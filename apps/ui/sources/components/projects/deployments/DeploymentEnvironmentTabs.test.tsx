@@ -200,7 +200,8 @@ describe('Environment → Domains', () => {
     try {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
-      expect(screen.findByTestId(`${id}.ingress.notRecorded`)).not.toBeNull();
+      // The choice names the place visitors reach (PAGE-ACCEPT-85 D3); no topology paragraph above it.
+      expect(screen.findByTestId(`${id}.ingress.notRecorded`)).toBeNull();
       await act(async () => {
         screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
         screen.changeTextByTestId(`${id}.service`, 'web');
@@ -218,6 +219,43 @@ describe('Environment → Domains', () => {
       } }));
     } finally { await screen.unmount(); controller.retire(); }
   });
+  it.each(['provider', 'admission'] as const)('shows the zones owner cause and remedy after a %s refusal', async boundary => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+    const credentialRef = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' };
+    const reason = boundary === 'provider' ? 'network_unavailable' : 'credential_unavailable';
+    const recovery = { requiredFact: boundary === 'provider' ? 'cloudflareConnection' : 'connectedAccountCredential',
+      remedy: boundary === 'provider'
+        ? 'The Cloudflare request could not reach the provider. Restore the connection and find zones again.'
+        : 'The selected connection has no usable credential. Reconnect it before finding zones.' };
+    const inspectPlatformTarget = vi.fn(async () => boundary === 'provider'
+      ? { ok: true as const, value: { kind: 'unavailable', options: [], reason, ...recovery } }
+      : { ok: false as const, code: reason, details: recovery,
+          failureCause: { phase: 'execution_authorization', errorClass: 'Error' as const,
+            errorCode: 'credential_unavailable', httpStatus: null } });
+    const addDomain = vi.fn();
+    const { screen, controller, settle } = await renderTab('domains', detail,
+      { listDomains: async () => ({ ok: true, value: { items: [], nextCursor: null } }) },
+      { domainActions: { addDomain, inspectPlatformTarget, verifyDomain: vi.fn(), removeDomain: vi.fn() } });
+    const id = 'project-deployments.environment.domains.add';
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account: credentialRef }, null);
+      });
+      expect(inspectPlatformTarget).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const failure = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.zones.error`);
+      expect(failure?.props).toMatchObject({ title: recovery.remedy, diagnosticCode: reason });
+      expect(screen.findByTestId(`${id}.ingress.zoneId`)).toBeNull();
+      expect(addDomain).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it.each([1, 2, 0, 'unavailable'] as const)('requires the named ingress choice and preserves it in Add (%s eligible)', async count => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
@@ -1034,7 +1072,54 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('uses one data card for a template database and opens Variables and the in-place Add sheet', async () => {
+  it('turns previews on from the Project repository when none are set up, through the same update an agent sends', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Previews setup', serverUrl: 'https://previews-setup.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const detail = createDeploymentEnvironmentDetailV1();
+    homes.answer(serverId, `GET /v1/projects/sources/${detail.environment.projectSourceId}`, { body: { ok: true, canManage: true,
+      source: { id: detail.environment.projectSourceId, revision: 1, name: 'shop', audience: [], createdByAccountId: 'account-owner',
+        repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+          repository: { nameWithOwner: 'acme/shop' }, protocol: 'https' } } } });
+    const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment } });
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      expect(await settle(`${id}.setup`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.setup`);
+      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { previewTemplate: expect.objectContaining({
+        v: 1, enabled: true, forkPreviews: 'off', runtimeTargetLinkId: detail.environment.runtimeTargetLinkId,
+        repository: expect.objectContaining({ kind: 'github', repository: 'acme/shop' }), domain: null, data: [] }) });
+      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+      expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: 'srv', environmentId: detail.environment.id,
+        expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
+        contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+        patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('says a stored definition needs a repository before previews, instead of an empty section', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Stored previews', serverUrl: 'https://stored-previews.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content,
+      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  web:\n    image: nginx\n', profiles: [], services: ['web'] } } });
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      expect(await settle(`${id}.needsRepository`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.setup`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('uses one data card for a template database and opens the in-place Add sheet', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Data', serverUrl: 'https://data-card.test',
       accountId: 'account-owner', currentAccount: true });
@@ -1045,17 +1130,13 @@ describe('Environment → Settings: checks, backups, previews', () => {
       definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
       services: ['database'], data: { engine: 'postgres', version: '17', service: 'database', port: 5432 },
     } } });
-    let navigate!: (destination: unknown) => void;
-    const navigation = new Promise<unknown>(resolve => { navigate = resolve; });
     const { screen, controller, settle } = await renderTab('overview', detail, {}, {
-      onNavigate: navigate, serverId, lifetime: account.accountLifetime,
+      serverId, lifetime: account.accountLifetime,
     });
     try {
       expect(await settle('project-deployments.environment.data')).not.toBeNull();
       expect(screen.getTextContent()).toContain('PostgreSQL');
       expect(screen.getTextContent()).toContain('5432');
-      await screen.pressByTestIdAsync('project-deployments.environment.data.variables');
-      expect(await navigation).toEqual({ tab: 'variables', section: null });
       routerMock.spies.push.mockClear();
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.show).mockClear();

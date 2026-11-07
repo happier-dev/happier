@@ -48,6 +48,7 @@ export function renderDeploymentDefaultsEditorRows(props: Readonly<{
       value={props.preferences.retainPreviousDeployments?.toString() ?? ''}
       placeholder={String(props.resolved.values.retainPreviousDeployments)}
       stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
+      compactStepper
       onCommit={draft => {
         if (props.disabled) return props.preferences.retainPreviousDeployments?.toString() ?? '';
         const value = draft.trim() === '' ? undefined : Number(draft);

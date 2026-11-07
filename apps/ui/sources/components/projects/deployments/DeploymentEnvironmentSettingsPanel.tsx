@@ -26,6 +26,8 @@ import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import { useProjectSource } from '@/components/projects/sources/useProjectSources';
+import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -305,6 +307,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               <Item
                 testID={`${section('rollout')}.restore`}
                 title={t('projects.deployments.restoreOnFail')}
+                subtitle={ownServer.autoRestorePreviousRelease
+                  ? t('projects.deployments.settingsSections.restoreOnFailOnBody')
+                  : t('projects.deployments.settingsSections.restoreOnFailOffBody')}
                 rightElement={
                   <Switch
                     value={ownServer.autoRestorePreviousRelease}
@@ -344,9 +349,11 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               testID={`${section('rollout')}.kept`}
               fieldTestID={`${section('rollout')}.kept.input`}
               title={t('projects.deployments.keptForRollback')}
+              subtitle={t('projects.deployments.settingsSections.keptBody')}
               kind="integer"
               value={String(detail.content.retainPreviousDeployments)}
               stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
+              compactStepper
               disabled={change.running}
               onCommit={(draft) => {
                 const count = Number(draft.trim());
@@ -420,6 +427,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                   void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }));
                 } : null}
                 saving={change.running}
+                lifetime={props.lifetime ?? null}
                 testID={`${section('previews')}.template`}
               />
             ) : null}
@@ -534,7 +542,7 @@ function BackupRows(props: SectionProps) {
         result={backups.result}
         testID={props.testID}
         errorTitle={t('projects.deployments.backupsErrorTitle')}
-        emptyTitle={t('projects.deployments.nothingSetUp')}
+        emptyTitle={t('projects.deployments.settingsSections.backupNotSetUpBody')}
       />
     );
   }
@@ -642,18 +650,23 @@ function PreviewTemplateRows(props: Readonly<{
   /** Saves the whole next template once through `environments.update` (patch.previewTemplate); absent for viewers. */
   onSave: ((next: PreviewTemplate) => void) | null;
   saving: boolean;
+  /** The captured Home/Account the Project repository is read under; absent while it is not current. */
+  lifetime: ServerAccountScopeLifetime | null;
   testID: string;
 }>) {
   const { theme } = useUnistyles();
   const template = props.detail.content.previewTemplate;
+  const onSaveTemplate = props.onSave;
   // The saved data selections this page has seen, so switching to None and back keeps the exact choice.
   const [seenData, setSeenData] = React.useState<Readonly<Partial<Record<'own' | 'branch', PreviewTemplate['data']>>>>({});
   React.useEffect(() => {
     const kind = template ? previewDataKind(template) : 'none';
     if (template && kind !== 'none') setSeenData((seen) => seen[kind] === template.data ? seen : { ...seen, [kind]: template.data });
   }, [template]);
-  // Without a template the preview list below already says there are none.
-  if (!template) return null;
+  if (!template) {
+    return <PreviewSetupRow detail={props.detail} lifetime={props.lifetime} onSave={onSaveTemplate} saving={props.saving}
+      testID={props.testID} />;
+  }
   const { onSave } = props;
   const runtimeLinks = props.detail.targetLinks.map((row) => row.targetLink).filter((link) => link.role === 'runtime');
   const linkName = (link: (typeof runtimeLinks)[number] | undefined) => {
@@ -767,6 +780,66 @@ function PreviewTemplateRows(props: Readonly<{
         <Item testID={`${props.testID}.forks`} title={t('projects.deployments.settingsSections.previewsForks')} mode="info" />
       ) : null}
     </>
+  );
+}
+
+/**
+ * No template yet (J6 entry): a repository-backed Environment turns previews on from its Project repository and its
+ * own runtime link, saved once through `environments.update` (patch.previewTemplate). A stored definition says why
+ * previews need a repository instead. The rest of the template is edited in the rows above once it exists.
+ */
+function PreviewSetupRow(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  lifetime: ServerAccountScopeLifetime | null;
+  onSave: ((next: PreviewTemplate) => void) | null;
+  saving: boolean;
+  testID: string;
+}>) {
+  if (props.detail.content.definition.kind === 'stored') {
+    return (
+      <Item
+        testID={`${props.testID}.needsRepository`}
+        title={t('projects.deployments.settingsSections.previewsNeedRepository')}
+        subtitle={t('projects.deployments.settingsSections.previewsNeedRepositoryBody')}
+        mode="info"
+      />
+    );
+  }
+  const runtimeTargetLinkId = props.detail.environment.runtimeTargetLinkId;
+  // Without a manager's save path or a runtime link there is nothing to turn on; the preview list says there are none.
+  if (!props.onSave || !props.lifetime || !runtimeTargetLinkId) return null;
+  return <PreviewTurnOnRow {...props} lifetime={props.lifetime} onSave={props.onSave} runtimeTargetLinkId={runtimeTargetLinkId} />;
+}
+
+function PreviewTurnOnRow(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  lifetime: ServerAccountScopeLifetime;
+  onSave: (next: PreviewTemplate) => void;
+  saving: boolean;
+  runtimeTargetLinkId: string;
+  testID: string;
+}>) {
+  const project = useProjectSource(props.lifetime, props.detail.environment.projectSourceId);
+  const repository = readProjectRepositoryIdentityV1({ source: project.source?.source ?? null });
+  if (!repository) {
+    return project.status === 'loading' ? null : (
+      <Item testID={`${props.testID}.noRepository`}
+        title={t('projects.deployments.settingsSections.previewsNoRepository')} mode="info" />
+    );
+  }
+  return (
+    <Item
+      testID={`${props.testID}.setup`}
+      title={t('projects.deployments.settingsSections.previewsTitle')}
+      subtitle={t('projects.deployments.settingsSections.previewsSetUpOff')}
+      rightElement={
+        <Switch value={false} disabled={props.saving} onValueChange={(enabled) => {
+          if (!enabled) return;
+          props.onSave({ v: 1, enabled: true, forkPreviews: 'off', repository, runtimeTargetLinkId: props.runtimeTargetLinkId,
+            domain: null, bindingBlueprints: [], data: [] });
+        }} />
+      }
+    />
   );
 }
 

@@ -284,6 +284,7 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
           placeholder="0"
           value={draft[field]}
           stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
+          compactStepper
           disabled={saving}
           onDraftChange={(text) => setDraft((current) => current ? { ...current, [field]: text } : current)}
           onCommit={(text) => {
