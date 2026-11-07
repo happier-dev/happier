@@ -250,5 +250,7 @@ describe('AgentInputSelectionListPopover', () => {
 
         expect(snap().selectionList?.maxHeight).toBe(312);
         expect(snap().selectionList?.heightBehavior).toBe('fixedToMaxHeight');
+        // A list that keeps its whole height needs its whole cap on the side it opens toward.
+        expect((snap().selectionPopover as { contentRoom?: number } | null)?.contentRoom).toBe(620);
     });
 });

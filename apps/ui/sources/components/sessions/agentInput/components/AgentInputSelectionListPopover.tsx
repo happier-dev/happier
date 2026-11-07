@@ -62,6 +62,8 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
             onRequestClose={props.onRequestClose}
             maxHeightCap={props.maxHeightCap ?? DEFAULT_MAX_HEIGHT_CAP}
             maxWidthCap={props.maxWidthCap ?? DEFAULT_MAX_WIDTH_CAP}
+            // A list that keeps its whole height needs its whole cap: it opens toward the side that holds it.
+            {...(props.heightBehavior === 'fixedToMaxHeight' ? { contentRoom: props.maxHeightCap ?? DEFAULT_MAX_HEIGHT_CAP } : {})}
         >
             {({ maxHeight, dismiss }) => (
                 <AgentInputPopoverSurface

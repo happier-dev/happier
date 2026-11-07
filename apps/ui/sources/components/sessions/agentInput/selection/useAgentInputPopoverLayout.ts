@@ -75,6 +75,12 @@ export function useAgentInputPopoverLayout(input: Readonly<{
      * (the 0.2 composition, owner 2026-10-18). `caret`: the slash/@ menu clears the whole composer.
      */
     anchor?: 'chip' | 'caret';
+    /**
+     * The room the content needs to show whole, when it is known up front (a list that keeps its whole
+     * height needs its whole cap). A chip popover whose side above cannot hold it opens below when that
+     * side has more room. Otherwise a side counts as enough once it has the usual popover room.
+     */
+    contentRoom?: number;
 }>): AgentInputPopoverLayout {
     const keyboardHeight = useKeyboardHeight();
     const composerKeyboardLayout = useComposerKeyboardLayout();
@@ -184,13 +190,14 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     const caretAnchored = input.anchor === 'caret';
     // A chip's popover opens above its chip (owner 2026-10-18). A composer high in the window (first-run Home,
     // New Session, a Run now form under the page header) leaves less room there than a popover's content needs:
-    // it then opens below instead of clipping to a sliver (calm-shell ruling 2026-11-01). One rule for every chip.
+    // it then opens below instead of clipping to a sliver (calm-shell ruling 2026-11-01). One rule for every chip:
+    // "enough" is what the content needs when it is known (`contentRoom`), else the usual popover room.
     return {
         maxHeightCap,
         keyboardBottomInset: effectiveKeyboardHeight,
         placement: caretAnchored && Platform.OS === 'web' ? 'bottom' : 'top',
         ...(caretAnchored && Platform.OS === 'web' ? { placementMinSpace: AGENT_INPUT_CARET_MENU_ROOMIER_SIDE_WINS }
-            : { placementMinSpace: POPOVER_PREFERRED_ROOM_PX }),
+            : { placementMinSpace: input.contentRoom ?? POPOVER_PREFERRED_ROOM_PX }),
         flip: true,
         // The popover now anchors correctly on every platform (Popover resolves the portal-relative
         // anchor via window-deltas on Android — see `resolvePortalRelativeAnchorRect`), so the gap is

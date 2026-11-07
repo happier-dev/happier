@@ -291,4 +291,14 @@ describe('AgentInputSelectionPopover', () => {
         surface?.props.onPointerEnter({ pointerType: 'mouse' });
         expect(onSurfacePointerChange).toHaveBeenCalledWith(true, { pointerType: 'mouse' });
     });
+    it('opens toward the side that holds what its content needs, flipping when the preferred side cannot', async () => {
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        await renderScreen(<AgentInputSelectionPopover open anchorRef={{ current: { nodeType: 'View' } } as any}
+            onRequestClose={() => {}} maxHeightCap={480} contentRoom={480}>
+            {() => React.createElement('View', { testID: 'fixed-list' })}
+        </AgentInputSelectionPopover>);
+        // The shared Popover flips to the roomier side when the preferred one cannot hold this much.
+        expect(capturedPopoverProps.current?.placementMinSpace).toBe(480);
+        expect(capturedPopoverProps.current?.flip).toBe(true);
+    });
 });

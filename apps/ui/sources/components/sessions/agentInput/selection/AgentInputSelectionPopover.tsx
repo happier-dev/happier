@@ -15,6 +15,8 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     onRequestClose: () => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    /** The room the content needs to show whole, when known up front (see `useAgentInputPopoverLayout`). */
+    contentRoom?: number;
     portalTopBottomLayout?: 'anchored' | 'boundary';
     /** `sheet`: a phone shows the content as the shared bottom sheet (see `Popover.phonePresentation`). */
     phonePresentation?: 'sheet';
@@ -40,6 +42,7 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
         open: true,
         maxHeightCap: props.maxHeightCap,
         portalTopBottomLayout: props.portalTopBottomLayout,
+        contentRoom: props.contentRoom,
     });
     // On web, agent-input popovers should be constrained to the viewport (not to an in-modal boundary
     // provider), so they can extend outside sheet-like modal cards.
