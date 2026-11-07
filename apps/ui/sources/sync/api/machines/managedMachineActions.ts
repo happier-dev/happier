@@ -21,7 +21,11 @@ export function createManagedMachineActionClient(params: Readonly<{ request: Ser
             const response = await params.request(managedMachineActionEndpointPathV1(actionId), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
                 ...(options?.signal ? { signal: options.signal } : {}),
-            }, { includeAuth: true });
+            }, { includeAuth: true }).catch((error: unknown) => {
+                if (error instanceof Error && error.name === 'AbortError') throw new ManagedMachineActionError(0, 'cancelled');
+                if (error instanceof TypeError) throw new ManagedMachineActionError(0, 'managed_request_failed');
+                throw error;
+            });
             let payload: unknown;
             try { payload = await response.json(); } catch {
                 throw new ManagedMachineActionError(response.status, !response.ok && [404, 405, 501].includes(response.status)
