@@ -351,6 +351,28 @@ async function renderDatabase(
 }
 
 describe('Environment → Data → Add (P10)', () => {
+  it('chooses from the Store catalog as an embedded picker, filtered to databases, not a Store page inside the sheet', async () => {
+    const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {},
+      content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
+    const screen = await renderScreen(<ModalProvider />);
+    try {
+      await act(async () => {
+        showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',
+          catalogFilters: { category: { include: ['database'], exclude: [] } },
+          lifetime: { scope: { serverId: 'home', accountId: 'account-owner' }, isCurrent: () => true } as never });
+      });
+      const { StoreRegistryItemPicker } = await import('@/components/store/StoreKindPage');
+      const picker = screen.root.findAllByType(StoreRegistryItemPicker)[0];
+      expect(picker?.props.initialFilters).toEqual({ category: { include: ['database'], exclude: [] } });
+      // No second page frame (header, project scope chip, page ⋯) inside the sheet.
+      expect(screen.findByTestId('store.kind.app')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('gives an Environment defined in its repository one real next step: the Store catalog picker on its Machine', async () => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const base = createDeploymentEnvironmentDetailV1();
@@ -360,6 +382,7 @@ describe('Environment → Data → Add (P10)', () => {
     try {
       await act(async () => {
         showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',
+          catalogFilters: { category: { include: ['database'], exclude: [] } },
           lifetime: { scope: { serverId: 'home', accountId: 'account-owner' }, isCurrent: () => true } as never });
       });
       expect(screen.findByTestId('project-deployments.add.blocked')).not.toBeNull();

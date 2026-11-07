@@ -44,7 +44,8 @@ import {
   type DeploymentReviewHandle,
 } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
-import { StoreKindPage, StoreRegistryItemSelectContext } from '@/components/store/StoreKindPage';
+import { StoreRegistryItemPicker } from '@/components/store/StoreKindPage';
+import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -596,9 +597,16 @@ export function DeploymentDatabasePage(
  * How apps reach a self-hosted database: its internal address, then whether the Environment exports it on a
  * private network or publicly (the Environment's saved exports), then its saved login as Reveal/Copy rows.
  */
+/** The Store catalog condition Data → Add opens with. */
+export const DEPLOYMENT_DATABASE_CATALOG_FILTER: SettingsCollectionFilter = Object.freeze({
+  category: Object.freeze({ include: ['database'], exclude: [] }),
+});
+
 /** P10: Add a service or database to this Environment, in place over it. Never routes to Store. */
 export type DeploymentAddSheetInput = Readonly<{
   detail: Detail;
+  /** The catalog conditions this entry point opens with: Data → Add passes the database category. */
+  catalogFilters: SettingsCollectionFilter;
   lifetime: ServerAccountScopeLifetime;
   review: DeploymentReviewHandle;
   machineName: (machineId: string) => string;
@@ -632,7 +640,7 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
     const openStore = () => {
       onClose();
       // The Store app catalog picker: the same list Add embeds, not a text search.
-      router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: { category: { include: ['database'], exclude: [] } },
+      router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: props.catalogFilters,
         machine: { serverId: props.lifetime.scope.serverId, machineId: detail.environment.controllerMachineId } }) as never);
     };
     return (
@@ -646,10 +654,9 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   }
   if (!chosen) {
     return (
-      <View testID="project-deployments.add.choose" style={styles.choose}>
-        <StoreRegistryItemSelectContext.Provider value={select}>
-          <StoreKindPage kind="app" presented />
-        </StoreRegistryItemSelectContext.Provider>
+      <View testID="project-deployments.add.choose" style={deploymentSheetStyles.body}>
+        <StoreRegistryItemPicker presented initialFilters={props.catalogFilters} onSelect={select}
+          testID="project-deployments.add.picker" />
       </View>
     );
   }
@@ -968,6 +975,5 @@ function ConnectionSection(
 }
 
 const styles = StyleSheet.create(() => ({
-  choose: { flex: 1, minHeight: 0 },
   page: { flex: 1, minHeight: 0 },
 }));

@@ -47,7 +47,8 @@ import {
 } from './StoreKindScreen';
 import { storeEditorialGroupKey } from './catalog/storeColumnAdapter';
 import { useStoreFilterFields } from './catalog/useStoreFilterFields';
-import { StoreDirectory as StoreQueryDirectory, type StoreSearchState } from './StoreSearch';
+import { StoreDirectory as StoreQueryDirectory, StoreSearch, type StoreSearchState } from './StoreSearch';
+import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import { StoreDiscover } from './StoreDiscover';
 import { StoreDiscoverItemMark } from './discover/StoreDirectorySection';
 import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
@@ -461,6 +462,52 @@ const registryReference = (item: RegistryCatalogItemSummary) => ({ type: 'regist
  * row's press and its + here, instead of the Store opening the listing. Absent, rows open as the Store does.
  */
 export const StoreRegistryItemSelectContext = React.createContext<((item: RegistryCatalogItemSummary) => void) | null>(null);
+
+/**
+ * The App catalog as an embedded picker (Deployments → Add a service or database): the search with its conditions and
+ * the catalog rows only, with no page header, project scope or listing pane. The host's conditions seed the picker's own
+ * filter (a database category), and a row press or its + goes to `onSelect` instead of opening the listing.
+ */
+export function StoreRegistryItemPicker(props: Readonly<{
+  presented: boolean;
+  initialFilters?: SettingsCollectionFilter;
+  onSelect: (item: RegistryCatalogItemSummary) => void;
+  testID: string;
+}>): React.ReactNode {
+  const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
+  return <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
+    <PickerQuery demand={demand} presented={props.presented} curation={curation.curation} curationComplete={complete}
+      initialFilters={props.initialFilters} onSelect={props.onSelect} testID={props.testID} />
+  }</StoreDiscover>;
+}
+
+const PickerQuery = React.memo(function PickerQuery(props: Readonly<{ demand: Readonly<{ presented: boolean }>; presented: boolean;
+  curation: RegistryCuration['curation']; curationComplete: boolean; initialFilters?: SettingsCollectionFilter;
+  onSelect: (item: RegistryCatalogItemSummary) => void; testID: string }>) {
+  const fields = useStoreFilterFields(props.curation, props.presented);
+  const copy = kindCopy('app');
+  return <StoreSearch kind="app" demand={props.demand} fields={fields} curation={props.curation}
+    curationComplete={props.curationComplete} {...(props.initialFilters ? { initialFilters: props.initialFilters } : {})}>
+    {state => {
+      const visible = new Set(state.rows);
+      const registryItems = state.rows.filter((row): row is RegistryCatalogItemSummary => 'kind' in row && 'itemId' in row);
+      return (
+        <StoreRegistryIdentityProvider items={registryItems}>
+          <StoreRegistryItemSelectContext.Provider value={props.onSelect}>
+            <View testID={props.testID}>
+              <CompactSearchField placement="page" testID={`${props.testID}.search`} value={state.query}
+                onChangeText={state.setQuery} placeholder={copy.search} trailing={state.filter.filterButton} />
+              {state.filter.tokenRow}
+              {state.lists.app ? <RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
+                items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={false} />
+                : <SkeletonRows testID={`${props.testID}.loading`} rows={5} accessibilityLabel={t('common.loading')} />}
+            </View>
+          </StoreRegistryItemSelectContext.Provider>
+        </StoreRegistryIdentityProvider>
+      );
+    }}
+  </StoreSearch>;
+});
 
 /** A row opens its exact listing (S40 §4.5): the pane beside the page, or its own page on a phone. */
 export function useOpenRegistryItem(): (item: RegistryCatalogItemSummary) => void {
