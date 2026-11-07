@@ -418,13 +418,13 @@ function normalizeDaemonState(
   };
 }
 
-async function readSettingsFromDisk(): Promise<Settings> {
+async function readSettingsFromDisk(): Promise<{ settings: Settings; needsMigration: boolean }> {
   let content: string;
   try {
     content = await readFile(configuration.settingsFile, 'utf8');
   } catch (error) {
     // Only a confirmed missing file is safe to initialize with defaults.
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { ...defaultSettings };
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { settings: { ...defaultSettings }, needsMigration: true };
     throw error;
   }
 
@@ -469,12 +469,12 @@ async function readSettingsFromDisk(): Promise<Settings> {
     const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
     if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
   }
-  return merged;
+  return { settings: merged, needsMigration: schemaVersion < SUPPORTED_SCHEMA_VERSION };
 }
 
 export async function readSettings(): Promise<Settings> {
   try {
-    return await readSettingsFromDisk();
+    return (await readSettingsFromDisk()).settings;
   } catch (error) {
     logger.warn(`Failed to read settings: ${error instanceof Error ? error.message : String(error)}`);
     return { ...defaultSettings };
@@ -631,11 +631,12 @@ export async function updateSettings(
 
   try {
     // Never turn a failed read or migration into a destructive defaults write.
-    const current = await readSettingsFromDisk();
+    const { settings: current, needsMigration } = await readSettingsFromDisk();
     await ensureAccountChangesCursorsImported();
 
     // Apply update
     const updated = await updater(current);
+    if (!needsMigration && isDeepStrictEqual(current, updated)) return updated;
 
     // Ensure directory exists
     await ensureHappyHomeDirExists();
