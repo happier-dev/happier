@@ -54,14 +54,14 @@ export function useUsageWidgetResource(input: Readonly<{
     React.useLayoutEffect(() => () => {
         for (const release of admitted.current) release();
         admitted.current.clear();
-    }, [context]);
+    }, [context, presented]);
     React.useLayoutEffect(() => {
         if (!entry || !input.retainPendingDemand || !presented) return;
         let retired = false;
         let unsubscribe = () => {};
         const release = () => { unsubscribe(); admitted.current.delete(release); };
         const settle = () => { if (retired && entry.getSnapshot().pending === 'idle') release(); };
-        // This lease retains finite admitted work; presented bodies own the live watch.
+        // Retain admitted work across visible widget changes; leaving releases page demand.
         unsubscribe = entry.subscribe(settle, false);
         admitted.current.add(release);
         return () => { retired = true; settle(); };

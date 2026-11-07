@@ -64,7 +64,7 @@ function BodyProbe(props: Readonly<{ resource: UsageWidgetResource; instanceId: 
 }
 
 describe('Usage widget shared Resource selection', () => {
-    it('withdraws a queued live replacement on hide while preserving the finite read already admitted', async () => {
+    it('cancels the pending read and withdraws a queued live replacement on hide', async () => {
         let amount = 1;
         const held = createDeferred<void>();
         const signals: (AbortSignal | null | undefined)[] = [];
@@ -97,7 +97,8 @@ describe('Usage widget shared Resource selection', () => {
             await screen.update(page(false));
             held.resolve();
             await flushHookEffects({ cycles: 30 });
-            expect(signals[0]?.aborted, 'withdrawal does not abort the admitted finite request').toBe(false);
+            // USAGE-LEAVE-COST-1107: finite reads that only serve a departed page lose demand.
+            expect(signals.filter(signal => signal?.aborted), 'leaving cancels the one pending physical request').toHaveLength(1);
             expect(posts(), 'the old live invalidation does not admit a deferred replacement while hidden').toBe(1);
             await screen.update(page(true));
             await expect.poll(() => model?.slice?.accounting?.totals.cost.reportedUsd).toBe(2);
@@ -208,13 +209,78 @@ describe('Usage widget shared Resource selection', () => {
             held = undefined;
             await refresh;
             await flushHookEffects({ cycles: 20 });
-            expect(admittedSignal?.aborted, 'hiding preserves finite work already admitted by the mounted page').toBe(false);
+            expect(admittedSignal?.aborted, 'hiding releases pending work that only serves the departed page').toBe(true);
             expect(posts() - beforePending, 'a hidden push adds no follow-up to an admitted finite read').toBe(1);
             await screen.update(page(true));
             await expect.poll(() => model?.slice?.accounting?.totals.cost.reportedUsd).toBe(5);
             await expect.poll(() => model?.pending).toBe(false);
             expect(posts() - beforePending, 'showing after the hidden push reads current accounting once').toBe(2);
         } finally { held?.resolve(); await screen.unmount(); }
+    });
+    it.each(['evidence', 'quota'] as const)('cancels pending %s reads on leave and admits no replacement on the next page', async source => {
+        const { UsageSessionEvidenceRequestSchema, USAGE_SESSION_EVIDENCE_PATH } = await import('@happier-dev/protocol/usage/usageSessionEvidence');
+        const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol/connect/account-usage-primitives');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'leave-cost' };
+        const recordKey = { providerId: 'codex', accountSubjectId: 'leave-cost', subjectKind: 'account' as const, quotaScope: 'account' as const };
+        const nowMs = Date.now();
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'codex', accountSubject: { kind: 'providerSubject', id: 'leave-cost' }, observedAtMs: nowMs,
+            fetchedAtMs: nowMs, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] });
+        const held = createDeferred<void>();
+        const signals: (AbortSignal | null | undefined)[] = [];
+        const historyPath = '/v4/connect/qualified/provider-account-usage/history';
+        const credentials = await mountHome(async request => {
+            if (request.path === '/v2/usage/query') return Response.json(accounting);
+            if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({
+                source: { bindingKind: 'account', ref }, recordId: snapshot.recordId, providerAccountId: ref.accountId,
+                fetchedAt: nowMs, staleAfterMs: 60_000 });
+            if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
+                content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: nowMs, staleAfterMs: 60_000, status: 'ok' },
+                sources: [{ bindingKind: 'account', ref }] });
+            if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+            if (request.path === (source === 'evidence' ? USAGE_SESSION_EVIDENCE_PATH : historyPath)) {
+                signals.push(request.signal);
+                await held.promise;
+                if (source === 'quota') return Response.json({ entries: [], nextCursor: null });
+                const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [] })), results: [] });
+            }
+            return undefined;
+        });
+        if (source === 'quota') {
+            storage.setState({ profile: AccountProfileSchema.parse({ ...storage.getState().profile, connectedAccountsV4: [{ ref,
+                status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+                credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] }) });
+            await getServerFeaturesSnapshot({ serverId: home!.homes.a!.id, force: true });
+        }
+        const queryPlan = plan(normalizeUsageQuery({ period: { relative: '7days' }, includeWorkEvidence: false,
+            includeSessionEvidence: source === 'evidence', includeTranscriptEvidence: false,
+            includeQuotaHistory: source === 'quota', includeComparison: false }));
+        function MountedPage() {
+            const resource = useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan, retainPendingDemand: true });
+            useUsageWidgetBodyModel(resource, 'first');
+            return null;
+        }
+        const page = (shown: boolean) => <PluginSurfaceFocusEligibilityProvider active={shown} presentationActive={shown}>
+            <MountedPage />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(page(false));
+        try {
+            await flushHookEffects({ cycles: 20 });
+            expect(signals, 'a hidden Usage page has no cold read').toHaveLength(0);
+            await screen.update(page(true));
+            await expect.poll(() => signals.length).toBe(1);
+            await screen.update(page(false));
+            await flushHookEffects({ cycles: 20 });
+            expect.soft(signals.filter(signal => signal?.aborted), 'the last page borrower cancels its physical read').toHaveLength(1);
+            await act(async () => { publishHomeAccountChange(home!.homes.a!.id, [], { changeKinds: ['account'],
+                usageQueryAffects: true, usageAccountingChange: { sessionId: null } }); });
+            await flushHookEffects({ cycles: 20 });
+            expect(signals, 'a push on the next page starts no Usage history/evidence read').toHaveLength(1);
+        } finally { held.resolve(); await screen.unmount(); }
     });
     it('does not reparse an unchanged batch on a body rerender and still admits a changed plan', async () => {
         const credentials = await mountHome(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
