@@ -22,6 +22,7 @@ import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
 import { DesktopMainWindowRuntimes } from '@/desktop/DesktopMainWindowRuntimes';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { withSessionsFallbackBack } from '@/components/navigation/root/sessionsFallbackBack';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useSetting } from '@/sync/domains/state/storage';
 import {
@@ -153,6 +154,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
         theme.colors.chrome.header.foreground,
     ]);
     const rootStackRouteOptions = useRootStackRouteOptions();
+    const homeScreenOptions = React.useMemo(() => withSessionsFallbackBack(rootStackRouteOptions['home'], 'home-back'), [rootStackRouteOptions]);
+    const accountHomesScreenOptions = React.useMemo(() => withSessionsFallbackBack(rootStackRouteOptions['homes/index'], 'account-homes-back'), [rootStackRouteOptions]);
     const workflowEditorScreenOptions = React.useCallback(() => ({
         ...rootStackRouteOptions['workflows/[id]/index'],
         // Desktop workflow pages own Back when their column is collapsed.
@@ -497,7 +500,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen
                     name="home"
                     // The phone's Home, opened from the Sessions header logo: the page is its own title.
-                    options={rootStackRouteOptions['home']}
+                    options={homeScreenOptions}
                 />
                 <Stack.Screen
                     name="changelog"
@@ -509,18 +512,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 />
                 <Stack.Screen
                     name="homes/index"
-                    options={({ navigation }) => ({
-                        ...rootStackRouteOptions['homes/index'],
-                        // Opened from the Sessions header's Home line; phone web reports no stack `back`,
-                        // so the page names its own way back (lab `xacct-P1`), falling back to Sessions.
-                        headerLeft: ({ tintColor }: { tintColor?: string }) => (
-                            <DefaultBackButton
-                                testID="account-homes-back"
-                                tintColor={tintColor}
-                                onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })}
-                            />
-                        ),
-                    })}
+                    // Opened from the Sessions header's Home line (lab `xacct-P1`).
+                    options={accountHomesScreenOptions}
                 />
                 <Stack.Screen
                     name="artifacts/index"
