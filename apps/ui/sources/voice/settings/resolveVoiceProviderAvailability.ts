@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import type { VoiceReadinessRole } from '@happier-dev/protocol';
+import type { VoiceReadinessRole } from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import type { DeviceSpeechRecognitionAvailability } from '@/voice/input/deviceSpeechRecognitionAvailability';
 
@@ -94,6 +94,10 @@ export type VoiceDaemonRouteAvailability = 'direct' | 'relay' | 'relay_disabled'
 export type VoiceDaemonModelAvailability = 'ready' | 'missing' | 'installing' | 'error' | 'unknown';
 export type VoiceDaemonRuntimeAvailability = 'available' | 'unavailable' | 'unknown';
 export type VoiceDaemonPcmCaptureAvailability = 'available' | 'unavailable' | 'unknown';
+export type VoiceDaemonSpeechAvailability = Readonly<Partial<Record<'stt' | 'tts', Readonly<{
+    modelState: VoiceDaemonModelAvailability;
+    runtimeState: VoiceDaemonRuntimeAvailability;
+}>>>>;
 
 export type ResolveVoiceProviderAvailabilityInput = Readonly<{
     happierVoiceSupported: boolean;
@@ -105,6 +109,7 @@ export type ResolveVoiceProviderAvailabilityInput = Readonly<{
             route: VoiceDaemonRouteAvailability;
             modelState: VoiceDaemonModelAvailability;
             runtimeState?: VoiceDaemonRuntimeAvailability;
+            speech?: VoiceDaemonSpeechAvailability;
             pcmCapture?: VoiceDaemonPcmCaptureAvailability;
         }>;
         nativeDevice?: Readonly<{

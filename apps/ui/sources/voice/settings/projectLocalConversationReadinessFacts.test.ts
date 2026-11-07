@@ -119,6 +119,38 @@ function project(settings: Settings) {
 
 describe('projectLocalConversationReadinessFacts credential readiness', () => {
   it.each([
+    { runtimeState: 'available', modelState: 'ready', status: 'ready', code: 'ready' },
+    { runtimeState: 'unavailable', modelState: 'ready', status: 'needs_setup', code: 'runtime_missing' },
+    { runtimeState: 'available', modelState: 'missing', status: 'needs_setup', code: 'model_missing' },
+  ] as const)('projects selected Kokoro Speak from its own admitted engine facts: $code', (scenario) => {
+    const settings = createLocalSettings('local_neural', 'local_neural');
+    const config = readLocalConversationVoiceSettings(settings.voice);
+    const voice = writeLocalConversationVoiceSettings(settings.voice, {
+      ...config,
+      tts: { ...config.tts, localNeural: { ...config.tts.localNeural, model: 'kokoro', execution: 'daemon' } },
+    });
+    // Recognition is unavailable; it cannot disable independently runnable speech.
+    const input = { ...localInput, daemon: { ...localInput.daemon,
+      runtimeState: 'unavailable' as const, modelState: 'missing' as const,
+      speech: { tts: { runtimeState: scenario.runtimeState, modelState: scenario.modelState } },
+    } };
+    const facts = projectLocalConversationReadinessFacts({
+      registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
+      connectedPurposes: null, platform: 'web', executionMachineId, voiceAgentAvailability: 'available',
+      localInput: input,
+      local: resolveVoiceProviderAvailability({ happierVoiceSupported: true, platformOs: 'web', local: input }).local,
+    });
+    expect(facts.speechReadiness.speak).toMatchObject({
+      providerId: 'local_neural', status: scenario.status, code: scenario.code,
+      reasonKey: `voice.readiness.${scenario.code}`,
+    });
+    const pipeline = buildVoiceConversationsPipeline({ voice, registry, serviceTitle: 'Local',
+      machine: { machineId: executionMachineId, machineLabel: 'Computer' }, readiness: null,
+      localSpeechReadiness: facts.speechReadiness, localThinkReadiness: facts.thinkReadiness });
+    expect(pipeline?.pipeline.steps[2]?.readiness).toEqual(facts.speechReadiness.speak);
+  });
+
+  it.each([
     { arm: 'policy_disabled', code: 'feature_policy_disabled', tone: 'needs_setup', recovery: 'enable_voice_agent' },
     { arm: 'server_disabled', code: 'server_feature_disabled', tone: 'waiting', recovery: 'switch_provider' },
     { arm: 'checking', code: 'server_feature_unknown', tone: 'unknown', recovery: 'switch_provider' },

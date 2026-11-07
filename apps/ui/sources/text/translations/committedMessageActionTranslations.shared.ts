@@ -3,6 +3,7 @@
 
 export const committedMessageActionTranslationsEnglish = { "en": {
         "committedMessageActions": {
+            "readAloud": "Read aloud",
             "copy": "Copy",
             "fork": "Fork",
             "rollback": "Rollback",
@@ -19,7 +20,7 @@ export const committedMessageActionTranslationsEnglish = { "en": {
             "savedHintFavorite": "Goes to your library, starred.",
             "savedHint": "Goes to your library.",
             "addShortcut": "Add a / shortcut",
-            "shortcutPlaceholder": "/shortcut",
+            "shortcutPlaceholder": "shortcut",
             "savedToLibrary": "Saved to Library",
             "savePromptHint": "Reuse it from the prompt library",
             "copyHint": "The message’s text, ready to paste.",
@@ -27,6 +28,7 @@ export const committedMessageActionTranslationsEnglish = { "en": {
             "rollbackHint": "Return the workspace to how it was before a message.",
             "pinHint": "Keep messages in reach. Existing pins stay when this is off.",
             "savePromptSettingHint": "Turn something you sent into a prompt you can reuse.",
-            "pluginsHint": "Actions your plugins add under messages."
+            "pluginsHint": "Actions your plugins add under messages.",
+            "showActions": "Show message actions"
         }
     } };

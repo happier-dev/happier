@@ -24,6 +24,8 @@ import { promptCollectionItemHref } from '@/components/settings/prompts/collecti
 import { useWorkflowMakeRepeatable } from '@/components/workflows/authoring/useWorkflowMakeRepeatable';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { RowActionHoverHost } from './rowActionRevealHost';
+import { isTranscriptRowBodyTap, openTranscriptRowTouchActions, toggleTranscriptRowTouchActions, useTranscriptRowNativeTap } from './transcriptRowTouchReveal';
+import { ReadAloudReadinessSubscription } from './ReadAloudReadinessSubscription';
 
 type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecision'> & Readonly<{
     showActions: boolean;
@@ -35,6 +37,8 @@ type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecis
     onActionsFocus: () => void;
     onActionsBlur: () => void;
     hoverProps?: RowActionHoverHost['hoverProps'];
+    /** On a touch host, the message key that a tap or long-press opens; null where hover reveals the row. */
+    touchRevealKey: string | null;
     onActionHoverIn?: () => void;
     onActionHoverOut?: () => void;
     children: (row: React.ReactNode) => React.ReactNode;
@@ -71,7 +75,8 @@ export function CommittedMessageActions(props: Props) {
     const decisionAnchorRef = React.useRef<View>(null);
     const [decisionSeedSource, setDecisionSeedSource] = React.useState<SessionMessageRefV1 | null>(null);
     const [decisionSaved, setDecisionSaved] = React.useState(false);
-    const { actions, pinAvailability, pluginActions, makeRepeatableSource, setMakeRepeatableCapability, committedMessage } = useCommittedMessageActions({
+    const { actions, pinAvailability, pluginActions, makeRepeatableSource, setMakeRepeatableCapability, committedMessage,
+        observeReadAloudReadiness, setReadAloudReadiness } = useCommittedMessageActions({
         ...props, openSavePrompt: () => setSaveOpen(true), openSaveDecision: setDecisionSeedSource,
     }, { rowVisible: props.showActions, menuVisible: menuOpen });
     React.useEffect(() => { setSaveOpen(false); setMenuOpen(false); setSavedArtifactId(null); setDecisionSeedSource(null); setDecisionSaved(false); }, [props.message.id]);
@@ -83,17 +88,35 @@ export function CommittedMessageActions(props: Props) {
         : action.id === 'pin' && props.settings.transcriptMessagePinActionEnabled === false
             ? [] : [{
                 id: action.id, title: action.title,
+                disabled: action.disabled,
                 icon: <Icon name={action.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
                 ...(action.id === 'savePrompt' ? { subtitle: t('committedMessageActions.savePromptHint') } : {}),
+                ...(action.disabledReason ? { subtitle: action.disabledReason } : {}),
             }]);
     // The gap to the neighbouring action (its `marginRight`) is split between the two hit areas.
     const actionGapPx = props.invertTimestampAndActions ? theme.space.s2 : theme.space.s6;
     const neighbourGapPx = resolveMessageActionNeighbourGapPx(theme);
     const hasNativeMenu = Platform.OS !== 'web' && items.length > 0;
-    const nativeMenuHold = React.useMemo(() => Gesture.LongPress()
-        .enabled(hasNativeMenu)
-        .runOnJS(true)
-        .onStart(() => setMenuOpen(true)), [hasNativeMenu]);
+    const touchRevealKey = props.touchRevealKey;
+    // Native: a tap on the message itself opens its timestamp and actions (a link or control inside only presses
+    // itself); a hold opens the same actions as a menu. The Tap never cancels the touches of views inside.
+    const nativeTap = useTranscriptRowNativeTap(Platform.OS === 'web' ? null : touchRevealKey);
+    const onNativeTapEnd = nativeTap.onTapEnd;
+    const nativeGesture = React.useMemo(() => Gesture.Exclusive(
+        Gesture.LongPress().enabled(hasNativeMenu).runOnJS(true).onStart(() => setMenuOpen(true)),
+        Gesture.Tap().enabled(touchRevealKey !== null).cancelsTouchesInView(false).runOnJS(true)
+            .onEnd((_event, success) => onNativeTapEnd(success)),
+    ), [hasNativeMenu, touchRevealKey, onNativeTapEnd]);
+    // Coarse-pointer web: a tap on the message body toggles it, a long-press (contextmenu) opens it.
+    const webTouchProps = Platform.OS === 'web' && touchRevealKey !== null ? {
+        onClick: (event: { target: unknown }) => {
+            if (isTranscriptRowBodyTap(event.target, anchorRef.current)) toggleTranscriptRowTouchActions(touchRevealKey, anchorRef.current);
+        },
+        onContextMenu: () => openTranscriptRowTouchActions(touchRevealKey, anchorRef.current),
+    } : null;
+    const openActions = React.useCallback(() => {
+        if (touchRevealKey !== null) openTranscriptRowTouchActions(touchRevealKey, anchorRef.current);
+    }, [touchRevealKey]);
     const perform = (id: string) => {
         setMenuOpen(false);
         if (id.startsWith('plugin:')) {
@@ -102,7 +125,7 @@ export function CommittedMessageActions(props: Props) {
             return;
         }
         const action = availableActions.find((candidate) => candidate.id === id);
-        if (action) void action.onPress();
+        if (action && !action.disabled) void action.onPress();
     };
     const pinAction = availableActions.find((action) => action.id === 'pin');
     const row = <MessageActionRow
@@ -112,6 +135,7 @@ export function CommittedMessageActions(props: Props) {
             testID={`transcript-message-pin:${props.message.id}`} invertedActionsLayout={props.invertTimestampAndActions}
             onHoverIn={props.onActionHoverIn} onHoverOut={props.onActionHoverOut} /> : null}
         onActionsFocus={props.onActionsFocus} onActionsBlur={props.onActionsBlur}
+        onOpenActions={touchRevealKey !== null && !props.showActions ? openActions : undefined}
         timestampText={props.timestampText} timestampGlyph={props.timestampGlyph
             ? <Icon name={props.timestampGlyph} size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} /> : undefined}
         invertTimestampAndActions={props.invertTimestampAndActions}
@@ -146,6 +170,7 @@ export function CommittedMessageActions(props: Props) {
                     ? theme.colors.state.success.foreground : theme.colors.text.secondary} />}
                 accessibilityLabel={action.title}
                 accessibilityHint={action.accessibilityHint}
+                disabled={action.disabled} disabledReason={action.disabledReason}
                 tooltip={action.title} interactiveTargetGapPx={actionGapPx} interactiveTargetVerticalGapPx={neighbourGapPx}
                 variant="plain" onPress={action.onPress}
                 onFocusChange={(focused) => focused ? props.onActionsFocus() : props.onActionsBlur()}
@@ -170,19 +195,20 @@ export function CommittedMessageActions(props: Props) {
             onSaved={() => { setDecisionSeedSource(null); setDecisionSaved(true); }} /> : null}
     </>;
     return <>
+        {observeReadAloudReadiness ? <ReadAloudReadinessSubscription onChange={setReadAloudReadiness} /> : null}
         {makeRepeatableSource ? <MakeRepeatableSubscription
             source={makeRepeatableSource} text={props.selectableText!.text} onChange={setMakeRepeatableCapability}
         /> : null}
         {Platform.OS === 'web' ? (
-            <View ref={anchorRef} collapsable={false} {...props.hoverProps}>
+            <View ref={anchorRef} collapsable={false} {...props.hoverProps} {...webTouchProps}>
                 {contents}
             </View>
         ) : (
             // A parent RN Pressable acquires the JS responder before a hesitant child scroll.
             // Keep the native host passive; RNGH recognizes a hold only after its native defaults
             // (500ms / 10pt movement) are met, without holding the child scroll's responder.
-            <GestureDetector gesture={nativeMenuHold}>
-                <View ref={anchorRef} collapsable={false}>{contents}</View>
+            <GestureDetector gesture={nativeGesture}>
+                <View ref={anchorRef} collapsable={false} {...nativeTap.hostProps}>{contents}</View>
             </GestureDetector>
         )}
     </>;

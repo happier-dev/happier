@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import { MachineLiveStreamRelayDisabledReasonSchema, readMachineLiveStreamRelayCaps } from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -8,12 +7,16 @@ import { getDefaultModelPackId, getModelPackCatalogEntry, resolveCanonicalModelP
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { resolveMachineRpcRelayFallbackDecision, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type {
-    DaemonVoiceInferenceModelStatus,
-    FeaturesResponse,
-    MachineLiveStreamRelayDisabledReason,
-    ModelPackKind,
+    DaemonVoiceInferenceModelStatus} from '@happier-dev/protocol/daemon/voiceInference';
+import type {
+    FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type {
+    MachineLiveStreamRelayDisabledReason} from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
+import type {
+    ModelPackKind} from '@happier-dev/protocol/voice/modelPacks/manifest';
+import type {
     VoiceReadinessRole,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -39,6 +42,7 @@ import type {
     VoiceDaemonPcmCaptureAvailability,
     VoiceDaemonRouteAvailability,
     VoiceDaemonRuntimeAvailability,
+    VoiceDaemonSpeechAvailability,
     VoiceProviderUnavailableReason,
 } from './resolveVoiceProviderAvailability';
 import { getDefaultBrowserWebSpeechCapability, useBrowserWebSpeechCapability } from './browserWebSpeechCapability';
@@ -137,7 +141,7 @@ export function resolveVoiceDaemonHeavyAudioReadiness(input: Readonly<{
 
 /** Canonical passive projection of the daemon inference-runtime fact. */
 export function projectVoiceDaemonRuntimeReadinessFact(
-    daemon: VoiceProviderLocalAvailability['daemon'] | null | undefined,
+    daemon: Readonly<{ runtimeState?: VoiceDaemonRuntimeAvailability }> | null | undefined,
 ): VoiceReadinessFact {
     if (!daemon) return 'unknown';
     if (daemon.runtimeState === 'available') return 'ready';
@@ -168,7 +172,7 @@ export function projectVoiceDaemonExecutionMachineReadinessFact(
 }
 
 export function projectVoiceDaemonModelReadinessFact(
-    daemon: VoiceProviderLocalAvailability['daemon'] | null | undefined,
+    daemon: Readonly<{ modelState: VoiceDaemonModelAvailability }> | null | undefined,
 ): VoiceReadinessFact {
     if (daemon?.modelState === 'ready') return 'ready';
     if (daemon?.modelState === 'missing') return 'missing';
@@ -377,6 +381,7 @@ export function resolveVoiceProviderLocalAvailability(input: Readonly<{
     browserSpeechOnDevice?: VoiceBrowserSpeechOnDeviceAvailability;
     daemonModelState?: VoiceDaemonModelAvailability;
     daemonRuntimeState?: VoiceDaemonRuntimeAvailability;
+    daemonSpeech?: VoiceDaemonSpeechAvailability;
     daemonPcmCapture?: VoiceDaemonPcmCaptureAvailability;
     daemonDirectRouteAvailability?: VoiceDaemonDirectRouteAvailability;
     nativeDeviceRequested?: boolean;
@@ -397,6 +402,7 @@ export function resolveVoiceProviderLocalAvailability(input: Readonly<{
             ),
             modelState: input.daemonModelState ?? 'unknown',
             runtimeState: input.daemonRuntimeState ?? 'unknown',
+            ...(input.daemonSpeech ? { speech: input.daemonSpeech } : {}),
             ...(input.daemonPcmCapture ? { pcmCapture: input.daemonPcmCapture } : {}),
         },
         nativeDevice: {
@@ -439,6 +445,7 @@ function useNativeDeviceSpeechRecognitionAvailability(
 export function useVoiceProviderLocalAvailability(input: Readonly<{
     daemonModelState?: VoiceDaemonModelAvailability;
     daemonRuntimeState?: VoiceDaemonRuntimeAvailability;
+    daemonSpeech?: VoiceDaemonSpeechAvailability;
     daemonMachineId?: string | null;
 }> = {}): VoiceProviderLocalAvailability {
     const activeServer = useActiveServerSnapshot();
@@ -456,7 +463,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
     });
     // Read the consumed route fact, not the whole Machine. Resource publications
     // stay quiet while preflight still observes endpoint expiry on source changes.
-    const daemonDirectRouteAvailability = useStoreWithEqualityFn(storage, React.useCallback(state => (
+    const daemonDirectRouteAvailability = storage(React.useCallback(state => (
         resolveVoiceDaemonDirectRouteAvailability({
             serverFeatures,
             credentials,
@@ -472,6 +479,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
             browserSpeechCapability,
             daemonModelState: input.daemonModelState,
             daemonRuntimeState: input.daemonRuntimeState,
+            daemonSpeech: input.daemonSpeech,
             daemonPcmCapture,
             daemonDirectRouteAvailability,
             nativeDeviceSpeechRecognition,
@@ -483,6 +491,7 @@ export function useVoiceProviderLocalAvailability(input: Readonly<{
             daemonPcmCapture,
             input.daemonModelState,
             input.daemonRuntimeState,
+            input.daemonSpeech,
             nativeDeviceSpeechRecognition,
             serverFeatures,
         ],

@@ -17,6 +17,7 @@ import { useDaemonVoiceModelCatalogState } from '@/voice/settings/panels/modelCa
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import {
   resolveVoiceDaemonModelAvailabilityFromCatalogState,
+  resolveVoiceDaemonModelKindAvailabilityFromCatalogState,
   resolveVoiceDaemonRouteDiagnosticReason,
   useVoiceProviderLocalAvailability,
 } from '@/voice/settings/voiceProviderLocalAvailability';
@@ -82,9 +83,16 @@ export function useVoiceSettingsReadinessInputs(voice: VoiceSettings, options: R
       requiresDaemonTtsModel,
     ],
   );
+  const daemonSpeech = React.useMemo(() => ({
+    stt: resolveVoiceDaemonModelKindAvailabilityFromCatalogState({ ...daemonModelCatalog.state,
+      kind: 'stt_sherpa', selectedPackId: activeLocalStt.localNeural.assetId }),
+    tts: resolveVoiceDaemonModelKindAvailabilityFromCatalogState({ ...daemonModelCatalog.state,
+      kind: 'tts_sherpa', selectedPackId: activeLocalTts.localNeural.assetId }),
+  }), [daemonModelCatalog.state, activeLocalStt.localNeural.assetId, activeLocalTts.localNeural.assetId]);
   const localAvailability = useVoiceProviderLocalAvailability({
     daemonModelState: daemonModelAvailability.modelState,
     daemonRuntimeState: daemonModelAvailability.runtimeState,
+    daemonSpeech,
     daemonMachineId,
   });
   const daemonRouteDiagnosticReason = React.useMemo(

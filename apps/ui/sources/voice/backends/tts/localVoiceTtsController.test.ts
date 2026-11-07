@@ -1,6 +1,5 @@
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMachineFixture } from '@/dev/testkit';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -10,6 +9,9 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { DaemonVoiceInferenceTtsStreamStartResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { DaemonVoiceInferenceModelStatusSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { getDefaultModelPackId, getModelPackCatalogEntry } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { createExternalVoiceProviderSettingsDescriptor } from '@/voice/settings/externalProviderSettings';
 import {
@@ -17,6 +19,8 @@ import {
     removeExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
 import type { VoiceProviderRegistryEntry } from '@/voice/registry/providerRegistry';
+
+vi.mock('react-native-gesture-handler', async () => (await import('@/dev/testkit/mocks/gestureHandler')).createGestureHandlerMock());
 
 let account: Awaited<ReturnType<typeof serveAccountHomes>>;
 let disconnect: (() => Promise<void>) | undefined;
@@ -34,7 +38,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
 const { createLocalVoiceTtsController } = await import('./localVoiceTtsController');
 const { createDefaultLocalVoiceTtsProviderControllers } = await import('./localVoiceTtsProviderControllers');
-const { voiceSettingsParse, readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+const { voiceSettingsParse, readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
 const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
 const initialSettings = storage.getState().settings;
@@ -77,9 +81,9 @@ describe('localVoiceTtsController', () => {
             } });
         disconnect = await account.restoreActiveConnection();
         await sync.resumeSync('manual');
-        const machine = createMachineFixture({ id: 'tts-machine', activeAt: Date.now() });
-        storage.setState({ machines: { ...initialMachines, [machine.id]: machine },
-            machineListByServerId: { ...initialMachineLists, [account.homes.voice!.id]: [machine] } });
+        // Preserve Sync's admitted plain-content context instead of replacing its hydrated Machine.
+        await vi.waitFor(() => expect(storage.getState().machines['tts-machine']?.access?.resourceMode).toBe('plain'));
+        const machine = storage.getState().machines['tts-machine']!;
         storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ experiments: true, featureToggles: {
             voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true,
         }, voice: { ...storage.getState().settings.voice,
@@ -149,25 +153,63 @@ describe('localVoiceTtsController', () => {
         }
     });
 
-    it('speaks agent-chosen text through the default Voice Action executor and stops the same output', async () => {
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    it.each(['device', 'local_neural'] as const)('reads an assistant message through the %s say Action, stops from presence and replays', async (provider) => {
         const { localVoiceTtsController } = await import('./localVoiceTtsController');
-        const { createDeferred } = await import('@/dev/testkit');
-        const started = createDeferred<void>();
-        expoSpeechSpeak.mockImplementation((_text, options) => { options.onStart?.(); started.resolve(); });
-        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: {
-            ...storage.getState().settings.voice, providerId: 'local_conversation', providers: {
-                ...storage.getState().settings.voice.providers,
-                local_conversation: { schemaVersion: 1, config: { tts: { provider: 'device' } } },
-            },
-        } }, storage.getState().settings));
-        const executor = createDefaultActionExecutor();
+        const playback = speechBoundary.holdNextPlayback(provider === 'device' ? 'device' : 'encoded');
+        const voice = storage.getState().settings.voice;
+        const local = readLocalConversationVoiceSettings(voice);
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: writeLocalConversationVoiceSettings({
+            ...voice, providerId: 'local_conversation',
+        }, { ...local, tts: { ...local.tts, provider,
+            localNeural: { ...local.tts.localNeural, model: 'kokoro', execution: 'daemon' },
+        } }) }, storage.getState().settings));
+        expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).tts.provider).toBe(provider);
+        // The Action captures its Account's settings from HTTP, just as setup does.
+        account.replaceAccountSettings('voice', { settings: storage.getState().settings, version: 1 });
         const React = await import('react');
-        const { renderScreen } = await import('@/dev/testkit');
+        const { act } = await import('react-test-renderer');
+        const { renderScreen, createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } = await import('@/dev/testkit');
+        const { CommittedMessageActions } = await import('@/components/sessions/transcript/messageActions/CommittedMessageActions');
+        const { IconButton } = await import('@/components/ui/buttons/IconButton');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(account.homes.voice!.serverUrl);
         const { VoiceTopBarPresence } = await import('@/components/voice/presence/VoiceTopBarPresence');
         const { useVoiceReadAloud } = await import('@/components/voice/presence/VoiceReadAloud');
         const { buildVoicePresenceFixture } = await import('@/components/dev/voicePresence/voicePresenceFixtures');
         const { t } = await import('@/text');
+        const { translateVoiceReadiness } = await import('@/voice/settings/panels/voiceProviderReadinessPresentation');
+        let catalog: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        let refreshCatalog: (() => Promise<void>) | undefined;
+        let isCatalogObserved = () => true;
+        let runtimeSupported = true;
+        if (provider === 'local_neural') {
+            const packId = getDefaultModelPackId('tts_sherpa')!;
+            const entry = getModelPackCatalogEntry(packId)!;
+            const answerSpeechRpc = machineRpc.getMockImplementation()!;
+            machineRpc.mockImplementation(async request => {
+                if (request.method === RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST
+                    || request.method === RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS) {
+                    return { ok: true, models: [DaemonVoiceInferenceModelStatusSchema.parse({
+                        packId, pluginIdentity: null, kind: entry.kind, model: entry.model, version: null,
+                        executionSupport: ['daemon'], runtimeFamily: entry.runtimeFamily, runtimeSupported,
+                        installState: 'installed', runtimeState: 'ready', progress: null, lastError: null, updatedAtMs: 1,
+                    })] };
+                }
+                return answerSpeechRpc(request);
+            });
+            const { useDaemonVoiceModelCatalogState } = await import('@/voice/settings/panels/modelCatalog/useDaemonVoiceModelCatalogState');
+            let observed = false;
+            isCatalogObserved = () => observed;
+            function CheckedVoiceSetup() {
+                const state = useDaemonVoiceModelCatalogState({ refreshKey: 'tts-machine' });
+                observed = state.state.statuses.some(status => status.packId === packId);
+                refreshCatalog = state.refresh;
+                return null;
+            }
+            // Explicit setup observes the real catalog transport; message actions only subscribe to its facts.
+            catalog = await renderScreen(React.createElement(CheckedVoiceSetup));
+        }
         const retained = buildVoicePresenceFixture('ended');
         const dismiss = vi.fn();
         function Presence() {
@@ -176,31 +218,60 @@ describe('localVoiceTtsController', () => {
             });
         }
         const presence = await renderScreen(React.createElement(Presence));
-        // This deliberately exceeds Paseo's speak cap: Happier adds no text ceiling.
-        const text = 'A chosen progress note. '.repeat(200);
-        const speaking = executor.execute('ui.voice_global.say.start', { text }, { surface: 'ui' });
+        // Device speech also covers a long message; this daemon boundary returns one protocol-sized segment.
+        const text = provider === 'device' ? 'A chosen progress note. '.repeat(200) : 'A chosen progress note.';
+        const message = { kind: 'agent-text' as const, id: 'answer', localId: 'answer', text, createdAt: 1, seq: 1, isThinking: false };
+        const messageActions = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children: wrapWithSessionTranscriptSource(React.createElement(CommittedMessageActions, {
+            message, sessionId: 's1', serverId: account.homes.voice!.id,
+            selectableText: { role: 'assistant', text }, copyText: text, isStructuredOnly: false,
+            canFork: false, forkCommon: { sessionReplayEnabled: false, sessionReplayStrategy: 'recent_messages',
+                sessionReplayMaxSeedChars: 50_000, sessionReplaySummaryRunnerV1: null,
+                executionRunsEnabled: false, agentSwitchingEnabled: false,
+                sessionForkSupportSource: { metadata: null } }, isForkAllowed: () => false,
+            settings: { ...storage.getState().settings, workspacePath: null, debugInformationEnabled: false },
+            showActions: true, showPinAction: false, timestampText: null, invertTimestampAndActions: false,
+            onActionsFocus: () => {}, onActionsBlur: () => {}, touchRevealKey: null,
+            children: row => row,
+        }), createTestSessionTranscriptSource({ sessionId: 's1', serverId: account.homes.voice!.id })) }));
+        const readAloudButton = () => messageActions.findAllByType(IconButton)
+            .find(button => button.props.testID === 'transcript-message-readAloud:answer');
+        // The rendered message control enters the real default executor; only speech/OS and network are substituted.
         try {
-            await Promise.race([started.promise, speaking.then(result => {
-                expect(result).toMatchObject({ ok: true });
-                throw new Error('Say settled before audio started');
-            })]);
-            expect(expoSpeechSpeak).toHaveBeenCalledWith(text.trim(), expect.anything());
+            await vi.waitFor(() => expect(isCatalogObserved()).toBe(true));
+            expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).tts.provider).toBe(provider);
+            await vi.waitFor(() => expect(readAloudButton()?.props.disabled).toBe(false));
+            await act(async () => {
+                messageActions.pressByTestId('transcript-message-readAloud:answer');
+            });
+            await vi.waitFor(() => expect(provider === 'device' ? expoSpeechSpeak : encodedAudio.start).toHaveBeenCalled());
+            await playback.started;
+            if (provider === 'device') expect(expoSpeechSpeak).toHaveBeenCalledWith(text.trim(), expect.anything());
+            else expect(daemonStreamStartRpc).toHaveBeenCalledWith(expect.objectContaining({ text: text.trim() }));
             expect(localVoiceTtsController.readSay()).toBe('speaking');
             await vi.waitFor(() => expect(presence.getTextContent()).toContain(t('voicePresence.readAloud.speaking')));
             await presence.pressByTestIdAsync('voice-top-bar-read-aloud-stop');
-            expect(await speaking).toMatchObject({ ok: true, result: { status: 'cancelled' } });
-            expect(speechBoundary.expoSpeechStop).toHaveBeenCalledTimes(1);
+            if (provider === 'device') expect(speechBoundary.expoSpeechStop).toHaveBeenCalledTimes(1);
+            else expect(encodedAudio.stop).toHaveBeenCalledTimes(1);
             expect(localVoiceTtsController.readSay()).toBe('idle');
             await presence.pressByTestIdAsync('voice-top-bar-transport-dismiss');
             expect(dismiss).toHaveBeenCalledTimes(1);
             expoSpeechSpeak.mockImplementation((_text, options) => { options.onStart?.(); options.onDone?.(); });
-            expect(await executor.execute('ui.voice_global.say.start', { text: 'Ready again.' }, { surface: 'ui' }))
-                .toMatchObject({ ok: true, result: { status: 'completed' } });
+            await messageActions.pressByTestIdAsync('transcript-message-readAloud:answer');
+            if (provider === 'device') expect(expoSpeechSpeak).toHaveBeenLastCalledWith(text.trim(), expect.anything());
+            else expect(daemonStreamStartRpc).toHaveBeenLastCalledWith(expect.objectContaining({ text: text.trim() }));
             expect(localVoiceTtsController.readSay()).toBe('idle');
+            if (refreshCatalog) {
+                runtimeSupported = false;
+                await act(async () => { await refreshCatalog?.(); });
+                await vi.waitFor(() => expect(readAloudButton()?.props.disabled).toBe(true));
+                expect(readAloudButton()?.props.disabledReason)
+                    .toBe(translateVoiceReadiness('voice.readiness.runtime_missing'));
+            }
         } finally {
             localVoiceTtsController.stopSay();
-            await speaking;
             await presence.unmount();
+            await messageActions.unmount();
+            await catalog?.unmount();
         }
     });
 

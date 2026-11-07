@@ -219,7 +219,18 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     const settingsStatus: VoiceSettingsReadinessFact = adapterSettings?.status !== 'ready'
       ? adapterSettings?.status ?? 'unknown'
       : settings?.status ?? (entry?.projectSettings ? 'unknown' : 'ready');
-    const readiness = resolveVoiceRoleReadiness({
+    const speechRole = role === 'conversation_stt' ? 'stt' : 'tts';
+    const requiresDaemonSpeech = providerId === 'local_neural' && resolveLocalNeuralExecutionPolicy({
+      requestedExecution: speechRole === 'stt' ? stt.localNeural.execution : tts.localNeural.execution,
+      platformOs: input.platform,
+    }).preferredExecution === 'daemon';
+    const daemonSpeech = requiresDaemonSpeech ? input.localInput?.daemon?.speech?.[speechRole] : undefined;
+    const daemonReadiness = requiresDaemonSpeech ? resolveVoiceDaemonHeavyAudioReadiness({
+      role, providerId, daemon: input.localInput?.daemon,
+      executionMachineId: input.executionMachineId,
+      executionMachineSelectionKind: input.executionMachineSelectionKind,
+    }) : null;
+    const readiness = daemonReadiness ?? resolveVoiceRoleReadiness({
       registry: input.registry,
       role,
       providerId,
@@ -232,8 +243,8 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
         executionMachine: projectVoiceExecutionMachineReadiness(input.executionMachineSelectionKind, input.executionMachineId),
         endpoint: roleEndpoint,
         credential: roleCredential,
-        // The available neural model/runtime check combines selected packs.
-        // It cannot attribute a partial failure to either speech role.
+        runtime: projectVoiceDaemonRuntimeReadinessFact(daemonSpeech),
+        model: projectVoiceDaemonModelReadinessFact(daemonSpeech),
       },
     });
     return { settings: settingsStatus, readiness: readiness.code.endsWith('_unknown') ? null : readiness };
