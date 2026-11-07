@@ -10,6 +10,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
+import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { VoiceNeedsYouPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
 import { Typography } from '@/constants/Typography';
@@ -24,7 +25,8 @@ import { useVoiceBriefRequest } from './useVoiceBriefRequest';
 
 /**
  * Home's quiet "Brief me" (lab `voice-moments` B0): one press turns the greeting into the brief.
- * Closed, it costs nothing — no Inbox subscription, no Voice start.
+ * Closed, it costs nothing — no Inbox subscription, no Voice start. While Voice is not set up a brief
+ * could not be spoken, so the entry is the attempt owner's own "Set up Voice" and opens setup.
  */
 export const VoiceBriefButton = React.memo(function VoiceBriefButton(props: Readonly<{
     open: boolean;
@@ -37,12 +39,22 @@ export const VoiceBriefButton = React.memo(function VoiceBriefButton(props: Read
         const expectedAttemptId = getVoiceSessionPresentedAttemptId();
         return execute('ui.voice_global.brief.request', expectedAttemptId ? { expectedAttemptId } : {});
     }, [execute]);
+    const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
     if (voiceEnabled !== true || props.open) return null;
-    return <VoiceBriefButtonView onOpen={request} block={props.block} disabled={!ready} />;
+    const setup = voice.primaryAction === 'setup' && voice.primaryActionLabel
+        ? { label: voice.primaryActionLabel, onPress: voice.onPrimaryAction }
+        : undefined;
+    return <VoiceBriefButtonView onOpen={request} block={props.block} disabled={!setup && !ready} setup={setup} />;
 });
 
 /** The button as drawn (the dev Home fixture draws it without the server's feature decision). */
-export const VoiceBriefButtonView = React.memo(function VoiceBriefButtonView(props: Readonly<{ onOpen: () => void; block?: boolean; disabled?: boolean }>) {
+export const VoiceBriefButtonView = React.memo(function VoiceBriefButtonView(props: Readonly<{
+    onOpen: () => void;
+    block?: boolean;
+    disabled?: boolean;
+    /** Voice is not set up: the entry names that act instead of opening a brief that cannot be spoken. */
+    setup?: Readonly<{ label: string; onPress: () => void }>;
+}>) {
     return (
         <RoundButton
             style={props.block ? stylesheet.block : undefined}
@@ -50,10 +62,10 @@ export const VoiceBriefButtonView = React.memo(function VoiceBriefButtonView(pro
             disabled={props.disabled}
             size="small"
             display="secondary"
-            title={t('voiceMoments.briefMe')}
-            accessibilityLabel={t('voiceMoments.briefMeA11y')}
+            title={props.setup?.label ?? t('voiceMoments.briefMe')}
+            accessibilityLabel={props.setup?.label ?? t('voiceMoments.briefMeA11y')}
             leading={<VoiceMarkArt pose="ready" size={16} still />}
-            onPress={props.onOpen}
+            onPress={props.setup?.onPress ?? props.onOpen}
         />
     );
 });

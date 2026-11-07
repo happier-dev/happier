@@ -605,10 +605,13 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;
     // Needs your attention says what waits, with its actions; the status line keeps it only when that list is hidden.
     const needsYouListed = layout.sections.some(section => section.id === HOME_HUB_ATTENTION_SECTION_ID && !section.hidden);
+    // Desktop Brief me sits on the greeting's line (lab B0): the hero's headline, or the page header's
+    // actions; phone gives it the page's width under the Bots' faces (lab B0p).
+    const briefEntry = phone ? null : <VoiceBriefButton open={briefOpen} />;
     const headerActions = (
         <View style={styles.headerActions}>
             {!heroActive ? <LookChip target={HOME_LOOK_TARGET} /> : null}
-            {phone ? null : <VoiceBriefButton open={briefOpen} />}
+            {heroActive ? null : briefEntry}
             <HubCustomizeButton open={customizeOpen} onOpenChange={next => next ? openCustomize() : closeCustomize()} />
         </View>
     );
@@ -637,7 +640,11 @@ const HomeHubContent = React.memo(function HomeHubContent() {
             <SessionSurfaceEntityTargetFeedback drag={homeDrop} testID="home-hub.widget-move" />
             <HomeHubSectionList
                 // Under the atmosphere a composer that leads Home stands in the hero; moved lower, it stays where it was put.
-                sections={heroComposer ? layout.sections.filter(section => section.id !== HOME_HUB_COMPOSER_SECTION_ID) : layout.sections}
+                // While open, the brief replaces Needs your attention (lab B1): one list of those facts, not two.
+                sections={heroComposer || briefOpen
+                    ? layout.sections.filter(section => !(heroComposer && section.id === HOME_HUB_COMPOSER_SECTION_ID)
+                        && !(briefOpen && section.id === HOME_HUB_ATTENTION_SECTION_ID))
+                    : layout.sections}
                 // With no machine yet, where agents will run is the one question: Machines leads the cards (58d AF1).
                 leadCardId={firstRun ? resolveHomeHubFirstRunLeadId(layout.sections) : null}
                 renderSection={(section, index, placement) => section.kind === 'builtin' ? (
@@ -702,7 +709,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         <AtmosphereTopChips picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture : null}
                             lookTarget={HOME_LOOK_TARGET} />
                     )}
-                    <HomeHero title={title} phone={phone} paneHeight={heroFrame.pane.height} frame={heroFrame}
+                    <HomeHero title={title} titleAccessory={briefEntry} phone={phone} paneHeight={heroFrame.pane.height} frame={heroFrame}
                         rise={planetSource && placement === 'rise'} suggestions={atmosphereSuggestions}
                         showComposer={heroComposer} />
                     {/* The first thing under the hero, whichever it is: Rise's body ends above this. */}

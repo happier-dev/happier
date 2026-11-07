@@ -196,6 +196,8 @@ export function useHomeHeroFrame(
 export function HomeHero(
   props: Readonly<{
     title: string;
+    /** On the greeting's own line (lab `voice-moments` B0): Brief me turns this line into the brief. */
+    titleAccessory?: React.ReactNode;
     phone: boolean;
     paneHeight: number;
     /** Rise keeps the widgets clear of the planet's body. */
@@ -230,10 +232,11 @@ export function HomeHero(
       style={[styles.hero, { paddingTop: top }, props.rise && styles.riseFoot]}
     >
       <View style={[styles.column, props.phone && styles.phoneColumn]}>
-        <View ref={frame.headlineRef} onLayout={frame.measure}>
+        <View ref={frame.headlineRef} onLayout={frame.measure} style={props.titleAccessory ? styles.headlineRow : null}>
           <Text accessibilityRole="header" style={styles.headline}>
             {props.title}
           </Text>
+          {props.titleAccessory}
         </View>
         {props.showComposer ? (
           <View style={props.phone ? styles.composerPhone : styles.composer}>
@@ -264,6 +267,14 @@ const styles = StyleSheet.create((theme) => ({
     ...happierPageTextMetrics('heroTitle'),
     color: theme.colors.text.primary,
     textAlign: 'center',
+  },
+  headlineRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    columnGap: theme.space.s16,
+    rowGap: theme.space.s8,
   },
   composer: { marginTop: HOME_HERO_COMPOSER_GAP_PX },
   composerPhone: { marginTop: HOME_PHONE_HERO_COMPOSER_GAP_PX },

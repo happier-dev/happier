@@ -39,6 +39,7 @@ import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceCo
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { VoiceBriefBlock, VoiceBriefButton, VoiceBriefList } from './VoiceBrief';
 import { buildVoiceBrief } from '@/voice/context/buildVoiceBrief';
+import { t } from '@/text';
 import { formatVoiceApprovalGuidance } from '@/voice/context/contextFormatters';
 import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
@@ -329,6 +330,18 @@ describe('mounted Voice Brief request', () => {
         await speech.waitForStarts(1);
         await act(async () => speech.connect());
         expect(speech.spoken).toHaveLength(1);
+    });
+
+    it('offers Set up Voice as the Home entry while Voice is not set up, and never opens a silent Brief from it', async () => {
+        const speech = await installTransport();
+        screen = await renderScreen(renderHome());
+        const entry = screen.findByTestId('home-brief-me');
+        expect(entry?.props.accessibilityLabel).toBe(t('voicePresence.setUp'));
+        await pressBriefControl('home-brief-me');
+        expect(screen.findByTestId('voice-brief')).toBeNull();
+        expect(speech.starts).toHaveLength(0);
+        await selectService();
+        expect(screen.findByTestId('home-brief-me')?.props.accessibilityLabel).toBe(t('voiceMoments.briefMeA11y'));
     });
 
     it('admits the initial request and Retry through the real UI Action policy before starting audio', async () => {
