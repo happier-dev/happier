@@ -107,6 +107,23 @@ describe('DropdownMenu', () => {
         vi.unstubAllGlobals();
     });
 
+    it('lets uncapped menus use the window while retaining explicit caller limits', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        for (const cap of [undefined, 240]) {
+            const screen = await renderScreen(React.createElement(DropdownMenu, {
+                open: true,
+                onOpenChange: () => {},
+                items: [{ id: 'a', title: 'A' }],
+                onSelect: () => {},
+                trigger: React.createElement('View'),
+                maxHeightCap: cap,
+            }));
+            const popover = screen.findByType('Popover');
+            expect(popover.props.maxHeightCap).toBe(cap ?? 600);
+            expect(popover.props.placementMinSpace).toBe(cap ?? 320);
+        }
+    });
+
     it('provides a toggle handler to the trigger and uses it to open/close', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const { Pressable, Text } = await import('react-native');
