@@ -6,7 +6,7 @@ import { drawBotFaceRaster } from './botFaceRaster';
 import { createBotFaceScene } from './botFaceScene';
 import { BotFaceSetInputSchema } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
 import { deriveBotFaceSprite } from './botFaceSprite';
-import { generateBotFaceShape } from './botFaceShapeGenerator';
+import { generateBotFaceShape } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
 
 const shape = { v: 1 as const, fill: ['M5 5 L85 5 L85 85 L5 85 Z'], mouth: [45, 48, 0.8] as [number, number, number], origin: 'custom' as const };
 

@@ -1,5 +1,6 @@
 import { createBotTemplateActionExecuteV1, readBotTemplateAuthorDraftV1, listSharedBotTemplateSummariesV1, type BotTemplateOperationPortV1 } from '@happier-dev/protocol/bots/templates/botTemplateOperations';
-import { BotTemplateArtifactHeaderV1Schema, BotTemplateDraftRefV1Schema, type BotTemplateDraftV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { BotTemplateArtifactHeaderV1Schema, type BotTemplateDraftV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import type { BotTemplateOpenInputV1, BotTemplateDraftResultV1, BotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
@@ -26,7 +27,8 @@ export async function readUiBotTemplateReleaseHeader(input: Readonly<{
         if (account.accountId !== input.expectedAccountId) return unavailable('action_account_scope_changed');
         const row = await account.readArtifactHeader(input.artifactId, { signal });
         const header = BotTemplateArtifactHeaderV1Schema.safeParse(row?.rawHeader ?? row?.header);
-        return header.success && header.data.state === 'released' ? header.data : null;
+        // Whose template it is travels with the row, never inside the template's own header.
+        return header.success && header.data.state === 'released' ? { ...header.data, author: row?.ownerDisplayName ?? null } : null;
     } finally { account.dispose(); }
 }
 
@@ -37,7 +39,7 @@ export async function readUiSharedBotTemplateSummaries(input: Readonly<{
     const account = await captureLazyActionAccountContext(input.serverId, signal);
     try {
         if (account.accountId !== input.expectedAccountId) return unavailable('action_account_scope_changed');
-        return await listSharedBotTemplateSummariesV1({ serverId: account.serverId, query: input.query,
+        return await listSharedBotTemplateSummariesV1({ serverId: account.serverId, query: input.query, limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1,
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }), ...(signal ? { signal } : {}), list: account.listArtifacts });
     } finally { account.dispose(); }
 }
@@ -78,9 +80,8 @@ export async function readUiOwnedSessionForAction(account: LazyActionAccountCont
 
 export function createUiBotTemplateAction(account: LazyActionAccountContext, open: (input: BotTemplateOpenInputV1) => void | Promise<void>,
     registryPort?: PromptLibraryStackActionPortV1,
-    getContent?: () => Pick<ActionExecutorDeps, 'promptDocGet' | 'skillActionExecute' | 'machineSetupPlan'>,
-    delivery?: Readonly<{ onPublicLinkIssued?: (link: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactPublicLinkIssuedV1) => void | Promise<void> }> &
-        Pick<BotTemplateOperationPortV1, 'resolveInstantiationRelease'> & Pick<NonNullable<BotTemplateOperationPortV1['recipient']>, 'prepareRequesterAdmission' | 'prepareUpdateRequesterAdmission'>) {
+    getContent?: () => Pick<ActionExecutorDeps, 'promptDocGet' | 'skillActionExecute'>,
+    delivery?: Readonly<{ onPublicLinkIssued?: (link: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactPublicLinkIssuedV1) => void | Promise<void> }>) {
     const writeInstance = async (ref: Readonly<{ serverId: string; sessionId: string }>, instance: BotTemplateInstanceV1,
         expectedInstance: BotTemplateInstanceV1 | null, context: ActionExecutorContext) => {
         const result = await writeUiSessionStateField({ sessionId: ref.sessionId,
@@ -102,9 +103,7 @@ export function createUiBotTemplateAction(account: LazyActionAccountContext, ope
     return createBotTemplateActionExecuteV1({
         artifacts: account.homeHubArtifactTransport,
         randomId: randomUUID,
-        requesterAccountId: account.accountId,
         isSameServerId: areServerProfileIdentifiersEquivalent,
-        resolveInstantiationRelease: delivery?.resolveInstantiationRelease,
         resolvePluginRelease: async (source, context, signal, purpose) => {
             if (!registryPort) return unavailable('unsupported_action');
             const { createUiRegistryHostV1 } = await import('@/registries/registryHostDeps');
@@ -113,12 +112,9 @@ export function createUiBotTemplateAction(account: LazyActionAccountContext, ope
                 : registry.readBotTemplate(source.registryItem, source.contributionId);
         },
         recipient: {
-            prepareRequesterAdmission: delivery?.prepareRequesterAdmission,
-            prepareUpdateRequesterAdmission: delivery?.prepareUpdateRequesterAdmission,
             content: {
                 get promptDocGet() { return getContent?.().promptDocGet; },
                 get skillActionExecute() { return getContent?.().skillActionExecute; },
-                get machineSetupPlan() { return getContent?.().machineSetupPlan; },
             },
             reportAcceptedVersion: (input, context) => createArtifactAccessApi(account.credentials, {
                 request: account.request, serverId: account.serverId,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { botFaceArtBounds, normaliseAndValidateBotFaceShape } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
-import { BOT_FACE_SHAPE_PARTS, generateBotFaceShape, type BotFaceShapeParts } from './botFaceShapeGenerator';
+import { botFaceArtBounds, normaliseAndValidateBotFaceShape } from './sessionBotFaceV1.js';
+import { BOT_FACE_SHAPE_PARTS, generateBotFaceShape, type BotFaceShapeParts } from './botFaceShapeGenerator.js';
 
 const plain: BotFaceShapeParts = { head: 'round', ears: 'none', limbs: 'none', tail: 'none', accessory: 'none' };
 

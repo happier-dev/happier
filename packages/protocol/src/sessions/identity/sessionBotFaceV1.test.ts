@@ -5,6 +5,18 @@ import { projectSessionDisplayV1 } from '../metadata/sessionDisplayProjectionV1.
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
 
 describe('shared Bot face', () => {
+  it('resolves a seeded Surprise me request to a concrete shared outline while preserving the other choices', () => {
+    const request = { sessionId: 'bot-surprise', face: { style: 'solid', palette: 'sand', seed: 'identity-seed',
+      shape: { generate: 'surprise', seed: 17 } } };
+    const first = BotFaceSetInputSchema.parse(request);
+    expect(first.face).toMatchObject({ style: 'solid', palette: 'sand', seed: 'identity-seed', shape: { v: 1, origin: 'surprise' } });
+    expect(first.face?.shape).not.toHaveProperty('generate');
+    expect(BotFaceSetInputSchema.parse(request)).toEqual(first);
+    expect(BotFaceSetInputSchema.parse({ ...request, face: { ...request.face, shape: { generate: 'surprise', seed: 18 } } }).face?.shape)
+      .not.toEqual(first.face?.shape);
+    expect(BotFaceSetInputSchema.parse(first)).toEqual(first);
+  });
+
   it('admits the hand-drawn cat as a roster body (R8, the 35th)', () => {
     expect(SessionBotFaceV1Schema.parse({ body: 'cat' })).toEqual({ body: 'cat' });
   });

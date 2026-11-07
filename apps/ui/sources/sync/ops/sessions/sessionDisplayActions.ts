@@ -1,4 +1,4 @@
-import type { SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import type { SessionBotFaceV1, SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -19,6 +19,13 @@ export const sessionDisplayActions = {
         if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });
         execute ??= createFrontDoorActionExecute();
         return execute('session.bot.set', { sessionId: address.sessionId, bot }, { surface: 'ui', serverId: address.serverId });
+    },
+    /** A Bot's face: the concrete choice the picker shows (null clears every override). */
+    setBotFace(sessionId: string, face: SessionBotFaceV1 | null, scope?: Readonly<{ serverId?: string | null }>) {
+        const address = addressFor(sessionId, scope);
+        if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });
+        execute ??= createFrontDoorActionExecute();
+        return execute('session.bot.face.set', { sessionId: address.sessionId, face }, { surface: 'ui', serverId: address.serverId });
     },
     setToolCalls(sessionId: string, showToolCalls: boolean | null, scope?: Readonly<{ serverId?: string | null }>) {
         const address = addressFor(sessionId, scope);

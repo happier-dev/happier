@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { BOT_FACE_BODIES } from './botFaceArt';
+import { BOT_FACE_BODIES, PIXEL_FACE8, PIXEL_MUTTER8 } from './botFaceArt';
 import {
   BOT_FACE_MOUTHS,
   botFaceGeometry,
@@ -10,12 +10,15 @@ import {
   type BotFaceMood,
 } from './botFaceGeometry';
 import {
+  botFaceRestLoop,
   registerBotFaceBrain,
   type BotFaceBrainFace,
   type BotFaceLook,
 } from './botFaceIdle';
 import { drawBotFaceRaster } from './botFaceRaster';
 import { createBotFaceScene } from './botFaceScene';
+import { deriveBotFaceSprite } from './botFaceSprite';
+import { generateBotFaceShape } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
 
 /** The clock is the only boundary: fake timers stand in for setTimeout and Date. Every timer the attention clock arms is counted. */
 let armed: number[] = [];
@@ -38,47 +41,68 @@ afterEach(() => {
 
 function face(overrides: Partial<BotFaceBrainFace> = {}) {
   const looks: { at: number; look: BotFaceLook }[] = [];
+  const loops: number[] = [];
   const gestures: number[] = [];
   const spec: BotFaceBrainFace = {
     seed: 5,
     mode: 'lively',
     turns: 'full',
     mood: 'quiet',
-    onLook: (look) => looks.push({ at: Date.now(), look }),
+    onLook: (look) => { if (look === 'loop') loops.push(Date.now()); else looks.push({ at: Date.now(), look }); },
     onGesture: () => gestures.push(Date.now()),
     ...overrides,
   };
-  return { looks, gestures, handle: registerBotFaceBrain(spec) };
+  return { looks, loops, gestures, handle: registerBotFaceBrain(spec) };
 }
 
-it('a resting Lively Bot looks somewhere new every 1.8–4.6 s and the clock sleeps between looks', () => {
-  const start = Date.now();
-  const { looks, handle } = face();
+it('retains a loop only while a matching brain owns it', () => {
+  const spec = { seed: 739, turns: 'full' as const, mood: 'working' as const };
+  const first = face(spec).handle;
+  const second = face(spec).handle;
+  const loop = botFaceRestLoop(spec);
+  expect(botFaceRestLoop(spec)).toBe(loop);
+  first.release();
+  first.release();
+  expect(botFaceRestLoop(spec)).toBe(loop);
+  second.release();
+  const next = face(spec).handle;
+  try { expect(botFaceRestLoop(spec)).not.toBe(loop); }
+  finally { next.release(); }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('a resting Lively Bot looks somewhere new every 1.8–4.6 s as a loop, and its clock wakes only for its gestures', () => {
+  for (const mood of ['quiet', 'done', 'failed'] as const) {
+    const slow = mood === 'failed' ? 2 : mood === 'done' ? 1.4 : 1;
+    const loop = botFaceRestLoop({ seed: 5, turns: 'full', mood });
+    const at = (ms: number) => loop.drawings[[...loop.frames].reverse().find(frame => frame.atMs <= ms)!.drawing]!;
+    // Each look starts a run of frames (the body springs there); between runs the drawing holds.
+    const starts = loop.frames.filter((frame, index) => index === 0 || frame.atMs - loop.frames[index - 1]!.atMs > 1000).map(frame => frame.atMs);
+    expect(starts.length, mood).toBeGreaterThanOrEqual(5);
+    for (let i = 1; i < starts.length; i++) {
+      expect(starts[i]! - starts[i - 1]!, mood).toBeGreaterThanOrEqual(1800 * slow - 1);
+      expect(starts[i]! - starts[i - 1]!, mood).toBeLessThanOrEqual(2 * 4600 * slow);
+    }
+    expect(loop.drawings.some(look => look.yaw !== 0), mood).toBe(true);
+    for (const look of loop.drawings) {
+      expect(Math.abs(look.yaw), mood).toBeLessThanOrEqual(0.35); // ±0.30 plus spring overshoot
+      expect(Math.abs(look.pitch - (mood === 'failed' ? 0.1 : 0)), mood).toBeLessThanOrEqual(0.15);
+    }
+    // Seamless: it ends where it starts, settled and looking ahead.
+    expect(at(loop.periodMs - 1), mood).toEqual(at(0));
+  }
+  const { looks, loops, handle } = face();
   try {
     vi.advanceTimersByTime(60_000);
-    const turned = looks.filter(({ look }) => look.yaw !== 0);
-    expect(turned.length).toBeGreaterThan(5);
-    for (const { look } of looks) {
-      expect(Math.abs(look.yaw)).toBeLessThanOrEqual(0.35); // ±0.30 plus spring overshoot
-      expect(Math.abs(look.pitch)).toBeLessThanOrEqual(0.15);
-    }
-    // Ticks run at 30 Hz only while the body moves; between looks it sleeps on one long timer.
-    const ticks = armed.filter((ms) => ms === 33).length,
-      sleeps = armed.filter((ms) => ms > 33);
-    expect(ticks).toBeLessThan(0.9 * 60 * 30);
-    expect(sleeps.length).toBeGreaterThan(5);
-    expect(Math.max(...sleeps)).toBeGreaterThan(500);
+    // It hands off at once; the clock never ticks at 30 Hz and sleeps only until its next R7 gesture.
+    expect(loops).toHaveLength(1);
+    expect(looks).toEqual([]);
+    const ticks = armed.filter((ms) => ms === 33).length;
+    expect(ticks).toBe(0);
+    // A few sleeps per gesture (14–40 s apart), never a frame clock.
+    expect(armed.length).toBeLessThanOrEqual(12);
     expect(vi.getTimerCount()).toBe(1);
-    console.info(
-      'R10A_REST_COST',
-      JSON.stringify({
-        seconds: 60,
-        ticks,
-        sleeps: sleeps.length,
-        looks: looks.length,
-        firstLookAfterMs: (looks[0]?.at ?? 0) - start,
-      }),
-    );
+    console.info('R10A_REST_COST', JSON.stringify({ seconds: 60, ticks, timers: armed.length, looks: looks.length }));
   } finally {
     handle.release();
   }
@@ -100,17 +124,34 @@ it('does zero work at rest in Reactions only: no timer, no draw, no gesture', ()
   }
 });
 
-it('mutters a working Lively Bot through raised dots 0, 1, 2 then rest, every 1.4 s, with one timer per step', () => {
-  const { looks, handle } = face({ mood: 'working', turns: 'none', seed: 0 });
+it('mutters a working Lively Bot through raised dots 0, 1, 2 then rest every 1.4 s as a loop, and hands it off once settled', () => {
+  for (const turns of ['full', 'slide', 'look', 'none'] as const) {
+    const loop = botFaceRestLoop({ seed: 5, turns, mood: 'working' });
+    // Seamless: whole mutter periods, three seeded nods 3–5 periods apart.
+    expect(loop.periodMs % 1400, turns).toBe(0);
+    expect(loop.periodMs / 1400, turns).toBeGreaterThanOrEqual(9);
+    expect(loop.periodMs / 1400, turns).toBeLessThanOrEqual(15);
+    const mutterAt = (ms: number) => loop.drawings[[...loop.frames].reverse().find(frame => frame.atMs <= ms)!.drawing]!.mutter;
+    expect([100, 300, 500, 900, 1500, 1700, 1900, 2300].map(mutterAt), turns).toEqual([0, 1, 2, null, 0, 1, 2, null]);
+    // A nod bows the turned styles below their working pitch for a moment, then the same drawings return.
+    if (turns === 'full' || turns === 'slide') expect(new Set(loop.drawings.map(look => look.pitch)).size, turns).toBeGreaterThan(1);
+    expect(loop.drawings.length, turns).toBeLessThanOrEqual(12);
+  }
+  const { looks, loops, handle } = face({ mood: 'working', turns: 'none', seed: 0 });
   try {
+    vi.advanceTimersByTime(2000);
+    expect(loops).toHaveLength(1);
+    const live = looks.length;
+    armed = [];
     vi.advanceTimersByTime(14_000);
-    const steps = looks.map(({ look }) => look.mutter);
-    const cycle = steps.slice(steps.indexOf(null), steps.indexOf(null) + 4);
-    expect(cycle).toEqual([null, 0, 1, 2]);
-    // ≈ 2.9 visible changes a second, and no 30 Hz ticking: the body does not move while it works.
-    expect(looks.length / 14).toBeGreaterThan(2.5);
-    expect(looks.length / 14).toBeLessThan(3.2);
-    expect(armed.filter((ms) => ms === 33).length).toBeLessThan(60); // only the occasional line-feed nod springs
+    // The loop plays on the animation driver: the clock arms nothing more and emits nothing more.
+    expect(looks.length).toBe(live);
+    expect(armed).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    // Leaving work takes it back to live looks.
+    handle.setMood('quiet', true);
+    vi.advanceTimersByTime(100);
+    expect(looks.length).toBeGreaterThan(live);
   } finally {
     handle.release();
   }
@@ -180,12 +221,13 @@ it('looks at you while its pin or row holds keyboard focus, in Lively and Reacti
 });
 
 it('drives a hero with the same brain at the hero turn step, and stops with it', () => {
-  const { looks, handle } = face({ seed: 4, hero: true });
+  const { loops, handle } = face({ seed: 4, hero: true });
   try {
     vi.advanceTimersByTime(30_000);
-    const turned = looks.filter(({ look }) => look.yaw !== 0);
+    expect(loops).toHaveLength(1);
+    const turned = botFaceRestLoop({ seed: 4, turns: 'full', hero: true, mood: 'quiet' }).drawings.filter(look => look.yaw !== 0);
     expect(turned.length).toBeGreaterThan(3);
-    for (const { look } of turned) expect(Math.abs(Math.round(look.yaw / 0.04) * 0.04 - look.yaw)).toBeLessThan(1e-9);
+    for (const look of turned) expect(Math.abs(Math.round(look.yaw / 0.04) * 0.04 - look.yaw)).toBeLessThan(1e-9);
   } finally { handle.release(); }
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -261,4 +303,27 @@ it('draws "…" as three beads in Dots and Planet, spaced so they never merge', 
     const xs = beads.map((b) => b.x).sort((a, b) => a - b);
     expect(xs[1] - xs[0], style).toBeGreaterThan(2 * beads[0].r);
   }
+});
+
+it('carves "…" in the hand-drawn and derived Pixel sprites, including a generated shape and the mutter', () => {
+  expect(PIXEL_FACE8.working[1]).toBe('X.X.X.XX');
+  expect(
+    PIXEL_MUTTER8.map((rows) => rows.join('')).every(
+      (rows) => rows !== PIXEL_FACE8.working.join(''),
+    ),
+  ).toBe(true);
+  const shape = generateBotFaceShape(7);
+  const still = deriveBotFaceSprite(shape, 'working', 12);
+  const holes = still.grid[still.mouthRow]
+    .split('')
+    .filter(
+      (c, i, row) =>
+        c === '.' &&
+        row.slice(0, i).includes('X') &&
+        row.slice(i + 1).includes('X'),
+    );
+  expect(holes.length).toBe(3);
+  expect(deriveBotFaceSprite(shape, 'working', 12, 1).grid).not.toEqual(
+    still.grid,
+  );
 });

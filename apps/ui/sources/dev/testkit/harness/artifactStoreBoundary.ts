@@ -9,6 +9,8 @@ import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { Buffer } from 'buffer';
 
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import type { ArtifactsDomain } from '@/sync/store/domains/artifacts';
 
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -143,6 +145,21 @@ export function createArtifactReadBatchHttpResponse(body: unknown, readItem: (ar
         const header = Object.fromEntries(Object.entries(artifact).filter(([key]) => key !== 'body'));
         return { artifactId: Reflect.get(item, 'artifactId'), ok: true, artifact: header };
     }) }));
+}
+
+/** Deliver this persistence boundary's committed body through the real Socket consumer. */
+export function createArtifactBodyUpdateFixture(artifact: Artifact, accountSequence: number): ApiUpdateContainer {
+    if (typeof artifact.body !== 'string' || artifact.bodyVersion === undefined) {
+        throw new Error('A body update requires a committed Artifact body and revision');
+    }
+    return UpdateContainerSchema.parse({
+        id: `artifact-body-${artifact.id}-${artifact.bodyVersion}`, seq: accountSequence, createdAt: artifact.updatedAt,
+        body: { t: 'update-artifact', artifactId: artifact.id,
+            body: { value: artifact.body, version: artifact.bodyVersion },
+            ...(artifact.provenance === undefined ? {} : { provenance: artifact.provenance }),
+            ...(artifact.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey }),
+        },
+    });
 }
 
 function isVersion(value: unknown): value is number {
@@ -429,7 +446,9 @@ export function createArtifactStoreBoundary(params: Readonly<{
                     const readable = readableRow(row, callerAccountId);
                     return readable ? [readable] : [];
                 });
-                return Promise.resolve(createArtifactListHttpResponse(url, inventory));
+                return Promise.resolve(createArtifactListHttpResponse(url,
+                    url.searchParams.get('audience') === 'received'
+                        ? inventory.filter(row => row.ownerAccountId !== callerAccountId) : inventory));
             }
             if (path === ARTIFACTS_PATH) {
                 if (method !== 'POST') return null;

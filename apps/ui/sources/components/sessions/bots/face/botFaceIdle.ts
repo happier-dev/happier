@@ -12,7 +12,10 @@ import { botFaceMotionTokens, type BotFaceIdleGesture } from './botFaceMotionTok
  * Cost contract: the clock steps only faces that are moving, due an event or newly passed by the pointer, at 30 Hz, and
  * otherwise sleeps on one timer until the earliest scheduled event. A face registers only while it is visible, its host
  * is viewed and its mode is Lively or Reactions only, so Still, Reduce motion, hidden and offscreen faces schedule
- * nothing. In Reactions only a resting face has no events at all; only the pointer wakes it.
+ * nothing. In Reactions only a resting face has no events at all; only the pointer wakes it. A settled Lively face hands
+ * its looks, nods and mutter to a precomputed loop of its own brain (`botFaceRestLoop`) that the platform's animation
+ * driver plays, so only its R7 idle gestures (finite moments) stay scheduled; the pointer, focus or a new mood takes it
+ * back, and it hands off again where its live drawing meets the loop's.
  */
 
 /** What a face draws from its brain, quantised to the drawing's steps: the head turn (radians) and the mutter step. */
@@ -30,7 +33,8 @@ export type BotFaceBrainFace = Readonly<{
   mood: BotFaceMood;
   /** A hero (48 px and up): turns in the hero step and plays no idle gestures (its moments are its own). */
   hero?: boolean;
-  onLook: (look: BotFaceLook) => void;
+  /** A drawing to show, or `'loop'`: play `botFaceRestLoop` for the face's mood until the next look. */
+  onLook: (look: BotFaceLook | 'loop') => void;
   /** An R7 idle gesture is due; the face ignores it while one of its reactions plays. */
   onGesture: (gesture: BotFaceIdleGesture) => void;
   /** The face's centre in viewport css px, for pointer attention (web and desktop); null where there is none. */
@@ -59,6 +63,8 @@ function rng(seed: number): () => number {
     return ((s ^ (s >>> 14)) >>> 0) / 4294967296;
   };
 }
+const lookMood = (mood: BotFaceMood) => mood === 'quiet' || mood === 'done' || mood === 'failed';
+const lookKey = (look: BotFaceLook) => `${look.yaw}|${look.pitch}|${look.roll}|${look.mutter}`;
 const between = (r: () => number, range: readonly [number, number]) => range[0] + r() * (range[1] - range[0]);
 const q = (v: number, step: number) => Math.round(v / step) * step + 0; // + 0 folds -0 into 0
 const smooth = (x: number) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
@@ -92,6 +98,10 @@ class Brain {
   lastStep = 0;
   pointerSeen = -1;
   emitted = '';
+  /** Live faces hand off to the loop; the loop's own simulation does not. */
+  looping = true;
+  /** When a live face that has not handed off next checks whether its drawing meets the loop's. */
+  loopCheckAt = Infinity;
   constructor(public face: BotFaceBrainFace, now: number) {
     this.r = rng(face.seed * 7919 + 1);
     this.nextLook = now + between(this.r, T.look.firstWithinMs);
@@ -121,9 +131,11 @@ class Brain {
   nextEvent(): number {
     if (!this.lively) return Infinity;
     const mood = this.face.mood;
-    const looks = mood === 'quiet' || mood === 'done' || mood === 'failed' ? this.nextLook : Infinity;
     const gestures = mood === 'quiet' && !this.face.hero ? this.nextGesture : Infinity;
-    return Math.min(looks, gestures, this.nextNod, this.mutterDue);
+    // A handed-off face's looks, nods and mutter are the loop's; only its gestures stay live.
+    if (this.emitted === 'loop') return gestures;
+    const looks = lookMood(mood) && !this.holdsLooks(this.lastStep) ? this.nextLook : Infinity;
+    return Math.min(looks, gestures, this.nextNod, this.mutterDue, this.loopCheckAt);
   }
   /** Advance to `now`; returns whether anything still moves (the clock keeps stepping this face at 30 Hz). */
   step(now: number, dt: number, pointer: Readonly<{ x: number; y: number }> | null): boolean {
@@ -132,7 +144,7 @@ class Brain {
     let tYaw = 0, tPitch = 0, tRoll = 0;
     if (live) {
       const slow = mood === 'failed' ? T.failed.lookSlow : mood === 'done' ? T.done.lookSlow : 1;
-      if (now >= this.nextLook && (mood === 'quiet' || mood === 'done' || mood === 'failed')) {
+      if (now >= this.nextLook && lookMood(mood) && !this.holdsLooks(now)) {
         this.look = this.r() < T.look.centreShare ? { yaw: 0, pitch: 0 }
           : { yaw: (this.r() - 0.5) * 2 * T.look.yaw, pitch: (this.r() - 0.5) * 2 * T.look.pitch };
         this.nextLook = now + between(this.r, T.look.everyMs) * slow;
@@ -142,7 +154,8 @@ class Brain {
         this.nextGesture = now + between(this.r, T.gesture.everyMs);
       }
       if (now >= this.nextNod) {
-        this.pitch.v += mood === 'needsYou' ? T.needsYou.nodV : T.working.nodV;
+        // A worker's nods belong to its loop while nothing else holds its attention.
+        if (!this.loopable(now)) this.pitch.v += mood === 'needsYou' ? T.needsYou.nodV : T.working.nodV;
         this.scheduleNod(now);
       }
       if (mood === 'working') tPitch = T.working.pitch;
@@ -181,10 +194,37 @@ class Brain {
     if (settled(this.yaw, tYaw) && settled(this.pitch, tPitch) && settled(this.roll, tRoll)) {
       this.yaw.x = tYaw; this.yaw.v = 0; this.pitch.x = tPitch; this.pitch.v = 0; this.roll.x = tRoll; this.roll.v = 0;
     } else moving = true;
+    this.lastStep = now;
+    this.loopCheckAt = Infinity;
+    if (!moving && this.loopable(now)) {
+      if (this.emitted === 'loop') return false;
+      // A face that has drawn nothing yet starts on the loop; one that has drawn live hands off only where its drawing
+      // is the loop's, so the head never jumps.
+      const loop = botFaceRestLoop(this.face);
+      const at = botFaceLoopFrameAt(loop, this.face.seed, now);
+      if (this.emitted === '' || this.emitted === lookKey(loop.drawings[at.drawing]!)) {
+        this.mutterDue = Infinity;
+        this.emitted = 'loop';
+        this.face.onLook('loop');
+        return false;
+      }
+      this.loopCheckAt = at.untilMs;
+    }
     this.emit(now, shake);
     this.mutterDue = this.nextMutter(now);
-    this.lastStep = now;
     return moving;
+  }
+  /**
+   * Handed off, the loop owns the looks. Waiting to hand off, a face looking ahead holds there until the loop looks ahead
+   * too, so the handoff never jumps and never waits on a coincidence of two random walks.
+   */
+  holdsLooks(now: number): boolean {
+    return this.loopable(now) && (this.emitted === 'loop' || (this.loopCheckAt < Infinity && this.look.yaw === 0 && this.look.pitch === 0));
+  }
+  /** A settled Lively face nobody is looking at: its looks, nods and mutter are the same loop every time. */
+  loopable(now: number): boolean {
+    return this.looping && this.lively && !this.focused && this.attention === 0
+      && now - this.shakeAt >= T.failed.shakeMs;
   }
   emit(now: number, shake = 0) {
     const yaw = this.yaw.x + shake, kind = this.face.turns, step = this.face.hero ? T.heroTurnStep : T.turnStep;
@@ -192,7 +232,7 @@ class Brain {
       : kind === 'slide' ? { yaw: q(yaw, T.turnStep), pitch: q(this.pitch.x, T.turnStep), roll: 0, mutter: this.mutterAt(now) }
       : kind === 'look' ? { yaw: yaw >= 0.12 ? 1 : yaw <= -0.12 ? -1 : 0, pitch: 0, roll: 0, mutter: this.mutterAt(now) }
       : { ...BOT_FACE_LOOK_REST, mutter: this.mutterAt(now) };
-    const key = `${look.yaw}|${look.pitch}|${look.roll}|${look.mutter}`;
+    const key = lookKey(look);
     if (key === this.emitted) return;
     const first = this.emitted === '';
     this.emitted = key;
@@ -269,6 +309,10 @@ export function registerBotFaceBrain(face: BotFaceBrainFace): BotFaceBrainHandle
   const brain = new Brain(face, now);
   brain.lastStep = now;
   faces.add(brain);
+  const loopKey = workingLoopKey(face);
+  const loopOwner = loops.get(loopKey) ?? { consumers: 0, loops: new Map() };
+  loopOwner.consumers++;
+  loops.set(loopKey, loopOwner);
   if (face.locate) listen(true);
   wake();
   return {
@@ -288,7 +332,8 @@ export function registerBotFaceBrain(face: BotFaceBrainFace): BotFaceBrainHandle
       wake();
     },
     release() {
-      faces.delete(brain);
+      if (!faces.delete(brain)) return;
+      if (--loopOwner.consumers === 0) loops.delete(loopKey);
       if (faces.size > 0) return;
       if (timer !== null) clearTimeout(timer);
       timer = null;
@@ -296,4 +341,91 @@ export function registerBotFaceBrain(face: BotFaceBrainFace): BotFaceBrainHandle
       listen(false);
     },
   };
+}
+
+/**
+ * A settled Lively face's loop: its brain's own looks, nods and mutter, simulated once per Bot, drawing kind and mood and
+ * replayed by the animation driver. It starts on an event with the body settled in the mood's rest pose (a nod for a
+ * worker or a Bot that needs you, a look from centre for the others) and ends on the first such event after its
+ * `LOOP_EVENTS`, so it repeats seamlessly with the brain's own seeded spacing. A worker's loop time 0 is its mutter phase
+ * 0, so it stays in step with its live mutter. `drawings` are the distinct looks; each frame holds one from `atMs` until
+ * the next frame.
+ */
+export type BotFaceLoop = Readonly<{
+  periodMs: number;
+  drawings: readonly BotFaceLook[];
+  frames: readonly Readonly<{ atMs: number; drawing: number }>[];
+}>;
+type BotFaceLoopFace = Readonly<{ seed: number; turns: BotFaceTurnKind; hero?: boolean; mood: BotFaceMood }>;
+/** A worker repeats after three nods (its mutter carries it); a looking face after eight looks, so it rarely repeats. */
+const LOOP_EVENTS = { nods: 3, looks: 8 } as const;
+/** A looking loop ends on the first look from centre after its eight; a run of 64 looks without one ends anyway. */
+const LOOP_EVENTS_MAX = 64;
+type WorkingLoopOwner = { consumers: number; loops: Map<BotFaceMood, BotFaceLoop> };
+const loops = new Map<string, WorkingLoopOwner>();
+const workingLoopKey = (face: Readonly<{ seed: number; turns: BotFaceTurnKind; hero?: boolean }>) => `${face.seed}|${face.turns}|${face.hero === true ? 1 : 0}`;
+export function botFaceRestLoop(face: BotFaceLoopFace): BotFaceLoop {
+  const owner = loops.get(workingLoopKey(face));
+  const cached = owner?.loops.get(face.mood);
+  if (cached) return cached;
+  // Loop time 0 is this Bot's mutter phase 0 (`mutterAt`).
+  const base = M.periodMs * (Math.ceil((face.seed * 97) / M.periodMs) + 1) - face.seed * 97;
+  const drawings: BotFaceLook[] = [];
+  const keys: string[] = [];
+  const frames: { atMs: number; drawing: number }[] = [];
+  let now = base;
+  const brain = new Brain({ seed: face.seed, mode: 'lively', turns: face.turns, hero: face.hero, mood: face.mood,
+    onGesture: () => {},
+    onLook: look => {
+      if (look === 'loop') return;
+      const key = lookKey(look);
+      let drawing = keys.indexOf(key);
+      if (drawing < 0) { drawing = keys.length; keys.push(key); drawings.push(look); }
+      if (frames.at(-1)?.drawing !== drawing) frames.push({ atMs: now - base, drawing });
+    } }, base);
+  brain.looping = false;
+  brain.emitted = '\u0000';
+  // Settled in the mood's rest pose, looking ahead.
+  brain.pitch.x = face.mood === 'working' ? T.working.pitch : face.mood === 'failed' ? T.failed.pitch : 0;
+  const looking = lookMood(face.mood);
+  const nodding = face.mood === 'working' || face.mood === 'needsYou';
+  if (looking) brain.nextLook = base;
+  if (nodding) brain.nextNod = base;
+  const wanted = looking ? LOOP_EVENTS.looks : LOOP_EVENTS.nods;
+  let events = 0, end = Infinity, previous = base, moving = false;
+  while (now < end) {
+    const due = (looking && now >= brain.nextLook) || (nodding && now >= brain.nextNod);
+    if (due) {
+      // The seam: an event with the body settled where loop time 0 has it.
+      const centred = !looking || (brain.look.yaw === 0 && brain.look.pitch === 0);
+      if (events > 0 && !moving && ((events >= wanted && centred) || events >= LOOP_EVENTS_MAX)) { end = now; break; }
+      events++;
+    }
+    const dt = moving ? Math.min(100, now - previous) : T.tickMs;
+    previous = now;
+    moving = brain.step(now, dt, null);
+    const next = Math.min(brain.nextMutter(now), brain.nextEvent());
+    now = moving ? Math.min(now + T.tickMs, next) : next;
+    if (!Number.isFinite(now)) { end = previous; break; }
+  }
+  // A face that never changes its drawing (Planet, or Pixel nodding) is a loop of one frame.
+  const loop: BotFaceLoop = { periodMs: Math.max(end - base, M.periodMs), drawings, frames };
+  owner?.loops.set(face.mood, loop);
+  return loop;
+}
+/** Which frame of a Bot's loop shows at `now`, and when it next changes (epoch ms). */
+function botFaceLoopFrameAt(loop: BotFaceLoop, seed: number, now: number): Readonly<{ drawing: number; untilMs: number }> {
+  const phase = botFaceLoopPhase(loop, seed, now);
+  let index = 0;
+  while (index + 1 < loop.frames.length && loop.frames[index + 1]!.atMs <= phase) index++;
+  const nextAt = index + 1 < loop.frames.length ? loop.frames[index + 1]!.atMs : loop.periodMs;
+  return { drawing: loop.frames[index]?.drawing ?? 0, untilMs: now + (nextAt - phase) };
+}
+/** The drawing a Bot's loop shows at `now`: a live moment on a looping face draws over this look. */
+export function botFaceLoopLookAt(loop: BotFaceLoop, seed: number, now: number): BotFaceLook {
+  return loop.drawings[botFaceLoopFrameAt(loop, seed, now).drawing] ?? BOT_FACE_LOOK_REST;
+}
+/** Where a Bot's loop is at `now`, ms: in step with its live mutter on every surface. */
+export function botFaceLoopPhase(loop: BotFaceLoop, seed: number, now: number): number {
+  return (((now + seed * 97) % loop.periodMs) + loop.periodMs) % loop.periodMs;
 }

@@ -7,7 +7,8 @@ import { createSessionFinishedRippleObserver } from '@/components/atmosphere/ses
 
 import type { BotFaceMood } from './botFaceGeometry';
 import type { BotFaceMutter } from './botFaceGeometry';
-import { BOT_FACE_LOOK_REST, registerBotFaceBrain, type BotFaceBrainHandle, type BotFaceLook, type BotFaceTurnKind } from './botFaceIdle';
+import { BOT_FACE_LOOK_REST, botFaceLoopLookAt, botFaceRestLoop, registerBotFaceBrain, type BotFaceBrainHandle, type BotFaceLook, type BotFaceTurnKind } from './botFaceIdle';
+import { BotFaceLoopPlayer } from './BotFaceLoopPlayer';
 import { BOT_FACE_REST, botFaceMoment, botFaceMotionChannels, botFaceMomentMs, botFaceMotionPose, botFaceMotionTokens, botFaceMouthLayers, botFacePixelLook, botFaceSmileSlide, type BotFaceChannels, type BotFaceReaction } from './botFaceMotionTokens';
 import type { BotFaceTurn } from './botFaceRaster';
 import { useBotFaceMotionEligibility } from './useBotFaceMotionEligibility';
@@ -22,11 +23,21 @@ export type BotFaceMotionMoment = Readonly<{ channels: BotFaceChannels; from: Bo
  */
 export type BotFaceMotionLayers = Readonly<{
   look: -1 | 0 | 1;
-  smile: ReturnType<typeof useAnimatedStyle<ViewStyle>> | null;
+  smile: ReturnType<typeof useAnimatedStyle<ViewStyle>> | ViewStyle | null;
   turn: BotFaceTurn | null;
   mutter: BotFaceMutter | null;
 }>;
 const STILL_LAYERS: BotFaceMotionLayers = { look: 0, smile: null, turn: null, mutter: null };
+/** A loop drawing's layers: the same mapping from a look as the live face's, with Dots' smile slide held still. */
+function loopLayers(look: BotFaceLook, turns: BotFaceTurnKind, slide: boolean): BotFaceMotionLayers {
+  const turned = look.yaw !== 0 || look.pitch !== 0 || look.roll !== 0;
+  return {
+    look: turns === 'look' ? (look.yaw as -1 | 0 | 1) : 0,
+    smile: slide && turns === 'slide' && turned ? { transform: [{ translateX: look.yaw * 2.6 }, { translateY: look.pitch * 2.6 }] } : null,
+    turn: turns === 'full' && turned ? { yaw: look.yaw, pitch: look.pitch, roll: look.roll } : null,
+    mutter: look.mutter,
+  };
+}
 type PoseKey = Readonly<{ channels: BotFaceChannels; u: number }>;
 /**
  * The drawing changes only when a channel moves by a visible amount: `grain` css px at the face's `size` (a third of a
@@ -101,7 +112,15 @@ export function BotFaceMotion(props: Readonly<{
   restingMouth.current = props.mood;
   const displayedMouth = React.useRef(props.mood);
   const frameRef = React.useRef<ReturnType<typeof useFrameCallback> | null>(null);
-  const [brainLook, setBrainLook] = React.useState<BotFaceLook>(BOT_FACE_LOOK_REST);
+  const [brainState, setBrainLook] = React.useState<BotFaceLook | 'loop'>(BOT_FACE_LOOK_REST);
+  const looping = brainState === 'loop';
+  const seed = props.identity ?? 0;
+  const turns = props.turns;
+  // A settled Lively face plays its own brain's loop on the animation driver (`BotFaceLoopPlayer`).
+  const loop = React.useMemo(() => (looping ? botFaceRestLoop({ seed, turns, mood: props.mood }) : null), [looping, seed, turns, props.mood]);
+  // A live moment on a looping face draws over the loop's look at that moment, so the head does not jump to centre.
+  const live = pose !== null || playing || mouths.from !== mouths.to;
+  const brainLook = brainState !== 'loop' ? brainState : loop && live ? botFaceLoopLookAt(loop, seed, Date.now()) : BOT_FACE_LOOK_REST;
   const brainSlide = useSharedValue({ x: 0, y: 0 });
   const finish = React.useCallback(() => {
     setPlaying(false);
@@ -215,8 +234,6 @@ export function BotFaceMotion(props: Readonly<{
    */
   const brain = React.useRef<BotFaceBrainHandle | null>(null);
   const brainMode = activityEligible && (props.mode === 'lively' || props.mode === 'reactions') ? props.mode : null;
-  const turns = props.turns;
-  const seed = props.identity ?? 0;
   React.useEffect(() => {
     if (!brainMode) return;
     const handle = registerBotFaceBrain({
@@ -289,6 +306,11 @@ export function BotFaceMotion(props: Readonly<{
   // The turn is keyed by its quantised value, so an equal look keeps the same layers object.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [shownLook, sliding, smileStyle, turnKey, brainLook.mutter]);
+  // A moment or a mouth swap draws live over the loop.
+  const slides = props.slide === true;
+  const render = props.children;
+  const loopFrame = React.useCallback((look: BotFaceLook) => render(mouths.to, null, loopLayers(look, turns, slides)),
+    [render, mouths.to, turns, slides]);
   const markerStyle = useAnimatedStyle(() => {
     const kind = reaction.get();
     return { opacity: kind && elapsed.get() < (botFaceMoment(kind).markerAtMs ?? 0) ? 0 : 1 };
@@ -298,6 +320,7 @@ export function BotFaceMotion(props: Readonly<{
       onPointerEnter={event => perk(event, false)} onPointerLeave={() => { hovered.current = false; }}
       onPointerDown={event => perk(event, true)}>
     {pose ? props.children(mouths.to, { channels: pose.channels, from: mouths.from, to: mouths.to, u: pose.u }, layers)
+      : loop && !playing && mouths.from === mouths.to ? <BotFaceLoopPlayer loop={loop} seed={seed} size={size}>{loopFrame}</BotFaceLoopPlayer>
       : mouths.from === mouths.to ? props.children(mouths.to, null, layers) : <>
       <View style={{ position: 'absolute' }}>{props.children(mouths.from, null, layers)}</View>
       <Animated.View style={newMouthStyle}>{props.children(mouths.to, null, layers)}</Animated.View>
