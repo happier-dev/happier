@@ -211,6 +211,40 @@ describe('Discussion Invite source composition', () => {
         }
     });
 
+    it('says once, at the top of Who answers, that nothing of the viewer\'s can answer while none of their Machines is ready', async () => {
+        const home = boundary.serverIds[1]!;
+        const accountLifetime = await captureHome(home);
+        boundary.http.answer(home, '/v1/teams/list', { body: { items: [], nextCursor: null } });
+        const machine = (id: string, overrides: Parameters<typeof createMachineFixture>[0] = {}) => createMachineFixture({
+            id, activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, displayName: id }, ...overrides,
+        });
+        // The listed Sessions run on machine-1 (the Session fixture's Machine).
+        const offline = [machine('machine-1', { active: false, activeAt: 0 }), machine('build-box', { active: false, activeAt: 0 })];
+        withdrawMachinePresenceForScope(accountLifetime.scope);
+        captureMachinePresenceObservation(accountLifetime.scope)(offline.map(row => row.id));
+        try {
+            storage.setState({ machineListByServerId: { [home]: offline } });
+            const hook = await renderHook(() => useExecutableParticipantSections({ accountLifetime, enabled: true,
+                sessionsContext: 'Reviewer', onChoose: vi.fn() }));
+            const models = () => hook.getCurrent().sections.find(section => section.id === 'agents-models')?.options ?? [];
+            const statusRows = () => hook.getCurrent().sections.flatMap(section => section.options)
+                .filter(option => option.testID === 'discussion-invite-sessions-unavailable');
+            await vi.waitFor(() => expect(hook.getCurrent().sessions.status).toBe('ready'));
+            await vi.waitFor(() => expect(hook.getCurrent().sections.find(section => section.id === 'agents-sessions')?.options
+                .some(option => option.id.startsWith('session:'))).toBe(true));
+            // One line, first in the list of new reviewers, and not a choice; each row keeps its own cause.
+            expect(statusRows()).toHaveLength(1);
+            expect(models()[0]).toMatchObject({ testID: 'discussion-invite-sessions-unavailable',
+                label: t('session.collaboration.discussion.secondOpinion.nothingCanAnswer'), disabled: true });
+            expect(models().slice(1).map(option => option.subtitle))
+                .toEqual(models().slice(1).map(() => t('session.collaboration.readiness.cause.machineOffline')));
+            // A Machine of theirs coming back is something that can answer: the line goes.
+            await act(async () => { storage.setState({ machineListByServerId: { [home]: [offline[0]!, machine('build-box')] } }); });
+            expect(statusRows()).toHaveLength(0);
+        } finally {
+            clearMachineRequestReachabilityForTest();
+        }
+    });
     it('projects encrypted title readability from the exact Home title owner and tracks unlock without label heuristics', async () => {
         const [focusedHome, home] = boundary.serverIds as [string, string, string];
         const accountLifetime = await captureHome(home);

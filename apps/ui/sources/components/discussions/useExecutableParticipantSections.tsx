@@ -47,13 +47,17 @@ import type { SessionServerStartDraftSeed, SessionServerStartDraftTarget } from 
  * A not-ready choice stays listed and selectable with its one cause in place of the usual hint
  * (C7): an offline Bot or current Machine stays visible, and unknown never reads as ready.
  */
-function readinessSubtitle(readiness: ExecutableParticipantSectionOption['readiness'], fallback: string): string {
-  if (!readiness) return fallback;
+function readinessCause(readiness: ExecutableParticipantSectionOption['readiness']): string | null {
+  if (!readiness) return null;
   if ('v' in readiness) {
     const presented = presentSessionReadiness({ readiness, repair: null, demanded: true, loading: false, unavailableReason: null });
-    return presented.tone === 'attention' ? (presented.cause ?? presented.title) : fallback;
+    return presented.tone === 'attention' ? (presented.cause ?? presented.title) : null;
   }
-  return describeMachineReadinessCause(readiness) ?? fallback;
+  return describeMachineReadinessCause(readiness);
+}
+
+function readinessSubtitle(readiness: ExecutableParticipantSectionOption['readiness'], fallback: string): string {
+  return readinessCause(readiness) ?? fallback;
 }
 
 export type ExecutableParticipantSectionOption = SelectionListOption & Readonly<{
@@ -233,6 +237,8 @@ export function useExecutableParticipantSections(
       { onlineOnly: false },
     );
     const machineById = new Map(launchMachines.map((machine) => [machine.id, machine]));
+    const readinessByMachineId = new Map(launchMachines.map((machine) => [machine.id,
+      resolveMachineSpawnReadiness({ machine, selectedMachineId: machine.id, scope: input.accountLifetime.scope })]));
     const agentLabel = (agentId: string) => resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title;
     const modelSearchByAgent = new Map<string, Set<string>>();
     for (const [index, candidate] of candidates.candidates.entries()) {
@@ -267,7 +273,7 @@ export function useExecutableParticipantSections(
     models.push(...modelRows.flatMap((row): ExecutableParticipantSectionOption[] => {
       const machine = machineById.get(row.machineId);
       if (!machine) return [];
-      const readiness = resolveMachineSpawnReadiness({ machine, selectedMachineId: machine.id, scope: input.accountLifetime.scope });
+      const readiness = readinessByMachineId.get(machine.id) ?? null;
       // A row the viewer's own sessions name: that Agent, started as a new session of theirs on that Machine;
       // its setup opens on that Agent. A Machine row leaves the Agent and model to setup.
       const agentId = row.kind === 'agent' ? row.agentId : undefined;
@@ -291,6 +297,23 @@ export function useExecutableParticipantSections(
           target: { serverId, machineId: machine.id }, automatic: true, onChoose }),
       }];
     }));
+    // Nothing of the viewer's can answer (lab flOpinion:emptyP): every Machine of theirs is not ready and every
+    // listed Session of theirs runs on one of them. Said once, leading the list, from the facts the rows already
+    // carry; Bots run with their Team's setup and stay choosable. Unknown readiness never counts as not ready.
+    const nothingCanAnswer = needle.length === 0 && status === 'ready' && launchMachines.length > 0
+      && [...readinessByMachineId.values()].every((readiness) => readinessCause(readiness) !== null)
+      && candidates.candidates.every((candidate) => candidate.kind === 'session'
+        ? candidate.bot === true || (candidate.machineId != null && machineById.has(candidate.machineId))
+        : candidate.kind !== 'model' || readinessCause(candidate.readiness) !== null);
+    if (nothingCanAnswer) {
+      const showModels = models.length > 0 && (!input.people || input.people.includeModels);
+      (showModels ? models : sessions).unshift(stateRow(
+        'unavailable',
+        t('session.collaboration.discussion.secondOpinion.nothingCanAnswer'),
+        <Icon name="cloud-slash" size={ICON_SIZE.md} color={theme.colors.text.tertiary} />,
+        { subtitle: t('session.collaboration.discussion.secondOpinion.nothingCanAnswerBody'), disabled: true },
+      ));
+    }
     const sections: ExecutableParticipantSection[] = [];
     if (sessions.length)
       sections.push({

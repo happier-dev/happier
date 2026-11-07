@@ -35,6 +35,7 @@ import { t } from '@/text';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
@@ -143,9 +144,9 @@ function InboxWorkflowRunRow(props: Readonly<{
         facts={facts}
         // A held line already says it waits for you, so the state column does not say it again (DESIGN-16 D8).
         time={<InboxRelativeTime timestamp={item.row.updatedAt} />} status={heldStep !== null ? null : status} narrow={!props.statusColumn}
-        // A failed run says so by its mark, like a failed session; a hold keeps the hand.
+        // A failed run says so by the calm rose dot, like a failed session (owner ruling 2026-11-01); a hold keeps the hand.
         mark={status?.tone === 'danger'
-            ? <Icon name="warning" size={18} color={theme.colors.status.error} />
+            ? <WorkStatusRowMark status={status} testIDSuffix={`inbox.run.${item.runId}`} />
             : settledMarker?.kind === 'icon'
                 ? <Icon name={settledMarker.icon} size={18} color={theme.colors.text.secondary} />
                 : <Icon name="hand" size={18} color={theme.colors.text.secondary} />}
@@ -292,7 +293,7 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                     status={status}
                     narrow={!statusColumn}
                     mark={failed
-                        ? glyph('warning', theme.colors.status.error)
+                        ? <WorkStatusRowMark status={status} testIDSuffix={`inbox.session.${candidate.sessionId}`} />
                         : props.identityDisplay !== 'none' ? (
                             <SessionListIdentity
                                 session={candidate.session}

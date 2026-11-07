@@ -48,6 +48,9 @@ import type { InboxItemView } from './inboxItems';
 import { InboxWorkItemRow } from './workGroups/InboxWorkItemRow';
 import { Text } from '@/components/ui/text/Text';
 import { InboxWorkRow } from './InboxWorkRow';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { Icon } from '@/components/ui/icons/Icon';
 import { resolveInboxItemPageRoute } from './inboxItemFocus';
 import { readWorkflowRunTarget } from '@/sync/domains/workflows/workflowRunRoute';
 
@@ -729,6 +732,11 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         expect(failedWord.props.children).toBe(failedStatus.word);
         expect(NativeStyleSheet.flatten(failedWord.props.style).color).toBe(workStatusWordStyle('danger').color);
         expect(tree.findHostByTestId('inbox.session.failed.summary:facts')!.findAll((node) => node.props.children === failedStatus.word)).toHaveLength(0);
+        // Its mark is the calm rose dot from the shared row-mark owner (owner ruling 2026-11-01), never a warning icon.
+        const failedRow = tree.findHostByTestId('inbox.session.failed')!;
+        expect(failedRow.findAll((node) => node.type === WorkStatusRowMark.type)
+            .map((mark) => resolveWorkStatusRowMark(mark.props.status))).toEqual(['danger']);
+        expect(failedRow.findAll((node) => node.type === Icon.type && node.props.name === 'warning')).toHaveLength(0);
 
         // Updates retains the Run owner's state and tone; C1 admission alone chooses Needs you membership.
         const run = model.workGroups.flatMap(group => group.items).find(item => item.kind === 'workflow_run');

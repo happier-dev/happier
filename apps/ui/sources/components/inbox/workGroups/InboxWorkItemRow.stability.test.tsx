@@ -8,6 +8,9 @@ import { buildInboxWorkGroups, type InboxWorkItem } from '@/activity/presentatio
 import { en } from '@/text/translations/en';
 import { buildInboxItems } from '../inboxItems';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const paints = vi.hoisted(() => new Map<string, number>());
 const openUrl = vi.hoisted(() => vi.fn(async () => {}));
@@ -52,6 +55,21 @@ describe('Inbox Work row stability', () => {
         const rendered = screen.tree.root.findAll(node => node.props.testID === 'inbox.run.interrupted' && node.props.status !== undefined)[0];
         expect(rendered?.props.status).toMatchObject({ tone: 'neutral', bucket: 'idle' });
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { state: 'interrupted', word: 'Interrupted' } }).tone).toBe('attention');
+    });
+    it('marks a failed unseen Run with the calm rose dot from the work-status row mark, never a warning icon', async () => {
+        const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'failed', state: 'failed', failureUnseen: true }), null);
+        const groups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
+            openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
+        const item = groups.flatMap(group => group.items)[0];
+        if (!item) throw new Error('failed_item_missing');
+        const screen = await renderScreen(<InboxWorkItemRow item={item} spansHomes={false} workflowServerId="home" identityDisplay="none"
+            presentation="screen" navigate={vi.fn()} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
+        const runRow = screen.findHostByTestId('inbox.run.failed')!;
+        // React.memo: the rendered instance carries the inner component.
+        const marks = runRow.findAll(node => node.type === WorkStatusRowMark.type);
+        expect(marks.map(mark => resolveWorkStatusRowMark(mark.props.status))).toEqual(['danger']);
+        expect(runRow.findAll(node => node.type === Icon.type && node.props.name === 'warning')).toHaveLength(0);
+        await screen.unmount();
     });
     it('opens the canonical PR URL as the Landing primary action even in a list-detail Inbox', async () => {
         const session = createSessionFixture({ id: 'landing', serverId: 'home' });
