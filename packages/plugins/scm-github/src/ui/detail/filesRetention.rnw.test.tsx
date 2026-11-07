@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
+import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -142,6 +143,15 @@ function openRefreshedFirstPageGate(): () => void {
   return release;
 }
 
+/** The parent page supplies its one refresh; the Files panel draws no second refresh control. */
+function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+  return <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration }}>
+    <Button title="Refresh page" onPress={() => setRefreshGeneration(value => value + 1)} />
+    {children}
+  </TriageActivityAgentProvider>;
+}
+
 async function mountDetail(): Promise<PluginUiTestkit> {
   const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
@@ -149,7 +159,7 @@ async function mountDetail(): Promise<PluginUiTestkit> {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-200', mountNonce: 'fixture-mount-200' },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: defineUiSurface(context => <SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture>),
+      surface: defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: launchInput(),
@@ -320,12 +330,11 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
       .resolves.toEqual({ content: '3 changed file(s) read.' });
     expect(listedText()).toContain('src/gamma.ts');
 
-    // Usable again, not merely unstuck: the panel's own explicit re-read is
-    // offered and lands, which it cannot do while a page is still in flight.
+    // Usable again, not merely unstuck: the page's one refresh re-reads this panel (it draws no refresh of its
+    // own) and lands, which it cannot do while a page is still in flight.
+    await expect(detail.queryByRole('button', { name: 'Re-read the changed files from GitHub' })).resolves.toBeUndefined();
     await act(async () => {
-      await detail.press(await detail.getByRole('button', {
-        name: 'Re-read the changed files from GitHub',
-      }));
+      await detail.press(await detail.getByRole('button', { name: 'Refresh page' }));
     });
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(4);
     await expect(detail.getByText('2 changed file(s) read.'))
@@ -341,9 +350,7 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
 
     const releaseRefresh = openRefreshedFirstPageGate();
     await act(async () => {
-      await detail.press(await detail.getByRole('button', {
-        name: 'Re-read the changed files from GitHub',
-      }));
+      await detail.press(await detail.getByRole('button', { name: 'Refresh page' }));
     });
     await openTab(detail, 'Checks');
     releaseRefresh();

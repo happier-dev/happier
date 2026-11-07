@@ -117,6 +117,7 @@ import {
   useTriageSourcePanelIntentV1,
   type TriageSourcePanelCommandV1,
   useTriageDetailRequest,
+  useTriagePageRefresh,
   useTriagePullRequestPrimaryWriteV1,
   type TriageDetailPrimaryWriteV1,
   type TriageActivityContinuationV1,
@@ -2775,6 +2776,8 @@ function FilesPanel({
   const { state } = controller;
   // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner; each row observes its own path.
   const viewed = useGithubFileViewedSource(input);
+  // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
+  useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
   // Which files are open in place. Opening a file reads its own diff; closing it drops that read.
   const [openPaths, setOpenPaths] = React.useState<ReadonlySet<string>>(() => new Set());
   const expansionCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows
@@ -2886,12 +2889,6 @@ function FilesPanel({
               />
             )
             : null}
-          <RefreshRow
-            onRefresh={() => { controller.refresh(); void viewed?.refresh(); }}
-            pending={state.pending}
-            accessibilityLabel="Re-read the changed files from GitHub"
-            accessibilityLabelKey="plugins.github.ui.rereadFiles"
-          />
         </Stack>
       )}
       // A changed-file list reads like a file tree: tight single-line rows, so a whole pull request fits in view.
@@ -3021,6 +3018,8 @@ function ChecksBody({
   /** A check GitHub Actions ran opens its run in place (lab a8); others open in place as before. */
   onOpenRun: (target: GithubCheckActionsTargetV1) => void;
 }>): React.ReactElement {
+  // The page's one refresh re-reads the checks; this panel draws no refresh of its own.
+  useTriagePageRefresh(pending ? undefined : onRefresh);
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
   const { spacing } = usePluginTheme();
@@ -3126,12 +3125,6 @@ function ChecksBody({
                 values={{ count: view.omittedRowCount }}
               />
             )}
-          <RefreshRow
-            onRefresh={onRefresh}
-            pending={pending}
-            accessibilityLabel="Re-read the checks from GitHub"
-            accessibilityLabelKey="plugins.github.ui.rereadChecks"
-          />
         </Stack>
       )}
       renderItem={(row) => {

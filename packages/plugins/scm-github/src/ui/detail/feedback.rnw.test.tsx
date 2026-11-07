@@ -775,7 +775,7 @@ describe('the mounted GitHub Feedback plane', () => {
   it.each([
     ['Checks', 'Re-read the checks from GitHub'],
     ['Feedback', 'Re-read this feedback from GitHub'],
-  ] as const)('keeps the %s refresh inert while its warm checks read is pending', async (
+  ] as const)('re-reads %s through the page refresh only, once per press while its warm read is pending', async (
     tabName,
     refreshName,
   ) => {
@@ -788,20 +788,11 @@ describe('the mounted GitHub Feedback plane', () => {
     nextChecksGate = new Promise<JsonValue>((resolve) => {
       settleChecks = resolve;
     });
-    if (tabName === 'Feedback') await refreshPage(detail);
-    else await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: refreshName }));
-    });
+    await refreshPage(detail);
 
-    if (tabName === 'Feedback') {
-      await expect(detail.queryByRole('button', { name: refreshName })).resolves.toBeUndefined();
-      await refreshPage(detail);
-    } else {
-      const pendingRefresh = await detail.getByRole('button', {
-        name: refreshName, state: { disabled: true },
-      });
-      await expect(detail.press(pendingRefresh)).rejects.toMatchObject({ code: 'stale_surface' });
-    }
+    // The page's one refresh reaches the panel; the panel draws no second refresh of its own.
+    await expect(detail.queryByRole('button', { name: refreshName })).resolves.toBeUndefined();
+    await refreshPage(detail);
     expect(dispatched.filter(
       (action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
     )).toHaveLength(2);
@@ -810,13 +801,7 @@ describe('the mounted GitHub Feedback plane', () => {
       settleChecks(answers.checks);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    await expect(detail.queryByRole('button', {
-      name: refreshName,
-      state: { disabled: true },
-    })).resolves.toBeUndefined();
-    if (tabName === 'Feedback') {
-      await refreshPage(detail);
-      expect(dispatched.filter((action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks)).toHaveLength(3);
-    } else await expect(detail.getByRole('button', { name: refreshName })).resolves.toBeDefined();
+    await refreshPage(detail);
+    expect(dispatched.filter((action) => action === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks)).toHaveLength(3);
   });
 });
