@@ -24,7 +24,8 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, isCustomAcpAgentContributionIdentityV1, listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import type { VoiceAgentCatalogEntryV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
+import { resolveVoiceAgentCatalogSelectionV1, type VoiceAgentCatalogEntryV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
+import { listSelectableBundledAgentExecutionTargets } from '@happier-dev/agents/definitions';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { readProviderStateSharingRiskAgentIdsV1, type ProviderStateSharingAgentV1 } from '@happier-dev/protocol/actions/settings/providerStateSharingMutations';
@@ -176,7 +177,16 @@ export function createCliSettingsCatalogServices(params: Readonly<{
             return projectCliProviderStateSharingRiskAgentIdsV1(registry, { activated: Boolean(activated),
                 unavailable: state.activeRegistry ? !activated : state.lastResult?.ok === false });
         },
-        readAgentCatalog: async settings => {
+        readAgentCatalog: async (settings, selectedValue) => {
+            const bundledEntries = listSelectableBundledAgentExecutionTargets().map(({ agentId, target }) => ({
+                agentId, backendTargetKey: buildBackendTargetKeyV2(target), identity: target.identity,
+                projectionGeneration: null, isBuiltIn: true,
+                enabled: !isBackendTargetDisabledByAccountSettings(settings, target),
+            }));
+            if (selectedValue && resolveVoiceAgentCatalogSelectionV1(bundledEntries, selectedValue)) {
+                return { entries: bundledEntries, isCurrent: latest => !params.signal?.aborted
+                    && JSON.stringify(latest.backendEnabledByTargetKey) === JSON.stringify(settings.backendEnabledByTargetKey) };
+            }
             // Automatic Voice selection is UI-local (sticky/preferred computer), not this process.
             // Fixed computers use exact machine evidence; native fallback is admitted only for this computer.
             const voice = params.voiceOwner?.voiceSettingsParse(settings.voice);

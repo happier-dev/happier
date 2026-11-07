@@ -14,6 +14,9 @@ import { createCliActionExecutorHarness } from './createCliActionExecutorHarness
 import { createSignedInSummaryCatalogFixture } from './settingsCatalog.test-support';
 import { createCliSettingsCatalogServices } from './settingsCatalogServices';
 import { emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { getEnabledAgentIds } from '../../../../ui/sources/agents/catalog/enabled';
+import { getResolvedBackendCatalogEntries } from '../../../../ui/sources/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { voiceAgentCatalogSelectionValueV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 
 const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
 
@@ -75,6 +78,49 @@ describe('CLI declared Account settings', () => {
   }
   const user = { surface: 'cli', authority: 'present_user', actionsSettings,
     presentUserConfirmation: { actionId: 'settings.set' } } as const;
+
+  it('accepts every bundled Voice picker choice through the public Action with automatic computer selection, one write per choice and no idle requests', async () => {
+    content = { t: 'plain', v: { favoriteMachines: ['neighbor'], voice: { providerId: 'local_conversation' } } };
+    const settings = accountSettingsParse(content.v);
+    const choices = getResolvedBackendCatalogEntries({
+      enabledAgentIds: getEnabledAgentIds(settings), backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    }).map(entry => voiceAgentCatalogSelectionValueV1(entry.agentCatalogEntry));
+    expect(choices).toContain('agent:happier.agent.claude/claude');
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'settings-account' })).toString('base64url')}.signature`;
+    const owner = executor(token);
+    for (const value of choices) {
+      const writes = vi.mocked(axios.post).mock.calls.length;
+      const changed = await owner.execute('settings.set', { anchor: 'voiceConversations.agent', value }, user);
+      expect(changed, JSON.stringify(changed)).toMatchObject({ ok: true, result: { value } });
+      expect(vi.mocked(axios.post).mock.calls.length - writes).toBe(1);
+      expect(await executor(token).execute('settings.get', { anchor: 'voiceConversations.agent' }, user))
+        .toMatchObject({ ok: true, result: { value } });
+    }
+    expect(content).toMatchObject({ t: 'plain', v: { favoriteMachines: ['neighbor'] } });
+    const reads = vi.mocked(axios.get).mock.calls.length;
+    const writes = vi.mocked(axios.post).mock.calls.length;
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(vi.mocked(axios.get).mock.calls.length).toBe(reads);
+      expect(vi.mocked(axios.post).mock.calls.length).toBe(writes);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('preserves unavailable for an installed Agent without an answering client or fixed computer catalog', async () => {
+    content = { t: 'plain', v: { voice: { providerId: 'local_conversation' } } };
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: [], mergedProviderProjectionById: {
+      'acme.review': { agentId: 'acme.review', identity: { pluginId: 'acme.review', localId: 'review' },
+        projectionGeneration: 7, isBuiltIn: false, title: 'Acme Review', channel: 'plugin' },
+    } });
+    expect(entries).toHaveLength(1);
+    const value = voiceAgentCatalogSelectionValueV1(entries[0]!.agentCatalogEntry);
+    expect(value).toBe('agent:acme.review/review');
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'settings-account' })).toString('base64url')}.signature`;
+    const result = await executor(token).execute('settings.set', { anchor: 'voiceConversations.agent', value }, user);
+    expect(result).toMatchObject({ ok: false, errorCode: 'setting_value_unavailable' });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
 
   it('applies typed global, placement and tool policy intents through the real Account CAS owner', async () => {
     content = { t: 'plain', v: { favoriteMachines: ['neighbor'], actionsSettingsV1: { v: 1, actions: {

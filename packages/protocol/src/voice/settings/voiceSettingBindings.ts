@@ -27,7 +27,7 @@ export function applyVoiceDiagnosticsCaptureDirection(diagnostics: VoiceSpeechDi
 }
 
 export type VoiceScalarValueV1 = Extract<SettingDomainValueV1, string | number | boolean | null>;
-export type VoiceSettingsMutationServicesV1<T> = Readonly<{ readAgentCatalog?: (settings: T) => Promise<Readonly<{ entries: readonly VoiceAgentCatalogEntryV1[]; isCurrent(settings: T): boolean }> | null> }>;
+export type VoiceSettingsMutationServicesV1<T> = Readonly<{ readAgentCatalog?: (settings: T, selectedValue?: string) => Promise<Readonly<{ entries: readonly VoiceAgentCatalogEntryV1[]; isCurrent(settings: T): boolean }> | null> }>;
 export type VoiceSettingBindingV1<T extends { voice: VoiceSettings }> = Readonly<{
  scope: 'account'; kind: 'owner'; access: 'read_write' | 'read_only' | 'sensitive'; allowedValues?: readonly VoiceScalarValueV1[];
  read(settings: T): unknown;
@@ -314,7 +314,7 @@ const voiceAgentSelectionBinding: VoiceSettingBindingV1<T> = {
     mutate: () => null,
     prepare: async (settings, value, services) => {
         if (typeof value !== 'string' || !canEditLocalConversation(settings.voice)) return null;
-        const catalog = await services.readAgentCatalog?.(settings);
+        const catalog = await services.readAgentCatalog?.(settings, value);
         if (!catalog) return null;
         const entry = resolveVoiceAgentCatalogSelectionV1(catalog.entries, value);
         if (!entry || entry.enabled === false) return null;

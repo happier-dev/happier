@@ -94,10 +94,7 @@ export type SettingsMutationServices = Readonly<{
         profiles: readonly import('@/settings/scmDiffSummary/settings').ScmDiffSummaryCatalogProfile[];
         isCurrent: (settings: Settings) => boolean;
     }> | null>;
-    readAgentCatalog?: (settings: Settings) => Promise<Readonly<{
-        entries: readonly import('@/agents/backendCatalog/agentCatalogProjection').ResolvedAgentCatalogEntry[];
-        isCurrent: (settings: Settings) => boolean;
-    }> | null>;
+    readAgentCatalog?: import('@happier-dev/protocol/voice/settings/voiceSettingBindings').VoiceSettingsMutationServicesV1<Settings>['readAgentCatalog'];
 }>;
 
 type ScalarSettingKeys<T> = { [K in keyof T]: T[K] extends string | number | boolean | null | undefined ? K : never }[keyof T] & string;

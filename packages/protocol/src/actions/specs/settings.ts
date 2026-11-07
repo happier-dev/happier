@@ -59,6 +59,9 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS = Object.freeze([
         && 'kind' in input.target && input.target.kind === 'public_profile_draft') return 'client';
       const declaration = readBuiltInSettingDeclarationV1(input.anchor);
       if (declaration?.storage?.prerequisite === 'ui_account_encryption_requirement') return 'client';
+      // Voice Agent options belong to the answering client's selected computer.
+      // The existing no-client fallback still serves headless catalog choices.
+      if (id === 'settings.set' && declaration?.storage?.owner === 'voiceAgentSelectionBinding') return 'client';
       return declaration?.storage && declaration.storage.scope !== 'local' ? 'account' : 'client';
     },
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_') },

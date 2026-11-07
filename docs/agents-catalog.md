@@ -342,6 +342,14 @@ catalog keys through the Protocol target reader before capturing the selection
 tuple. An unresolved presentation target stays unavailable in settings and the
 Session composer; it never becomes a substitute executable Agent.
 
+In 0.3 development, the Voice picker and public Settings Actions share bundled
+choices from `listSelectableBundledAgentExecutionTargets`. Saving a bundled
+preference does not require a reachable execution machine or a ready configured
+ACP catalog. Installed choices use the answering client's selected-machine
+catalog; configured ACP choices also require the Account's ready ACP catalog.
+The existing headless Settings Action path still serves bundled choices.
+Saving a preference does not establish execution readiness.
+
 The definition id survives picker selection and draft persistence/reopening,
 then the daemon admits the installed contribution and the exact catalog row.
 Admission refreshes that row through the scoped Account catalog owner; a ready

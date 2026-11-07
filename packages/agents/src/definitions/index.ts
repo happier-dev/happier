@@ -9,6 +9,7 @@ export {
   getAgentCatalogDefinition,
   getAllAgentDefinitionContracts,
   getAgentDefinitionContract,
+  listSelectableBundledAgentExecutionTargets,
 } from './agentDefinitions.js';
 export {
   getAllBackendCatalogDefinitions,
