@@ -18,6 +18,15 @@ const VisibleModalKindContext = createContext<ModalType | null>(null);
 const VisibleModalIdContext = createContext<string | null>(null);
 const ModalContentIdContext = createContext<string | null>(null);
 
+type VisibleModal = Readonly<{ kind: ModalType; id: string }>;
+/**
+ * A modally presented route (Settings, `/new`) hosts its own provider inside the app's root one. The
+ * dialog in front may live in that nested host, while its readers (the current-UI context) sit above it,
+ * so each host reports its front dialog to its parent. A host's own dialog renders above everything in
+ * its children, so it wins over a nested report.
+ */
+const NestedVisibleModalReportContext = createContext<((host: object, visible: VisibleModal | null) => void) | null>(null);
+
 /** Host-owned identities let contextual controls distinguish the foreground dialog from retained content. */
 export const useVisibleModalId = () => useContext(VisibleModalIdContext);
 export const useModalContentId = () => useContext(ModalContentIdContext);
@@ -66,6 +75,17 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         modals: []
     });
     const stateRef = React.useRef<ModalHostState>(state);
+    const reportToParent = useContext(NestedVisibleModalReportContext);
+    const [hostKey] = useState(() => ({}));
+    const [nestedReports, setNestedReports] = useState<ReadonlyMap<object, VisibleModal>>(() => new Map());
+    const reportNested = useCallback((host: object, visible: VisibleModal | null) => setNestedReports(previous => {
+        const current = previous.get(host);
+        if (current?.id === visible?.id && current?.kind === visible?.kind) return previous;
+        const next = new Map(previous);
+        if (visible) next.set(host, visible);
+        else next.delete(host);
+        return next;
+    }), []);
     const removalTimersRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
     useEffect(() => {
@@ -238,7 +258,16 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const topVisibleIndex = state.modals.reduce((topIndex, modal, index) => (
         modal.visible ? index : topIndex
     ), -1);
-    const visibleModalKind = topVisibleIndex >= 0 ? state.modals[topVisibleIndex]?.type ?? null : null;
+    const ownVisible = topVisibleIndex >= 0 ? state.modals[topVisibleIndex]! : null;
+    const nestedVisible = nestedReports.size > 0 ? [...nestedReports.values()].at(-1)! : null;
+    const visibleModalKind = ownVisible?.type ?? nestedVisible?.kind ?? null;
+    const visibleModalId = ownVisible?.id ?? nestedVisible?.id ?? null;
+    // An inactive (unfocused) route host keeps its dialogs but is not in front.
+    useEffect(() => {
+        if (!reportToParent) return;
+        reportToParent(hostKey, active && visibleModalKind && visibleModalId ? { kind: visibleModalKind, id: visibleModalId } : null);
+    }, [active, hostKey, reportToParent, visibleModalId, visibleModalKind]);
+    useEffect(() => () => reportToParent?.(hostKey, null), [hostKey, reportToParent]);
     const zIndexStep = MODAL_Z_INDEX_STEP;
     const zIndexBase = MODAL_Z_INDEX;
     const screenOverlayPortalZIndex = SCREEN_OVERLAY_Z_INDEX;
@@ -246,7 +275,8 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     return (
         <OverlayPortalProvider>
             <VisibleModalKindContext.Provider value={visibleModalKind}>
-            <VisibleModalIdContext.Provider value={topVisibleIndex >= 0 ? state.modals[topVisibleIndex]!.id : null}>
+            <VisibleModalIdContext.Provider value={visibleModalId}>
+            <NestedVisibleModalReportContext.Provider value={reportNested}>
                 <ModalContext.Provider value={contextValue}>
                     {children}
                     <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
@@ -337,6 +367,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                     </ModalContentIdContext.Provider>;
                     })}
                 </ModalContext.Provider>
+            </NestedVisibleModalReportContext.Provider>
             </VisibleModalIdContext.Provider>
             </VisibleModalKindContext.Provider>
         </OverlayPortalProvider>
