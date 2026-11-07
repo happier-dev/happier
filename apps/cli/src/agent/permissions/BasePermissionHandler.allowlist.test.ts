@@ -136,6 +136,7 @@ class PostClaimCompletionDeferredSession extends FakeSession {
 
 class TestPermissionHandler extends BasePermissionHandler {
   private remoteMediationAllowEligible = true;
+  remoteMediationAllowEligibilityChecks = 0;
 
   constructor(
     session: ConstructorParameters<typeof BasePermissionHandler>[0],
@@ -156,10 +157,10 @@ class TestPermissionHandler extends BasePermissionHandler {
 
   setRemoteMediationAllowEligible(eligible: boolean): void {
     this.remoteMediationAllowEligible = eligible;
-    this.invalidateRemoteMediationAllowCurrentness();
   }
 
   protected isCurrentRemoteMediationAllowEligible(): boolean {
+    this.remoteMediationAllowEligibilityChecks += 1;
     return this.remoteMediationAllowEligible;
   }
 
@@ -198,7 +199,6 @@ function startBlockedRemoteSettlement(params: Readonly<{
   signal?: AbortSignal;
   scope?: 'request' | 'session';
   source?: string;
-  respectAbort?: boolean;
   pauseAfterCreate?: boolean;
   pauseAfterInitialRead?: boolean;
   pauseBeforeCompletion?: boolean;
@@ -234,7 +234,6 @@ function startBlockedRemoteSettlement(params: Readonly<{
       }
       rowCreateStarted.resolve();
       await releaseRowCreate.promise;
-      if (params.respectAbort && input.signal?.aborted) return { status: 'unavailable' as const };
       if (stored) return { status: 'conflict' as const };
       stored = { identity: input.identity, kind: input.kind, record: input.record, revision: `ssr1.${params.requestId}` };
       completionSession?.armAfterNextClaimObservation();
@@ -2009,141 +2008,6 @@ describe('BasePermissionHandler allowlist', () => {
     }
   });
 
-  it('does not commit a remote session grant when current policy narrows during its blocked row CAS', async () => {
-    const race = startBlockedRemoteSettlement({
-      requestId: 'remote-policy-narrowed-during-cas',
-      scope: 'session',
-      respectAbort: true,
-    });
-
-    try {
-      await race.rowCreateStarted.promise;
-      race.handler.setRemoteMediationAllowEligible(false);
-      race.releaseRowCreate.resolve();
-
-      await expect(race.remote).resolves.toEqual({
-        status: 'rejected',
-        code: 'permissionCeilingExceeded',
-      });
-      expect(race.readStored()).toBeNull();
-      expect(race.session.agentState.requests['remote-policy-narrowed-during-cas']).toBeDefined();
-      expect(race.session.agentState.completedRequests['remote-policy-narrowed-during-cas']).toBeUndefined();
-      expect(await settledState(race.pending)).toBe('pending');
-    } finally {
-      race.releaseRowCreate.resolve();
-      await race.handler.reset();
-      await Promise.allSettled([race.remote, race.pending]);
-    }
-  });
-
-  it('neutralizes a created stale remote session grant before an exact retry or restart can replay it', async () => {
-    const race = startBlockedRemoteSettlement({
-      requestId: 'remote-policy-narrowed-ignored-cas',
-      scope: 'session',
-      respectAbort: false,
-    });
-    const input = { command: ['bash', '-lc', 'echo race'] };
-    let recovered: TestPermissionHandler | null = null;
-
-    try {
-      await race.rowCreateStarted.promise;
-      race.handler.setRemoteMediationAllowEligible(false);
-      race.releaseRowCreate.resolve();
-
-      await expect(race.remote).resolves.toEqual({
-        status: 'rejected',
-        code: 'permissionCeilingExceeded',
-      });
-      expect(race.readStored()).toEqual(expect.objectContaining({
-        kind: 'remote_grant.v1',
-        record: expect.objectContaining({
-          revoked: expect.objectContaining({
-            actor: { kind: 'accountUser', accountId: 'account-owner' },
-          }),
-        }),
-      }));
-      expect(race.handler.isAllowedByRemoteGrant('Bash', input, race.sourceAuthority)).toBe(false);
-
-      race.handler.setRemoteMediationAllowEligible(true);
-      const incumbentRetry = await race.handler.respondToMediatedPendingPermission(race.response);
-      expect(incumbentRetry).toEqual({
-        status: 'rejected',
-        code: 'requestNotPending',
-      });
-      expect(race.handler.isAllowedByRemoteGrant('Bash', input, race.sourceAuthority)).toBe(false);
-
-      recovered = new TestPermissionHandler(race.session as any, { mediationRecordStore: race.recordStore });
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(recovered.isAllowedByRemoteGrant('Bash', input, race.sourceAuthority)).toBe(false);
-      const claimWritesBeforeRecoveryRetry = race.session.permissionResponseClaimWriteCount;
-      const recoveredRetry = await recovered.respondToMediatedPendingPermission(race.response);
-      expect(recoveredRetry).toEqual({
-        status: 'rejected',
-        code: 'requestNotPending',
-      });
-      expect(race.session.permissionResponseClaimWriteCount).toBe(claimWritesBeforeRecoveryRetry);
-    } finally {
-      race.releaseRowCreate.resolve();
-      await recovered?.reset();
-      await race.handler.reset();
-      await Promise.allSettled([race.remote, race.pending]);
-    }
-  });
-
-  it('settles a pruned stale remote allow non-authorizing and keeps it non-replayable', async () => {
-    const race = startBlockedRemoteSettlement({
-      requestId: 'remote-policy-narrowed-pruned-settlement',
-      scope: 'request',
-      respectAbort: false,
-    });
-    let recovered: TestPermissionHandler | null = null;
-
-    try {
-      await race.rowCreateStarted.promise;
-      race.handler.setRemoteMediationAllowEligible(false);
-      race.releaseRowCreate.resolve();
-
-      await expect(race.remote).resolves.toEqual({
-        status: 'rejected',
-        code: 'permissionCeilingExceeded',
-      });
-      expect(race.readStored()).toBeNull();
-      expect(race.recordStore.pruneInactive).toHaveBeenCalledWith(expect.objectContaining({
-        identity: {
-          sessionId: race.session.sessionId,
-          turnId: 'turn-remote-policy-narrowed-pruned-settlement',
-          requestId: 'remote-policy-narrowed-pruned-settlement',
-        },
-      }));
-      expect(race.session.agentState.requests['remote-policy-narrowed-pruned-settlement']).toBeUndefined();
-      expect(race.session.agentState.completedRequests['remote-policy-narrowed-pruned-settlement']).toEqual(
-        expect.objectContaining({
-          status: 'denied',
-          decision: 'denied',
-          remoteMediationSettlementId: expect.any(String),
-        }),
-      );
-      await expect(race.pending).resolves.toEqual({ decision: 'denied' });
-
-      race.handler.setRemoteMediationAllowEligible(true);
-      await expect(race.handler.respondToMediatedPendingPermission(race.response)).resolves.toEqual({
-        status: 'rejected',
-        code: 'requestNotPending',
-      });
-
-      recovered = new TestPermissionHandler(race.session as any, { mediationRecordStore: race.recordStore });
-      await expect(recovered.respondToMediatedPendingPermission(race.response)).resolves.toEqual({
-        status: 'rejected',
-        code: 'requestNotPending',
-      });
-    } finally {
-      race.releaseRowCreate.resolve();
-      await recovered?.reset();
-      await race.handler.reset();
-    }
-  });
-
   it('reconciles a rejoined remote claim without its pruned row non-authorizing after restart', async () => {
     const session = new FakeSession();
     const requestId = 'remote-pruned-settlement-restart';
@@ -2306,22 +2170,37 @@ describe('BasePermissionHandler allowlist', () => {
     await expect(pending).resolves.toEqual({ decision: 'denied' });
   });
 
-  it('rechecks current remote allow eligibility after asynchronous ledger admission and before the CAS write', async () => {
+  it('admits a remote session allow with one policy evaluation, finishes it after policy narrows, and refuses the next admission', async () => {
     const session = new FakeSession();
-    const admissionListStarted = createDeferred<void>();
-    const releaseAdmissionList = createDeferred<void>();
-    let listCalls = 0;
+    const rowCreateStarted = createDeferred<void>();
+    const releaseRowCreate = createDeferred<void>();
+    const rows = new Map<string, PermissionMediationStoredRecord>();
     const recordStore: PermissionMediationRecordStore = {
-      read: vi.fn(async () => ({ status: 'absent' as const })),
-      createExpectedAbsent: vi.fn(async () => ({ status: 'unavailable' as const })),
-      list: vi.fn(async () => {
-        listCalls += 1;
-        if (listCalls === 2) {
-          admissionListStarted.resolve();
-          await releaseAdmissionList.promise;
-        }
-        return { status: 'ready' as const, records: [], nextCursor: null, hasNext: false };
+      read: vi.fn(async (input) => {
+        const stored = rows.get(input.identity.requestId);
+        return stored ? { status: 'found' as const, stored } : { status: 'absent' as const };
       }),
+      createExpectedAbsent: vi.fn(async (input) => {
+        if (input.identity.requestId === 'one-admission-first') {
+          rowCreateStarted.resolve();
+          await releaseRowCreate.promise;
+        }
+        if (rows.has(input.identity.requestId)) return { status: 'conflict' as const };
+        const stored = {
+          identity: input.identity,
+          kind: input.kind,
+          record: input.record,
+          revision: `ssr1.${input.identity.requestId}`,
+        } as PermissionMediationStoredRecord;
+        rows.set(input.identity.requestId, stored);
+        return { status: 'created' as const, stored };
+      }),
+      list: vi.fn(async () => ({
+        status: 'ready' as const,
+        records: [...rows.values()],
+        nextCursor: null,
+        hasNext: false,
+      })),
       pruneInactive: vi.fn(async () => ({ status: 'unavailable' as const })),
       compareAndSet: vi.fn(async () => ({ status: 'unavailable' as const })),
     };
@@ -2332,47 +2211,91 @@ describe('BasePermissionHandler allowlist', () => {
       sourceRef: 'binding:ops',
       sourceRevisionOrEpoch: '42',
       admittedPermissionCeiling: 'default',
-      remoteApprovalMaxScope: 'request',
+      remoteApprovalMaxScope: 'session',
     } as const;
-    const pending = handler.request('policy-after-admission', 'Bash', { command: ['bash', '-lc', 'echo policy'] }, {
-      causalPermissionContext: {
-        turnId: 'turn-policy-after-admission',
-        causalPermissionAuthority: {
-          kind: 'admittedSessionInputV1',
-          admittedPermissionCeiling: 'default',
-          sourceAuthority,
+    let completionPolicyEvaluations = 0;
+    const requestFromSource = (requestId: string, command: string) => handler.request(
+      requestId,
+      'Bash',
+      { command: ['bash', '-lc', command] },
+      {
+        resolveCurrentPermissionDecision: () => {
+          completionPolicyEvaluations += 1;
+          return { decision: 'approved' } as PermissionResult;
+        },
+        causalPermissionContext: {
+          turnId: 'turn-one-admission',
+          causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1',
+            admittedPermissionCeiling: 'default',
+            sourceAuthority,
+          },
         },
       },
-    });
-    const remote = handler.respondToMediatedPendingPermission({
+    );
+    const responseFor = (requestId: string) => ({
       sessionId: session.sessionId,
-      turnId: 'turn-policy-after-admission',
-      requestId: 'policy-after-admission',
+      turnId: 'turn-one-admission',
+      requestId,
       sourceRef: 'binding:ops',
       sourceRevisionOrEpoch: '42',
-      idempotencyKey: 'policy-after-admission-retry',
+      idempotencyKey: `${requestId}-key`,
       actor: { namespace: 'discord', principalId: 'person-1' },
-      decision: 'allow',
-      scope: 'request',
+      decision: 'allow' as const,
+      scope: 'session' as const,
       mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
     });
 
+    const first = requestFromSource('one-admission-first', 'echo first');
+    expect(await settledState(first)).toBe('pending');
+    // Count only the response's own policy decisions, not request publication.
+    completionPolicyEvaluations = 0;
+    const remote = handler.respondToMediatedPendingPermission(responseFor('one-admission-first'));
     try {
-      await admissionListStarted.promise;
+      await rowCreateStarted.promise;
+      // The owner narrows policy after the remote answer was admitted.
       handler.setRemoteMediationAllowEligible(false);
-      releaseAdmissionList.resolve();
+      releaseRowCreate.resolve();
 
-      await expect(remote).resolves.toEqual({
+      await expect(remote).resolves.toEqual(expect.objectContaining({
+        status: 'applied',
+        decision: 'allow',
+        effect: expect.objectContaining({ kind: 'sessionGrant' }),
+      }));
+      await expect(first).resolves.toEqual({ decision: 'approved' });
+      // One policy decision per remote response: at its admission, none after.
+      expect({
+        admission: handler.remoteMediationAllowEligibilityChecks,
+        completion: completionPolicyEvaluations,
+      }).toEqual({ admission: 1, completion: 0 });
+
+      // Narrowed policy takes effect at the next admission.
+      const second = requestFromSource('one-admission-second', 'echo second');
+      await expect(handler.respondToMediatedPendingPermission(responseFor('one-admission-second'))).resolves.toEqual({
         status: 'rejected',
         code: 'permissionCeilingExceeded',
       });
-      expect(recordStore.createExpectedAbsent).not.toHaveBeenCalled();
-      expect(session.agentState.requests['policy-after-admission']).toBeDefined();
-      expect(await settledState(pending)).toBe('pending');
+      expect(rows.has('one-admission-second')).toBe(false);
+      expect(await settledState(second)).toBe('pending');
+
+      // Another person's source cannot answer at all.
+      const claimWrites = session.permissionResponseClaimWriteCount;
+      await expect(handler.respondToMediatedPendingPermission({
+        ...responseFor('one-admission-second'),
+        sourceRef: 'binding:someone-else',
+        decision: 'deny',
+      })).resolves.toEqual({ status: 'rejected', code: 'requestNotFound' });
+      await expect(handler.respondToMediatedPendingPermission({
+        ...responseFor('one-admission-second'),
+        mediator: { pluginId: 'other.mediator', contributionLocalId: 'discord' },
+        decision: 'deny',
+      })).resolves.toEqual({ status: 'rejected', code: 'requestNotFound' });
+      expect(session.permissionResponseClaimWriteCount).toBe(claimWrites);
+      expect(await settledState(second)).toBe('pending');
     } finally {
-      releaseAdmissionList.resolve();
+      releaseRowCreate.resolve();
       await handler.reset();
-      await Promise.allSettled([remote, pending]);
+      await Promise.allSettled([remote, first]);
     }
   });
 

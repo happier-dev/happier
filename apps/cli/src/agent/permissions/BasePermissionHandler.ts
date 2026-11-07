@@ -707,12 +707,6 @@ export abstract class BasePermissionHandler {
      * 1,024 before either creates row 1,025.
      */
     private remoteMediationLedgerMutation: Promise<void> = Promise.resolve();
-    /**
-     * A policy change invalidates an in-flight remote allow before its row
-     * CAS. This is owner-local currentness only: the coordinator claim and
-     * mediation row remain the sole durable terminal owners.
-     */
-    private remoteMediationAllowCurrentness = new AbortController();
 
     /**
      * Returns the log prefix for this handler.
@@ -863,11 +857,11 @@ export abstract class BasePermissionHandler {
     }
 
     /**
-     * The concrete permission-policy owner rechecks a remote allow against
-     * its latest mutable policy immediately before the mediation row can
-     * claim the decision. Base has no policy of its own, so an unimplemented
-     * live handler fails closed rather than treating an old admission as a
-     * continuing authorization.
+     * The concrete permission-policy owner decides a remote allow once, at
+     * its response admission and before any mediation row is written. An
+     * admitted answer then finishes; a narrowed policy refuses the next
+     * admission. Base has no policy of its own, so an unimplemented live
+     * handler fails closed.
      */
     protected isCurrentRemoteMediationAllowEligible(_params: Readonly<{
         requestId: string;
@@ -887,25 +881,6 @@ export abstract class BasePermissionHandler {
         _context: PermissionRequestCoordinatorContext,
     ): PermissionResult | null {
         return null;
-    }
-
-    /**
-     * Concrete policy owners call this whenever their current permission
-     * decision changes. It cancels only pre-commit remote allows that captured
-     * the prior policy; it neither releases a durable claim nor changes a
-     * persisted mediation result.
-     */
-    protected invalidateRemoteMediationAllowCurrentness(): void {
-        const prior = this.remoteMediationAllowCurrentness;
-        this.remoteMediationAllowCurrentness = new AbortController();
-        prior.abort();
-    }
-
-    private isRemoteMediationAllowCurrentnessCurrent(currentness: AbortController | null): boolean {
-        return currentness === null || (
-            this.remoteMediationAllowCurrentness === currentness
-            && !currentness.signal.aborted
-        );
     }
 
     protected updateAgentStateBestEffort(updater: (state: AgentState) => AgentState, reason: string): void {
@@ -2717,78 +2692,6 @@ export abstract class BasePermissionHandler {
         return outcome.status === 'rejected' && outcome.code === 'requestNotPending';
     }
 
-    /**
-     * Re-resolves the live request and policy immediately before an opened
-     * mediation row can produce a provider completion or in-memory grant.
-     * The row is durable idempotency evidence, never independent authority.
-     */
-    private revalidateMediatedPermissionRecordCurrentness(params: Readonly<{
-        input: SessionPermissionRemoteRespondInputV1;
-        mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
-    }>): Extract<SessionPermissionRemoteRespondOutputV1, Readonly<{ status: 'rejected' }>> | null {
-        const legacyPending = this.pendingRequests.get(params.input.requestId);
-        const context = this.requestCoordinator.getResponseContext(params.input.requestId)
-            ?? (legacyPending
-                ? {
-                    requestId: params.input.requestId,
-                    toolName: legacyPending.toolName,
-                    toolInput: legacyPending.input,
-                    createdAt: Date.now(),
-                    ...(legacyPending.owner ? { owner: legacyPending.owner } : {}),
-                    sourceLocalId: null,
-                    correlation: 'record' as const,
-                    status: 'live' as const,
-                }
-                : null);
-        if (
-            !context
-            || resolveAgentRequestKind(context.toolName) !== 'permission'
-            || !matchesMediatedPermissionTurnId(context.turnId, params.input)
-        ) {
-            return { status: 'rejected', code: 'requestNotFound' };
-        }
-
-        const sourceAuthority = context.owner?.sourceAuthority;
-        if (!sourceAuthority || !matchesRemoteMediationSourceAuthority(
-            sourceAuthority,
-            params.input,
-            params.mediator.pluginId,
-        )) {
-            return { status: 'rejected', code: 'requestNotFound' };
-        }
-        if (sourceAuthority.remoteApprovalMaxScope === 'off') {
-            return { status: 'rejected', code: 'remoteApprovalDisabled' };
-        }
-        if (
-            params.input.decision === 'allow'
-            && params.input.scope === 'session'
-            && (sourceAuthority.remoteApprovalMaxScope !== 'session'
-                || context.source === NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE)
-        ) {
-            return { status: 'rejected', code: 'scopeExceedsPolicy' };
-        }
-
-        const causalPermissionContext = legacyPending?.causalPermissionContext ?? {
-            causalPermissionAuthority: {
-                kind: 'admittedSessionInputV1' as const,
-                admittedPermissionCeiling: sourceAuthority.admittedPermissionCeiling,
-                sourceAuthority,
-            },
-        };
-        if (
-            params.input.decision === 'allow'
-            && !this.isCurrentRemoteMediationAllowEligible({
-                requestId: params.input.requestId,
-                toolName: context.toolName,
-                input: context.toolInput,
-                causalPermissionContext,
-            })
-        ) {
-            return { status: 'rejected', code: 'permissionCeilingExceeded' };
-        }
-        return null;
-    }
-
     private isCompletedMediatedPermissionRequestVisible(params: Readonly<{
         input: SessionPermissionRemoteRespondInputV1;
         mediatorPluginId: string;
@@ -3031,15 +2934,6 @@ export abstract class BasePermissionHandler {
             recordWrite = { kind: 'remote_settlement.v1', record: settlement.data };
         }
 
-        const allowCurrentness = input.decision === 'allow'
-            ? this.remoteMediationAllowCurrentness
-            : null;
-        const recordSignal = allowCurrentness
-            ? params.signal
-                ? AbortSignal.any([params.signal, allowCurrentness.signal])
-                : allowCurrentness.signal
-            : params.signal;
-
         // Hydration can neutralize a stale grant through the same incumbent
         // ledger-mutation owner used below. Finish that recovery before taking
         // the owner so neither side waits for the other while holding it.
@@ -3055,10 +2949,10 @@ export abstract class BasePermissionHandler {
             return { status: 'rejected', code: 'mediationStateUnavailable' };
         }
 
+        // The answer was admitted above. Later steps keep only request/turn/
+        // source custody and the first-answer claim; they do not re-decide
+        // policy, so an owner's later narrowing applies to the next admission.
         const creation = await this.withRemoteMediationLedgerMutation(async () => {
-            if (!this.isRemoteMediationAllowCurrentnessCurrent(allowCurrentness)) {
-                return { policyNarrowed: true } as const;
-            }
             const admission = await this.admitRemoteMediationLedgerWrite({
                 store: recordStore,
                 session: recordSession,
@@ -3066,9 +2960,6 @@ export abstract class BasePermissionHandler {
                 recordWrite,
                 ...(params.signal ? { signal: params.signal } : {}),
             });
-            if (!this.isRemoteMediationAllowCurrentnessCurrent(allowCurrentness)) {
-                return { policyNarrowed: true } as const;
-            }
             if (admission.status !== 'ready') return { admission } as const;
             if (!this.isCurrentRemoteMediationLedger({
                 store: recordStore,
@@ -3088,20 +2979,6 @@ export abstract class BasePermissionHandler {
             ) {
                 return { currentnessLost: true } as const;
             }
-            if (!this.isRemoteMediationAllowCurrentnessCurrent(allowCurrentness)) {
-                return { policyNarrowed: true } as const;
-            }
-            if (
-                input.decision === 'allow'
-                && !this.isCurrentRemoteMediationAllowEligible({
-                    requestId: input.requestId,
-                    toolName: currentContext.toolName,
-                    input: currentContext.toolInput,
-                    causalPermissionContext,
-                })
-            ) {
-                return { policyNarrowed: true } as const;
-            }
             const reaffirmedClaim = await this.requestCoordinator.rejoinResponseClaim({
                 requestId: input.requestId,
                 claim: prepared.claim,
@@ -3109,13 +2986,10 @@ export abstract class BasePermissionHandler {
             if (reaffirmedClaim.status !== 'rejoined') {
                 return { claimLost: reaffirmedClaim } as const;
             }
-            if (!this.isRemoteMediationAllowCurrentnessCurrent(allowCurrentness)) {
-                return { policyNarrowed: true } as const;
-            }
             const created = await recordStore.createExpectedAbsent({
                 identity,
                 ...recordWrite,
-                ...(recordSignal ? { signal: recordSignal } : {}),
+                ...(params.signal ? { signal: params.signal } : {}),
             });
             const claimAfterRecordCas = await this.requestCoordinator.rejoinResponseClaim({
                 requestId: input.requestId,
@@ -3134,22 +3008,10 @@ export abstract class BasePermissionHandler {
                 return { claimLost: claimAfterRecordCas } as const;
             }
             if (created.status === 'created') {
-                // The System Record is now the first-answer evidence even if
-                // the policy changed while an abort-ignoring transport was in
-                // flight. Retain the coordinator claim until this exact row
-                // has been neutralized or completed.
+                // The System Record is now the first-answer evidence. Retain
+                // the coordinator claim until this exact row has been
+                // neutralized or completed.
                 onSettlementPersisted();
-                const staleRejection = !this.isRemoteMediationAllowCurrentnessCurrent(allowCurrentness)
-                    ? { status: 'rejected' as const, code: 'permissionCeilingExceeded' as const }
-                    : this.revalidateMediatedPermissionRecordCurrentness({ input, mediator });
-                if (staleRejection) {
-                    return { staleCreated: created.stored, staleRejection } as const;
-                }
-            } else if (
-                created.status !== 'conflict'
-                && !this.isRemoteMediationAllowCurrentnessCurrent(allowCurrentness)
-            ) {
-                return { policyNarrowed: true } as const;
             }
             if (!this.isCurrentRemoteMediationLedger({
                 store: recordStore,
@@ -3195,9 +3057,6 @@ export abstract class BasePermissionHandler {
         if (params.signal?.aborted) return { status: 'rejected', code: 'canceled' };
         if ('currentnessLost' in creation && creation.currentnessLost) {
             return { status: 'rejected', code: 'requestNotPending' };
-        }
-        if ('policyNarrowed' in creation && creation.policyNarrowed) {
-            return { status: 'rejected', code: 'permissionCeilingExceeded' };
         }
         if ('claimLost' in creation && creation.claimLost) {
             return creation.claimLost.status === 'conflict'
@@ -3372,42 +3231,17 @@ export abstract class BasePermissionHandler {
                 : { status: 'rejected', code: 'mediationStateUnavailable' };
         };
 
-        const legacyPending = this.pendingRequests.get(params.input.requestId);
-        let context = this.requestCoordinator.getResponseContext(params.input.requestId)
-            ?? (legacyPending
-                ? {
-                    requestId: params.input.requestId,
-                    toolName: legacyPending.toolName,
-                    toolInput: legacyPending.input,
-                    createdAt: Date.now(),
-                    ...(legacyPending.owner ? { owner: legacyPending.owner } : {}),
-                    sourceLocalId: null,
-                    correlation: 'record' as const,
-                    status: 'live' as const,
-                }
-                : null);
-        if (!context || resolveAgentRequestKind(context.toolName) !== 'permission') {
-            return params.mustComplete
-                ? { status: 'rejected', code: 'requestNotPending' }
-                : null;
-        }
-
-        const initialRejection = this.revalidateMediatedPermissionRecordCurrentness({
-            input: params.input,
-            mediator: params.mediator,
-        });
-        if (initialRejection) return await staleRecordRejection(initialRejection);
-
         if (params.stored.kind === 'remote_grant.v1' && !params.skipRemoteMediationGrantHydration) {
             if (!await this.ensureRemoteMediationGrantsHydrated() || !this.isCurrentRemoteMediationLedger(ledger)) {
                 return { status: 'rejected', code: 'mediationStateUnavailable' };
             }
         }
 
-        // Hydration and session swaps are asynchronous. Re-resolve the live
-        // request/source/policy immediately before a row can activate a grant
-        // or dispatch a provider completion.
-        context = this.requestCoordinator.getResponseContext(params.input.requestId)
+        // The row records an admitted answer; it finishes without a fresh
+        // policy decision. Resolve request/turn/source custody once, after
+        // hydration, immediately before completion or grant activation.
+        const legacyPending = this.pendingRequests.get(params.input.requestId);
+        const context = this.requestCoordinator.getResponseContext(params.input.requestId)
             ?? (legacyPending
                 ? {
                     requestId: params.input.requestId,
@@ -3425,14 +3259,8 @@ export abstract class BasePermissionHandler {
                 ? { status: 'rejected', code: 'requestNotPending' }
                 : null;
         }
-        const finalRejection = this.revalidateMediatedPermissionRecordCurrentness({
-            input: params.input,
-            mediator: params.mediator,
-        });
-        if (finalRejection) return await staleRecordRejection(finalRejection);
-
         const sourceAuthority = context.owner?.sourceAuthority;
-        if (!sourceAuthority || !matchesRemoteMediationSourceAuthority(
+        if (!matchesMediatedPermissionTurnId(context.turnId, params.input) || !sourceAuthority || !matchesRemoteMediationSourceAuthority(
             sourceAuthority,
             params.input,
             params.mediator.pluginId,
@@ -3764,6 +3592,18 @@ export abstract class BasePermissionHandler {
             );
             return { status: 'not_found' };
         }
+        const responseTurnId = response.turnId;
+        if (responseTurnId !== undefined && responseTurnId !== context.turnId) {
+            return { status: 'not_found' };
+        }
+        const isCurrent = responseTurnId !== undefined
+            ? () => {
+                if (options?.isCurrent && !options.isCurrent()) return false;
+                // The terminal writer checks currentness before removing the request.
+                const current = this.requestStore.readOutstandingRequest(response.id);
+                return current?.turnId === responseTurnId;
+            }
+            : options?.isCurrent;
         if (
             options?.expectedRequestKind
             && resolveAgentRequestKind(context.toolName) !== options.expectedRequestKind
@@ -3792,7 +3632,7 @@ export abstract class BasePermissionHandler {
                 permissionDecisionActorV1: options.permissionDecisionActorV1,
             } : {}),
             ...(options?.answeredBy ? { answeredBy: options.answeredBy } : {}),
-            ...(options?.isCurrent ? { isCurrent: options.isCurrent } : {}),
+            ...(isCurrent ? { isCurrent } : {}),
         });
         return completed ? { status: 'resolved' } : { status: 'not_found' };
     }
@@ -3815,16 +3655,14 @@ export abstract class BasePermissionHandler {
             remoteMediationSettlementId,
             isCurrent,
         } = params;
-        const recoveredCurrentDecision = context.source !== HAPPIER_ACTION_REQUEST_SOURCE
-            && !legacyPending && context.status === 'agent_state_only'
-            ? this.resolveCurrentPermissionDecisionForOutstandingRequest(context)
-            : null;
-        const resolveCurrentPermissionDecision = legacyPending?.resolveCurrentPermissionDecision
-            ?? (recoveredCurrentDecision
-                ? () => this.resolveCurrentPermissionDecisionForOutstandingRequest(context)
-                : undefined);
-        const currentDecision = response.approved
-            ? legacyPending?.resolveCurrentPermissionDecision?.() ?? recoveredCurrentDecision ?? undefined
+        // One point-of-effect policy decision for an approval. A remote answer
+        // (settlement id present) was already decided at its admission.
+        const currentDecision = response.approved && remoteMediationSettlementId === undefined
+            ? legacyPending?.resolveCurrentPermissionDecision?.()
+                ?? (context.source !== HAPPIER_ACTION_REQUEST_SOURCE
+                    && !legacyPending && context.status === 'agent_state_only'
+                    ? this.resolveCurrentPermissionDecisionForOutstandingRequest(context)
+                    : undefined)
             : undefined;
         const currentDecisionBlocksApproval =
             currentDecision?.decision === 'denied' || currentDecision?.decision === 'abort';
@@ -3870,16 +3708,7 @@ export abstract class BasePermissionHandler {
             effectiveResponse.id,
             context,
             result,
-            effectiveResponse.approved && resolveCurrentPermissionDecision
-                ? {
-                    ...completedRequest,
-                    isCurrent: () => {
-                        if (completedRequest.isCurrent && !completedRequest.isCurrent()) return false;
-                        const latest = resolveCurrentPermissionDecision();
-                        return latest !== null && latest.decision !== 'denied' && latest.decision !== 'abort';
-                    },
-                }
-                : completedRequest,
+            completedRequest,
         );
 
         if (!completed && (!legacyPending || legacyPending.coordinatorManaged)) {
@@ -4305,33 +4134,20 @@ export abstract class BasePermissionHandler {
         revalidate: (() => PermissionResult | null) | undefined,
     ): Promise<void> {
         await this.requestCoordinator.withResponseClaim(requestId, async () => {
-            const initialContext = this.requestCoordinator.getResponseContext(requestId);
-            if (!initialContext) {
+            const context = this.requestCoordinator.getResponseContext(requestId);
+            if (!context) {
                 logger.debug(`${this.getLogPrefix()} Automatic permission completion lacked a durable pending request`);
                 return;
             }
             if (this.requestStore.hasPermissionResponseClaim(requestId)) return;
 
-            // Preserve the pre-activation currentness boundary at the one
-            // incumbent AgentState completion write without creating a new
-            // durable first-answer claim.
-            const context = this.requestCoordinator.getResponseContext(requestId);
-            if (!context) return;
+            // Decide once inside the response claim. The terminal write keeps
+            // only first-answer custody: a person's claimed answer wins.
             const currentResult = revalidate ? revalidate() : result;
             if (!currentResult) return;
-            const currentCompletedRequest = revalidate
-                ? {
-                    status: currentResult.decision === 'denied' || currentResult.decision === 'abort'
-                        ? 'denied'
-                        : 'approved',
-                    decision: currentResult.decision,
-                    isCurrent: () => {
-                        if (this.requestStore.hasPermissionResponseClaim(requestId)) return false;
-                        const latest = revalidate();
-                        return latest !== null && isDeepStrictEqual(latest, currentResult);
-                    },
-                }
-                : completedRequest ?? {
+            const currentCompletedRequest = completedRequest && !revalidate
+                ? completedRequest
+                : {
                     status: currentResult.decision === 'denied' || currentResult.decision === 'abort'
                         ? 'denied'
                         : 'approved',

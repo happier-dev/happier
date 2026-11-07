@@ -164,9 +164,6 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   * The mode still governs host-mediated operations that do not pass through provider policy.
   */
   setPermissionMode(mode: PermissionMode): void {
-    if (this.currentPermissionMode !== mode) {
-      this.invalidateRemoteMediationAllowCurrentness();
-    }
     this.currentPermissionMode = mode;
     logger.debug(`${this.getLogPrefix()} Permission mode set to: ${mode} (provider-enforced)`);
     this.resolvePendingRequestsIfNowDecidable();
