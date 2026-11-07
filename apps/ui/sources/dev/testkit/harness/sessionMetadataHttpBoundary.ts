@@ -1,12 +1,15 @@
 import { SessionCurrentProjectionRecordV1Schema, type SessionCurrentProjectionRecordV1 } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol';
+import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 import { z } from 'zod/mini';
+import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageTimingV1';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions';
+import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 export interface SessionMetadataHttpBoundary {
     writes: string[];
@@ -28,12 +31,14 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             if (record) records.set(sessionId, SessionCurrentProjectionRecordV1Schema.parse(record));
             else records.delete(sessionId);
         },
-        /** Mirror the current /v1/sessions hosted plain create/load transport contract. */
+        /** Mirror the current /v1/sessions hosted create/load transport contract. */
         createSessionFromPost(sessionId: string, init: RequestInit): Response {
             const body = z.strictObject({ tag: z.string().check(z.minLength(1)), metadataLayoutVersion: z.literal(1),
                 sharedMetadata: z.strictObject({ ciphertext: z.string().check(z.minLength(1)) }), ownerMetadata: SessionOwnerMetadataEnvelopeV1Schema,
                 displayProjectionV1: z.optional(z.nullable(SessionDisplayProjectionV1Schema)),
-                agentState: z.null(), dataEncryptionKey: z.null(), encryptionMode: z.literal('plain') }).parse(JSON.parse(String(init.body)));
+                agentState: z.null(), dataEncryptionKey: z.nullable(z.string()), encryptionMode: z.enum(['plain', 'e2ee']),
+                usageTimingV1: z.optional(UsageSessionTimingV1Schema),
+                organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema), initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema) }).parse(JSON.parse(String(init.body)));
             const current = records.get(sessionId);
             if (current?.metadataLayoutVersion === 1) return Response.json({ created: false, session: current });
             if (current) throw new Error('Create/load fixture requires an existing current owner tuple, not a candidate migration');
@@ -41,9 +46,9 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             const record = SessionCurrentProjectionRecordV1Schema.parse({ id: sessionId, seq: seed?.seq ?? 0, createdAt: seed?.createdAt ?? 1, updatedAt: seed?.updatedAt ?? 1,
                 active: false, activeAt: seed?.activeAt ?? 1, archivedAt: null, encryptionMode: body.encryptionMode, metadataLayoutVersion: 1,
                 metadata: body.sharedMetadata.ciphertext, metadataVersion: seed?.metadataVersion ?? 0, ownerMetadata: body.ownerMetadata,
-                displayProjectionV1: body.displayProjectionV1 ?? null,
+                displayProjectionV1: body.displayProjectionV1 ?? undefined,
                 effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
-                responsibleAccountId: null, responsibleAccount: null, share: null, dataEncryptionKey: null,
+                responsibleAccountId: null, responsibleAccount: null, share: null, dataEncryptionKey: body.dataEncryptionKey,
                 agentState: null, agentStateVersion: seed?.agentStateVersion ?? 0, pendingCount: 0, pendingVersion: 0 });
             records.set(sessionId, record);
             return Response.json({ created: true, session: record });
@@ -101,7 +106,7 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
                 }
                 const committed = SessionCurrentProjectionRecordV1Schema.parse({ ...current,
                     metadata: patch.sharedMetadata.ciphertext, metadataVersion: current.metadataVersion + 1,
-                    displayProjectionV1: patch.displayProjectionV1 ?? null });
+                    displayProjectionV1: patch.displayProjectionV1 ?? undefined });
                 records.set(id, committed);
                 return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
                     sharedMetadata: { version: committed.metadataVersion } }));
@@ -120,7 +125,7 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             const target = patch.mode === 'owner_migration' ? patch.target : patch;
             const committed = SessionCurrentProjectionRecordV1Schema.parse({ ...current, metadataLayoutVersion: 1,
                 metadata: target.sharedMetadata.ciphertext, metadataVersion: current.metadataVersion + 1,
-                displayProjectionV1: target.displayProjectionV1 ?? null,
+                displayProjectionV1: target.displayProjectionV1 ?? undefined,
                 ownerMetadata: target.ownerMetadata, agentState: target.agentState.ciphertext, agentStateVersion: (current.agentStateVersion ?? 0) + 1 });
             records.set(id, committed);
             return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,

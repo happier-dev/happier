@@ -14,6 +14,7 @@ import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/message
 import { pendingDeliveryStatusV1ToPersistedFields, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import { renderScreen, waitForTestEvent } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -26,6 +27,8 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { CanonicalVoiceTranscriptAttempt } from '@/voice/transcript/canonicalProjector';
 
@@ -76,9 +79,11 @@ const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
 let homeSequence = 0;
 const pendingPostSchema = z.strictObject({ localId: PendingLocalIdSchema, content: StrictSessionStoredMessageContentEnvelopeSchema,
     messageRole: z.literal('user'), deliveryMode: z.optional(z.literal('external_handoff')),
-    requestedAction: PendingRequestedActionV1Schema, targetMachineId: z.optional(z.string()) });
+    requestedAction: PendingRequestedActionV1Schema, targetMachineId: z.optional(z.string()),
+    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)) });
 const messagePostSchema = z.strictObject({ localId: z.string().check(z.minLength(1)),
-    content: StrictSessionStoredMessageContentEnvelopeSchema, messageRole: SessionMessageRoleSchema });
+    content: StrictSessionStoredMessageContentEnvelopeSchema, messageRole: SessionMessageRoleSchema,
+    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)) });
 
 it.each([
     { source: 'canonical', endBeforeReply: false, restartBeforeInput: false },
@@ -112,7 +117,8 @@ it.each([
         accountId: 'completion-account', credentialScope: 'restored-home', request: createSessionReadBatchFetchBoundary(async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
-            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: { voice: settings } }, version: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain',
+                v: normalizeVoiceSettingsServerDelta({ voice: settings }) }, version: 1 });
             if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list` && init?.method === 'POST') return Response.json(createPlainProjectAccountRowListFixture());
             if (path === '/v1/machines') return Response.json([machine]);
             if (path === '/v1/machines/machine-1') return Response.json({ machine });
@@ -154,7 +160,8 @@ it.each([
                     authorAccountId: 'completion-account', accountActor: null }] });
             }
             const response = await artifact.request(input, init);
-            return response.status === 404 ? await metadata.handle(input, init) : response;
+            return response.status === 404 ? await metadata.handle(input, init)
+                ?? createEmptyAccountBootstrapHttpResponse(path, init) : response;
         }) });
     const scope = { serverId: connection.home.id, accountId: 'completion-account' };
     const conversation = { serverId: connection.home.id, sessionId: 'conversation' };
@@ -200,6 +207,8 @@ it.each([
         else await sync.refreshAccountSettingsFromServer(1, scope);
         setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
         screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}><Scene /></InjectedAuthProvider>);
+        if (source === 'durable') await waitForTestEvent(getVoiceAdapterRegistry().subscribe!,
+            () => getVoiceAdapterRegistry().get(providerId), adapter => adapter !== null);
         await act(async () => {
             if (source === 'durable') {
                 const adapter = getVoiceAdapterRegistry().get(providerId);
@@ -208,24 +217,28 @@ it.each([
                     initialContext: '', textOnly: true });
                 expect(adapter.getSnapshot()).toMatchObject({ status: 'connected' });
                 expect(getVoiceSessionPresentedAttemptId()).not.toBeNull();
-                await waitForTestEvent(storage.subscribe,
-                    () => readStoredSessionMessages(storage.getState(), conversation.sessionId),
-                    rows => rows.some(row => row.localId === transcriptWrites[0]?.localId
-                        && row.realID === 'completion-message-11' && row.seq === 11));
-                expect(readStoredSessionMessages(storage.getState(), conversation.sessionId))
-                    .toEqual(expect.arrayContaining([expect.objectContaining({
-                        localId: transcriptWrites[0]?.localId, realID: 'completion-message-11', seq: 11,
-                    })]));
-                expect(transcriptWrites).toEqual([expect.objectContaining({ messageRole: 'agent',
-                    content: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({
-                        happier: expect.objectContaining({ kind: 'voice_note.v1' }),
-                    }) }) } })]);
             } else {
                 voiceSessionBindingStore.getState().bind(binding);
                 setVoiceSessionSnapshot({ adapterId: binding.adapterId, sessionId: binding.controlSessionId,
                     status: 'connected', mode: 'listening', canStop: true }, binding, { accountScope: scope, conversationScope: { kind: 'voice_home' } });
             }
         });
+        if (source === 'durable') {
+            // The mounted runtime publishes the continuation from an effect.
+            // Let the Start act flush that effect before awaiting its HTTP ACK.
+            await waitForTestEvent(storage.subscribe,
+                () => readStoredSessionMessages(storage.getState(), conversation.sessionId),
+                rows => rows.some(row => row.localId === transcriptWrites[0]?.localId
+                    && row.realID === 'completion-message-11' && row.seq === 11));
+            expect(readStoredSessionMessages(storage.getState(), conversation.sessionId))
+                .toEqual(expect.arrayContaining([expect.objectContaining({
+                    localId: transcriptWrites[0]?.localId, realID: 'completion-message-11', seq: 11,
+                })]));
+            expect(transcriptWrites).toEqual([expect.objectContaining({ messageRole: 'agent',
+                content: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({
+                    happier: expect.objectContaining({ kind: 'voice_note.v1' }),
+                }) }) } })]);
+        }
         if (restartBeforeInput) await act(async () => {
             setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
             if (!canonicalAttempt) throw new Error('Expected canonical attempt');
