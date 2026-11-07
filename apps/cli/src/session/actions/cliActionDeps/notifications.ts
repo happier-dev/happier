@@ -9,13 +9,13 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { PushNotificationClient } from '@/api/pushNotifications';
 import type { dispatchActivityNotificationAsync, listActivityNotificationChannels, NotificationChannelCatalogUnavailableError } from '@/notifications/activity/dispatchActivityNotification';
 import type { hydrateNotificationChannelCatalogForActiveAccount, hydrateNotificationChannelCatalogForOperation } from '@/settings/notifications/hydrateNotificationChannelCatalog';
-import type { createSavedSecretMaterializerFromSnapshotV1, SavedSecretResolutionError } from '@/settings/secrets/savedSecretCatalog';
+import type { SavedSecretResolutionError } from '@/settings/secrets/savedSecretCatalog';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 export function createCliNotificationActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'savedSecretOperationContext' | 'serverHttpBaseUrl' | 'serverId' | 'isCredentialCurrent' | 'resolvePluginNotifications'>,
   workflowAction: ActionExecutorDeps['workflowAction'] | null,
-): Pick<ActionExecutorDeps, 'notificationChannelsList' | 'webhookCall' | 'notificationsNotifyMe'> {
+): Pick<ActionExecutorDeps, 'notificationChannelsList' | 'webhookCall' | 'notificationsNotifyMe' | 'notificationConfigurationAction'> {
   const readNotificationContext = async (signal?: AbortSignal) => {
     const credentials = params.credentials;
     if (!credentials) {
@@ -64,10 +64,8 @@ export function createCliNotificationActionDeps(
       throw new NotificationChannelCatalogUnavailableError('scope-retired');
     }
     const captured = snapshot;
-    const { createSavedSecretMaterializerFromSnapshotV1 } = await import("@/settings/secrets/savedSecretCatalog");
     return { settings: captured.settings, notificationChannelCatalog: captured.notificationChannelCatalog ?? { status: 'loading' as const },
-      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(captured,
-        operation ? { isCurrent: () => operation.readSnapshot() === captured } : undefined), isCurrent };
+      ...(operation ? { operationContext: operation } : {}), isCurrent };
   };
   const notificationFailure = async (error: unknown) => {
     const [{ NotificationChannelCatalogUnavailableError }, { SavedSecretResolutionError }] = await Promise.all([import("@/notifications/activity/dispatchActivityNotification"), import("@/settings/secrets/savedSecretCatalog")]);
@@ -78,6 +76,20 @@ export function createCliNotificationActionDeps(
     throw error;
   };
   return {
+    notificationConfigurationAction: async ({ actionId, input, context }) => {
+      if (actionId !== 'notifications.webhooks.test') return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      const { NotificationConfigurationActionInputSchemas } = await import('@happier-dev/protocol/actions/notificationConfigurationActionFamily');
+      const { channelId } = NotificationConfigurationActionInputSchemas[actionId].parse(input);
+      const { testWebhookActivityNotificationAsync } = await import('@/notifications/activity/testWebhookActivityNotification');
+      try {
+        return await testWebhookActivityNotificationAsync({ ...await readNotificationContext(context.signal), channelId, signal: context.signal });
+      } catch (error) {
+        context.signal?.throwIfAborted();
+        const { NotificationChannelCatalogUnavailableError } = await import('@/notifications/activity/dispatchActivityNotification');
+        if (error instanceof NotificationChannelCatalogUnavailableError) return { status: 'refused', reason: 'catalog_unavailable' };
+        throw error;
+      }
+    },
     notificationChannelsList: async (context) => {
       if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       context.signal?.throwIfAborted();

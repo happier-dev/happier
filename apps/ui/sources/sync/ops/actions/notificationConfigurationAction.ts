@@ -21,6 +21,8 @@ import { sendExpoLocalNotification } from '@/activity/notifications/channels/sen
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { PUSH_NOTIFICATION_SOUND_IDS, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
+import { createUiAccountAction } from './accountActionDeps';
+import { ActionExecuteFailureSchema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 function patchChannel(channel: NotificationChannelRecordV1, patch: NotificationChannelConfigurationPatch): NotificationChannelRecordV1 {
     const topics = { ...channel.topics };
@@ -99,6 +101,19 @@ export function createNotificationConfigurationAction(account: LazyActionAccount
         }
         if (!account) return { ok: false, errorCode: 'action_account_scope_unavailable', error: 'action_account_scope_unavailable' };
         account.assertCurrent();
+        if (actionId === 'notifications.webhooks.test') {
+            const target = NotificationConfigurationActionInputSchemas[actionId].parse(input);
+            try {
+                const result = await createUiAccountAction({ account })({ actionId, input: target, context });
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                // The common Action output owner preserves pending approval and
+                // validates delivery results; a pending review is not an outage.
+                return failure.success ? { status: 'unreachable', reason: failure.data.errorCode } : result;
+            } catch (error) {
+                context.signal?.throwIfAborted();
+                return { status: 'unreachable', reason: readUnexpectedActionErrorDiagnosticV1(error).errorCode ?? 'transport_error' };
+            }
+        }
         if (actionId === 'notifications.push.permission.request') {
             const { purpose } = NotificationConfigurationActionInputSchemas[actionId].parse(input);
             const { isExpoPushNotificationChannelEnabled } = await import('@happier-dev/protocol/account/settings/accountSettings');

@@ -2,6 +2,7 @@ import { type ActionExecutorContext, type ActionId } from '@happier-dev/protocol
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionRequesterInvocationV1Schema, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { randomUUID } from '@/platform/randomUUID';
 
 export type AccountActionTransport = (input: Readonly<{
@@ -60,6 +61,18 @@ export function createUiAccountActionTransport(params: Readonly<{
             ? target.machineId.trim()
             : params.resolveFallbackMachineId();
         if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        const relayTarget = target?.kind === 'machine' ? { ...target, machineId } : { kind: 'machine' as const, machineId };
+        // The common executor consumes a native Confirm before this adapter.
+        // Carry its admitted digest, not a fresh review of the caller's input.
+        // An Account carrier is execution placement, selected by this relay.
+        const review = args.context.presentUserApproval;
+        const confirmation = args.context.presentUserConfirmation?.inputDigest !== undefined
+            ? args.context.presentUserConfirmation
+            : review?.actionId === args.actionId && isPresentUserHostInvocation(args.context) ? {
+                actionId: review.actionId, inputDigest: review.inputDigest, requestId: review.requestId,
+                accountId: params.account.accountId, serverId: args.context.serverIdentityId ?? params.account.serverId,
+                target: relayTarget,
+            } : undefined;
         const workspaceWrites = args.context.workspaceWrites === 'deny' || args.context.agentStartWorkspaceWrites === 'deny'
             ? 'deny' : args.context.workspaceWrites ?? args.context.agentStartWorkspaceWrites;
         const provenance = !args.context.externalActionCredential
@@ -69,7 +82,8 @@ export function createUiAccountActionTransport(params: Readonly<{
                     ? parseAgentPermissionIntentV1Alias(args.context.callerPermissionMode) ?? args.context.callerPermissionMode : args.context.callerPermissionMode } : {}),
                 ...(args.context.callerInputConstraints !== undefined ? { callerInputConstraints: args.context.callerInputConstraints } : {}),
                 ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
-                ...(args.context.defaultSessionId !== undefined ? { defaultSessionId: args.context.defaultSessionId } : {}),
+                ...(args.context.defaultSessionId != null ? { defaultSessionId: args.context.defaultSessionId } : {}),
+                ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
             }) : null;
         if (!provenance?.success) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
         if (target && target.kind !== 'machine') return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
@@ -82,7 +96,7 @@ export function createUiAccountActionTransport(params: Readonly<{
             serverId: params.account.serverId,
             accountId: params.account.accountId,
             machineId,
-            target: target?.kind === 'machine' ? { ...target, machineId } : { kind: 'machine', machineId },
+            target: relayTarget,
             method: method ?? '',
             payload: args.input,
             actionId: args.actionId, requestId: args.context.actionRequestId ?? randomUUID(), invocation: provenance.data,

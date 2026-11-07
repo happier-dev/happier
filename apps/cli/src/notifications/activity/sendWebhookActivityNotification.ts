@@ -14,6 +14,7 @@ import { openPinnedHttpStream, type PinnedHttpStreamTransport, type PinnedHttpSt
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import { buildActivityNotificationContent } from './buildActivityNotificationContent';
 import { SavedSecretResolutionError, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 
 /** DNS is a genuine system boundary; every caller may substitute it. */
 export type WebhookDestinationAddressResolver = (hostname: string) => Promise<readonly string[]>;
@@ -179,6 +180,7 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
   nowMs?: () => number;
   network?: WebhookActivityNotificationNetworkDependencies;
   previewBehavior?: AttentionPreviewBehavior;
+  signal?: AbortSignal;
 }>): Promise<void> {
   const built = buildActivityNotificationContent(params.event, {
     readyIncludeMessageText: params.channel.readyIncludeMessageText !== false,
@@ -238,7 +240,7 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
       if (current.status !== 'ready') throw new SavedSecretResolutionError({ reference: signingSecret.reference,
         status: current.status, consumer: 'notification-channel', field: 'signingSecretRef' });
     },
-    wallTimeMs: WEBHOOK_REQUEST_WALL_TIME_MS, ...(params.network ? { network: params.network } : {}) });
+    signal: params.signal, wallTimeMs: WEBHOOK_REQUEST_WALL_TIME_MS, ...(params.network ? { network: params.network } : {}) });
   response.cancel();
   if (response.status >= 300 && response.status < 400) {
     // Following the hop would dispatch the signed payload to a destination this
@@ -247,6 +249,6 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
     throw new Error('Webhook notification destination returned a redirect');
   }
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Webhook notification failed with status ${response.status}`);
+    throw createHttpStatusError(response.status, `Webhook notification failed with status ${response.status}`);
   }
 }

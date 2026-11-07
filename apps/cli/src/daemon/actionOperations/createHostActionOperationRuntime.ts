@@ -256,7 +256,9 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     const template = request.actionId === 'deployments.templates.instantiate'
       ? DeploymentActionInputSchemasV1['deployments.templates.instantiate'].safeParse(request.input) : null;
     if (!scope || !spec || !(request.operation ?? spec.operation) || template?.success && template.data.mode === 'preview') {
-      if (carriesNativeConfirmation(request.rpcContext)) return { ok: false,
+      // Actions without a host operation consume their carried review in the action executor.
+      if (!scope && (request.operation ?? spec?.operation)
+        && carriesNativeConfirmation(request.actionId, request.rpcContext)) return { ok: false,
         errorCode: 'admission_unavailable', error: 'admission_unavailable' };
       return await request.execute({
         signal: new AbortController().signal,
@@ -307,7 +309,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       ...(request.existingDeploymentOperationId ? { existingDeploymentOperationId: request.existingDeploymentOperationId } : {}),
       ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
       ...(requestId ? { requestId } : {}),
-      ...(carriesNativeConfirmation(request.rpcContext) ? { rejoinPendingApproval: true as const } : {}),
+      ...(carriesNativeConfirmation(request.actionId, request.rpcContext) ? { rejoinPendingApproval: true as const } : {}),
       ...(request.rpcContext?.approvedActionReplay ? { approvedActionReplay: request.rpcContext.approvedActionReplay } : {}),
       input: request.input,
       ...(deploymentChildIdentity ? { deploymentChildIdentity } : {}),
@@ -545,7 +547,7 @@ export async function runHostActionOperation(
   // carried confirmation observes here before policy; the receiver consumes
   // that same private acceptance rather than joining its own invocation.
   if ((request.actionId === 'projects.open' || request.actionId === 'localServices.launcher.start')
-    && !carriesNativeConfirmation(context)) return request.execute(context);
+    && !carriesNativeConfirmation(request.actionId, context)) return request.execute(context);
   if (context.operationAcceptance?.actionId === request.actionId) return request.execute(context);
   return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context,
     ...(request.recoverPendingDeployment ? { recoverPendingDeployment: request.recoverPendingDeployment } : {}),
@@ -567,8 +569,9 @@ export async function runHostActionOperation(
 
 type ConfirmationContext = Pick<ActionExecutorContext, 'presentUserConfirmation' | 'externalActionExecutionAuthorization' | 'approvedActionReplay'>;
 
-function carriesNativeConfirmation(context?: ConfirmationContext): boolean {
-  return Boolean(context?.externalActionExecutionAuthorization && context.presentUserConfirmation?.inputDigest);
+export function carriesNativeConfirmation(actionId: string, context?: ConfirmationContext): boolean {
+  return Boolean(context?.externalActionExecutionAuthorization && context.presentUserConfirmation?.inputDigest
+    && context.presentUserConfirmation.actionId === actionId);
 }
 
 function readDeploymentOperationRequestId(actionId: string, input: unknown): string | undefined {

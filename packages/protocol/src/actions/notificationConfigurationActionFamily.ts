@@ -22,11 +22,20 @@ export type NotificationChannelConfigurationPatch = z.infer<typeof ChannelPatchS
 const PatchSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ChannelPatchSchema, { url: z.optional(WebhookUrlSchema) })).check(z.refine(value => Object.values(value).some(field => field !== undefined))));
 const ExpoPushPatchSchema = lazyZodSchema(() => ChannelPatchSchema.check(z.refine(value => Object.values(value).some(field => field !== undefined))));
 const ChannelTargetSchema = lazyZodSchema(() => z.strictObject({ channelId: ChannelIdSchema }));
+export const WebhookNotificationTestResultSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('delivered') }),
+  z.strictObject({ status: z.literal('refused'), reason: z.enum([
+    'channel_not_found', 'catalog_unavailable', 'signing_secret_unavailable', 'destination_rejected', 'http_rejected',
+  ]), httpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))) }),
+  z.strictObject({ status: z.literal('unreachable'), reason: z.string().check(z.minLength(1)) }),
+]));
+export type WebhookNotificationTestResult = z.infer<typeof WebhookNotificationTestResultSchema>;
 export const NotificationConfigurationActionInputSchemas = {
   'notifications.webhooks.list': z.strictObject({}),
   'notifications.webhooks.add': z.strictObject({ url: WebhookUrlSchema }),
   'notifications.webhooks.update': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ChannelTargetSchema, { patch: PatchSchema }))),
   'notifications.webhooks.remove': ChannelTargetSchema,
+  'notifications.webhooks.test': ChannelTargetSchema,
   'notifications.webhooks.signingSecret.set': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ChannelTargetSchema, { secret: z.string().check(z.minLength(1)) }))),
   'notifications.webhooks.signingSecret.clear': ChannelTargetSchema,
   'notifications.expoPush.update': z.strictObject({ patch: ExpoPushPatchSchema }),
@@ -53,6 +62,7 @@ export const NotificationConfigurationActionOutputSchemas = {
   'notifications.webhooks.add': MutationOutputSchema,
   'notifications.webhooks.update': MutationOutputSchema,
   'notifications.webhooks.remove': MutationOutputSchema,
+  'notifications.webhooks.test': WebhookNotificationTestResultSchema,
   'notifications.webhooks.signingSecret.set': MutationOutputSchema,
   'notifications.webhooks.signingSecret.clear': MutationOutputSchema,
   'notifications.expoPush.update': MutationOutputSchema,
@@ -75,6 +85,7 @@ export const NotificationConfigurationActionOutputSchemas = {
 export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   ...({
     'notifications.webhooks.add': { confirmVerb: { key: 'common.add', fallback: 'Add' } },
+    'notifications.webhooks.test': { confirmVerb: { key: 'common.send', fallback: 'Send' } },
     'notifications.webhooks.update': { confirmVerb: { key: 'common.update', fallback: 'Update' } },
     'notifications.webhooks.remove': { confirmVerb: { key: 'common.remove', fallback: 'Remove' }, irreversible: true },
     'notifications.webhooks.signingSecret.set': { confirmVerb: { key: 'common.save', fallback: 'Save' } },
@@ -83,11 +94,12 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
     'notifications.push.tokens.remove': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
   } as Partial<Record<typeof id, Pick<PreNormalizedActionSpec, 'confirmVerb' | 'irreversible'>>>)[id],
   id, approvalPolicy: { uiConfirmation: 'policy',
-    ...(id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request'
+    ...(id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request' || id === 'notifications.webhooks.test'
       ? { agentDefault: 'authority' as const, requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] as const } : {}),
   }, approval: { result: 'required' }, title: {
     'notifications.webhooks.list': 'List notification webhooks', 'notifications.webhooks.add': 'Add notification webhook',
     'notifications.webhooks.update': 'Configure notification webhook', 'notifications.webhooks.remove': 'Remove notification webhook',
+    'notifications.webhooks.test': 'Send a webhook test',
     'notifications.webhooks.signingSecret.set': 'Set notification webhook signing secret',
     'notifications.webhooks.signingSecret.clear': 'Clear notification webhook signing secret',
     'notifications.expoPush.update': 'Configure built-in push notifications',
@@ -102,6 +114,7 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
   }[id],
   description: id === 'notifications.expoPush.update'
     ? 'Update the existing built-in Expo push endpoint and its corresponding Account attention preferences together. Topic and preview delivery still intersect global topic and privacy rules; absent or deleted endpoints are not recreated.'
+    : id === 'notifications.webhooks.test' ? 'Send one fixed diagnostic payload to a configured channel through the Account daemon’s existing signed webhook delivery. Reports receiver acceptance, refusal or unreachability. Does not change notification preferences or validate automatic delivery policy. Ask first by default; retry only on another invocation.'
     : id === 'notifications.sounds.preview' ? 'Send one native local preview notification using the captured Account sound preset and this device’s current sound preference. Available on native mobile clients only.'
     : id.startsWith('notifications.desktop.') ? 'Read or request this desktop’s operating-system notification permission. Automation asks first by default; the OS still owns the permission decision.'
     : id.startsWith('notifications.push.tokens.') ? 'Read or remove the addressed captured Account push registration. Native token material is resolved privately and is never an Action operand or receipt.'
@@ -114,7 +127,7 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
     || id === 'notifications.push.permission.read' ? 'read'
     : id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request' || id === 'notifications.push.register'
       || id === 'notifications.sounds.preview' ? 'write' : 'danger',
-  requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
+  requiredAuthority: 'account_automation', executionPlacement: id === 'notifications.webhooks.test' ? 'account' : 'client', placements: [],
   bindings: { mcpToolName: id.replace(/[.]/g, '_').replace('signingSecret', 'signing_secret') },
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
   toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },

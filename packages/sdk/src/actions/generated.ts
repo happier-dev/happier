@@ -360,6 +360,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "notifications.webhooks.remove",
   "notifications.webhooks.signingSecret.clear",
   "notifications.webhooks.signingSecret.set",
+  "notifications.webhooks.test",
   "notifications.webhooks.update",
   "plugin.webhook.delivery.discard",
   "plugin.webhook.delivery.replay",
@@ -1901,6 +1902,7 @@ export type GeneratedActions = Readonly<{
         readonly clear: (input: PublicActionInputById["notifications.webhooks.signingSecret.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.signingSecret.clear">>;
         readonly set: (input: PublicActionInputById["notifications.webhooks.signingSecret.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.signingSecret.set">>;
       }> ;
+      readonly test: (input: PublicActionInputById["notifications.webhooks.test"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.test">>;
       readonly update: (input: PublicActionInputById["notifications.webhooks.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.update">>;
     }> ;
   }> ;
@@ -4383,6 +4385,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           clear: (input: PublicActionInputById["notifications.webhooks.signingSecret.clear"], options?: ActionExecutionOptions) => execute("notifications.webhooks.signingSecret.clear", input, options),
           set: (input: PublicActionInputById["notifications.webhooks.signingSecret.set"], options?: ActionExecutionOptions) => execute("notifications.webhooks.signingSecret.set", input, options),
         },
+        test: (input: PublicActionInputById["notifications.webhooks.test"], options?: ActionExecutionOptions) => execute("notifications.webhooks.test", input, options),
         update: (input: PublicActionInputById["notifications.webhooks.update"], options?: ActionExecutionOptions) => execute("notifications.webhooks.update", input, options),
       },
     },

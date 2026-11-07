@@ -9,6 +9,30 @@ import {
 } from './notificationConfigurationActionFamily.js';
 
 describe('notification signing secret Action input', () => {
+  it('asks before an agent sends an external webhook test unless that surface has an explicit waiver', () => {
+    const actionId = 'notifications.webhooks.test';
+    const spec = getActionSpec(actionId);
+    expect(spec.executionPlacement).toBe('account');
+    for (const surface of ['agent', 'mcp', 'ui'] as const) {
+      const context = { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation', actionCaller: { kind: 'host' } } as const;
+      expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1 }), context)).toBe(true);
+      expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: { [actionId]: [surface] } }), context)).toBe(false);
+    }
+  });
+  it('addresses only a configured webhook for test delivery and requires a reason for failed outcomes', () => {
+    const input = Object.entries(NotificationConfigurationActionInputSchemas)
+      .find(([id]) => id === 'notifications.webhooks.test')?.[1];
+    const output = Object.entries(NotificationConfigurationActionOutputSchemas)
+      .find(([id]) => id === 'notifications.webhooks.test')?.[1];
+    expect(input?.safeParse({ channelId: 'hook' }).success).toBe(true);
+    expect(input?.safeParse({ channelId: 'hook', url: 'https://other.example', body: 'private' }).success).toBe(false);
+    expect(output?.safeParse({ status: 'delivered' }).success).toBe(true);
+    expect(output?.safeParse({ status: 'refused', reason: 'http_rejected', httpStatus: 503 }).success).toBe(true);
+    expect(output?.safeParse({ status: 'unreachable', reason: 'ECONNREFUSED' }).success).toBe(true);
+    expect(output?.safeParse({ status: 'refused' }).success).toBe(false);
+    expect(output?.safeParse({ status: 'unreachable' }).success).toBe(false);
+  });
   it('admits an explicit local-notifications permission purpose without changing the default push request', () => {
     const schema = NotificationConfigurationActionInputSchemas['notifications.push.permission.request'];
     expect(schema.parse({})).toEqual({});

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import axios, { AxiosHeaders } from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -35,6 +36,35 @@ import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
 
 describe('finite host operation custody', () => {
+  it.each(['scope unavailable', 'native project receiver', 'native launcher receiver'] as const)(
+    'refuses carried native confirmation where the existing request owner is unavailable (%s)', async direction => {
+      const actionId = direction === 'native project receiver' ? 'projects.open'
+        : direction === 'native launcher receiver' ? 'localServices.launcher.start'
+          : 'machines.setup.apply';
+      const runtime = createHostActionOperationRuntime({ machineId: 'native-target',
+        resolveAccountId: async () => null });
+      const target = { kind: 'machine' as const, machineId: 'native-target' };
+      const context = { surface: 'ui' as const, authority: 'present_user' as const,
+        actionRequestId: 'original-native-request', externalActionTarget: target,
+        externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted',
+          binding: { accountId: 'alice', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 0 },
+            accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId, requestId: 'original-native-request',
+            machineId: target.machineId, installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43) } }),
+        presentUserConfirmation: { actionId, requestId: 'original-native-request', accountId: 'alice', serverId: 'home',
+          inputDigest: 'a'.repeat(43), target } as const,
+      };
+      let effects = 0;
+      const execute = async () => { effects++; return { ok: true as const, result: { completed: true } }; };
+      expect(await runtime.runActionOperation({ actionId, input: {}, context, execute }))
+        .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+      expect(effects).toBe(0);
+      // This unsupported private-carrier direction does not change ordinary
+      // native receiver routing or require a new receipt for local execution.
+      expect(await runtime.runActionOperation({ actionId, input: {}, context: { ...context, presentUserConfirmation: undefined }, execute }))
+        .toEqual({ ok: true, result: { completed: true } });
+      expect(effects).toBe(1);
+    },
+  );
   it('continues a partial Compose adoption under the same request key across transport retries', async () => {
     let sequence = 0;
     const runtime = createHostActionOperationRuntime({ machineId: 'target', resolveAccountId: async () => 'owner',

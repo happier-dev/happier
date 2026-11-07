@@ -25,6 +25,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/p
 import { PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 const inspectionTransport = vi.hoisted(() => ({ accounts: [] as string[], answer: null as unknown,
@@ -222,6 +223,14 @@ describe('Scripts canonical operation subscriptions', () => {
                         machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'account', accountEncryptionMode: 'plain',
                         actionId: 'projects.script.run', requestId: request.envelope.requestId, target: request.envelope.target,
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                        workspaceSyncAdmission: {
+                            relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+                            sourceWorkspaceRefId: input.workspace.workspaceId,
+                            source: { actorAccountId: 'account', custodianAccountId: 'account',
+                                machineId: input.workspace.machineId,
+                                installationId: createPlainMachineRowFixture({ id: input.workspace.machineId, accountId: 'account' }).installationId,
+                                role: 'manage', encryptionMode: 'plain' },
+                        },
                     } }));
                 }
                 if (path === '/v1/actions/projects.script.run') {
@@ -281,8 +290,8 @@ describe('Scripts canonical operation subscriptions', () => {
             if (policy === 'direct') {
                 // This is renewed explicit user intent, not an automatic fallback after the refusal.
                 await act(async () => { await hook.getCurrent().run('build', { kind: 'named', name: 'build' }, { kind: 'primary' }); });
-                expect(dispatched).toEqual([{ workspace, selection: { kind: 'named', name: 'build' }, choice: { kind: 'primary' } }]);
                 expect(hook.getCurrent().failure).toEqual({ key: 'build', code: 'permission_denied' });
+                expect(dispatched).toEqual([{ workspace, selection: { kind: 'named', name: 'build' }, choice: { kind: 'primary' } }]);
                 if (reason === 'worker_copy_missing') {
                     // Sync's committed setup makes the target observable as eligible. A changed
                     // census is not renewed Run intent and must not replay the refused request.

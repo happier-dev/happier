@@ -29,18 +29,41 @@ import { createCliActionDeps } from './createCliActionDeps';
 import { normalizeWorkflowActionThrownError } from './workflowActionExecutor';
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
-import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
+import { commitActiveNotificationChannelCatalog, commitActiveSavedSecretCatalog, getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { publishServerHttpRuntimeOrigin, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { bindAutomationWorkflowInputs } from '@/daemon/workflows/input';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { notificationSettingsFixture as accountSettingsParse, notificationCatalogFixture } from '@/notifications/activity/activityNotification.testkit';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { configuration } from '@/configuration';
+
+import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { recordPresentUserApprovalV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import type { ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+
+function confirmedAccountInvocation(actionId: ActionId, input: unknown, accountId = 'account', machineId = 'notification-machine', directory?: string): ActionExecutorContext {
+  const requestId = crypto.randomUUID();
+  const target = { kind: 'machine' as const, machineId, ...(directory ? { project: { machineId, directory } } : {}) };
+  const review = recordPresentUserApprovalV1({ actionId, input, requestId, requestSurface: 'ui', decidingAccountId: accountId });
+  return { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
+    serverId: 'notification-home', serverIdentityId: 'notification-home', actionRequestId: requestId, externalActionTarget: target,
+    // This fixture starts at the receiving host with the Home's private admission carrier.
+    externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted',
+      binding: { accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'notification-home', actionId, requestId,
+        machineId, installationId: 'notification-installation', target, requestEnvelopeDigest: 'a'.repeat(43) } }),
+    presentUserConfirmation: { actionId, requestId, accountId, serverId: 'notification-home', target, inputDigest: review.inputDigest },
+  };
+}
 
 function hostParams(settings = accountSettingsParse({}), workflowAction?: ActionExecutorDeps['workflowAction']) {
   if (getActiveAccountSettingsSnapshot()?.settings !== settings) {
@@ -73,6 +96,93 @@ describe('CLI Notify me host composition', () => {
         : url.endsWith('/v1/push-tokens')
           ? { tokens: [{ id: 'device-1', token: 'ExponentPushToken[test]', createdAt: 1, updatedAt: 1 }] }
           : { badgeCount: 0 } }));
+  });
+
+  it.each(['ordinary', 'native-confirmed'] as const)('tests one configured webhook with its real signature, reports refusal, and retries only when invoked again (%s)', async admission => {
+    const observed: { body: Buffer; signature: string | undefined }[] = [];
+    const receiver = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const signature = request.headers['x-happier-signature-256'];
+      observed.push({ body: Buffer.concat(chunks), signature: typeof signature === 'string' ? signature : undefined });
+      response.writeHead(observed.length === 1 ? 503 : 204); response.end();
+    });
+    receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
+    try {
+      const address = receiver.address();
+      if (!address || typeof address === 'string') throw new Error('Loopback receiver unavailable');
+      const settings = accountSettingsParse({});
+      hostParams(settings);
+      const snapshot = getActiveAccountSettingsSnapshot();
+      if (!snapshot?.scopeKey) throw new Error('Missing admitted snapshot');
+      const incumbent = { scopeKey: snapshot.scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
+      const secret = ' byte-exact webhook test signing\n';
+      expect(commitActiveNotificationChannelCatalog({ ...incumbent,
+        catalog: { status: 'ready', revision: 8, diagnostics: [], channels: [NotificationChannelRecordV1Schema.parse({
+          v: 1, kind: 'webhook', id: 'test-channel', enabled: false, topics: {},
+          url: `http://127.0.0.1:${address.port}/test`, signingSecretRef: 'happier:shared-secret:v1:test-signing',
+        })] } })).toBe(true);
+      expect(commitActiveSavedSecretCatalog({ ...incumbent, state: 'ready', resources: [{ resourceId: 'test-signing', ownerAccountId: 'account',
+          displayName: 'Signing', kind: 'other', revision: 1, encryptionMode: 'plain', materialStatus: 'ready',
+          storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'test-signing', mode: 'plain',
+            content: { v: 1, name: 'Signing', kind: 'other', value: secret } }) }] })).toBe(true);
+      const home = resolveServerHttpBaseUrl();
+      let signingAvailable = true;
+      const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{ resourceId: 'test-signing',
+        encryptionMode: 'plain', recipientEnvelope: null,
+        entry: { ref: 'happier:shared-secret:v1:test-signing', source: 'shared_resource', relationship: 'owner',
+          ownerAccountId: 'account', name: 'Signing', kind: 'other', revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'test-signing', mode: 'plain',
+          content: { v: 1, name: 'Signing', kind: 'other', value: secret } }) }] });
+      // Account material hydration is a real HTTP boundary; the sender still uses the actual loopback socket.
+      boundary.get.mockImplementation(async (url: string) => {
+        expect(url).toBe(`${home}/v1/account/saved-secrets/resources/materials`);
+        return { status: 200, data: { resources: signingAvailable ? materials.resources : [] } };
+      });
+      const admittedSnapshot = getActiveAccountSettingsSnapshot();
+      if (!admittedSnapshot) throw new Error('Missing configured snapshot');
+      const operation = createInvocationSavedSecretOperationContextV1({ credentials: { token: 'account-token', encryption: null },
+        snapshot: admittedSnapshot, serverHttpBaseUrl: home, isCurrent: async () => true });
+      const operations = createHostActionOperationRuntime({ machineId: 'notification-machine', resolveAccountId: async () => 'account' });
+      const params = { ...hostParams(settings), savedSecretOperationContext: operation };
+      const executor = admission === 'native-confirmed'
+        ? createCliActionExecutorHarness(params, { runActionOperation: operations.runActionOperation }).executor
+        : createActionExecutor(createCliActionDeps(params));
+      const actionId = 'notifications.webhooks.test';
+      const context = { surface: 'cli' as const, actionsSettings: normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: { [actionId]: ['cli'] } }) };
+      const send = (channelId: string) => executor.execute(actionId, { channelId }, admission === 'native-confirmed'
+        ? confirmedAccountInvocation(actionId, { channelId }) : context);
+      await expect(send('test-channel'))
+        .resolves.toEqual({ ok: true, result: { status: 'refused', reason: 'http_rejected', httpStatus: 503 } });
+      expect(observed).toHaveLength(1);
+      await expect(send('test-channel'))
+        .resolves.toEqual({ ok: true, result: { status: 'delivered' } });
+      expect(observed).toHaveLength(2);
+      for (const request of observed) {
+        expect(request.signature).toBe(`sha256=${createHmac('sha256', secret).update(request.body).digest('hex')}`);
+        const payload = JSON.parse(request.body.toString());
+        expect(payload).toMatchObject({ channelId: 'test-channel', topic: 'notify_me' });
+        expect(payload.session).toBeUndefined();
+        expect(request.body.toString()).not.toContain(secret);
+      }
+      await expect(send('missing'))
+        .resolves.toEqual({ ok: true, result: { status: 'refused', reason: 'channel_not_found' } });
+      expect(observed).toHaveLength(2);
+      expect(boundary.send).not.toHaveBeenCalled();
+      signingAvailable = false;
+      await expect(send('test-channel'))
+        .resolves.toEqual({ ok: true, result: { status: 'refused', reason: 'signing_secret_unavailable' } });
+      expect(observed).toHaveLength(2);
+      signingAvailable = true;
+      receiver.close(); await once(receiver, 'close');
+      await expect(send('test-channel'))
+        .resolves.toEqual({ ok: true, result: { status: 'unreachable', reason: 'ECONNREFUSED' } });
+      expect(observed).toHaveLength(2);
+    } finally {
+      if (receiver.listening) { receiver.close(); await once(receiver, 'close'); }
+    }
   });
 
   it('refuses unavailable channel discovery and Notify me without substituting registered push', async () => {
@@ -285,10 +395,17 @@ describe('CLI Notify me host composition', () => {
       randomBytes: () => { throw new Error('plain_account_does_not_need_keys'); },
     });
     const workflowAction: NonNullable<ActionExecutorDeps['workflowAction']> = async (args) => {
-      if (args.actionId !== 'workflow.run.get') throw new Error('unexpected_workflow_operation');
+      if (args.actionId !== 'workflow.run.get' && args.actionId !== 'workflow.run.start') throw new Error('unexpected_workflow_operation');
       try { return await runOwner.execute(args); }
       catch (error) { return normalizeWorkflowActionThrownError(error); }
     };
+    const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'account-1' });
+    const startInput = { runId, source: { kind: 'saved' as const, definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 } } };
+    const { executor: confirmedExecutor } = createCliActionExecutorHarness(hostParams(accountSettingsParse({}), workflowAction),
+      { runActionOperation: operations.runActionOperation });
+    await expect(confirmedExecutor.execute('workflow.run.start', startInput,
+      confirmedAccountInvocation('workflow.run.start', startInput, 'account-1', 'machine-a', '/repo')))
+      .resolves.toMatchObject({ ok: true, result: { admission: 'existing', run: { id: runId } } });
     const deps = host(accountSettingsParse({}), workflowAction);
     const executor = createActionExecutor(deps);
     const input = { message: 'Panel finished', title: 'Review', channels: ['builtin:expo_push'],
