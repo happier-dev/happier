@@ -137,11 +137,15 @@ function phaseEligible(value: unknown, badge: boolean): boolean {
     return value.state.phase === 'queued' || value.state.phase === 'running' || (badge && value.state.phase === 'waiting');
 }
 
-export function createForgeCiReadsV1({ adapter, scopeKey }: Readonly<{ adapter: ForgeCiAdapterV1; scopeKey: string }>): ForgeCiReadsV1 {
+export function createForgeCiReadsV1({ adapter, scopeKey, authorityFailure: refused = null }: Readonly<{
+    adapter: ForgeCiAdapterV1; scopeKey: string;
+    /** The host refused read authority before any read: every query settles to this failure and reads nothing. */
+    authorityFailure?: TriageSourceFailureV1 | null;
+}>): ForgeCiReadsV1 {
     const entries = new Map<string, Entry>();
     const logIndexes = new Map<string, Map<string, IndexedLog>>();
     let retired = false;
-    let authorityFailure: TriageSourceFailureV1 | null = null;
+    let authorityFailure: TriageSourceFailureV1 | null = refused;
     const active = (entry: Entry) => !retired && authorityFailure === null && [...entry.demands].some(demand => demand.active);
     const transport = (entry: Entry) => [...entry.demands].find(demand => demand.active);
     const retainedImmutableLog = (entry: Entry) => entry.operation === 'readJobLog'

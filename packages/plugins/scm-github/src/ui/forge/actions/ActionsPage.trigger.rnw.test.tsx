@@ -256,3 +256,53 @@ describe('Actions trigger and lens parity', () => {
     expect(calls).toHaveLength(initialReads);
   });
 });
+
+describe('Actions when reads cannot start', () => {
+  async function mountRefused(subPath: string, surface: Partial<Parameters<typeof createSurfaceContextFixture>[0]> = {}) {
+    const counts = { watches: 0, reads: 0 };
+    const entries = new Map<string, { value: unknown; dispose(): void }>();
+    function acquire<T>(key: string, create: () => { value: T; dispose(): void }) {
+      if (!entries.has(key)) entries.set(key, create());
+      const entry = entries.get(key)!;
+      return { value: entry.value as T, release() {}, retire() { if (entries.get(key) === entry) { entries.delete(key); entry.dispose(); } } };
+    }
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({
+        identity: { instanceId: 'ci-refused', mountNonce: 'ci-refused' }, authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(context => <GithubActionsPage context={context} />), subPath,
+        surfaceContext: createSurfaceContextFixture({ mountId: 'ci-refused', target: { kind: 'project', projectKey: 'project', repository }, ...surface }),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: { acquire, acquireExecutionBound: acquire } }),
+        handlers: {
+          watchResource: async () => { counts.watches++; throw new Error('Read authority is unavailable'); },
+          replacePageLocation: async ({ subPath: next }) => next,
+          executeAction: async () => { counts.reads++; return { kind: 'value', value: page }; },
+        },
+      });
+    });
+    mounted.push(fixture);
+    return { fixture, counts };
+  }
+
+  it('settles the Workflows list into one refusal with Try again instead of skeletons', async () => {
+    const { fixture, counts } = await mountRefused('workflows');
+    await vi.waitFor(async () => { await fixture.getByText('Couldn’t load workflows'); });
+    expect(counts).toEqual({ watches: 1, reads: 0 });
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Try again' })); });
+    // Try again asks the host for read authority again; it still reads nothing GitHub-side while refused.
+    await vi.waitFor(() => expect(counts.watches).toBe(2));
+    expect(counts.reads).toBe(0);
+  });
+
+  it('settles an open Workflow pane into the same refusal instead of a skeleton', async () => {
+    const { fixture, counts } = await mountRefused('workflows/42');
+    await vi.waitFor(async () => { await fixture.getByText('Couldn’t load Workflow'); });
+    expect(counts.reads).toBe(0);
+  });
+
+  it('settles the runs lens when the host says the Machine cannot run reads', async () => {
+    const { fixture, counts } = await mountRefused('runs', { machineConnectionPending: false, machineExecutionReady: false });
+    await vi.waitFor(async () => { await fixture.getByText('Couldn’t load runs'); });
+    expect(counts).toEqual({ watches: 0, reads: 0 });
+  });
+});

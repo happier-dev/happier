@@ -3,11 +3,17 @@ import { usePluginHostApi, usePluginHostReadiness, usePluginSurfaceActivity, use
 import type { Disposable, PluginEphemeralSharedValueLease } from '@happier-dev/plugin-sdk';
 import type { PluginUiReadAuthorityReference } from '@happier-dev/plugin-sdk/ui';
 import type { ForgeCiActionInputByOperationV1 } from '@happier-dev/triage-protocol/ci/v1';
+import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type { ForgeCiAdapterV1 } from '../runtime/adapter.js';
 import {
   createForgeCiReadsV1, forgeCiReadQueryKeyV1,
   type ForgeCiReadDemandV1, type ForgeCiReadLeaseV1, type ForgeCiReadOperationV1, type ForgeCiReadsV1,
 } from '../runtime/reads.js';
+
+/** The host refused this mount's read authority (no reachable sign-in or Machine); the failure the surfaces show. */
+const READ_AUTHORITY_REFUSED: TriageSourceFailureV1 = { class: 'transient', code: 'ci_read_authority_unavailable' };
+/** The host settled that this mount's Machine cannot run reads now (offline or not admitted). */
+const EXECUTION_UNAVAILABLE: TriageSourceFailureV1 = { class: 'transient', code: 'ci_execution_unavailable' };
 
 /** Acquire host sharing only after commit; a retired scope never gets a fallback. */
 export function useForgeCiReadsV1(options: Readonly<{
@@ -19,11 +25,13 @@ export function useForgeCiReadsV1(options: Readonly<{
   const scope = usePluginUiEphemeralSharedScope();
   const readiness = usePluginHostReadiness();
   const [held, setHeld] = useState<Readonly<{ scope: typeof scope; options: typeof options; readinessRevision: number; reads: ForgeCiReadsV1 }> | null>(null);
+  // An explicit Retry on a refused mount asks the host for read authority again; nothing retries on its own.
+  const [admissionAttempt, setAdmissionAttempt] = useState(0);
   useEffect(() => {
     // The host owns admission and its push-driven re-acquisition edge. Issuing
     // the authority watch while it is pending would settle a premature refusal
     // with no later wake when the same physical mount becomes ready.
-    if (readiness.pending || readiness.ready === false || options.signal?.aborted || options.readAuthority === null) { setHeld(null); return; }
+    if (readiness.pending || options.signal?.aborted || options.readAuthority === null) { setHeld(null); return; }
     const observation = new AbortController();
     let watch: Disposable | undefined;
     let lease: PluginEphemeralSharedValueLease<ForgeCiReadsV1> | null = null;
@@ -36,15 +44,17 @@ export function useForgeCiReadsV1(options: Readonly<{
     };
     const retire = () => { release(); setHeld(null); };
     options.signal?.addEventListener('abort', retire, { once: true });
-    const create = () => {
-      const reads = createForgeCiReadsV1(options);
+    const create = (authorityFailure: TriageSourceFailureV1 | null = null) => {
+      const reads = createForgeCiReadsV1({ ...options, authorityFailure });
       return { value: reads, dispose: () => reads.retire() };
     };
-    const acquire = () => {
+    const acquire = (refusal: TriageSourceFailureV1 | null = null) => {
       if (observation.signal.aborted) return;
-      lease = scope?.acquireExecutionBound?.(`forge-ci/reads/v1/${options.scopeKey}`, create) ?? null;
-      if (scope && !lease) { setHeld(null); return; }
-      local = scope ? null : create();
+      // A refused mount keeps its own unshared reads: every query settles to the refusal (the surfaces' one failure
+      // state) and reads nothing, while an admitted mount of the same scope still shares its reads.
+      lease = refusal === null ? scope?.acquireExecutionBound?.(`forge-ci/reads/v1/${options.scopeKey}`, () => create()) ?? null : null;
+      if (refusal === null && scope && !lease) { setHeld(null); return; }
+      local = lease ? null : create(refusal);
       const reads = lease?.value ?? local!.value;
       const demandForMount = (demand?: ForgeCiReadDemandV1): ForgeCiReadDemandV1 => {
         const signal = options.signal?.aborted ? options.signal : demand?.signal ?? options.signal;
@@ -52,7 +62,9 @@ export function useForgeCiReadsV1(options: Readonly<{
       };
       // The shared controller owns the Demand set. This facade contributes only
       // this physical mount's current transport and existing renderer lifetime.
-      function bindLease<T extends Readonly<{ release(): void }>>(query: T): T {
+      function bindLease<T extends Readonly<{ release(): void; refresh(): Promise<void> }>>(admitted: T): T {
+        const query = refusal === null ? admitted
+          : { ...admitted, refresh: () => { setAdmissionAttempt(attempt => attempt + 1); return Promise.resolve(); } };
         if (!options.signal) return query;
         const release = () => { options.signal?.removeEventListener('abort', release); query.release(); };
         options.signal.addEventListener('abort', release, { once: true });
@@ -67,7 +79,10 @@ export function useForgeCiReadsV1(options: Readonly<{
       };
       setHeld({ scope, options, readinessRevision: readiness.revision, reads: bound });
     };
-    if (options.readAuthority) {
+    // A settled outage (the host says this Machine cannot run reads) is a failure with Retry, never a skeleton; the
+    // host's re-admission revision re-runs this effect when the Machine comes back.
+    if (readiness.ready === false) acquire(EXECUTION_UNAVAILABLE);
+    else if (options.readAuthority) {
       void host.watchResource(options.readAuthority, event => {
         if (observation.signal.aborted || event.kind !== 'error') return;
         // Revocation ends this open observation, not finite work already
@@ -78,13 +93,13 @@ export function useForgeCiReadsV1(options: Readonly<{
         if (observation.signal.aborted) { void subscription.dispose(); return; }
         watch = subscription;
         acquire();
-      }, () => { if (!observation.signal.aborted) { release(); setHeld(null); } });
+      }, () => { if (!observation.signal.aborted) acquire(READ_AUTHORITY_REFUSED); });
     } else acquire();
     if (options.signal?.aborted) retire();
     return () => { options.signal?.removeEventListener('abort', retire); release(); };
   }, [host, scope, options.adapter, options.scopeKey, options.signal, options.readAuthority,
-    readiness.pending, readiness.ready, readiness.revision]);
-  return !readiness.pending && readiness.ready !== false && held?.readinessRevision === readiness.revision
+    readiness.pending, readiness.ready, readiness.revision, admissionAttempt]);
+  return !readiness.pending && held?.readinessRevision === readiness.revision
     && held.scope === scope && held.options.adapter === options.adapter && held.options.scopeKey === options.scopeKey
     && held.options.signal === options.signal && held.options.readAuthority === options.readAuthority
     && options.signal?.aborted !== true ? held.reads : null;
