@@ -2,7 +2,7 @@ import { MENTION_KIND_V1, parseMentionRefV1 } from '@happier-dev/protocol/runtim
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import type { SessionDraftSessionMessagingValueV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { ActionSessionFanoutResultV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
-import { SessionMessageSendResultV1Schema, type SessionMessageSendResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionMessageSendResultV1Schema, SessionMessageSendActionResultV1Schema, type SessionMessageSendResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
@@ -10,8 +10,100 @@ import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/inpu
 import type { RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { captureComposerContentSubmission, releaseComposerContent } from '@/sync/domains/transfers/runtime/transferRuntime/families/composerMediaStageTransfers';
 import type { ComposerSubmissionSnapshot } from './composerSubmissionCoordinator';
+import { projectSessionMessageInvocationV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageInvocationV1';
+import { persistSessionMessageInvocation } from '@/sync/api/session/sessionMessageInvocationApi';
+import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readSessionMessagingDraftMutationAttempt, retainSessionMessagingDraftCustody, flushSessionDraftLocally,
+    type SessionDraftRepository, type SessionMessagingDraftCustody } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 export type SessionComposerMessageIntent = SessionDraftSessionMessagingValueV1;
+
+export async function recordSessionComposerMessageResult(input: Readonly<{
+    scope: ServerAccountScope;
+    sessionId: string;
+    localId: string;
+    text: string;
+    intent: Exclude<SessionComposerMessageIntent, { kind: 'post_update' }>;
+    result: ActionExecuteResult;
+    isCurrent: () => boolean;
+}>): Promise<void> {
+    if (!input.isCurrent()) throw new Error('Composer submission retired');
+    if (input.result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(input.result.result).success) return;
+    const invocation = projectSessionMessageInvocationV1({ serverId: input.scope.serverId, localId: input.localId,
+        requestLocalId: input.localId, target: input.intent.target,
+        reply: input.intent.kind === 'ask' ? input.intent.reply ?? 'return' : 'none', result: input.result });
+    await persistSessionMessageInvocation({ ...input, invocation });
+}
+
+/** The composer admits the real Action and retains its result before relinquishing the captured draft. */
+export async function submitSessionComposerMessagingAction(input: Omit<Parameters<typeof recordSessionComposerMessageResult>[0], 'result'>
+    & Readonly<{ execute: FrontDoorActionExecute; actionInput: unknown; context: Parameters<FrontDoorActionExecute>[2];
+        /** Captured Home/Account authority survives presentation retirement, never Account retirement. */
+        isAccountCurrent: () => boolean;
+        draftRepository?: Pick<SessionDraftRepository, 'readSessionMessagingDraftMutationAttempt' | 'retainSessionMessagingDraftCustody' | 'flushSessionDraftLocally'>;
+    }>): Promise<ActionExecuteResult> {
+    if (!input.isCurrent()) throw new Error('Composer submission retired');
+    const repository = input.draftRepository ?? { readSessionMessagingDraftMutationAttempt, retainSessionMessagingDraftCustody, flushSessionDraftLocally };
+    const attempt = repository.readSessionMessagingDraftMutationAttempt(input);
+    if (!attempt || attempt.localId !== input.localId) throw new Error('Composer draft attempt unavailable');
+    let custody = attempt.custody;
+    const addressKey = (target: SessionMessagingDraftCustody['targets']['targets'][number]) => JSON.stringify([target.serverId, target.sessionId]);
+    const previous = new Map(custody?.results.map(row => [addressKey(row.target), row]));
+    const remaining = custody?.targets.targets.filter(target => {
+        const row = previous.get(addressKey(target));
+        return !row?.result.ok || !hasAdmittedInput(row.result.result);
+    });
+    let resolved = custody && remaining?.length ? { ...custody.targets, targets: remaining } : input.context?.sessionTargetsV1;
+    const retain = () => {
+        if (!custody || !input.isCurrent() || !repository.retainSessionMessagingDraftCustody({ ...input, custody })) {
+            throw new Error('Composer draft attempt retired');
+        }
+    };
+    // A settled private receipt is real admission evidence, not a transcript
+    // inference. Only unresolved leaves enter the existing Action executor.
+    const result: ActionExecuteResult = custody && remaining?.length === 0
+        ? custody.targets.selector ? { ok: true, result: { kind: 'fanout', results: custody.results } } : custody.results[0].result
+        : await input.execute('session.message.send', input.actionInput, {
+        ...input.context,
+        ...(resolved ? { sessionTargetsV1: resolved } : {}),
+        onSessionTargetsResolved: notice => {
+            resolved = notice.targets;
+            custody ??= { targets: notice.targets, results: [] };
+            // The repository persists this local supplement synchronously, before
+            // fanout effects, and never seals it into the Account draft payload.
+            retain();
+            input.context?.onSessionTargetsResolved?.(notice);
+        },
+    });
+    if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
+        await repository.flushSessionDraftLocally(input);
+        return result;
+    }
+    const fanout = result.ok ? ActionSessionFanoutResultV1Schema.safeParse(result.result) : null;
+    // A root refusal/unknown after target preparation still names the concrete
+    // attempted leaves. Resolution itself failing has no invented recipients.
+    const results = fanout?.success ? fanout.data.results : resolved?.targets.map(target => ({ target, result }));
+    let combined = result;
+    if (custody && results?.length) {
+        const current = SessionMessageSendActionResultV1Schema.parse({ kind: 'fanout', results });
+        if (!('kind' in current)) throw new Error('Expected exact message results');
+        const settled = new Map(current.results.map(row => [addressKey(row.target), row]));
+        custody = { targets: custody.targets, results: custody.targets.targets.map(target => {
+            const known = previous.get(addressKey(target));
+            const row = known?.result.ok && hasAdmittedInput(known.result.result) ? known : settled.get(addressKey(target)) ?? known;
+            if (!row) throw new Error('Missing exact message result');
+            return row;
+        }) };
+        // Even if editing retired this draft while the send was in flight, the
+        // real Action result still belongs in its source presentation entry.
+        if (input.isAccountCurrent()) repository.retainSessionMessagingDraftCustody({ ...input, custody });
+        await repository.flushSessionDraftLocally(input);
+        combined = custody.targets.selector ? { ok: true, result: { kind: 'fanout', results: custody.results } } : custody.results[0].result;
+    }
+    await recordSessionComposerMessageResult({ ...input, result: combined, isCurrent: input.isAccountCurrent });
+    return combined;
+}
 
 /** Freeze source bytes once before target fanout; the caller releases its captures after all leaves settle. */
 export async function captureSessionComposerMessageAttachments(input: Readonly<{
@@ -89,11 +181,6 @@ export function readSessionComposerMessageIntent(
     return sessionId.success ? { kind: 'ask', target: sessionId.data } : null;
 }
 
-function hasAdmittedInput(value: unknown): boolean {
-    const parsed = SessionMessageSendResultV1Schema.safeParse(value);
-    return parsed.success && parsed.data.status !== 'rejected' && parsed.data.status !== 'outcomeUnknown';
-}
-
 export type AdmittedSessionComposerMessageResult = Exclude<SessionMessageSendResultV1, { status: 'rejected' | 'outcomeUnknown' }>;
 
 /** One admission interpretation for mounted messaging and detached draft submission. */
@@ -107,6 +194,9 @@ export function readSessionComposerMessageAdmission(value: unknown):
         : { kind: 'accepted', receipt: parsed.data };
 }
 
+function hasAdmittedInput(value: unknown): boolean {
+    return readSessionComposerMessageAdmission(value).kind === 'accepted';
+}
 
 export type SessionComposerMessagingOutcome =
     | Readonly<{ kind: 'accepted' }>

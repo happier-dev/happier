@@ -7,6 +7,7 @@ import { ComposerOperationV1Schema, ComposerTransactionV1Schema, type ComposerDe
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
+import type { NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type {
     CurrentSessionPresentationIntentResultV1,
@@ -45,6 +46,7 @@ import { createExistingSessionComposerDocumentOwner, type SessionComposerDocumen
 import type { ComposerPresentationDocumentMutation } from '@/components/sessions/composer/composerDocumentOwner';
 export type { ComposerPresentationDocumentMutation } from '@/components/sessions/composer/composerDocumentOwner';
 import { randomUUID } from '@/platform/randomUUID';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { pickAndStageComposerMedia } from '@/sync/domains/transfers/ops/pickAndStageComposerMedia';
 import {
     getComposerMediaContentAvailability,
@@ -70,6 +72,7 @@ import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionCompanionMutationObserver } from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
+import type { PromptPickerActionPort } from '@/components/sessions/agentInput/commandMenu/promptPickerActionPort';
 
 type ComposerMentionRef = ComposerSnapshotV1['references'][number];
 
@@ -222,6 +225,8 @@ export type ComposerPresentationTarget = Readonly<{
     blurComposer?: () => boolean | void;
     /** Opens this mounted input's picker without reading or changing its draft. */
     openPromptPicker?: () => boolean;
+    /** Current open leaf only; closed composers retain no prompt/history detail owner. */
+    readPromptPicker?: () => PromptPickerActionPort | null;
     /** Opens the incumbent file picker; selection and staging remain with its attachment owner. */
     openAttachmentPicker?: () => boolean;
     /**
@@ -234,6 +239,7 @@ export type ComposerPresentationTarget = Readonly<{
     hasActionChip?: (chipKey: string) => boolean;
     /** The mounted New Session directory owner; never a launch or filesystem write. */
     applyNewSessionDirectoryIntent?: (intent: SessionDirectoryIntentV1, expectedScope?: Readonly<Partial<ServerAccountScope>>) => boolean;
+    applyNewSessionModelIntent?: (intent: NewSessionDraftModelIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>) => Promise<boolean>;
     /**
      * Projects an ephemeral, owner-scoped decoration into the incumbent input.
      * The owner plus key is the visual identity; it must not mutate text,
@@ -288,6 +294,25 @@ export function useStableComposerPresentationTarget(
         targetKey: string;
         target: ComposerPresentationTarget;
     }> | null>(null);
+    const publishedScopeRef = React.useRef<Readonly<{
+        targetKey: string;
+        scope: ServerAccountScope | null;
+    }> | null>(null);
+
+    React.useLayoutEffect(() => {
+        let scope: ServerAccountScope | null = null;
+        try { scope = latestTargetRef.current.readScope?.() ?? null; }
+        catch { /* Unavailable scope remains closed until the producer updates. */ }
+        const previous = publishedScopeRef.current;
+        if (previous?.targetKey === targetKey && (
+            (previous.scope === null && scope === null)
+            || areServerAccountScopesEqual(previous.scope, scope)
+        )) return;
+        publishedScopeRef.current = { targetKey, scope: scope ? { ...scope } : null };
+        // Registration publishes the initial document. Later scope hydration
+        // changes admission without editing it or replacing its stable adapter.
+        if (previous?.targetKey === targetKey) emit(ref);
+    });
 
     if (stableTargetRef.current?.targetKey !== targetKey) {
         const readCurrent = () => latestTargetRef.current;
@@ -330,6 +355,9 @@ export function useStableComposerPresentationTarget(
                 ...(target.openPromptPicker ? {
                     openPromptPicker: () => readCurrent().openPromptPicker?.() ?? false,
                 } : {}),
+                ...(target.readPromptPicker ? {
+                    readPromptPicker: () => readCurrent().readPromptPicker?.() ?? null,
+                } : {}),
                 ...(target.openAttachmentPicker ? {
                     openAttachmentPicker: () => readCurrent().openAttachmentPicker?.() ?? false,
                 } : {}),
@@ -341,6 +369,9 @@ export function useStableComposerPresentationTarget(
                 } : {}),
                 ...(target.applyNewSessionDirectoryIntent ? {
                     applyNewSessionDirectoryIntent: (intent, expectedScope) => readCurrent().applyNewSessionDirectoryIntent?.(intent, expectedScope) ?? false,
+                } : {}),
+                ...(target.applyNewSessionModelIntent ? {
+                    applyNewSessionModelIntent: async (intent, expectedScope) => await readCurrent().applyNewSessionModelIntent?.(intent, expectedScope) ?? false,
                 } : {}),
                 ...(target.setComposerDecorations ? {
                     setComposerDecorations: (input) => readCurrent().setComposerDecorations!(input),
@@ -531,7 +562,6 @@ function createPersistentSessionComposerTarget(
     const isCurrent = binding?.isCurrent ?? (() => isPersistentSessionDraftCurrent(scope, sessionId));
     const owner = createExistingSessionComposerDocumentOwner({ scope, ref, isCurrent });
     const readSnapshot = (): ComposerSnapshotV1 => {
-        const state = storage.getState();
         const session = binding?.session ?? readPersistentSession(storage.getState(), scope, sessionId);
         const editable = session?.access?.capabilities.submitAgentInput === true;
         return projectComposerDocumentSnapshot({
@@ -543,7 +573,7 @@ function createPersistentSessionComposerTarget(
                 editable,
                 submittable: editable,
                 submitting: false,
-                running: state.sessions[sessionId]?.active === true,
+                running: session?.active === true,
             },
         });
     };
@@ -1609,13 +1639,18 @@ export function createComposerPresentationTransactionApplier(input: Readonly<{
             return Object.freeze({ target: null, isTargetCurrent: () => false });
         }
         const addressKey = sessionAddressKey(address);
-        const target = resolveQualifiedSessionTarget(addressKey);
+        const readExactTarget = (): ComposerPresentationTarget | null => input.scope === undefined
+            ? resolveQualifiedSessionTarget(addressKey)
+            : input.scope && sessionAddressKey({ serverId: input.scope.serverId, sessionId: ref.sessionId }) === addressKey
+                ? resolveScopedMountedComposerTarget(ref, input.scope)
+                : null;
+        const target = readExactTarget();
         return Object.freeze({
             target,
             isTargetCurrent: (candidate) => (
                 target !== null
                 && candidate === target
-                && resolveQualifiedSessionTarget(addressKey) === target
+                && readExactTarget() === target
                 && isComposerPresentationTargetCurrent(target)
             ),
         });
@@ -1674,7 +1709,11 @@ export function applyComposerPresentationTransaction(
     });
 }
 
-function resolveScopedMountedComposerTarget(ref: ComposerRefV1, scope: ServerAccountScope): ComposerPresentationTarget | null {
+function resolveScopedMountedComposerTarget(
+    ref: ComposerRefV1,
+    scope: ServerAccountScope,
+    requirePresented = true,
+): ComposerPresentationTarget | null {
     const registrations = ref.kind === 'session'
         ? qualifiedSessionTargets.get(sessionAddressKey({ serverId: scope.serverId, sessionId: ref.sessionId }))
         : targets.get(composerRefV1Key(ref));
@@ -1683,7 +1722,15 @@ function resolveScopedMountedComposerTarget(ref: ComposerRefV1, scope: ServerAcc
         try { return areServerAccountScopesEqual(candidate.readScope(), scope); }
         catch { return false; }
     }));
-    return target && isComposerPresentationTargetPresented(target) ? target : null;
+    return target && (!requirePresented || isComposerPresentationTargetPresented(target)) ? target : null;
+}
+
+/** Scope-ready physical retention is independent of visibility; document operations keep their presented-only fences. */
+export function isScopedMountedComposerPresentationTargetReady(
+    ref: ComposerRefV1,
+    scope: ServerAccountScope | null | undefined,
+): boolean {
+    return scope != null && resolveScopedMountedComposerTarget(ref, scope, false) !== null;
 }
 
 function readScopedMountedComposerTarget(ref: ComposerRefV1, scope: ServerAccountScope): ComposerPresentationTarget | null {
@@ -1903,6 +1950,30 @@ export function registerComposerFocusTarget(ref: symbol, target: ComposerPresent
     return () => { remove(); };
 }
 
+/** Resolve exact Account and visual identity using the existing document registry. */
+export function readRegisteredComposerPromptPickerTarget(options: Readonly<{
+    ref?: ComposerRefV1;
+    scope: ServerAccountScope;
+}>): Readonly<{ composerRef: ComposerRefV1; target: ComposerPresentationTarget }> | null {
+    const read = (target: ComposerPresentationTarget | null, focusedOnly: boolean) => {
+        if (!target || !isComposerPresentationTargetCurrent(target) || !isComposerPresentationTargetPresented(target)
+            || !areServerAccountScopesEqual(target.readScope?.(), options.scope)) return null;
+        const snapshot = target.readSnapshot?.();
+        return snapshot && (!focusedOnly || snapshot.state.focused)
+            ? { composerRef: snapshot.ref, target } : null;
+    };
+    if (options.ref) return read(readScopedMountedComposerTarget(options.ref, options.scope), false);
+    for (const registrations of Array.from(targets.values()).reverse()) {
+        for (let index = registrations.length - 1; index >= 0; index -= 1) {
+            const target = registrations[index]!;
+            if (!isDocumentPresentationTarget(target)) continue;
+            const found = read(target, true);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
 /** Prompt display uses the same mounted document/address owner as focus and edits. */
 export function requestRegisteredComposerPromptPicker(options: Readonly<{
     ref?: ComposerRefV1;
@@ -1939,9 +2010,14 @@ export function applyRegisteredNewSessionDirectoryIntent(ref: ComposerRefV1, int
     if (ref.kind !== 'newSession') return false;
     const target = readRegisteredTarget(ref);
     if (!target || !isComposerPresentationTargetPresented(target)) return false;
-    const snapshot = target.readSnapshot?.();
-    if (!snapshot?.state.editable || snapshot.state.submitting) return false;
     return target.applyNewSessionDirectoryIntent?.(intent, expectedScope) === true;
+}
+
+export async function applyRegisteredNewSessionModelIntent(ref: ComposerRefV1, intent: NewSessionDraftModelIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>): Promise<boolean> {
+    if (ref.kind !== 'newSession') return false;
+    const target = readRegisteredTarget(ref);
+    if (!target || !isComposerPresentationTargetPresented(target)) return false;
+    return await target.applyNewSessionModelIntent?.(intent, expectedScope) === true;
 }
 
 /**
@@ -1953,10 +2029,10 @@ export function readComposerPresentationSnapshot(ref: ComposerRefV1, scope?: Ser
     return target?.readSnapshot?.() ?? null;
 }
 
+/** Exact-account draft observation uses the same mounted-or-persisted Session target as document Actions. */
 export function readSessionDraftComposerSnapshot(ref: Extract<ComposerRefV1, { kind: 'session' }>, scope: ServerAccountScope): ComposerSnapshotV1 | null {
     return readTarget(ref, scope)?.readSnapshot?.() ?? null;
 }
-
 
 /**
  * Scope adapters call this after their incumbent local draft owner advances
@@ -1988,7 +2064,7 @@ function subscribePersistentSessionComposerTarget(
         signature = nextSignature;
         if (readRegisteredTarget(ref)) return;
         listener();
-    });
+    }, { sessions: [sessionId], deletedSessionIds: [sessionId], sessionLocalStateScope: true });
     return () => {
         unsubscribeSemanticRevision();
         unsubscribeStorage();
@@ -2004,12 +2080,13 @@ function subscribePersistentSessionComposerTarget(
 export function subscribeComposerPresentationTarget(
     ref: ComposerRefV1,
     listener: () => void,
+    options?: Readonly<{ includePersistentSession?: boolean }>,
 ): () => void {
     const key = composerRefV1Key(ref);
     const scopedListeners = listenersByTargetKey.get(key) ?? new Set<() => void>();
     scopedListeners.add(listener);
     listenersByTargetKey.set(key, scopedListeners);
-    const unsubscribePersistentSession = ref.kind === 'session'
+    const unsubscribePersistentSession = ref.kind === 'session' && options?.includePersistentSession !== false
         ? subscribePersistentSessionComposerTarget(ref, listener)
         : () => undefined;
     return () => {
@@ -2043,6 +2120,8 @@ export type ComposerPresentationHostHandlers = Pick<
 export type CreateComposerPresentationHostHandlersInput = Readonly<{
     /** Captured by the mounted connection, never accepted from guest payloads. */
     scope?: ServerAccountScope | null;
+    /** The admitted Composer surface's opener, independent of DOM focus. */
+    mountedComposer?: ComposerRefV1;
     /**
      * This must come from the mounted surface's admitted contribution and
      * generation, never an author payload. Invalid source facts install no
@@ -2209,9 +2288,15 @@ export function createComposerPresentationHostHandlers(
     }
     const activeOwner = owner;
     const capturedScope = input.scope ?? getActiveServerAccountScope();
-    const readHostTarget = (ref: ComposerRefV1): ComposerPresentationTarget | null => ref.kind === 'discussion'
-        ? capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope) : null
-        : readTarget(ref);
+    const readHostTarget = (ref: ComposerRefV1): ComposerPresentationTarget | null => {
+        if (input.mountedComposer) {
+            if (composerRefV1Key(ref) !== composerRefV1Key(input.mountedComposer)) return null;
+            return capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope) : null;
+        }
+        return ref.kind === 'discussion'
+            ? capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope) : null
+            : readTarget(ref);
+    };
     const readHostSnapshot = (ref: ComposerRefV1): ComposerSnapshotV1 | null => {
         const target = readHostTarget(ref);
         return target ? readComposerSnapshot(target) : null;
@@ -2384,6 +2469,7 @@ export function createComposerPresentationHostHandlers(
         ): PluginUiJsonValueV1 => {
             const refusal = requestRefusal(options, 'composer_active_cancelled');
             if (refusal) return refusal;
+            if (input.mountedComposer) return readHostSnapshot(input.mountedComposer)?.ref ?? null;
             let active: ComposerRefV1 | null = null;
             for (const targetKey of Array.from(targets.keys())) {
                 if (typeof targetKey !== 'string') continue;
@@ -2459,10 +2545,13 @@ export function createComposerPresentationHostHandlers(
             if (refusal) return Promise.resolve(refusal);
             const parsed = PluginUiApplyComposerRequestV1Schema.safeParse(request.payload);
             if (!parsed.success) return Promise.resolve(composerHostInvalidPayload('composer_apply_payload_invalid'));
+            if (input.mountedComposer && !readHostTarget(parsed.data.ref)) {
+                return Promise.resolve({ status: 'composerUnavailable' });
+            }
             const apply = async (): Promise<PluginUiJsonValueV1> => {
                 const ref = parsed.data.ref;
-                const target = ref.kind === 'discussion' ? readHostTarget(ref) : null;
-                const result = ref.kind === 'discussion'
+                const target = ref.kind === 'discussion' || input.mountedComposer ? readHostTarget(ref) : null;
+                const result = ref.kind === 'discussion' || (input.mountedComposer && !input.transactionApplier)
                     ? target ? applyComposerPresentationTransactionAtOwner({
                         request: parsed.data, target, attachmentAuthorityResolver: null, admittedContributor,
                         isTargetCurrent: candidate => requestRefusal(options, 'composer_apply_cancelled') === null && readHostTarget(ref) === candidate,
@@ -2476,7 +2565,8 @@ export function createComposerPresentationHostHandlers(
                             ? { executionTarget: composerMediaExecutionTarget }
                             : {}),
                         ...(options?.signal ? { signal: options.signal } : {}),
-                        isCurrent: () => requestRefusal(options, 'composer_apply_cancelled') === null,
+                        isCurrent: () => requestRefusal(options, 'composer_apply_cancelled') === null
+                            && (!input.mountedComposer || readHostTarget(ref) === target),
                     })
                     : applyComposerPresentationTransaction(parsed.data);
                 const lateRefusal = requestRefusal(options, 'composer_apply_cancelled');
@@ -2496,55 +2586,81 @@ export function createComposerPresentationHostHandlers(
                     if (refusal) return refusal;
                     const parsed = PluginUiPickComposerMediaRequestV1Schema.safeParse(request.payload);
                     if (!parsed.success) return composerHostInvalidPayload('composer_media_pick_payload_invalid');
+                    const target = input.mountedComposer ? readHostTarget(parsed.data.ref) : null;
+                    if (input.mountedComposer && (!target || !readComposerSnapshot(target))) {
+                        return composerHostUnavailable('composer_media_pick_unavailable');
+                    }
                     const attachmentOwner = readAdmittedComposerMediaAttachmentOwner(
                         parsed.data.request.attachmentLocalId,
                     );
                     if (!attachmentOwner) return composerHostUnavailable('composer_media_attachment_unavailable');
 
+                    // The document can retire while its containing route stays
+                    // mounted. Reuse the registry's push edge to cancel the
+                    // existing picker/transfer pipeline, including its own
+                    // asynchronous capability preflight, without another timer.
+                    const targetRetirement = input.mountedComposer ? new AbortController() : null;
+                    const unsubscribeTarget = targetRetirement
+                        ? subscribeComposerPresentationTarget(parsed.data.ref, () => {
+                            if (readHostTarget(parsed.data.ref) !== target) targetRetirement.abort();
+                        })
+                        : undefined;
+                    const mergedSignal = targetRetirement
+                        ? mergeAbortSignals([targetRetirement.signal, options?.signal])
+                        : null;
+                    const mediaOptions = mergedSignal ? { ...options, signal: mergedSignal.signal } : options;
                     try {
-                        const availability = await getComposerMediaContentAvailability({
-                            executionTarget: composerMediaExecutionTarget,
-                            signal: options?.signal ?? null,
-                        });
-                        if (!availability.available) {
+                        try {
+                            const availability = await getComposerMediaContentAvailability({
+                                executionTarget: composerMediaExecutionTarget,
+                                signal: mediaOptions?.signal ?? null,
+                            });
+                            if (!availability.available) {
+                                return composerHostUnavailable('composer_media_capability_unavailable');
+                            }
+                        } catch {
                             return composerHostUnavailable('composer_media_capability_unavailable');
                         }
-                    } catch {
-                        return composerHostUnavailable('composer_media_capability_unavailable');
-                    }
-                    // Capability negotiation is asynchronous. Recheck the same
-                    // mount before selection so a retired host cannot open its
-                    // picker after the target daemon answered.
-                    const capabilityRefusal = requestRefusal(options, 'composer_media_pick_cancelled');
-                    if (capabilityRefusal) return capabilityRefusal;
+                        // Capability negotiation is asynchronous. Recheck the same
+                        // mount before selection so a retired host cannot open its
+                        // picker after the target daemon answered.
+                        const capabilityRefusal = requestRefusal(mediaOptions, 'composer_media_pick_cancelled');
+                        if (capabilityRefusal) return capabilityRefusal;
+                        if (input.mountedComposer && readHostTarget(parsed.data.ref) !== target) {
+                            return composerHostUnavailable('composer_media_pick_unavailable');
+                        }
 
-                    let staged: ComposerContentHandleV1 | null;
-                    try {
-                        staged = await pickAndStageComposerMedia({
-                            executionTarget: composerMediaExecutionTarget,
-                            owner: attachmentOwner,
-                            kinds: parsed.data.request.kinds,
-                            signal: options?.signal ?? null,
-                        });
-                    } catch {
-                        return composerHostUnavailable('composer_media_stage_unavailable');
-                    }
-                    if (!staged) return composerHostUnavailable('composer_media_stage_unavailable');
+                        let staged: ComposerContentHandleV1 | null;
+                        try {
+                            staged = await pickAndStageComposerMedia({
+                                executionTarget: composerMediaExecutionTarget,
+                                owner: attachmentOwner,
+                                kinds: parsed.data.request.kinds,
+                                signal: mediaOptions?.signal ?? null,
+                            });
+                        } catch {
+                            return composerHostUnavailable('composer_media_stage_unavailable');
+                        }
+                        if (!staged) return composerHostUnavailable('composer_media_stage_unavailable');
 
-                    const canonicalStage = ComposerContentHandleV1Schema.safeParse(staged);
-                    if (!canonicalStage.success || !isMountedComposerMediaHandle(canonicalStage.data)) {
-                        return composerHostUnavailable('composer_media_stage_unavailable');
+                        const canonicalStage = ComposerContentHandleV1Schema.safeParse(staged);
+                        if (!canonicalStage.success || !isMountedComposerMediaHandle(canonicalStage.data)) {
+                            return composerHostUnavailable('composer_media_stage_unavailable');
+                        }
+                        if (!parsed.data.request.kinds.includes(canonicalStage.data.mediaKind)) {
+                            releaseComposerStagedMedia(canonicalStage.data);
+                            return composerHostUnavailable('composer_media_stage_unavailable');
+                        }
+                        const lateRefusal = requestRefusal(mediaOptions, 'composer_media_pick_cancelled');
+                        if (lateRefusal || (input.mountedComposer && readHostTarget(parsed.data.ref) !== target)) {
+                            releaseComposerStagedMedia(canonicalStage.data);
+                            return lateRefusal ?? composerHostUnavailable('composer_media_pick_unavailable');
+                        }
+                        return PluginUiJsonValueV1Schema.parse(canonicalStage.data);
+                    } finally {
+                        unsubscribeTarget?.();
+                        mergedSignal?.dispose();
                     }
-                    if (!parsed.data.request.kinds.includes(canonicalStage.data.mediaKind)) {
-                        releaseComposerStagedMedia(canonicalStage.data);
-                        return composerHostUnavailable('composer_media_stage_unavailable');
-                    }
-                    const lateRefusal = requestRefusal(options, 'composer_media_pick_cancelled');
-                    if (lateRefusal) {
-                        releaseComposerStagedMedia(canonicalStage.data);
-                        return lateRefusal;
-                    }
-                    return PluginUiJsonValueV1Schema.parse(canonicalStage.data);
                 },
                 inspectComposerContent: async (
                     request: PluginUiHostApiRequestEnvelopeV1,
@@ -2976,16 +3092,22 @@ export function flushPendingRegisteredSessionComposerActionChip(addressRaw: Sess
     return target ? deliverPendingSessionComposerActionChip(addressKey, target) : false;
 }
 
-/** Whether the exact Session composer offers the action chip (subscribe with `subscribeSessionComposerPresentationTargets`). */
-export function readSessionComposerActionChipAvailable(addressRaw: SessionAddress, chipKey: string): boolean {
+/**
+ * What the exact Session composer says about an action chip (subscribe with
+ * `subscribeSessionComposerPresentationTargets`): `offered`, `not_offered`, or `no_composer` while none
+ * is mounted for that Home/Session (a phone's Work page stands apart from the Chat surface).
+ */
+export type SessionComposerActionChipOffer = 'offered' | 'not_offered' | 'no_composer';
+
+export function readSessionComposerActionChipOffer(addressRaw: SessionAddress, chipKey: string): SessionComposerActionChipOffer {
     const address = normalizeSessionAddress(addressRaw.serverId, addressRaw.sessionId);
-    if (!address) return false;
+    if (!address) return 'no_composer';
     const target = resolveQualifiedSessionTarget(sessionAddressKey(address));
-    if (!target?.hasActionChip || target.isCurrent?.() === false) return false;
+    if (!target?.hasActionChip || target.isCurrent?.() === false) return 'no_composer';
     try {
-        return target.hasActionChip(chipKey) === true;
+        return target.hasActionChip(chipKey) === true ? 'offered' : 'not_offered';
     } catch {
-        return false;
+        return 'not_offered';
     }
 }
 

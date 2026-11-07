@@ -1,4 +1,28 @@
 import { selectBrowserContextComposerAttachments, type BrowserContextState } from '@/sync/domains/browser/context';
+import type { BrowserContextMessagePayloadV1, BrowserContextAnnotationItemV2 } from '@happier-dev/protocol/browser/context/v1';
+import { buildBrowserContextAnnotationStructuredBlockV2 } from '@happier-dev/protocol/browser/context/annotationStructuredBlock';
+
+export type BrowserAnnotationPicture = Pick<BrowserContextAnnotationItemV2, 'annotationId' | 'marks' | 'imageRef'>;
+type BrowserAnnotationUpload = Readonly<{ browserAnnotation?: BrowserAnnotationPicture }>;
+
+/** Send projects source facts onto the picture that owns the current pixels and marks. */
+export function reconcileBrowserContextPictures(payload: BrowserContextMessagePayloadV1,
+    uploaded: readonly BrowserAnnotationUpload[]): BrowserContextMessagePayloadV1 {
+    const pictures = new Map(uploaded.flatMap(image => image.browserAnnotation ? [[image.browserAnnotation.annotationId, image.browserAnnotation] as const] : []));
+    if (pictures.size === 0) return payload;
+    const contexts = payload.contexts.map(item => {
+        const picture = item.kind === 'browserAnnotation' ? pictures.get(item.annotationId) : undefined;
+        if (!picture || item.kind !== 'browserAnnotation') return item;
+        const markIds = new Set(picture.marks.marks.filter(mark => mark.kind === 'element').map(mark => mark.id));
+        return { ...item, marks: picture.marks, imageRef: picture.imageRef, elements: item.elements.filter(element => markIds.has(element.markId)) };
+    });
+    const byId = new Map(contexts.map(item => [item.contextId, item]));
+    return { ...payload, contexts, attachments: payload.attachments.map(attachment => {
+        const item = byId.get(attachment.contextId);
+        return item?.kind === 'browserAnnotation' ? { ...attachment,
+            structuredBlock: buildBrowserContextAnnotationStructuredBlockV2(item) } : attachment;
+    }) };
+}
 
 export const BROWSER_CONTEXT_MESSAGE_META_KIND_V1 = 'browser_context.v1' as const;
 
@@ -27,6 +51,7 @@ export type BrowserContextMessageMetaMergeResult =
 export function buildBrowserContextMessageMetaOverrides(args: Readonly<{
     state: BrowserContextState;
     attachmentIds?: readonly string[];
+    uploadedAttachments?: readonly BrowserAnnotationUpload[];
 }>): BrowserContextMessageMetaBuildResult {
     const allowedAttachmentIds = args.attachmentIds ? new Set(args.attachmentIds) : null;
     const attachments = selectBrowserContextComposerAttachments(args.state)
@@ -82,10 +107,10 @@ export function buildBrowserContextMessageMetaOverrides(args: Readonly<{
         metaOverrides: {
             happierBrowserContext: {
                 kind: BROWSER_CONTEXT_MESSAGE_META_KIND_V1,
-                payload: {
+                payload: reconcileBrowserContextPictures({
                     contexts,
                     attachments,
-                },
+                }, args.uploadedAttachments ?? []),
             },
         },
     };
@@ -94,6 +119,7 @@ export function buildBrowserContextMessageMetaOverrides(args: Readonly<{
 export function mergeBrowserContextMessageMetaOverrides(args: Readonly<{
     state: BrowserContextState | null | undefined;
     metaOverrides?: Record<string, unknown>;
+    uploadedAttachments?: readonly BrowserAnnotationUpload[];
 }>): BrowserContextMessageMetaMergeResult {
     if (!args.state || selectBrowserContextComposerAttachments(args.state).length === 0) {
         return {
@@ -104,6 +130,7 @@ export function mergeBrowserContextMessageMetaOverrides(args: Readonly<{
 
     const browserContextMeta = buildBrowserContextMessageMetaOverrides({
         state: args.state,
+        uploadedAttachments: args.uploadedAttachments,
     });
     if (!browserContextMeta.ok) return browserContextMeta;
 

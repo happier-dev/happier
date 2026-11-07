@@ -25,6 +25,14 @@ export function readSafeFailureDetails(details: unknown): ActionFailureContext {
     return safe;
 }
 
+/** The deliberate reveal shared by inline recovery and failure alerts. */
+export function showActionFailureDetails(failure: Readonly<{ code: string; context?: ActionFailureContext }>): void {
+    const details = failure.context && Object.keys(failure.context).length > 0
+        ? JSON.stringify({ code: failure.code, ...failure.context }, null, 2)
+        : failure.code;
+    Modal.alert(t('approvals.technicalDetails'), details);
+}
+
 /** Deliberate disclosure of a typed Action failure, never its private transport details. */
 export function alertActionFailure(failure: Readonly<{
     reason: string;
@@ -32,20 +40,18 @@ export function alertActionFailure(failure: Readonly<{
     context?: ActionFailureContext;
     recovery?: Readonly<{ label: string; onPress: () => void }>;
 }>): void {
-    if (!failure.code) {
+    const code = failure.code;
+    if (!code) {
         Modal.alert(t('common.error'), failure.reason);
         return;
     }
-    const details = failure.context && Object.keys(failure.context).length > 0
-        ? JSON.stringify({ code: failure.code, ...failure.context }, null, 2)
-        : failure.code;
-    const uncertain = failure.code === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
+    const uncertain = code === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
     Modal.alert(
         t(uncertain ? 'toolView.pending.unknownTitle' : 'common.error'),
         uncertain ? t('toolView.pending.unknownDescription') : failure.reason,
         [
             ...(failure.recovery ? [{ text: failure.recovery.label, onPress: failure.recovery.onPress }] : []),
-            { text: t('approvals.technicalDetails'), onPress: () => Modal.alert(t('approvals.technicalDetails'), details) },
+            { text: t('approvals.technicalDetails'), onPress: () => showActionFailureDetails({ code, context: failure.context }) },
             { text: t('common.ok'), style: 'cancel' },
         ],
     );

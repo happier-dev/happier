@@ -1,11 +1,24 @@
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
-import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
+
+/** Held managed input recovers through its existing activation Action, not a second immediate send. */
+export function isManagedPendingInputAwaitingWake(
+    pending: Pick<PendingMessage, 'localId' | 'source' | 'pendingDeliveryStatus' | 'pendingActivationHoldReason'>,
+    session: Pick<Session, 'active' | 'pendingActivationAuthorization'> | null | undefined,
+): boolean {
+    if (session?.active === true || pending.source !== 'server_pending' || pending.pendingDeliveryStatus !== 'server_queued') return false;
+    const activation = session?.pendingActivationAuthorization;
+    return Boolean(pending.pendingActivationHoldReason
+        || activation?.managedWakeTargetV1 && activation.requestId === pending.localId);
+}
 
 export type ManagedWakeProjectionInput = Readonly<{
     managed: Pick<ManagedMachineV1, 'id' | 'homeId' | 'creationState' | 'enrolledMachineId' | 'allocation' | 'controller' | 'observation' | 'submittedNativeEffect' | 'wakeOnAcceptedMessage'> | null;
     pending: Pick<PendingMessage, 'source' | 'pendingDeliveryStatus'> | null;
     activation: PendingActivationAuthorizationV1 | null;
+    /** The enrolled Machine's canonical reachability, independently of native power. */
+    machineReachable: boolean | null;
     runtimeResuming: boolean;
     /** False while the Session's pending list has not been read: a missing row is then unread, not unconfirmed. */
     pendingLoaded?: boolean;
@@ -37,7 +50,7 @@ export function deriveManagedWakeProjection(input: ManagedWakeProjectionInput): 
     const ready = observation?.availability === 'present'
         && observation.power === 'running'
         && observation.storage === 'retained'
-        && observation.daemon === 'connected';
+        && input.machineReachable === true;
     const base = {
         inputCustody: queued ? 'queued' as const : 'unknown' as const,
         canWithdraw: queued,
@@ -66,22 +79,28 @@ export function deriveManagedWakeProjection(input: ManagedWakeProjectionInput): 
     if (managed.submittedNativeEffect?.intent === 'start' && observation?.power !== 'running') {
         return { ...base, kind: 'starting' };
     }
+    // An authorization is accepted input, not proof of an outstanding native
+    // Start. In particular, a lost live Ask can settle stale after restart
+    // without a controller invocation left to report activation failure.
+    // Explicit rearming replaces that origin through the ordinary pending owner;
+    // current power admission/approval still belongs to the managed controller.
+    const canRequestWake = managed.wakeOnAcceptedMessage === true && !managed.submittedNativeEffect
+        && managed.creationState === 'active' && managed.allocation === 'bound'
+        && observation?.availability === 'present'
+        && (observation.power === 'stopped' || observation.power === 'suspended');
     if (activation?.status === 'failed') {
         // Retry re-admits the intent through the managed owner. Unknown storage
         // is not loss (handled above) or a UI-owned native-effect refusal.
         return { ...base, kind: 'agentStartFailed', failureCode: activation.failureCode, canRetryAgentStart: ready,
-            canRequestWake: managed.wakeOnAcceptedMessage === true && !managed.submittedNativeEffect
-                && managed.creationState === 'active' && managed.allocation === 'bound'
-                && observation?.availability === 'present'
-                && (observation.power === 'stopped' || observation.power === 'suspended') };
+            canRequestWake };
     }
     if (!observation) return { ...base, kind: 'unknown' };
     if (observation.power === 'running') {
-        if (observation.daemon === 'disconnected') return { ...base, kind: 'connecting' };
+        if (input.machineReachable === false) return { ...base, kind: 'connecting' };
         if (ready) return { ...base, kind: 'waiting', canResumeRuntime: activation?.status === 'waiting' };
     }
-    if (observation.storage === 'retained' && (observation.power === 'stopped' || observation.power === 'suspended')) {
-        return { ...base, kind: 'waiting' };
+    if ((observation.storage === 'retained' || canRequestWake) && (observation.power === 'stopped' || observation.power === 'suspended')) {
+        return { ...base, kind: 'waiting', canRequestWake };
     }
     return { ...base, kind: 'unknown' };
 }

@@ -1,5 +1,6 @@
-import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
+import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type { RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildUploadedAttachment, type UploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 
 import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
@@ -16,8 +17,44 @@ import type { SessionAttachmentsUploadFinalizeResponse, SessionAttachmentTransfe
 
 import { assertAttachmentDraftSourcesAvailable, sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
+import type { BrowserAnnotationPicture } from '@/sync/domains/session/input/browserContext';
 
-export { buildUploadedAttachment, buildAttachmentMessageMeta, type UploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
+export { buildUploadedAttachment, type UploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
+
+export type IssuedUploadedAttachment = UploadedAttachment & Readonly<{
+    attachmentHandle: SessionAttachmentHandleV1;
+    browserAnnotation?: BrowserAnnotationPicture;
+}>;
+
+/** The draft owner withdrew this upload; callers settle it without failure UI. */
+export class AttachmentUploadCancelled extends Error {
+    constructor() {
+        super('Attachment upload cancelled');
+        this.name = 'AttachmentUploadCancelled';
+    }
+}
+
+function throwIfAttachmentUploadCancelled(signal: AbortSignal | null | undefined): void {
+    if (signal?.aborted) throw new AttachmentUploadCancelled();
+}
+
+function projectUploadedDraft(draft: AttachmentDraft, attachment: UploadedAttachmentBase): IssuedUploadedAttachment {
+    const uploaded = { ...buildUploadedAttachment(attachment), attachmentHandle: attachment.attachmentHandle };
+    if (!draft.browserAnnotation) return uploaded;
+    const marks = draft.edit?.document ?? { v: 1 as const, image: draft.browserAnnotation.image, marks: [] };
+    return { ...uploaded, browserAnnotation: { annotationId: draft.browserAnnotation.annotationId, marks,
+        imageRef: { mediaId: attachment.attachmentHandle.id, mediaKind: 'image',
+            width: marks.crop?.width ?? marks.image.width, height: marks.crop?.height ?? marks.image.height,
+            sizeBytes: attachment.sizeBytes, file: { sessionId: attachment.attachmentHandle.sessionId, storage: 'session',
+                path: attachment.path, ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}), mimeType: attachment.mimeType ?? 'image/png' } } } };
+}
+
+/** Authored ingress carries issued selections; the daemon owns their presentation projection. */
+export function buildSessionAttachmentIngressMeta(
+    uploaded: readonly Pick<IssuedUploadedAttachment, 'attachmentHandle'>[],
+): Readonly<{ happierStructuredInputV1: RawIngressStructuredInputV1 }> {
+    return { happierStructuredInputV1: { v: 1, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle) } };
+}
 
 export type AttachmentUploadedDraftCheckpoint = Readonly<{
     id: string;
@@ -34,7 +71,7 @@ export type AttachmentTargetUploadedDraftCheckpoint = AttachmentUploadedDraftChe
     messageLocalId: string;
 }>;
 
-type UploadedAttachmentBase = Omit<UploadedAttachment, 'structuredInput'>;
+type UploadedAttachmentBase = Omit<IssuedUploadedAttachment, 'structuredInput'>;
 
 export function describeAttachmentUploadSource(source: AttachmentUploadSource): Readonly<{
     name: string;
@@ -78,7 +115,9 @@ function createAttachmentUploadFailureError(input: Readonly<{
 }
 
 type DraftUploadArguments = Parameters<typeof uploadAttachmentDraftsToSession>[0];
-type DraftUploadResult = Awaited<ReturnType<typeof sessionAttachmentsUploadFile>>;
+type TransferUploadResult = Awaited<ReturnType<typeof sessionAttachmentsUploadFile>>;
+type DraftUploadResult = Exclude<TransferUploadResult, { success: true }>
+    | (Extract<TransferUploadResult, { success: true }> & Readonly<{ attachmentHandle: SessionAttachmentHandleV1 }>);
 // Eager upload and Send share one complete transfer, including finalize recovery.
 // Successful results also serve snapshots captured before the draft checkpoint arrived.
 const folderUploads = new WeakMap<AttachmentUploadSource, Map<string, Promise<DraftUploadResult>>>();
@@ -99,7 +138,12 @@ async function uploadAndRecoverDraft(args: DraftUploadArguments, draft: Attachme
                 error: recovery?.status === 'unavailable' ? t('transferRecovery.unavailable')
                     : recovery?.status === 'discarded' ? t('transferRecovery.discarded') : result.error };
         }
-        return result;
+        if (!result.success) return result;
+        const issuedHandle = SessionAttachmentHandleV1Schema.safeParse(result.attachmentHandle);
+        if (!issuedHandle.success || issuedHandle.data.sessionId !== args.sessionId) {
+            throw new Error('Session attachment preparation requires an issued target Session handle');
+        }
+        return { ...result, attachmentHandle: issuedHandle.data };
     };
     if (draft.source.kind !== 'folder') return await upload();
     const key = JSON.stringify([draft.id, args.sessionId, args.sessionTarget?.serverId, args.sessionTarget?.accountId,
@@ -135,20 +179,21 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
     uploadFile?: typeof sessionAttachmentsUploadFile;
 }>): Promise<Readonly<{
     messageLocalId: string;
-    uploaded: readonly UploadedAttachment[];
+    uploaded: readonly IssuedUploadedAttachment[];
 }>> {
     const messageLocalId = args.messageLocalId ?? randomUUID();
-    const uploaded: UploadedAttachment[] = [];
+    const uploaded: IssuedUploadedAttachment[] = [];
 
     assertAttachmentDraftSourcesAvailable(args.drafts);
 
     for (const draft of sendableAttachmentDrafts(args.drafts)) {
-        args.signal?.throwIfAborted();
+        throwIfAttachmentUploadCancelled(args.signal);
         const stillPresent = args.drafts.find((d) => d.id === draft.id);
         if (!stillPresent) continue;
 
         const described = describeAttachmentUploadSource(stillPresent.source);
-        if (stillPresent.uploadedPath) {
+        const retainedHandle = SessionAttachmentHandleV1Schema.safeParse(stillPresent.attachmentHandle);
+        if (stillPresent.uploadedPath && retainedHandle.success && retainedHandle.data.sessionId === args.sessionId) {
             const uploadedAttachment: UploadedAttachmentBase = {
                 id: stillPresent.id,
                 name: described.name,
@@ -158,9 +203,9 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
                     ? { mimeType: (stillPresent.uploadedMimeType ?? described.mimeType)! }
                     : {}),
                 ...(stillPresent.sha256 ? { sha256: stillPresent.sha256 } : {}),
-                ...(stillPresent.attachmentHandle ? { attachmentHandle: stillPresent.attachmentHandle } : {}),
+                attachmentHandle: retainedHandle.data,
             };
-            uploaded.push(buildUploadedAttachment(uploadedAttachment));
+            uploaded.push(projectUploadedDraft(stillPresent, uploadedAttachment));
             continue;
         }
 
@@ -168,20 +213,20 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             typeof described.sizeBytes === 'number' && Number.isFinite(described.sizeBytes) && described.sizeBytes >= 0
                 ? { uploadedBytes: 0, totalBytes: described.sizeBytes }
                 : undefined;
-        args.applyDraftPatch(stillPresent.id, { status: 'uploading', error: undefined, uploadProgress: initialProgress });
+        args.applyDraftPatch(stillPresent.id, { status: 'uploading', error: undefined, errorCode: undefined, uploadProgress: initialProgress });
         let uploadRes: DraftUploadResult;
         try {
             uploadRes = await uploadAndRecoverDraft(args, stillPresent, messageLocalId);
         } catch (error) {
-            if (args.signal?.aborted) throw error;
+            throwIfAttachmentUploadCancelled(args.signal);
             const failure = createAttachmentUploadFailureError({ errorCode: readRpcErrorCode(error) ?? readTransferFailureCode(error), thrown: error });
-            args.applyDraftPatch(stillPresent.id, { status: 'error', error: failure.message });
+            args.applyDraftPatch(stillPresent.id, { status: 'error', error: failure.message, errorCode: readRpcErrorCode(failure) });
             throw failure;
         }
-        args.signal?.throwIfAborted();
+        throwIfAttachmentUploadCancelled(args.signal);
         if (!uploadRes.success) {
             const failure = createAttachmentUploadFailureError(uploadRes);
-            args.applyDraftPatch(stillPresent.id, { status: 'error', error: failure.message });
+            args.applyDraftPatch(stillPresent.id, { status: 'error', error: failure.message, errorCode: readRpcErrorCode(failure) });
             throw failure;
         }
 
@@ -193,6 +238,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             sha256: uploadRes.sha256,
             attachmentHandle: uploadRes.attachmentHandle,
             error: undefined,
+            errorCode: undefined,
             uploadProgress: { uploadedBytes: uploadRes.sizeBytes, totalBytes: uploadRes.sizeBytes },
         } satisfies Partial<Omit<AttachmentDraft, 'id' | 'source'>>;
         args.applyDraftPatch(stillPresent.id, uploadedPatch);
@@ -202,7 +248,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             uploadedSizeBytes: uploadRes.sizeBytes,
             ...(described.mimeType ? { uploadedMimeType: described.mimeType } : {}),
             ...(uploadRes.sha256 ? { sha256: uploadRes.sha256 } : {}),
-            ...(uploadRes.attachmentHandle ? { attachmentHandle: uploadRes.attachmentHandle } : {}),
+            attachmentHandle: uploadRes.attachmentHandle,
         });
 
         const uploadedAttachment: UploadedAttachmentBase = {
@@ -212,9 +258,9 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             sizeBytes: uploadRes.sizeBytes,
             ...(described.mimeType ? { mimeType: described.mimeType } : {}),
             ...(uploadRes.sha256 ? { sha256: uploadRes.sha256 } : {}),
-            ...(uploadRes.attachmentHandle ? { attachmentHandle: uploadRes.attachmentHandle } : {}),
+            attachmentHandle: uploadRes.attachmentHandle,
         };
-        uploaded.push(buildUploadedAttachment(uploadedAttachment));
+        uploaded.push(projectUploadedDraft(stillPresent, uploadedAttachment));
     }
 
     return { messageLocalId, uploaded };

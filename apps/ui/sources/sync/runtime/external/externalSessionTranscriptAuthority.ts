@@ -1,7 +1,7 @@
 import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import {
@@ -15,6 +15,17 @@ export type ExternalSessionTranscriptStorageState =
     | 'snapshot_complete'
     | 'hosted'
     | 'legacy_external_unknown';
+
+/**
+ * Where a Session's transcript lives. A Home that does not report the storage
+ * state is read as hosted unless the Session is linked to an external source.
+ */
+export function readExternalSessionTranscriptStorageState(
+    currentStorageState: ExternalSessionTranscriptStorageState | null | undefined,
+    linked: boolean,
+): ExternalSessionTranscriptStorageState {
+    return currentStorageState ?? (linked ? 'legacy_external_unknown' : 'hosted');
+}
 
 export type ExternalSessionTranscriptUnavailableReason =
     | 'machine_offline'

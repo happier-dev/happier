@@ -1,13 +1,21 @@
-import type { PendingMessage } from '@/sync/domains/state/storageTypes';
-import type { TranslationKeyNoParams } from '@/text';
+import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
+import { isManagedPendingInputAwaitingWake } from '@/sync/domains/pending/managedWakeProjection';
+import { t, type TranslationKeyNoParams } from '@/text';
 import { isPendingDeliveryProviderEffectPossibleV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import type { SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { followInputNeedsYou, isHostAuthoredInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { followNoticeSourceKey, groupFollowNoticesBySource } from './followNoticeGroups';
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 export type PendingMessageVisualStateKind =
+    /** A new Session's launch owns this first message and has not confirmed it. */
+    | 'starting'
+    /** That launch ended without the agent accepting the message. */
+    | 'launch_failed'
+    /** That launch's outcome is unknown: the message may already have reached the agent. */
+    | 'launch_unresolved'
     | 'saving'
     | 'send_unconfirmed'
     | 'send_failed'
@@ -36,6 +44,8 @@ export type PendingMessageVisualState = Readonly<{
 }>;
 
 export type PendingMessageQueuedStateOptions = Readonly<{
+    session?: Pick<Session, 'activeAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails'> | null;
+    machineAccessRemoved?: boolean;
     hasEarlierRow?: boolean;
     /** An earlier row in this queue is itself blocked, so this one waits behind it. */
     hasBlockedEarlierRow?: boolean;
@@ -49,6 +59,8 @@ export type PendingMessageQueuedStateOptions = Readonly<{
 export type PendingDeliveryBlockedReasonPresentation = Readonly<{
     labelKey: TranslationKeyNoParams;
     isUnknown: boolean;
+    /** An owner-localized cause that replaces the generic delivery label. */
+    message?: string;
 }>;
 
 /**
@@ -122,7 +134,7 @@ export function resolvePendingMessageContentPresentation(message: PendingMessage
 
 export function resolvePendingMessagesPresentation(
     messages: readonly PendingMessage[],
-    options?: Readonly<{ materializingLocalIds?: ReadonlySet<string> }>,
+    options?: Readonly<{ materializingLocalIds?: ReadonlySet<string> }> & Pick<PendingMessageQueuedStateOptions, 'session' | 'machineAccessRemoved'>,
 ): PendingMessagesPresentation {
     const hasProviderDeliveryInFlight = messages.some(isPendingMessageProviderDeliveryInFlight);
     const inputs = messages.map((message, index) => {
@@ -144,7 +156,8 @@ export function resolvePendingMessagesPresentation(
             opensSourceSession: needsYou && followInput !== null && 'sourceSessionId' in followInput.original,
             heightBearingChrome: resolvePendingMessageHeightBearingChrome(row.visualState),
             canMutate: !folded && !aggregate,
-            canReorder: !folded && !aggregate && row.visualState.deliveryMutationPolicy !== 'effect_possible' };
+            canReorder: !folded && !aggregate && row.visualState.deliveryMutationPolicy !== 'effect_possible'
+                && !isLaunchOwnedPendingMessage(row.message) };
     });
     return { rows, shownRows: rows.filter(row => !row.folded),
         foldKey: rows.map(row => `${row.message.id}:${row.folded}:${row.count}`).join('|') };
@@ -233,11 +246,24 @@ function getDeliveryMutationPolicy(
 }
 
 export function getPendingDeliveryBlockedReasonPresentation(
-    message: Pick<PendingMessage, 'pendingDeliveryBlockedReason' | 'pendingDeliveryBlockedReasonRaw' | 'pendingDeliveryStatusRaw'>,
+    message: Pick<PendingMessage, 'pendingDeliveryBlockedReason' | 'pendingDeliveryBlockedReasonRaw' | 'pendingDeliveryStatusRaw'>
+        & Partial<Pick<PendingMessage, 'localId' | 'id'>>,
+    session?: PendingMessageQueuedStateOptions['session'],
+    machineAccessRemoved = false,
 ): PendingDeliveryBlockedReasonPresentation {
     const reason = message.pendingDeliveryBlockedReason ?? 'unknown';
+    const activation = session?.pendingActivationAuthorization;
+    // Diagnostics belong to this failed activation, never another queued input or a later retry.
+    const cause = reason === 'runtime_config_blocked'
+        ? machineAccessRemoved
+            ? t('machineRequester.accessRemoved', { machine: t('common.machine') })
+            : session && activation?.status === 'failed'
+                && activation.requestId === (message.localId ?? message.id) && activation.requestedAt > session.activeAt
+                ? presentSessionStartupFailureCause(session.pendingActivationFailureDetails?.runtimeReason) : null
+        : null;
     return {
         labelKey: blockedReasonLabelKeys[reason] ?? blockedReasonLabelKeys.unknown,
+        ...(cause ? { message: cause } : {}),
         isUnknown:
             reason === 'unknown'
             || typeof message.pendingDeliveryBlockedReasonRaw === 'string'
@@ -282,6 +308,32 @@ export function getPendingMessageVisualState(
     }
 
     const hasDurableServerPendingTruth = message.source === 'server_pending';
+    if (!hasDurableServerPendingTruth && message.pendingLaunch?.state === 'starting') {
+        return { kind: 'starting', showSpinner: true, iconName: 'cloud-arrow-up' };
+    }
+    if (!hasDurableServerPendingTruth && message.pendingLaunch?.state === 'unresolved') {
+        return {
+            kind: 'launch_unresolved',
+            showSpinner: false,
+            iconName: 'warning-circle',
+            deliveryBlockedPresentation: {
+                labelKey: 'session.pendingMessages.deliveryBlockedReasons.deliveryOutcomeUncertain',
+                isUnknown: true,
+            },
+        };
+    }
+    if (!hasDurableServerPendingTruth && message.pendingLaunch?.state === 'failed') {
+        return {
+            kind: 'launch_failed',
+            showSpinner: false,
+            iconName: 'warning-circle',
+            deliveryBlockedPresentation: {
+                labelKey: 'session.pendingMessages.deliveryStatus.notStarted',
+                isUnknown: false,
+                message: message.pendingLaunch.message,
+            },
+        };
+    }
     if (!hasDurableServerPendingTruth && message.pendingOutboxOperation === 'cancel') {
         return message.sendState === 'failed'
             ? { kind: 'cancel_failed', showSpinner: false, iconName: 'warning-circle' }
@@ -319,7 +371,7 @@ export function getPendingMessageVisualState(
             kind: 'blocked',
             showSpinner: false,
             iconName: 'warning-circle',
-            deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message),
+            deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message, options?.session, options?.machineAccessRemoved),
             ...(deliveryMutationPolicy ? { deliveryMutationPolicy } : {}),
         };
     }
@@ -369,7 +421,7 @@ export function getPendingMessageVisualState(
 
 function derivePendingMessageQueuedReason(
     message: PendingMessage,
-    context: Required<PendingMessageQueuedStateOptions>,
+    context: Required<Omit<PendingMessageQueuedStateOptions, 'session' | 'machineAccessRemoved'>>,
 ): PendingMessageVisualState['queuedReason'] {
     if (message.pendingRequestedActionMalformed === true) return 'unsupported_action';
     if (!context.runtimeReachable) return 'waiting_for_runtime';
@@ -400,14 +452,25 @@ export function isNextTurnHostInput(message: PendingMessage): boolean {
         && isHostAuthoredInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput);
 }
 
+/** The launch of a new Session owns this row; Message writers never act on it (one writer per input). */
+export function isLaunchOwnedPendingMessage(message: PendingMessage): boolean {
+    return message.source !== 'server_pending' && message.pendingLaunch !== undefined;
+}
+
 export function isAcceptedLocalPendingProjection(message: PendingMessage): boolean {
     return message.deliveryStatus === 'accepted' && message.source !== 'server_pending';
 }
 
 /** Shared by row actions and the empty-composer shortcut; in-flight custody stays with its sender. */
-export function canUseDirectPendingDeliveryActions(message: PendingMessage, visualState = getPendingMessageVisualState(message)): boolean {
+export function canUseDirectPendingDeliveryActions(
+    message: PendingMessage,
+    visualState = getPendingMessageVisualState(message),
+    session?: Pick<Session, 'active' | 'pendingActivationAuthorization'> | null,
+): boolean {
     const deliveryState = visualState.kind === 'materializing' ? getPendingMessageVisualState(message) : visualState;
-    return message.source !== 'local_outbound'
+    return !isManagedPendingInputAwaitingWake(message, session)
+        && !isLaunchOwnedPendingMessage(message)
+        && message.source !== 'local_outbound'
         && !isAcceptedLocalPendingProjection(message)
         && message.pendingDecryptFailure?.kind !== 'decrypt_failed'
         && message.pendingDecryption?.kind !== 'loading'

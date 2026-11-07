@@ -6,6 +6,7 @@ import {
     SessionHumanPresenceVisibleReplaceResultV1Schema,
     SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT as VISIBLE_EVENT,
     SESSION_HUMAN_PRESENCE_TYPING_SET_EVENT as TYPING_EVENT,
+    type SessionHumanPresencePendingMessageEditV1,
 } from '@happier-dev/protocol/sessions';
 import { getVisibleSessionSurfaces, subscribeSessionSurfaceVisibility } from '../sessionSurfaceVisibility';
 import { readHostActivelyViewed, subscribeToHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
@@ -28,7 +29,14 @@ type Attachment = {
     stop(target?: SessionHumanPresenceTarget): void;
 };
 const homes = new Map<string, Attachment>();
-const discussionLocations = new Map<string, { target: DiscussionHumanPresenceTarget; accountId: string; count: number }>();
+// The existing registration owner covers both rendered Discussions and admitted
+// pending edits. It retains desired declarations across socket replacement.
+const registeredLocations = new Map<string, {
+    target: SessionHumanPresenceTarget;
+    accountId: string;
+    count: number;
+    pendingEdit?: { holdId: string; settleAdmission?: (admitted: boolean) => void };
+}>();
 let detachVisibility: (() => void) | null = null;
 
 const targetKey = (target: SessionHumanPresenceTarget) => JSON.stringify([target.serverId, humanPresenceLocationKey(target)]);
@@ -49,9 +57,9 @@ export function registerDiscussionHumanPresence(target: DiscussionHumanPresenceT
     const normalized = { ...parsed.data, serverId: resolveServerProfileScopeIdForIdentifier(parsed.data.serverId) };
     if (resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId) !== normalized.serverId) return () => {};
     const key = JSON.stringify([lifetime.scope.accountId, targetKey(normalized)]);
-    const entry = discussionLocations.get(key) ?? { target: normalized, accountId: lifetime.scope.accountId, count: 0 };
+    const entry = registeredLocations.get(key) ?? { target: normalized, accountId: lifetime.scope.accountId, count: 0 };
     entry.count++;
-    discussionLocations.set(key, entry);
+    registeredLocations.set(key, entry);
     homes.get(normalized.serverId)?.publish();
     let disposed = false;
     let retirement: Readonly<{ dispose(): void }> | undefined;
@@ -59,12 +67,52 @@ export function registerDiscussionHumanPresence(target: DiscussionHumanPresenceT
         if (disposed) return;
         disposed = true;
         retirement?.dispose();
-        if (discussionLocations.get(key) !== entry) return;
-        if (--entry.count === 0) discussionLocations.delete(key);
+        if (registeredLocations.get(key) !== entry) return;
+        if (--entry.count === 0) registeredLocations.delete(key);
         homes.get(normalized.serverId)?.publish();
     };
     retirement = lifetime.onRetire(dispose);
     return dispose;
+}
+
+/** Acquire only after the existing socket owner admits this edit declaration. */
+export async function registerSessionPendingMessageEdit(
+    target: SessionAddress,
+    holdId: string,
+    lifetime: ServerAccountScopeLifetime,
+): Promise<() => void> {
+    const serverId = resolveServerProfileScopeIdForIdentifier(target.serverId);
+    const home = homes.get(serverId);
+    if (!lifetime.isCurrent() || resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId) !== serverId
+        || !home || home.accountId !== lifetime.scope.accountId) {
+        throw new Error('Pending message edit presence unavailable');
+    }
+    return new Promise((resolve, reject) => {
+        const normalized = { serverId, sessionId: target.sessionId };
+        const key = JSON.stringify([lifetime.scope.accountId, targetKey(normalized), holdId]);
+        let disposed = false;
+        let retirement: Readonly<{ dispose(): void }> | undefined;
+        const pendingEdit: { holdId: string; settleAdmission?: (admitted: boolean) => void } = {
+            holdId,
+            settleAdmission(admitted) {
+                pendingEdit.settleAdmission = undefined;
+                if (admitted) resolve(dispose);
+                else { dispose(); reject(new Error('Pending message edit presence unavailable')); }
+            },
+        };
+        const entry = { target: normalized, accountId: lifetime.scope.accountId, count: 1, pendingEdit };
+        function dispose() {
+            if (disposed) return;
+            disposed = true;
+            retirement?.dispose();
+            if (registeredLocations.get(key) === entry) registeredLocations.delete(key);
+            pendingEdit.settleAdmission?.(false);
+            homes.get(serverId)?.publish();
+        }
+        registeredLocations.set(key, entry);
+        retirement = lifetime.onRetire(dispose);
+        home.publish();
+    });
 }
 
 export function reportSessionTypingEdit(address: SessionAddress, nonEmpty: boolean): void {
@@ -112,8 +160,9 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
     let admittedLocations = new Set<string>();
     let typing: {target: SessionHumanPresenceTarget; renewedAt: number; timer: ReturnType<typeof setTimeout>} | null = null;
     const currentLocations = (): DiscussionHumanPresenceTarget[] => readHostActivelyViewed()
-        ? [...discussionLocations.values()].filter((entry) => entry.accountId === accountId && entry.target.serverId === serverId)
-            .map((entry) => entry.target)
+        ? [...registeredLocations.values()].filter((entry) => entry.accountId === accountId && entry.target.serverId === serverId
+                && entry.target.discussionId !== undefined)
+            .map((entry) => entry.target as DiscussionHumanPresenceTarget)
             .sort((left, right) => left.discussionId.localeCompare(right.discussionId))
         : [];
     const currentIds = () => readHostActivelyViewed()
@@ -134,14 +183,25 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
     const publish = () => {
         const ids = currentIds();
         const locations = currentLocations().map(({ discussionId }) => ({ discussionId }));
+        const edits = [...registeredLocations.values()].filter(entry => entry.accountId === accountId
+            && entry.target.serverId === serverId && entry.pendingEdit !== undefined);
+        const pendingMessageEdits = edits.map(entry => ({ sessionId: entry.target.sessionId!, holdId: entry.pendingEdit!.holdId }))
+            .sort((left, right) => left.sessionId.localeCompare(right.sessionId) || left.holdId.localeCompare(right.holdId));
+        const settleEdits = (admittedEdits: readonly SessionHumanPresencePendingMessageEditV1[]) => {
+            for (const entry of edits) entry.pendingEdit!.settleAdmission?.(admittedEdits.some(edit =>
+                edit.sessionId === entry.target.sessionId && edit.holdId === entry.pendingEdit!.holdId));
+        };
         const desiredKeys = new Set(locations.map((location) => location.discussionId));
         if (typing && (typeof typing.target.sessionId === 'string'
             ? !ids.includes(typing.target.sessionId)
             : !desiredKeys.has(typing.target.discussionId))) stop();
-        if (disposed || !connected || pending) return;
-        const nextSignature = JSON.stringify([ids, locations]);
+        if (disposed || !connected) { settleEdits([]); return; }
+        if (pending) return;
+        const includePendingEdits = pendingMessageEdits.length > 0;
+        const nextSignature = JSON.stringify([ids, locations, includePendingEdits ? pendingMessageEdits : null]);
         if (signature === nextSignature) return;
         if (support === 'unavailable') {
+            settleEdits([]);
             // A timed-out/malformed acknowledgement does not reveal whether the Home
             // committed the declaration. Do not probe again, but clear that possible
             // declaration once when this host stops presenting every Session.
@@ -161,11 +221,13 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
             v: 1 as const,
             sessionIds: ids,
             ...(locations.length > 0 ? { locations } : {}),
+            ...(includePendingEdits ? { pendingMessageEdits } : {}),
         };
         void transport.sendWithAck(VISIBLE_EVENT, payload).then((raw) => {
             if (disposed || issuedGeneration !== generation) return;
             const parsed = SessionHumanPresenceVisibleReplaceResultV1Schema.safeParse(raw);
             if (!parsed.success) {
+                settleEdits([]);
                 // A malformed or absent reply is inconclusive transport evidence, not
                 // proof about the Home. Stop probing this generation.
                 stop();
@@ -175,6 +237,7 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
             }
             unacknowledgedDeclarationMayBeApplied = false;
             if (!parsed.data.ok) {
+                settleEdits([]);
                 stop();
                 admitted.clear();
                 admittedLocations.clear();
@@ -192,6 +255,7 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
                 return;
             }
             support = 'supported';
+            settleEdits(parsed.data.admittedPendingMessageEdits ?? []);
             admitted = new Set(parsed.data.admittedSessionIds.filter((sessionId) => ids.includes(sessionId)));
             admittedLocations = new Set((parsed.data.admittedLocations ?? [])
                 .map((location) => location.discussionId)
@@ -207,6 +271,7 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
             if (disposed || issuedGeneration !== generation) return;
             stop();
             support = 'unavailable';
+            settleEdits([]);
             handle.setStatus('unavailable');
         }).finally(() => {
             if (disposed || issuedGeneration !== generation) return;
@@ -260,6 +325,13 @@ export function attachSessionHumanPresenceSocket(input: Readonly<{
         admitted.clear();
         admittedLocations.clear();
         unacknowledgedDeclarationMayBeApplied = false;
+        if (!connected) {
+            // A retired transport cannot acknowledge a new acquire. Admitted
+            // declarations have no pending callback and remain desired on reconnect.
+            for (const entry of registeredLocations.values()) {
+                if (entry.accountId === accountId && entry.target.serverId === serverId) entry.pendingEdit?.settleAdmission?.(false);
+            }
+        }
         if (connected) {
             publishFocus();
             handle = sessionHumanPresenceStore.attachHome(serverId, accountId);

@@ -15,8 +15,18 @@ export function resolveSessionDraftStatusKey(status: SessionDraftStatus): Transl
     }
 }
 
-export function buildSessionDraftSyncStatusBadge(status: SessionDraftStatus): AgentInputStatusBadge | null {
-    if (status === 'clean' || status === 'pending' || status === 'conflict') return null;
+/**
+ * The draft status the composer badge shows, or null when it shows none. `pending` is the normal
+ * state of every edit until its remote flush and `conflict` has its own banner, so a host that
+ * selects this instead of the raw status does not render for each sync of a typing burst.
+ */
+export function selectSessionDraftSyncBadgeStatus(status: SessionDraftStatus): SessionDraftStatus | null {
+    return status === 'clean' || status === 'pending' || status === 'conflict' ? null : status;
+}
+
+export function buildSessionDraftSyncStatusBadge(input: SessionDraftStatus | null): AgentInputStatusBadge | null {
+    const status = input === null ? null : selectSessionDraftSyncBadgeStatus(input);
+    if (status === null) return null;
     const statusKey = resolveSessionDraftStatusKey(status);
     if (!statusKey) return null;
     const label = t(statusKey);

@@ -1,7 +1,7 @@
 import React from 'react';
-import { useShallow } from 'zustand/react/shallow';
 
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { compareTranscriptMessagesOldestFirst } from '@happier-dev/session-core/messages';
 import {
     SESSION_MESSAGE_HISTORY_REMOTE_ROLES_QUERY,
     USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
@@ -9,72 +9,17 @@ import {
     type FetchUserMessageHistoryPageResult,
     type SessionMessageHistoryRemoteRow,
 } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
-import type { Message } from "@happier-dev/session-core/messages";
-import { readStoredSessionMessagesFromStateLike } from "@happier-dev/session-core/messages";
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { StorageState } from '@/sync/store/types';
-import { readMessageDisplayText } from '@happier-dev/session-core/messages';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
-import { deriveSessionListMeaningfulActivityAt } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useSessionServerId, useSessionUserMessageHistory,
+    useUserMessageHistorySessionIds, useUserMessageHistorySessionServerIds } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import type { AgentInputHistoryScope } from './userMessageHistory';
-
-type SessionMessagesStateLike = {
-    messageIdsOldestFirst?: ReadonlyArray<string>;
-    messagesById?: Record<string, Message>;
-    // Back-compat alias (older store snapshots/tests).
-    messagesMap?: Record<string, Message>;
-};
-
-export function collectUserTextMessagesBySessionIdFromSessionMessagesState(
-    sessionMessages: Record<string, SessionMessagesStateLike> | undefined,
-): Record<string, ReadonlyArray<Message> | undefined> {
-    const out: Record<string, ReadonlyArray<Message> | undefined> = {};
-    const map = sessionMessages ?? {};
-
-    for (const [sessionId, value] of Object.entries(map)) {
-        const messages = readStoredSessionMessagesFromStateLike(value);
-
-        if (messages.length === 0) {
-            out[sessionId] = [];
-            continue;
-        }
-
-        const userMessages: Message[] = [];
-        for (const m of messages) {
-            if (!m || m.kind !== 'user-text') continue;
-            userMessages.push(m);
-        }
-        out[sessionId] = userMessages;
-    }
-
-    return out;
-}
-
-export function useAllSessionMessages(enabled: boolean): Record<string, ReadonlyArray<Message> | undefined> {
-    // IMPORTANT:
-    // Do not derive new objects/arrays inside a Zustand selector. React 18 may call getSnapshot twice, and if
-    // the selector allocates new references for the same store state it can trigger:
-    // - "The result of getSnapshot should be cached…"
-    // - "Maximum update depth exceeded"
-    //
-    // Instead, subscribe to the store's stable `sessionMessages` reference and derive via `useMemo`.
-    const emptySessionMessages = React.useMemo<Record<string, SessionMessagesStateLike>>(() => ({}), []);
-    const sessionMessages = getStorage()(
-        useShallow((state) => (enabled === true ? state.sessionMessages : emptySessionMessages))
-    );
-
-    return React.useMemo(() => {
-        if (enabled !== true) return {};
-        return collectUserTextMessagesBySessionIdFromSessionMessagesState(sessionMessages);
-    }, [enabled, sessionMessages, emptySessionMessages]);
-}
 
 type RemoteHistoryState = Readonly<{
     rows: SessionMessageHistoryRemoteRow[];
@@ -100,25 +45,15 @@ const EMPTY_REMOTE_HISTORY_STATE: RemoteHistoryState = Object.freeze({
 });
 
 export type UserMessageHistoryRemoteEntriesSnapshot = RemoteHistoryState & Readonly<{
-    requestNextPage: () => void;
+    requestNextPage: (retryFailed?: boolean) => void;
 }>;
 
 type RemoteHistoryStoreRecord = {
     state: RemoteHistoryState;
 };
 
-/**
- * A transport failure leaves the cursor, `hasMore` and `pagesLoaded` untouched, so every caller
- * that re-drives history — the transcript-navigation continuation effect on each transcript store
- * update, composer prefetch on each ArrowUp — would otherwise re-issue the same request against an
- * already failing (possibly rate-limiting) endpoint. The floor suppresses automatic re-drives;
- * an explicit Retry can request the same cursor immediately.
- */
-export const USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS = 30_000;
-
 const remoteHistoryRecordsByKey = new Map<string, RemoteHistoryStoreRecord>();
-const remoteHistoryInFlightByCursorKey = new Map<string, Promise<void>>();
-const remoteHistoryRetryFloorMsByCursorKey = new Map<string, number>();
+const remoteHistoryInFlightByCursorKey = new Map<string, Readonly<{ promise: Promise<void>; controller: AbortController }>>();
 const remoteHistoryListeners = new Set<() => void>();
 
 function normalizeRemoteHistoryBeforeSeq(value: unknown): number | null {
@@ -219,7 +154,8 @@ function requestRemoteHistoryPage(params: Readonly<{
     if (params.includeLatest && !record.state.startedFromLatest) {
         const existingCursorKey = `${params.cacheKey}:cursor:${remoteHistoryCursorKey(record.state.nextBeforeSeq)}`;
         const pendingOlderPage = remoteHistoryInFlightByCursorKey.get(existingCursorKey);
-        if (pendingOlderPage) return pendingOlderPage.then(() => requestRemoteHistoryPage(params));
+        if (pendingOlderPage && !params.explicitRetry) return pendingOlderPage.promise.then(() => requestRemoteHistoryPage(params));
+        pendingOlderPage?.controller.abort();
         // Keep the already-read rows and use this same pager to bridge from the latest page to
         // the old window. Exhaustion then means the whole session, rather than only its backfill.
         updateRemoteHistoryState(params.cacheKey, (previous) => ({
@@ -231,30 +167,35 @@ function requestRemoteHistoryPage(params: Readonly<{
     const beforeSeq = record.state.nextBeforeSeq;
     const cursorKey = `${params.cacheKey}:cursor:${remoteHistoryCursorKey(beforeSeq)}`;
     const pending = remoteHistoryInFlightByCursorKey.get(cursorKey);
-    if (pending) return pending;
-    const retryFloorMs = remoteHistoryRetryFloorMsByCursorKey.get(cursorKey);
-    if (!params.explicitRetry && retryFloorMs !== undefined && Date.now() < retryFloorMs) return Promise.resolve();
+    if (pending && !params.explicitRetry) return pending.promise;
+    pending?.controller.abort();
+    // Store updates cannot retry a failed cursor. Retry, ArrowUp or a fresh Session mount
+    // clears this existing failure fact; elapsed time is not renewed demand.
+    if (!params.explicitRetry && record.state.failure === 'error') return Promise.resolve();
+    if (params.explicitRetry && record.state.failure === 'error') {
+        updateRemoteHistoryState(params.cacheKey, (previous) => ({ ...previous, failure: null }));
+    }
 
     const cacheKey = params.cacheKey;
+    const controller = new AbortController();
     const request = sync.fetchUserMessageHistoryPage(params.sessionId, {
         limit: USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
+        signal: controller.signal,
+        ...(params.explicitRetry ? { fresh: true } : {}),
         ...(params.turnProjection ? { turnProjection: true } : {}),
         ...(beforeSeq !== null ? { beforeSeq } : {}),
     // A rejected call (unresolvable server scope, transport throw) is the same transport failure
-    // the page fetcher already reports as `error`, and gets the same retry floor.
+    // the page fetcher already reports as `error`, and latches the same failure fact.
     }).catch((): FetchUserMessageHistoryPageResult => ({ status: 'error' })).then((result) => {
+        // A superseded cursor read can finish after its replacement. Only the current
+        // request may publish rows, checkpoint a cursor, or latch a failure.
+        if (controller.signal.aborted || remoteHistoryInFlightByCursorKey.get(cursorKey) !== inFlight) return;
         if (result.status === 'error') {
-            remoteHistoryRetryFloorMsByCursorKey.set(
-                cursorKey,
-                Date.now() + USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS,
-            );
             updateRemoteHistoryState(cacheKey, (previous) => (
                 previous.failure === 'error' ? previous : { ...previous, failure: 'error' }
             ));
             return;
         }
-        remoteHistoryRetryFloorMsByCursorKey.delete(cursorKey);
-
         if (result.status === 'loaded') {
             updateRemoteHistoryState(cacheKey, (previous) => ({
                 rows: mergeRemoteHistoryRows(previous.rows, result.rows),
@@ -287,16 +228,33 @@ function requestRemoteHistoryPage(params: Readonly<{
             ));
         }
     }).finally(() => {
-        remoteHistoryInFlightByCursorKey.delete(cursorKey);
+        if (remoteHistoryInFlightByCursorKey.get(cursorKey) === inFlight) remoteHistoryInFlightByCursorKey.delete(cursorKey);
     });
-    remoteHistoryInFlightByCursorKey.set(cursorKey, request);
+    const inFlight = { promise: request, controller };
+    remoteHistoryInFlightByCursorKey.set(cursorKey, inFlight);
     return request;
 }
 
+/** Stop releases this demand's wait; another consumer may still need the shared cursor read. */
+function waitForRemoteHistoryDemand(request: Promise<void>, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+        const stop = () => { signal.removeEventListener('abort', stop); resolve(); };
+        signal.addEventListener('abort', stop, { once: true });
+        request.then(() => {
+            signal.removeEventListener('abort', stop);
+            resolve();
+        }, error => {
+            signal.removeEventListener('abort', stop);
+            reject(error);
+        });
+    });
+}
+
 export function resetUserMessageHistoryRemoteEntriesForTests(): void {
+    for (const request of remoteHistoryInFlightByCursorKey.values()) request.controller.abort();
     remoteHistoryRecordsByKey.clear();
     remoteHistoryInFlightByCursorKey.clear();
-    remoteHistoryRetryFloorMsByCursorKey.clear();
     emitRemoteHistoryChange();
 }
 
@@ -367,12 +325,18 @@ export function useUserMessageHistoryRemoteEntries(opts: Readonly<{
         () => readRemoteHistoryState(cacheKey, initialBeforeSeq),
         () => EMPTY_REMOTE_HISTORY_STATE,
     );
-    const requestNextPage = React.useCallback(() => {
+    React.useEffect(() => {
+        if (!cacheKey) return;
+        updateRemoteHistoryState(cacheKey, (previous) => previous.failure === 'error'
+            ? { ...previous, failure: null } : previous);
+    }, [cacheKey]);
+    const requestNextPage = React.useCallback((retryFailed = false) => {
         requestRemoteHistoryPage({
             cacheKey,
             initialBeforeSeq,
             sessionId: normalizedSessionId,
             turnProjection: turnProjectionSupported,
+            explicitRetry: retryFailed && readRemoteHistoryState(cacheKey, initialBeforeSeq).failure === 'error',
         });
     }, [cacheKey, initialBeforeSeq, normalizedSessionId, turnProjectionSupported]);
 
@@ -398,20 +362,21 @@ export type UserMessageHistoryEntriesOptions = Readonly<{
     enabled?: boolean;
 }>;
 
-export type UserMessageHistoryEntriesSnapshot = Readonly<{
+export type UserMessageHistoryEntriesData = Readonly<{
     entries: readonly UserMessageHistoryEntry[];
     coverage: 'loaded' | 'partial' | 'complete';
     hasMore: boolean;
     isLoading: boolean;
     error: boolean;
     progress: Readonly<{ pagesLoaded: number; sessionsSearched: number; totalSessions: number }>;
-    loadMore: () => Promise<void>;
-    retry: () => Promise<void>;
-    stop: () => void;
 }>;
 
-type HistorySource = Pick<StorageState, 'sessionMessages' | 'sessions' | 'sessionListRowsByServerId'>;
-const EMPTY_HISTORY_SOURCE: HistorySource = { sessionMessages: {}, sessions: {}, sessionListRowsByServerId: {} };
+export type UserMessageHistoryEntriesSnapshot = UserMessageHistoryEntriesData & Readonly<{
+    loadMore: (signal?: AbortSignal) => Promise<UserMessageHistoryEntriesData>;
+    retry: (signal?: AbortSignal) => Promise<UserMessageHistoryEntriesData>;
+    stop: () => UserMessageHistoryEntriesData;
+}>;
+
 const EMPTY_ACCEPTED_SESSIONS: Readonly<Record<string, RemoteHistoryState>> = {};
 const EMPTY_ENTRIES: readonly UserMessageHistoryEntry[] = [];
 
@@ -433,21 +398,13 @@ export function useUserMessageHistoryEntries(opts: UserMessageHistoryEntriesOpti
     const roleQuerySupported = sourceAvailable && serverFeatures.status === 'ready' && isSessionMessageRoleQuerySupported(serverFeatures.features);
     const turnProjection = serverFeatures.status === 'ready' && isSessionMessageTurnProjectionSupported(serverFeatures.features);
     const perSession = opts.scope === 'perSession';
-    // Elect references before React: a per-Session history reader must not
-    // rebuild its entries when a sibling transcript or list row streams.
-    const selectedSource = getStorage()(useShallow((state) => ({
-        transcript: enabled && sourceAvailable && perSession && sessionId ? state.sessionMessages[sessionId] : undefined,
-        session: enabled && sourceAvailable && perSession && sessionId ? state.sessions[sessionId] : undefined,
-        sessionMessages: enabled && sourceAvailable && !perSession ? state.sessionMessages : EMPTY_HISTORY_SOURCE.sessionMessages,
-        sessions: enabled && sourceAvailable && !perSession ? state.sessions : EMPTY_HISTORY_SOURCE.sessions,
-        sessionListRowsByServerId: enabled && sourceAvailable && !perSession
-            ? state.sessionListRowsByServerId : EMPTY_HISTORY_SOURCE.sessionListRowsByServerId,
-    })));
-    const source = React.useMemo<HistorySource>(() => perSession ? {
-        sessionMessages: sessionId && selectedSource.transcript ? { [sessionId]: selectedSource.transcript } : EMPTY_HISTORY_SOURCE.sessionMessages,
-        sessions: sessionId && selectedSource.session ? { [sessionId]: selectedSource.session } : EMPTY_HISTORY_SOURCE.sessions,
-        sessionListRowsByServerId: EMPTY_HISTORY_SOURCE.sessionListRowsByServerId,
-    } : selectedSource, [perSession, selectedSource, sessionId]);
+    const localHistory = useSessionUserMessageHistory(perSession ? sessionId ?? '__none__' : null, enabled && sourceAvailable);
+    const sessionServerId = useSessionServerId(sessionId ?? '__none__', enabled && sourceAvailable && perSession);
+    const sessionServerIds = useUserMessageHistorySessionServerIds(enabled && sourceAvailable && !perSession);
+    const globalInventory = useUserMessageHistorySessionIds(serverId, enabled && sourceAvailable && !perSession);
+    const inventory = React.useMemo(() => !enabled || !sourceAvailable ? []
+        : perSession ? sessionId ? [sessionId] : [] : globalInventory,
+    [enabled, globalInventory, perSession, sessionId, sourceAvailable]);
     const contextKey = JSON.stringify([serverId, activeScope?.accountId ?? null, opts.scope, sessionId]);
     const contextRef = React.useRef({ key: contextKey, enabled });
     contextRef.current = { key: contextKey, enabled };
@@ -458,41 +415,21 @@ export function useUserMessageHistoryEntries(opts: UserMessageHistoryEntriesOpti
     }>>({ key: contextKey, sessions: EMPTY_ACCEPTED_SESSIONS, demanded: false });
     const acceptedSessions = accepted.key === contextKey ? accepted.sessions : EMPTY_ACCEPTED_SESSIONS;
     const demanded = accepted.key === contextKey && accepted.demanded;
-    const pendingRef = React.useRef<{ cancelled: boolean } | null>(null);
+    const pendingRef = React.useRef<AbortController | null>(null);
     const [isLoading, setIsLoading] = React.useState(false);
     const stop = React.useCallback(() => {
-        if (pendingRef.current) pendingRef.current.cancelled = true;
+        pendingRef.current?.abort();
         pendingRef.current = null;
         setIsLoading(false);
+        return { ...latestProjection.current.data, isLoading: false };
     }, []);
     React.useEffect(() => {
         stop();
         return () => {
-            if (pendingRef.current) pendingRef.current.cancelled = true;
+            pendingRef.current?.abort();
             pendingRef.current = null;
         };
     }, [contextKey, enabled, stop]);
-
-    const inventory = React.useMemo(() => {
-        if (!enabled || !sourceAvailable || !serverId) return [];
-        if (opts.scope === 'perSession') return sessionId ? [sessionId] : [];
-        const rows = readSessionListRowsForServerId(source.sessionListRowsByServerId, serverId) ?? {};
-        const sessions = new Map(Object.entries(rows));
-        for (const session of Object.values(source.sessions)) {
-            if (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, serverId)) continue;
-            if (!sessions.has(session.id)) sessions.set(session.id, session);
-        }
-        const activityAt = (id: string) => {
-            const session = sessions.get(id);
-            return deriveSessionListMeaningfulActivityAt({
-                sessionMeaningfulActivityAt: session?.meaningfulActivityAt,
-                sessionCreatedAt: session?.createdAt,
-                latestCommittedMessageCreatedAt: undefined,
-                latestPendingMessageCreatedAt: undefined,
-            }) ?? 0;
-        };
-        return [...sessions.keys()].sort((a, b) => activityAt(b) - activityAt(a) || a.localeCompare(b));
-    }, [enabled, opts.scope, serverId, sessionId, sourceAvailable, source.sessions, source.sessionListRowsByServerId]);
 
     React.useEffect(() => {
         if (!enabled || !roleQuerySupported || demanded || !serverId) return;
@@ -508,7 +445,7 @@ export function useUserMessageHistoryEntries(opts: UserMessageHistoryEntriesOpti
         }
     }, [activeScope?.accountId, contextKey, demanded, enabled, inventory, roleQuerySupported, serverId]);
 
-    const entries = React.useMemo(() => {
+    const projectEntries = React.useCallback((sessions: Readonly<Record<string, RemoteHistoryState>>) => {
         if (!enabled || !sourceAvailable || !serverId) return EMPTY_ENTRIES;
         const rows = new Map<string, UserMessageHistoryEntry>();
         const include = (entry: UserMessageHistoryEntry) => {
@@ -517,13 +454,12 @@ export function useUserMessageHistoryEntries(opts: UserMessageHistoryEntriesOpti
         };
         const localSessionIds = opts.scope === 'perSession'
             ? sessionId ? [sessionId] : []
-            : [...new Set([...inventory, ...Object.keys(source.sessionMessages)])];
+            : [...new Set([...inventory, ...Object.keys(localHistory)])];
         for (const id of localSessionIds) {
-            const session = source.sessions[id];
-            if (session?.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, serverId)) continue;
-            for (const message of readStoredSessionMessagesFromStateLike(source.sessionMessages[id])) {
-                if (message.kind !== 'user-text') continue;
-                const text = readMessageDisplayText(message);
+            const ownerServerId = perSession ? sessionServerId : sessionServerIds[id];
+            if (ownerServerId && !areServerProfileIdentifiersEquivalent(ownerServerId, serverId)) continue;
+            for (const message of Object.values(localHistory[id] ?? {}).sort(compareTranscriptMessagesOldestFirst)) {
+                const text = message.text;
                 if (!text.trim()) continue;
                 include({
                     serverId, sessionId: id, messageId: message.realID ?? message.id,
@@ -532,26 +468,53 @@ export function useUserMessageHistoryEntries(opts: UserMessageHistoryEntriesOpti
                 });
             }
         }
-        for (const [id, state] of Object.entries(acceptedSessions)) {
+        for (const [id, state] of Object.entries(sessions)) {
             for (const row of state.rows) {
                 if (row.role !== 'user') continue;
                 include({ serverId, sessionId: id, messageId: row.messageId, seq: row.seq, createdAtMs: row.createdAt, text: row.text });
             }
         }
         return [...rows.values()].sort((a, b) => b.createdAtMs - a.createdAtMs || (b.seq ?? 0) - (a.seq ?? 0));
-    }, [acceptedSessions, enabled, inventory, opts.scope, serverId, sessionId, sourceAvailable, source.sessionMessages, source.sessions]);
+    }, [enabled, inventory, opts.scope, perSession, serverId, sessionId, sourceAvailable,
+        localHistory, sessionServerId, sessionServerIds]);
+    const entries = React.useMemo(() => projectEntries(acceptedSessions), [projectEntries, acceptedSessions]);
+
+    const projectData = React.useCallback((sessions: Readonly<Record<string, RemoteHistoryState>>, hasDemand: boolean,
+        loading: boolean, projectedEntries = projectEntries(sessions)): UserMessageHistoryEntriesData => {
+        // The paged ordinary/archived/query inventory cannot attest Account-wide completeness.
+        const complete = perSession && inventory.length > 0 && inventory.every((id) => {
+            const state = sessions[id];
+            return state && state.startedFromLatest && state.pagesLoaded > 0 && !state.hasMore && state.failure === null;
+        });
+        return {
+            entries: projectedEntries,
+            coverage: complete ? 'complete' : hasDemand ? 'partial' : 'loaded',
+            hasMore: enabled && roleQuerySupported && inventory.some((id) => sessions[id]?.hasMore !== false || sessions[id]?.startedFromLatest !== true),
+            isLoading: enabled && loading,
+            error: enabled && hasDemand && (!roleQuerySupported || Object.values(sessions).some((state) => state.failure !== null)),
+            progress: {
+                pagesLoaded: Object.values(sessions).reduce((count, state) => count + state.pagesLoaded, 0),
+                sessionsSearched: Object.keys(sessions).length,
+                totalSessions: inventory.length,
+            },
+        };
+    }, [enabled, inventory, perSession, projectEntries, roleQuerySupported]);
+    const data = projectData(acceptedSessions, demanded, isLoading, entries);
+    const latestProjection = React.useRef({ projectData, acceptedSessions, demanded, data });
+    latestProjection.current = { projectData, acceptedSessions, demanded, data };
 
     const nextSessionId = inventory.find((id) => acceptedSessions[id]?.hasMore !== false || acceptedSessions[id]?.startedFromLatest !== true) ?? null;
-    const loadPage = React.useCallback(async (explicitRetry: boolean) => {
-        if (!enabled || !serverId || pendingRef.current) return;
+    const loadPage = React.useCallback(async (explicitRetry: boolean, signal?: AbortSignal) => {
+        if (!enabled || !serverId || pendingRef.current) return latestProjection.current.data;
         const demandKey = contextKey;
         setAccepted((previous) => ({
             key: demandKey,
             sessions: previous.key === demandKey ? previous.sessions : EMPTY_ACCEPTED_SESSIONS,
             demanded: true,
         }));
-        if (!nextSessionId || !roleQuerySupported) return;
-        const pending = { cancelled: false };
+        if (!nextSessionId || !roleQuerySupported) return latestProjection.current.projectData(acceptedSessions, true, false);
+        const pending = new AbortController();
+        const cancellation = mergeAbortSignals([pending.signal, signal]);
         pendingRef.current = pending;
         setIsLoading(true);
         const cacheKey = buildRemoteHistoryCacheKey({
@@ -559,42 +522,35 @@ export function useUserMessageHistoryEntries(opts: UserMessageHistoryEntriesOpti
             accountId: activeScope?.accountId ?? null,
         });
         try {
-            await requestRemoteHistoryPage({ cacheKey, sessionId: nextSessionId, initialBeforeSeq: null, turnProjection, includeLatest: true, explicitRetry });
-            if (pending.cancelled || contextRef.current.key !== demandKey || !contextRef.current.enabled) return;
+            await waitForRemoteHistoryDemand(requestRemoteHistoryPage({ cacheKey, sessionId: nextSessionId, initialBeforeSeq: null,
+                turnProjection, includeLatest: true, explicitRetry }), cancellation.signal);
+            if (cancellation.signal.aborted || contextRef.current.key !== demandKey || !contextRef.current.enabled) {
+                const latest = latestProjection.current;
+                return latest.projectData(latest.acceptedSessions, latest.demanded, false);
+            }
             const state = readRemoteHistoryState(cacheKey, null);
-            setAccepted((previous) => ({
+            const nextAccepted = {
                 key: demandKey,
                 demanded: true,
-                sessions: { ...(previous.key === demandKey ? previous.sessions : {}), [nextSessionId]: state },
-            }));
+                sessions: { ...latestProjection.current.acceptedSessions, [nextSessionId]: state },
+            };
+            setAccepted(nextAccepted);
+            // Return the owner's accepted projection directly: React may commit the setState only
+            // after an Action awaiting this page resumes. No presenter needs to wait for a render.
+            return latestProjection.current.projectData(nextAccepted.sessions, true, false);
         } finally {
+            cancellation.dispose();
             if (pendingRef.current === pending) {
                 pendingRef.current = null;
                 setIsLoading(false);
             }
         }
-    }, [activeScope?.accountId, contextKey, enabled, nextSessionId, roleQuerySupported, serverId, turnProjection]);
-    const loadMore = React.useCallback(() => loadPage(false), [loadPage]);
-    const retry = React.useCallback(() => loadPage(true), [loadPage]);
+    }, [acceptedSessions, activeScope?.accountId, contextKey, enabled, nextSessionId, roleQuerySupported, serverId, turnProjection]);
+    const loadMore = React.useCallback((signal?: AbortSignal) => loadPage(false, signal), [loadPage]);
+    const retry = React.useCallback((signal?: AbortSignal) => loadPage(true, signal), [loadPage]);
 
-    // Ordinary, archived and strict-query memberships each retain independent pagination in the
-    // Account inventory owner. The union of cached rows cannot attest that archived/shared sessions
-    // were fully enumerated, so global exhaustion is partial even when all known sessions were read.
-    const complete = opts.scope === 'perSession' && inventory.length > 0 && inventory.every((id) => {
-        const state = acceptedSessions[id];
-        return state && state.startedFromLatest && state.pagesLoaded > 0 && !state.hasMore && state.failure === null;
-    });
     return {
-        entries,
-        coverage: complete ? 'complete' : demanded ? 'partial' : 'loaded',
-        hasMore: enabled && roleQuerySupported && nextSessionId !== null,
-        isLoading: enabled && isLoading,
-        error: enabled && demanded && (!roleQuerySupported || Object.values(acceptedSessions).some((state) => state.failure !== null)),
-        progress: {
-            pagesLoaded: Object.values(acceptedSessions).reduce((count, state) => count + state.pagesLoaded, 0),
-            sessionsSearched: Object.keys(acceptedSessions).length,
-            totalSessions: inventory.length,
-        },
+        ...data,
         loadMore,
         retry,
         stop,

@@ -31,6 +31,7 @@ export async function createUiApprovalRequest(input: Readonly<{
     actionId: Parameters<Execute>[0];
     actionInput: Parameters<Execute>[1];
     actionRequestId: string;
+    externalActionTarget?: NonNullable<Parameters<Execute>[2]>['externalActionTarget'];
 }>): Promise<string> {
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null });
@@ -41,6 +42,7 @@ export async function createUiApprovalRequest(input: Readonly<{
             surface: 'ui',
             authority: 'present_user',
             actionRequestId: input.actionRequestId,
+            ...(input.externalActionTarget ? { externalActionTarget: input.externalActionTarget } : {}),
         });
     });
     const created = result as { ok?: unknown; result?: { kind?: unknown; artifactId?: unknown } } | undefined;
@@ -98,7 +100,7 @@ export async function replayApprovedAsDaemon(input: Readonly<{
         { writeApprovalRequestArtifact }, { isApprovalExecutionOriginCurrentForAccountContext },
         { createUiConnectedServiceAction }, { executeActionOperationActionV1 }, { machineRpcWithServerScope },
         { resolveServerProfileScopeIdForIdentifier }, { createUiProviderActionExecuteV1 }, { createUiProjectWorkerActionV1 },
-        { createUiFilesystemAction }, { createUiScmAction }] = await Promise.all([
+        { createUiFilesystemAction }, { createUiScmAction }, { sessionStopWithServerScope }] = await Promise.all([
         import('@happier-dev/protocol/actions/actionExecutor'),
         import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1'),
         import('@/sync/ops/actions/actionAccountContext'),
@@ -113,6 +115,7 @@ export async function replayApprovedAsDaemon(input: Readonly<{
         import('@/sync/ops/actions/projectWorkerAction'),
         import('@/sync/ops/actions/filesystemActionDeps'),
         import('@/sync/ops/actions/scmActionDeps'),
+        import('@/sync/ops/sessions'),
     ]);
     const account = await captureLazyActionAccountContext(input.serverId, input.signal);
     try {
@@ -128,6 +131,10 @@ export async function replayApprovedAsDaemon(input: Readonly<{
             projectWorkerAction: createUiProjectWorkerActionV1(account),
             filesystemActionExecute: createUiFilesystemAction(),
             scmActionExecute: createUiScmAction(account),
+            sessionStop: ({ sessionId, stopIntent, context, signal }) => sessionStopWithServerScope(sessionId, {
+                serverId: account.serverId, scope: account.accountLifetime.scope, stopIntent, signal,
+                actionContext: context, isCurrent: account.accountLifetime.isCurrent,
+            }),
             actionOperationAction: args => executeActionOperationActionV1({ ...args,
                 transport: request => machineRpcWithServerScope({ ...request, accountId: account.accountId }),
             }),
@@ -161,6 +168,32 @@ export async function replayApprovedAsDaemon(input: Readonly<{
     } finally { account.dispose(); }
 }
 
+/** The Home's own-Machine HTTP decision endpoint, backed by the real approval replay owner. */
+export async function executeOwnMachineApprovalDecisionBoundary(input: Readonly<{
+    serverId: string;
+    machineId: string;
+    body: unknown;
+    signal?: AbortSignal | null;
+    runtimeActionExecute?: import('@happier-dev/protocol/actions/executor/types').RuntimeActionExecute;
+    machineFilesystemEffects?: MachineFilesystemEffects;
+}>) {
+    const [{ ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema }, { getActionSpec }] = await Promise.all([
+        import('@happier-dev/protocol/actions/externalActionApi'),
+        import('@happier-dev/protocol/actions/actionSpecs'),
+    ]);
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input.body);
+    if (envelope.target?.kind !== 'machine' || envelope.target.machineId !== input.machineId) throw new Error('Wrong approval Machine');
+    const decision = getActionSpec('approval.request.decide').inputSchema.parse(envelope.input);
+    if (typeof decision !== 'object' || decision === null || !('artifactId' in decision)
+        || typeof decision.artifactId !== 'string') throw new Error('Missing approval Artifact');
+    const result = await replayApprovedAsDaemon({ serverId: input.serverId, machineId: input.machineId,
+        artifactId: decision.artifactId, decision: 'approve', ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.runtimeActionExecute ? { runtimeActionExecute: input.runtimeActionExecute } : {}),
+        ...(input.machineFilesystemEffects ? { machineFilesystemEffects: input.machineFilesystemEffects } : {}),
+    });
+    return ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId, execution: result });
+}
+
 /** Home HTTP and Machine RPC remain boundaries; approval/Artifact/effect owners are real. */
 export async function installOwnMachineApprovalReplayBoundary(input: Readonly<{
     harness: import('./homeGovernanceHarness').HomeGovernanceHarness;
@@ -170,12 +203,7 @@ export async function installOwnMachineApprovalReplayBoundary(input: Readonly<{
     runtimeActionExecute?: import('@happier-dev/protocol/actions/executor/types').RuntimeActionExecute;
     machineFilesystemEffects?: MachineFilesystemEffects;
 }>) {
-    const [{ ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema },
-        { createPlainMachineRowFixture }, { getActionSpec }] = await Promise.all([
-        import('@happier-dev/protocol/actions/externalActionApi'),
-        import('../fixtures/machineFixtures'),
-        import('@happier-dev/protocol/actions/actionSpecs'),
-    ]);
+    const { createPlainMachineRowFixture } = await import('../fixtures/machineFixtures');
     const machine = {
         ...createPlainMachineRowFixture({ id: input.machineId, accountId: input.accountId }),
         installationId: `${input.machineId}-installation`,
@@ -183,18 +211,6 @@ export async function installOwnMachineApprovalReplayBoundary(input: Readonly<{
     input.harness.answer(input.serverId, '/v1/machines', { body: [machine] });
     input.harness.answer(input.serverId, `GET /v1/machines/${input.machineId}`, { body: { machine } });
     input.harness.answer(input.serverId, '/v1/actions/approval.request.decide', { select: async (body, request) => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        if (envelope.target?.kind !== 'machine' || envelope.target.machineId !== input.machineId) throw new Error('Wrong approval Machine');
-        const decision = getActionSpec('approval.request.decide').inputSchema.parse(envelope.input);
-        // The generic registry returns unknown; narrow its validated network
-        // input before passing the Artifact identity to the replay boundary.
-        if (typeof decision !== 'object' || decision === null || !('artifactId' in decision)
-            || typeof decision.artifactId !== 'string') throw new Error('Missing approval Artifact');
-        const result = await replayApprovedAsDaemon({ serverId: input.serverId, machineId: input.machineId,
-            artifactId: decision.artifactId, decision: 'approve', ...(request.signal ? { signal: request.signal } : {}),
-            ...(input.runtimeActionExecute ? { runtimeActionExecute: input.runtimeActionExecute } : {}),
-            ...(input.machineFilesystemEffects ? { machineFilesystemEffects: input.machineFilesystemEffects } : {}),
-        });
-        return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId, execution: result }) };
+        return { body: await executeOwnMachineApprovalDecisionBoundary({ ...input, body, signal: request.signal }) };
     } });
 }
