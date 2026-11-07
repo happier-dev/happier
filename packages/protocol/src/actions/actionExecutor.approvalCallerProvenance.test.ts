@@ -625,10 +625,10 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         storedRequest = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
         return { ok: true as const };
       },
-      isApprovalExecutionOriginCurrent: async ({ origin, request }: Parameters<NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>>[0]) => {
+      isApprovalExecutionOriginCurrent: async ({ origin, request, reportStale }: Parameters<NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>>[0]) => {
         if (!origin.target) return false;
         verifiedTargets.push(origin.target);
-        return verifyExternalActionApprovalInputV1({
+        const current = verifyExternalActionApprovalInputV1({
           authorizationToken: origin.externalActionExecutionAuthorization?.token ?? '',
           actionId: request.actionId,
           target: origin.target,
@@ -636,6 +636,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
           publicKey: currentMachineKey.publicKey,
           signature: origin.externalActionInputSignature ?? '',
         });
+        if (!current) reportStale?.('credential_changed');
+        return current;
       },
       isActionApprovalRequired: () => true,
       homeDomainAction,
@@ -712,27 +714,27 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     }, approverContext);
     if (scenario === 'changed resolved target') {
       expect(replay).toMatchObject({
-        ok: true,
-        result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
+        ok: false, errorCode: 'approval_stale', effectAttempted: false,
+        details: { reason: 'credential_changed' },
       });
       expect(homeDomainAction).not.toHaveBeenCalled();
       expect(verifiedTargets).toEqual([{ kind: 'session', sessionId: 'session-substituted' }]);
       expect(storedRequest).toMatchObject({
-        status: 'failed',
-        execution: { ok: false, errorCode: 'approval_stale' },
+        status: 'approved',
       });
+      expect(storedRequest).not.toHaveProperty('execution');
       return;
     }
     if (scenario === 'changed stored input' || scenario === 'different machine key') {
       expect(replay).toMatchObject({
-        ok: true,
-        result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
+        ok: false, errorCode: 'approval_stale', effectAttempted: false,
+        details: { reason: 'credential_changed' },
       });
       expect(homeDomainAction).not.toHaveBeenCalled();
       expect(storedRequest).toMatchObject({
-        status: 'failed',
-        execution: { ok: false, errorCode: 'approval_stale' },
+        status: 'approved',
       });
+      expect(storedRequest).not.toHaveProperty('execution');
       return;
     }
     expect(replay).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });

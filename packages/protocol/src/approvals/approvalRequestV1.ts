@@ -1,5 +1,6 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
 export { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema, type ApprovalRequestStatus } from './approvalRequestStatus.js';
 import { z } from 'zod/mini';
@@ -16,7 +17,7 @@ import {
 } from '../sessions/creation/sessionCreationTargetPreparationV1.js';
 import { HandoffTargetReplacementApprovalV1Schema } from '../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import { ActionRequiredAuthoritySchema, ActionSurfaceSchema } from '../actions/metadata.js';
-import { computeActionInputApprovalDigestV1, isAutomationApprovalRequestSurface } from '../actions/decisionAuthority.js';
+import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { ActionRequestAttributionV1Schema, isSharedRequesterActionV1 } from '../actions/actionRequestAttributionV1.js';
@@ -719,37 +720,6 @@ export const ApprovalRequestSchema = lazyZodSchema(() => z.discriminatedUnion('v
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
 export const StoredApprovalRequestSchema = createStoredReadSchema(ApprovalRequestSchema);
 
-/**
- * Caller principals whose currentness only the exact daemon that admitted them
- * can recheck (plugin source custody, Automation Run currentness, Workflow
- * accepted authorization). Declared beside the caller union it keys on, so a new
- * arm cannot be added without answering this question — the hand-maintained
- * consumer-side list it replaced silently defaulted new arms to local replay.
- */
-const CALLER_REQUIRES_EXACT_DAEMON_REPLAY_RECORD = {
-  host: false,
-  session: true,
-  plugin: true,
-  automationRun: true,
-  workflowRun: true,
-} as const satisfies Record<ApprovalExecutionOriginCallerV1['kind'], boolean>;
-
-/**
- * Surfaces whose admission facts (external authorization, agent ceilings,
- * transport identity) the exact daemon owns, except for the host Account effects
- * admitted by the shared custody predicate below.
- */
-const SURFACE_REQUIRES_EXACT_DAEMON_REPLAY_RECORD = {
-  ui: false,
-  voice: false,
-  plugin: false,
-  agent: true,
-  mcp: true,
-  cli: true,
-  rpc: true,
-  api: true,
-} as const satisfies Record<ApprovalExecutionOriginV1['surface'], boolean>;
-
 export function resolveApprovalRequestAppExecutionPlacement(approval: ApprovalRequest): 'account' | 'client' | null {
   const actionId = ActionIdSchema.safeParse(approval.actionId);
   const spec = actionId.success ? getActionSpec(actionId.data) : null;
@@ -801,56 +771,12 @@ export function isSessionDiscussionApprovalPublicationV1(approval: ApprovalReque
     || publicationActionId === 'discussion.second_opinion.start';
 }
 
-/**
- * True when this durable approval carries authority facts a client cannot
- * verify itself, so its replay belongs to the exact daemon named by the origin.
- * Unsigned host-caused Account/client approvals on a present-user surface remain
- * locally replayable, as do durable host-origin Account effects and,
- * by the 2026-10-12 owner ruling, signed Agent-Session proposals whose reviewed
- * effect is Account/client-only: the approving app runs that effect while the signed
- * carrier stays immutable proposal provenance. Discussion Agent publication is
- * the exception: its actual Session publisher, not the approving person, must
- * author the committed message. Other signed origins retain daemon custody.
- */
+/** Compatibility projection; execution custody is decided by the canonical resolver. */
 export function requiresExactDaemonApprovalReplay(approval: ApprovalRequest): boolean {
-  if (approval.v !== 2) return false;
-  if (approval.requesterConfirmation) return true;
-  const origin = approval.executionOriginV1;
-  const actionId = ActionIdSchema.safeParse(approval.actionId);
-  const spec = actionId.success ? getActionSpec(actionId.data) : null;
-  const input = spec?.inputSchema.safeParse(approval.actionArgs);
-  const appPlacement = resolveApprovalRequestAppExecutionPlacement(approval);
-  const clientEffect = appPlacement === 'client';
-  const accountEffect = appPlacement === 'account';
-  if (isSessionDiscussionApprovalPublicationV1(approval)) return true;
-  const authorization = origin.externalActionExecutionAuthorization;
-  if (authorization) {
-    return !((accountEffect || clientEffect) && 'authentication' in authorization.binding
-      && authorization.binding.sessionActionOrigin !== undefined);
-  }
-  // The host-bound Session authors the proposal; the approving person executes
-  // its Account-only effect through the existing authenticated Account owner.
-  if (accountEffect && origin.caller.kind === 'session'
-    && (origin.surface === 'agent' || origin.surface === 'mcp')) return false;
-  // Client effects belong to the approving app's mounted owner. The requesting
-  // Session's Machine is provenance, not the location of its microphone or UI.
-  // Plugin/Run custody and CLI/API transport authority still stay exact.
-  if (clientEffect && (origin.caller.kind === 'host' || origin.caller.kind === 'session')
-    && (origin.surface === 'ui' || origin.surface === 'voice' || origin.surface === 'agent' || origin.surface === 'mcp')) return false;
-  // Replaying a Machine effect in the app would issue a fresh external root
-  // and ask again. Its exact daemon consumes the recorded decision instead.
-  if (origin.surface === 'ui' && origin.caller.kind === 'host'
-    && spec && input?.success && resolveActionExecutionPlacementForInput(spec, input.data) === 'machine') return true;
-  // These Account effects run through the deciding app's authenticated Home
-  // adapter, so a daemon's disallowed terminal policy cannot veto human consent.
-  // Plugin and other external provenance still belongs to its original executor.
-  if (spec && origin.caller.kind === 'host'
-    && spec.approvalInputCustody !== 'live_only') {
-    if (accountEffect && (origin.surface === 'cli'
-      || isAutomationApprovalRequestSurface(origin.surface, spec, approval.actionArgs))) return false;
-  }
-  return SURFACE_REQUIRES_EXACT_DAEMON_REPLAY_RECORD[origin.surface]
-    || CALLER_REQUIRES_EXACT_DAEMON_REPLAY_RECORD[origin.caller.kind];
+  const executor = resolveApprovalExecutor(approval);
+  return executor.kind === 'daemon'
+    || executor.kind === 'live_invocation' && Boolean(executor.daemonMachineId)
+    || executor.kind === 'unavailable' && executor.reason !== 'legacy_request';
 }
 
 export { resolveApprovalExecutor } from './resolveApprovalExecutor.js';

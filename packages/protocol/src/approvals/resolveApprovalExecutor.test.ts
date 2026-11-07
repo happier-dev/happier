@@ -159,7 +159,23 @@ describe('resolveApprovalExecutor', () => {
     expect(resolveApprovalExecutor(signed)).toEqual({ kind: 'app', placement: 'account' });
   });
 
-  it('keeps immediate power on its Home-admitted Machine while unsigned and deferred power remain Account-owned', () => {
+  it('retains signed API-token Account replay on its originating host after public projection', () => {
+    const request = requestFor('workflow.trigger.run_now', { automationId: 'automation' }, 'api');
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: { ...request.executionOriginV1,
+      serverIdentityId: 'stable-home', target, externalActionInputSignature: 'a'.repeat(86),
+      externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding: {
+        accountId: 'account', principalId: 'principal', credentialId: 'credential',
+        serverIdentityId: 'stable-home', machineId: 'machine', custodianAccountId: 'account',
+        installationId: 'installation', actionId: request.actionId, requestId: 'request',
+        requestEnvelopeDigest: 'a'.repeat(43), target, grant: API_TOKEN_FULL_GRANT_V1,
+      } } } });
+    expect(resolveApprovalExecutor(signed)).toEqual({ kind: 'daemon', machineId: 'machine' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(signed))))
+      .toEqual({ kind: 'daemon', machineId: 'machine' });
+  });
+
+  it('keeps signed API-token power on its Home-admitted Machine while unsigned power remains Account-owned', () => {
     const request = requestFor('machines.managed.power.set', { homeId: 'home', managedId: 'managed',
       intent: 'stop', when: 'now', expectedRevision: 0 }, 'api');
     expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
@@ -175,7 +191,7 @@ describe('resolveApprovalExecutor', () => {
     expect(resolveApprovalExecutor(signed)).toEqual({ kind: 'daemon', machineId: 'machine' });
     const deferred = ApprovalRequestV2Schema.parse({ ...signed,
       actionArgs: { homeId: 'home', managedId: 'managed', intent: 'stop', when: 'after-idle' } });
-    expect(resolveApprovalExecutor(deferred)).toEqual({ kind: 'app', placement: 'account' });
+    expect(resolveApprovalExecutor(deferred)).toEqual({ kind: 'daemon', machineId: 'machine' });
   });
 
   it('routes native deployment public reads and Machine-targeted proposals to the controller while unplaced proposals stay Account-owned', () => {

@@ -77,6 +77,12 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   if ((deploymentOperationForRootActionV1(actionId.data) !== undefined
       || isManagedRetainedControlInvocation(actionId.data, input.data))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
+  if (placement === 'account' && origin.target?.kind === 'machine'
+    && origin.principalId && origin.credentialId) {
+    // A token's approved Account effect retains its original signed transport.
+    // The deciding app's Account bearer cannot replace that credential custody.
+    return { kind: 'daemon', machineId: origin.target.machineId };
+  }
   if (placement === 'account' || placement === 'client') return { kind: 'app', placement };
   const machineId = origin.machineId?.trim()
     || (origin.target?.kind === 'machine' ? origin.target.machineId.trim() : '');

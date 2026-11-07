@@ -5,6 +5,7 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 import { createProviderErrorV1 } from '../providers/errors.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
 import {
   ApprovalRequestSchema,
@@ -44,8 +45,9 @@ it('admits only unsigned mounted plugin Account/client blocking continuations to
       caller: { kind: 'plugin', pluginId: 'example.widgets', contributionLocalId: 'overview', sourceCustody: { kind: 'development', registeredRootId: 'root' } },
       serverId: 'home', serverIdentityId: 'srv_home', accountId: 'alice', machineId: 'machine', actionId: 'widgets.item.add', requestId: 'add' } });
   expect(isMountedPluginBlockingApprovalEligibleForLiveClient(request)).toBe(true);
-  // Eligibility never relaxes exact source admission for durable/remote replay.
-  expect(requiresExactDaemonApprovalReplay(request)).toBe(true);
+  // The retained plugin invocation is local; a contextual Machine is not custody.
+  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'live_invocation' });
+  expect(requiresExactDaemonApprovalReplay(request)).toBe(false);
   const target = { kind: 'machine' as const, machineId: 'machine' };
   const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
     ...request.executionOriginV1, target, externalActionInputSignature: 'a'.repeat(86),
@@ -72,7 +74,7 @@ it('admits only unsigned mounted plugin Account/client blocking continuations to
   }
 });
 
-it('keeps client Voice replay in the approving app without transferring plugin or Machine custody', () => {
+it('keeps client Voice replay app-owned while Machine effects retain their executor', () => {
   const actionId = 'ui.voice_global.set_muted';
   const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent', actionId,
@@ -90,7 +92,7 @@ it('keeps client Voice replay in the approving app without transferring plugin o
     executionOriginV1: { ...request.executionOriginV1, surface: 'plugin', caller: {
       kind: 'plugin', pluginId: 'custom.voice', contributionLocalId: 'voice',
       sourceCustody: { kind: 'development', registeredRootId: 'voice-root' },
-    } } }))).toBe(true);
+    } } }))).toBe(false);
   expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
     actionArgs: { expectedAttempt: 'voice-attempt:1', muted: 'false' } }))).toBe(true);
   expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
@@ -246,7 +248,7 @@ it.each(['projects.compute.exec', 'projects.service.relocate'] as const)('retain
   ]) expect(ApprovalExecutionOriginV1Schema.safeParse(changed).success).toBe(false);
 });
 
-it('replays client Home continuations at the deciding app while retaining plugin custody', () => {
+it('replays client Home continuations at the deciding app across originating callers', () => {
   const actionId = 'account.home_continuation.invoke';
   const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId,
@@ -263,7 +265,7 @@ it('replays client Home continuations at the deciding app while retaining plugin
       caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 } } }))).toBe(false);
   expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
     executionOriginV1: { ...request.executionOriginV1, caller: { kind: 'plugin', pluginId: 'custom.owner', contributionLocalId: 'step',
-      sourceCustody: { kind: 'managed', immutableGenerationId: 'generation', installSource: 'archive' } } } }))).toBe(true);
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'generation', installSource: 'archive' } } } }))).toBe(false);
   expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request, actionId: 'ui.current_context.command.invoke',
     actionArgs: { commandId: 'current-ui:home' },
     executionOriginV1: { ...request.executionOriginV1, actionId: 'ui.current_context.command.invoke' } }))).toBe(false);
@@ -1502,25 +1504,24 @@ describe('requiresExactDaemonApprovalReplay', () => {
   }
 
   it.each([
-    // Its person-supplied OAuth client is live-only input: no stored input exists
-    // for the deciding Home, so even a deferred proposal stays at its daemon.
-    { actionId: 'mcp.servers.signIn.start', input: { serverId: 'oauth-server' }, deferredReplaysAtDaemon: true },
+    // A standalone terminal's private input retains its live invocation.
+    { actionId: 'mcp.servers.signIn.start', input: { serverId: 'oauth-server' } },
     { actionId: 'teams.credentials.externalKeys.create', input: {
       resourceId: 'resource-1', teamMembershipId: 'membership-1', label: 'CLI key',
-    }, deferredReplaysAtDaemon: false },
-  ] as const)('keeps a blocking $actionId result at its originating daemon', ({ actionId, input, deferredReplaysAtDaemon }) => {
+    } },
+  ] as const)('keeps a blocking $actionId result in the original terminal invocation', ({ actionId, input }) => {
     const request = hostCliRequest(actionId, input);
     expect(getActionSpec(actionId).approvalResultCustody).toBe('live_only');
-    expect(requiresExactDaemonApprovalReplay({ ...request,
-      approval: { flow: 'blocking', result: 'required' },
-      executionOriginV1: { ...request.executionOriginV1, machineId: 'origin-machine' },
-    })).toBe(true);
+    const blocking = { ...request, approval: { flow: 'blocking', result: 'required' } as const,
+      executionOriginV1: { ...request.executionOriginV1, machineId: 'origin-machine' } };
+    expect(resolveApprovalExecutor(blocking)).toEqual({ kind: 'live_invocation' });
+    expect(requiresExactDaemonApprovalReplay(blocking)).toBe(false);
     // A deliberately deferred proposal has no original live result recipient.
     // Its deciding human retains the existing one-shot result path unless the
     // Action's input itself is live-only.
     expect(requiresExactDaemonApprovalReplay({ ...request,
       approval: { flow: 'deferred', result: 'required' },
-    })).toBe(deferredReplaysAtDaemon);
+    })).toBe(false);
   });
 
   it('replays an unsigned host CLI Account effect at the deciding Home without inventing a Machine', () => {
@@ -1539,7 +1540,7 @@ describe('requiresExactDaemonApprovalReplay', () => {
     expect(requiresExactDaemonApprovalReplay({ ...request, executionOriginV1: {
       ...request.executionOriginV1,
       caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
-    } })).toBe(true);
+    } })).toBe(false);
   });
 
   it('replays unsigned host CLI Account effects outside the Profile family', () => {
@@ -1626,20 +1627,27 @@ describe('requiresExactDaemonApprovalReplay', () => {
     },
   );
 
-  it('keeps Machine, Session and client placement and live-only Account inputs on the exact CLI daemon', () => {
+  it('keeps missing Machine custody unavailable and client/private input custody off the daemon', () => {
     for (const request of [
       hostCliRequest('paths.list_recent', { machineId: 'machine-1', limit: 10 }),
       hostCliRequest('session.stop', { sessionId: 'session-1' }),
-      hostCliRequest('remote_hosts.edit', { hostId: 'reviewed-host', expectedRevision: 3 }),
-      hostCliRequest('remote_hosts.save', {
-        host: { id: 'reviewed-host', name: 'Reviewed host', createdAt: 1, updatedAt: 1,
-          lastUsedAt: null, ssh: { target: 'user@example.test', authMode: 'agent' } },
-        expectedRevision: 3,
-      }),
-    ]) expect(requiresExactDaemonApprovalReplay(request), request.actionId).toBe(true);
+    ]) {
+      expect(resolveApprovalExecutor(request)).toEqual({ kind: 'unavailable', reason: 'missing_machine' });
+      expect(requiresExactDaemonApprovalReplay(request)).toBe(true);
+    }
+    const client = hostCliRequest('remote_hosts.edit', { hostId: 'reviewed-host', expectedRevision: 3 });
+    expect(resolveApprovalExecutor(client)).toEqual({ kind: 'app', placement: 'client' });
+    expect(requiresExactDaemonApprovalReplay(client)).toBe(false);
+    const privateInput = hostCliRequest('remote_hosts.save', {
+      host: { id: 'reviewed-host', name: 'Reviewed host', createdAt: 1, updatedAt: 1,
+        lastUsedAt: null, ssh: { target: 'user@example.test', authMode: 'agent' } },
+      expectedRevision: 3,
+    });
+    expect(resolveApprovalExecutor(privateInput)).toEqual({ kind: 'live_invocation' });
+    expect(requiresExactDaemonApprovalReplay(privateInput)).toBe(false);
   });
 
-  it('routes signed present-user UI approval custody to its admitting daemon', () => {
+  it('keeps a Machine effect on its captured executor independently of the external carrier', () => {
     const target = { kind: 'machine' as const, machineId: 'controller' };
     const actionId = 'machines.managed.acquire';
     const approval = ApprovalRequestV2Schema.parse({
@@ -1660,7 +1668,7 @@ describe('requiresExactDaemonApprovalReplay', () => {
     expect(requiresExactDaemonApprovalReplay(approval)).toBe(true);
     const { externalActionExecutionAuthorization: _authorization, externalActionInputSignature: _signature,
       ...localOrigin } = approval.executionOriginV1;
-    expect(requiresExactDaemonApprovalReplay({ ...approval, executionOriginV1: localOrigin })).toBe(false);
+    expect(requiresExactDaemonApprovalReplay({ ...approval, executionOriginV1: localOrigin })).toBe(true);
   });
 
   it('keeps host Agent/MCP Account security requests on the deciding human Home adapter', () => {
@@ -1703,14 +1711,15 @@ describe('requiresExactDaemonApprovalReplay', () => {
     };
   }
 
-  it('routes every caller whose currentness only the admitting daemon owns', () => {
+  it('retains every original caller while Account effects use app placement', () => {
     const host = ApprovalRequestV2Schema.parse(approvalWithCaller({ kind: 'host' }));
     expect(requiresExactDaemonApprovalReplay(host)).toBe(false);
 
     const sessionCaller = { kind: 'session', sessionId: 'session-caller', starterDepth: 2, turnDepth: 3 };
     const session = ApprovalRequestV2Schema.parse(approvalWithCaller(sessionCaller));
     expect(session.executionOriginV1.caller).toEqual(sessionCaller);
-    expect(requiresExactDaemonApprovalReplay(session)).toBe(true);
+    expect(resolveApprovalExecutor(session)).toEqual({ kind: 'app', placement: 'account' });
+    expect(requiresExactDaemonApprovalReplay(session)).toBe(false);
     expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ ...sessionCaller, capability: 'secret' })).success).toBe(false);
     expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ ...sessionCaller, sessionId: ' ' })).success).toBe(false);
     expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ kind: 'session', sessionId: 'session-caller' })).success).toBe(false);
@@ -1730,7 +1739,7 @@ describe('requiresExactDaemonApprovalReplay', () => {
         },
       },
     }));
-    expect(requiresExactDaemonApprovalReplay(workflowRun)).toBe(true);
+    expect(requiresExactDaemonApprovalReplay(workflowRun)).toBe(false);
 
     const automationCaller = {
       kind: 'automationRun',
@@ -1745,10 +1754,10 @@ describe('requiresExactDaemonApprovalReplay', () => {
         runId: 'automation-run-1',
       },
     });
-    expect(requiresExactDaemonApprovalReplay(automationRun)).toBe(true);
+    expect(requiresExactDaemonApprovalReplay(automationRun)).toBe(false);
   });
 
-  it('replays durable host Account requests while retaining exact-daemon custody for RPC and API origins', () => {
+  it('keeps durable Account placement independent of RPC or API carrier', () => {
     for (const surface of ['agent', 'mcp', 'cli', 'rpc'] as const) {
       const request = ApprovalRequestV2Schema.parse({
         ...approvalWithCaller({ kind: 'host' }) as Record<string, unknown>,
@@ -1759,7 +1768,7 @@ describe('requiresExactDaemonApprovalReplay', () => {
           surface,
         },
       });
-      expect(requiresExactDaemonApprovalReplay(request), surface).toBe(surface === 'rpc');
+      expect(requiresExactDaemonApprovalReplay(request), surface).toBe(false);
     }
 
     const apiRequest = ApprovalRequestV2Schema.parse({
@@ -1773,6 +1782,6 @@ describe('requiresExactDaemonApprovalReplay', () => {
         credentialId: 'credential-1',
       },
     });
-    expect(requiresExactDaemonApprovalReplay(apiRequest)).toBe(true);
+    expect(requiresExactDaemonApprovalReplay(apiRequest)).toBe(false);
   });
 });

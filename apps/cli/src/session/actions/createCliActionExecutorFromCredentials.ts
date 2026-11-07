@@ -131,7 +131,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
-import { requiresExactDaemonApprovalReplay } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/resolveApprovalExecutor';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -918,9 +918,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
     const isApprovalExecutionOriginCurrent: NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']> = async (args) => {
       // Account/client proposals belong to the deciding Account, not the old
       // runner. The signature authenticates unchanged proposal provenance.
-      const clientDaemonReplay = params.externalActionClient === true
-        && !params.isApprovalExecutionOriginCurrent && requiresExactDaemonApprovalReplay(args.request);
-      if (!requiresExactDaemonApprovalReplay(args.request) || clientDaemonReplay) {
+      if (resolveApprovalExecutor(args.request).kind !== 'daemon') {
         const { origin, request, signal } = args;
         if (origin.accountId !== undefined && origin.accountId !== readAccountIdFromToken(credentials.token)) return false;
         const snapshot = await resolveServerFeaturesSnapshot();
@@ -934,7 +932,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           || origin.actionId !== request.actionId
           || (authorization.binding.actionId !== request.actionId && authorization.binding.actionId !== 'approval.request.create')
           || (origin.caller.kind === 'session' ? request.createdBy.sessionId !== origin.caller.sessionId
-            : !clientDaemonReplay || origin.caller.kind !== 'host')) return false;
+            : origin.caller.kind !== 'host')) return false;
         // The terminal verifies the issuing installation's signature. Only the
         // recorded daemon can recheck its signed Home root and live custody;
         // the existing approved-Artifact replay does that before the effect.
@@ -945,10 +943,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const publicKey = decodeBase64(source.installationPublicKey, 'base64');
         if (encodeBase64(publicKey, 'base64') !== source.installationPublicKey
           || !MachineInstallationPublicKeySchema.safeParse(encodeBase64(publicKey, 'base64url')).success) return false;
-        return verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+        const current = verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
           actionId: request.actionId, input: request.actionArgs, target: origin.target,
           ...(request.v === 2 && request.requesterConfirmation ? { requesterConfirmation: request.requesterConfirmation } : {}),
           signature: origin.externalActionInputSignature, publicKey });
+        if (!current) args.reportStale?.('credential_changed');
+        return current;
       }
       // A daemon's live-custody callback owns exact replay, not an Account proposal.
       if (params.isApprovalExecutionOriginCurrent) return await params.isApprovalExecutionOriginCurrent(args);
@@ -1259,23 +1259,18 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           return failure.success ? failure.data : actionFailure('invalid_action_transport_output');
         }
         if (request.v !== 2) return null;
-        // The decision is already committed. A standalone CLI consumes that
-        // same Artifact at its recorded daemon; daemon-local replay keeps its
-        // admitted execution owner.
-        const approvedActionId = ActionIdSchema.safeParse(request.actionId);
-        const clientPlaced = approvedActionId.success
-          && resolveActionExecutionPlacementForInput(getActionSpec(approvedActionId.data), request.actionArgs) === 'client';
-        // A Session proposal may be app-replayable without requiring exact
-        // daemon custody. A standalone deciding CLI still has no mounted UI:
-        // reuse the recorded daemon's dispatcher, preserving the Session address.
-        const clientNeedsDaemonReplay = clientPlaced && Boolean(request.executionOriginV1.machineId)
-          && !params.clientActionExecute && !getDaemonClientActionExecutor(approvalServerId);
+        const executor = resolveApprovalExecutor(request);
+        if (executor.kind === 'unavailable') return actionFailure('approval_origin_unavailable');
+        if (executor.kind === 'app' && executor.placement === 'client'
+          && !params.clientActionExecute && !getDaemonClientActionExecutor(approvalServerId)) {
+          return actionFailure('approval_origin_unavailable');
+        }
         if (machineAdmissionTransport || params.machineActionDirectTargetTransport
           || params.pluginActionExecutionOwner === 'current_process'
-          || clientPlaced && params.clientActionExecute
-          || !requiresExactDaemonApprovalReplay(request) && !clientNeedsDaemonReplay) return null;
-        if (request.v !== 2 || !request.executionOriginV1.machineId
-          || !hasStoredSessionCredentialProvenance(credentials)
+          || executor.kind === 'app') return null;
+        const machineId = executor.kind === 'daemon' ? executor.machineId : executor.daemonMachineId;
+        if (!machineId) return actionFailure('approval_origin_unavailable');
+        if (!hasStoredSessionCredentialProvenance(credentials)
           || context.surface !== 'cli' || context.authority !== 'present_user'
           || context.externalActionCredential || context.externalActionExecutionAuthorization
           || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host') {
@@ -1285,7 +1280,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (signal?.aborted) return actionFailure('cancelled');
         if (!sameStoredCredentials(credentials, await readCurrentCredentials())) return actionFailure('credential_scope_retired');
         const replay = await callExactMachineRpc({ credentials, serverUrl: approvalServerApiUrl,
-          machineId: request.executionOriginV1.machineId,
+          machineId,
           method: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, request: { artifactId },
           ...(requestId ? { requestId } : {}), requireCurrentMachine: true, timeoutMs: null,
           ...buildTerminalAuthorityCeiling({ token: credentials.token, serverHttpBaseUrl: approvalServerApiUrl }),

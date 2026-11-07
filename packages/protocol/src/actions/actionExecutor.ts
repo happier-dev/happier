@@ -1607,9 +1607,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // itself. In that case retain the validated originating context.
       && isActionSpecSurfacedOn(getActionSpec(actionId), args.ctx.surface === 'cli' ? 'cli' : 'ui')
       && isPresentUserHostInvocation(args.ctx);
-    // A list's ambient corpus stays with its admitted origin even when the
-    // deciding app supplies the Home adapter for its replay.
-    const appOwnedContextReplay = appOwnedReplay && origin?.success && (!isSessionListActionId(actionId)
+    // App placement supplies transport, not replacement authority for an
+    // external admission or a list's admitted ambient corpus.
+    const appOwnedContextReplay = appOwnedReplay && origin?.success
+      && !origin.data.externalActionExecutionAuthorization && (!isSessionListActionId(actionId)
       || origin.data.sessionListAccess === undefined || origin.data.sessionListAccess === 'mounted_ui');
     // A Machine target authored with the creator's device-local profile follows
     // this already-verified Account replay Home. Never rewrite the stored/signed
