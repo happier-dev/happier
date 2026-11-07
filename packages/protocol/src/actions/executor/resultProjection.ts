@@ -20,7 +20,7 @@ import { getActionSpec } from '../actionSpecs.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema } from '../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult } from './types.js';
-import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
+import { readActionFailureEnvelope, readFailureEnvelopeDetails, readMachineActionRpcResult } from './actionFailureEnvelope.js';
 import { type ActionId } from '../actionIds.js';
 import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSchema, ExecutionRunEnsureResponseSchema } from '../../execution/runs/index.js';
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '../../execution/runs/streaming.js';
@@ -252,6 +252,7 @@ export function completeSessionHandoffActionResult(result: unknown): ActionExecu
  * Action result shape; raw Action-shaped values still pass through unchanged.
  */
 export function completeExecutionRunServiceActionResult(actionId: ActionId, result: unknown): ActionExecuteResult {
+  readMachineActionRpcResult(result);
   const record = readRecord(result);
   if (record.ok === true && hasOwn(record, 'data')) {
     const data = record.data;

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { actionStartTargetUnavailableV1 } from './executor/actionStartDiagnostics.js';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { buildAcpConfigOptionOverridesV1 } from '../sessions/metadata/metadataOverridesV1.js';
@@ -85,6 +86,40 @@ const START_CONTEXT = {
   callerPermissionCeiling: 'read-only',
 } as const;
 const START_TARGET_KEY = buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } });
+
+it.each(['review.start', 'subagents.plan.start', 'subagents.delegate.start'] as const)(
+  'preserves an explicit approval profile selection through %s fan-out', async actionId => {
+    const requests: unknown[] = [];
+    const executor = createActionExecutor(createDeps({
+      agentsBackendsList: async () => ({ items: [{ targetKey: START_TARGET_KEY, label: 'Codex', enabled: true }] }),
+      reviewEnginesList: async () => ({ items: [{ targetKey: START_TARGET_KEY, label: 'Codex', enabled: true }] }),
+      executionRunStart: async (_sessionId, request) => {
+      requests.push(ExecutionRunStartRequestSchema.parse(request));
+      return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+    } }));
+    expect(await executor.execute(actionId, { sessionId: 's1', instructions: 'Inspect the change',
+      ...(actionId === 'review.start' ? { engineIds: [START_TARGET_KEY] } : { backendTargetKeys: [START_TARGET_KEY] }),
+      approvalProfileId: 'custom:proposal',
+    }, { ...UI_CALLER, approvalProfileId: 'builtin:apply-safe' })).toMatchObject({ ok: true });
+    expect(requests).toEqual([expect.objectContaining({ approvalProfileId: 'custom:proposal' })]);
+  },
+);
+
+it.each([
+  { selection: undefined, expected: 'builtin:apply-safe' },
+  { selection: 'custom:proposal', expected: 'custom:proposal' },
+  { selection: null, expected: null },
+])('binds the Run approval profile reference at admission ($selection)', async ({ selection, expected }) => {
+  const requests: unknown[] = [];
+  const executor = createActionExecutor(createDeps({ executionRunStart: async (_sessionId, request) => {
+    requests.push(ExecutionRunStartRequestSchema.parse(request));
+    return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+  } }));
+  expect(await executor.execute('execution.run.start', {
+    ...RUN_START_BASE, ...(selection !== undefined ? { approvalProfileId: selection } : {}),
+  }, { ...UI_CALLER, approvalProfileId: 'builtin:apply-safe' })).toMatchObject({ ok: true });
+  expect(requests).toMatchObject([{ approvalProfileId: expected }]);
+});
 
 it.each([
   { actionId: 'execution.run.start', surface: 'ui' },
@@ -372,12 +407,13 @@ it('compares actual selections and carries admitted depth only as host context',
   expect(deps.executionRunStart).toHaveBeenCalledWith('s1', expect.not.objectContaining({ workDepth: expect.anything() }), expect.objectContaining({ workDepth: 3 }));
 });
 
-it('fails closed when the host cannot resolve an agent start baseline', async () => {
-  const deps = createDeps({ resolveAgentStartContext: async () => null });
+it.each(['agent_start_context_unavailable', 'role_source_incomplete'] as const)('fails closed when the host cannot resolve an agent start baseline: %s', async reason => {
+  const deps = createDeps({ resolveAgentStartContext: async () => reason === 'agent_start_context_unavailable'
+    ? null : actionStartTargetUnavailableV1(undefined, 'agent_start_context', reason) });
   const result = await createActionExecutor(deps).execute('execution.run.start', RUN_START_BASE, RUN_DISPATCHER_CALLER);
   expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: {
-    issues: [{ code: 'unavailable', path: ['host'] }],
-    executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+    executionRunStart: { v: 1, runCreation: 'noRunCreated',
+      refusal: { code: reason, phase: 'agent_start_context' } },
   } });
   expect(deps.executionRunStart).not.toHaveBeenCalled();
 });
@@ -508,6 +544,41 @@ it('binds a present-user role start without imposing the agent depth or override
   })).toMatchObject({ ok: true });
   expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ roleId: 'scout', intent: 'task', modelId: 'scout-model' });
   expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[2]).toMatchObject({ workDepth: 0, workspaceWrites: 'deny' });
+});
+
+it.each(['allowed', 'model_denied', 'depth_denied', 'permission_denied'] as const)(
+  'binds an Account automation role under its actual authority: %s', async scenario => {
+    const role = { roleId: 'approval_reviewer', name: 'Approval reviewer', instructions: 'Assess one request', enabled: true,
+      engine: { agentTargetKey: START_TARGET_KEY, modelId: 'review-model' },
+      runsAs: { kind: 'background_run', intent: 'task' }, workspaceWrites: 'deny', secondOpinion: 'off' } as const;
+    const deps = createDeps();
+    const result = await createActionExecutor(deps).execute('execution.run.start', {
+      ...RUN_START_BASE, roleId: role.roleId, permissionMode: scenario === 'permission_denied' ? 'yolo' : 'no_tools',
+    }, { surface: 'rpc', authority: 'account_automation', defaultSessionId: 's1',
+      ...(scenario === 'model_denied' ? { sessionAgentSpawnPolicyV1: { allowModelOverride: false } } : {}),
+      agentStartContext: { ...START_CONTEXT, roles: { [role.roleId]: role },
+        caller: { ...START_CONTEXT.caller, turnDepth: scenario === 'depth_denied' ? 4 : 0 } },
+    });
+    if (scenario !== 'allowed') {
+      const errorCode = { model_denied: 'policy_denied_field', depth_denied: 'work_depth_exceeded',
+        permission_denied: 'permission_exceeds_ceiling' }[scenario];
+      expect(result).toMatchObject({ ok: false, errorCode });
+      expect(deps.executionRunStart).not.toHaveBeenCalled();
+      return;
+    }
+    expect(result).toMatchObject({ ok: true });
+    expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ roleId: role.roleId,
+      intent: 'task', modelId: 'review-model', permissionMode: 'no_tools' });
+    expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[2]).toMatchObject({ workDepth: 1, workspaceWrites: 'deny' });
+  },
+);
+
+it.each(['no_tools', 'read_only'] as const)('preserves the exact Run tool restriction for an Agent caller: %s', async permissionMode => {
+  const deps = createDeps();
+  const result = await createActionExecutor(deps).execute('execution.run.start',
+    { ...RUN_START_BASE, permissionMode }, RUN_DISPATCHER_CALLER);
+  expect(result).toMatchObject({ ok: true });
+  expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ permissionMode });
 });
 
 it('applies the Account agent-start policy to execution.run.start before dispatch', async () => {
@@ -1160,6 +1231,39 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       errorCode: 'execution_run_not_allowed',
       error: 'Execution runs disabled',
     });
+  });
+
+  it.each(['execution.run.get', 'execution.run.list'] as const)(
+    'preserves serialized execution-run RPC failures before validating %s success output', async (actionId) => {
+      // These dependencies are the Machine RPC transport boundary. Both reply
+      // shapes are emitted by RpcHandlerManager, including untyped exceptions.
+      for (const reply of [
+        { error: 'Machine unavailable', errorCode: 'RPC_CLIENT_NOT_AVAILABLE', effectAttempted: false,
+          details: { field: 'machineId' } },
+        { error: 'Unknown error' },
+      ]) {
+        const executor = createActionExecutor(createDeps({
+          executionRunGet: async () => reply,
+          executionRunList: async () => reply,
+        }));
+        await expect(executor.execute(actionId, {
+          sessionId: null, ...(actionId === 'execution.run.get' ? { runId: 'run_1' } : {}),
+        }, UI_CALLER)).resolves.toMatchObject({
+          ok: false,
+          errorCode: 'errorCode' in reply ? reply.errorCode : 'action_failed',
+          error: reply.error,
+          ...('details' in reply ? { details: reply.details, effectAttempted: false } : {}),
+        });
+      }
+    },
+  );
+
+  it('still rejects malformed execution-run RPC replies through the declared success schema', async () => {
+    const executor = createActionExecutor(createDeps({
+      executionRunGet: async () => ({ error: 'Malformed reply', errorCode: 7 }),
+    }));
+    await expect(executor.execute('execution.run.get', { sessionId: null, runId: 'run_1' }, UI_CALLER))
+      .resolves.toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
 
   it('requires and threads active-turn authority for every Agent existing-run effect', async () => {
