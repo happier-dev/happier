@@ -12,8 +12,10 @@ import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { readStackRuntimeStateFile, recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 import { sanitizeStackTestRunnerEnv } from './utils/test/test_env.mjs';
 
-for (const [identity, publication] of [['default', 'retained'], ['account-b', 'retained'], ['default', 'missing']]) {
-  test(`source restart starts the selected ${identity} daemon after its incumbent exits (${publication} state)`, async t => {
+for (const [identity, publication, action = 'restart'] of [
+  ['default', 'retained'], ['account-b', 'retained'], ['default', 'missing'], ['account-b', 'missing', 'start'],
+]) {
+  test(`source ${action} starts the selected ${identity} daemon after its incumbent exits (${publication} state)`, async t => {
     const fixture = await createTempFixture(t, { prefix: 'hstack-restart-absent-', registerCleanup: false });
     const stackName = 'restart-absent';
     const cliHomeDir = fixture.path(identity === 'default' ? 'cli' : 'cli-identities/account-b');
@@ -49,8 +51,9 @@ for (const [identity, publication] of [['default', 'retained'], ['account-b', 'r
       await fixture.cleanup();
     });
     await once(incumbent, 'message');
+    const defaultIdentity = { selected: 'default-source', loaded: 'default-source' };
     await recordStackRuntimeStart(runtimeStatePath, { stackName, ownerPid: process.pid,
-      processes: { daemonPid: incumbent.pid } });
+      processes: { daemonPid: incumbent.pid }, sourceRuntimeIdentities: { daemon: defaultIdentity } });
     const exited = once(incumbent, 'exit');
     incumbent.kill('SIGTERM');
     await exited;
@@ -67,7 +70,7 @@ if (process.argv[2] === 'daemon' && process.argv[3] === 'start') {
 `);
     const result = await startLocalDaemonWithAuth({ cliBin: entrypoint, cliEntrypoint: entrypoint,
       cliHomeDir, internalServerUrl: serverUrl, publicServerUrl: serverUrl, runtimeStatePath,
-      stackName, cliIdentity: identity, env, forceRestart: true, preserveSessionsOnRestart: true,
+      stackName, cliIdentity: identity, env, forceRestart: action === 'restart', preserveSessionsOnRestart: action === 'restart',
       isShuttingDown: () => false,
       sourceRuntimeLaunchUpdate: { launch: { entrypoint, cliDir: fixture.root }, identity: 'successor' } });
     assert.equal(result.started, true);
@@ -75,6 +78,6 @@ if (process.argv[2] === 'daemon' && process.argv[3] === 'start') {
     assert.notEqual(state.pid, incumbent.pid);
     assert.doesNotThrow(() => process.kill(state.pid, 0));
     assert.deepEqual((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon,
-      { selected: 'successor', loaded: 'successor' });
+      identity === 'default' ? { selected: 'successor', loaded: 'successor' } : defaultIdentity);
   });
 }

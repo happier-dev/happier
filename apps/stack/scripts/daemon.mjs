@@ -22,7 +22,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { getComponentDir, getRootDir, resolveStackBaseDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
@@ -51,6 +51,8 @@ import {
   recordStackRuntimeUpdate,
 } from './utils/stack/runtime_state.mjs';
 import { applyCliRuntimeLaunchProvenanceEnv, resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { sourceDaemonCommandEnv } from './runtime/launch/sourceDaemonCommandEnv.mjs';
+import { recordSourceReloadRecovery } from './runtime/shared/source_reload_refusal.mjs';
 import { isRecordedStackProcessRetired, killPidOwnedByStack, listPidsWithEnvNeedles } from './utils/proc/ownership.mjs';
 import { isPidAlive, observePidLiveness } from './utils/proc/pids.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
@@ -812,7 +814,7 @@ function resolveDaemonCommandSpec({
     return {
       command: explicitCommand,
       argsPrefix: Array.isArray(cliCommandArgs) ? cliCommandArgs.map((value) => String(value)) : [],
-      mode: 'binary',
+      mode: explicitCommand === process.execPath ? 'node' : 'binary',
     };
   }
   const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
@@ -1742,13 +1744,14 @@ async function waitForCredentialsFiles({ paths, timeoutMs, isShuttingDown }) {
   return false;
 }
 
-export function getDaemonEnv({
+export async function getDaemonEnv({
   baseEnv,
   cliHomeDir,
   internalServerUrl,
   publicServerUrl,
   stackName = null,
   cliIdentity = null,
+  cliLaunchSpec = null,
 }) {
   const scopedEnv = applyStackDaemonLifecycleScopeEnv({
     env: applyStackActiveServerScopeEnv({
@@ -1782,14 +1785,14 @@ export function getDaemonEnv({
       resolveStackDaemonStartVerifyTimeoutMs(scopedEnv),
     );
   }
-  return {
+  return await sourceDaemonCommandEnv({ cliHomeDir, cliLaunchSpec, env: {
     ...scopedEnv,
     HAPPIER_SERVER_URL: internalServerUrl,
     HAPPIER_WEBAPP_URL: String(scopedEnv.HAPPIER_WEBAPP_URL ?? '').trim() || publicServerUrl,
     HAPPIER_HOME_DIR: cliHomeDir,
     HAPPIER_DAEMON_STARTUP_SOURCE: startupSource,
     HAPPIER_DAEMON_SERVICE_LABEL: explicitServiceLabel,
-  };
+  } });
 }
 
 export async function stopLocalDaemon({
@@ -1808,17 +1811,25 @@ export async function stopLocalDaemon({
   expectedPid = null,
 }) {
   const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+  let stopError = null;
   // Retirement consumes the retained execution, not the replacement bundle or
   // the moving checkout. Keep the existing CLI launch owner authoritative.
   if (runtimeState?.sourceRuntimeLaunch) {
-    const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: runtimeState.sourceRuntimeLaunch });
-    cliEntrypoint = launch.entrypoint;
-    cliNodeEntrypoint = launch.nodeEntrypoint;
-    cliCommand = launch.command;
-    cliCommandArgs = launch.args;
-    env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: launch });
+    try {
+      const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: runtimeState.sourceRuntimeLaunch });
+      cliEntrypoint = launch.entrypoint;
+      cliNodeEntrypoint = launch.nodeEntrypoint;
+      cliCommand = launch.command;
+      cliCommandArgs = launch.args;
+      env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: launch });
+    } catch (error) {
+      if (error?.code !== 'SOURCE_RUNTIME_RELOAD_REQUIRED') throw error;
+      // Fresh dependencies admit launches, not cleanup. The existing process
+      // identity checks below must still prove retirement before it completes.
+      stopError = error;
+    }
   }
-  const daemonEnv = getDaemonEnv({
+  const daemonEnv = await getDaemonEnv({
     baseEnv: env,
     cliHomeDir,
     internalServerUrl,
@@ -1887,8 +1898,7 @@ export async function stopLocalDaemon({
       : distEntrypoint
         ? readCliDistIntegrity(distEntrypoint)
         : { ok: false, reason: 'unknown_cli_bin' };
-  let stopError = null;
-  if (distIntegrity.ok && (scopedDaemonState.status !== 'stopped'
+  if (!stopError && distIntegrity.ok && (scopedDaemonState.status !== 'stopped'
     || retainedPids.some(isPidAlive)
     || (!runtimeState?.sourceRuntimeLaunch && (explicitCommand || explicitEntrypoint)))) {
     try {
@@ -1975,10 +1985,33 @@ export async function startLocalDaemonWithAuth({
   }
   // Recovery consumes the same selected source launch as explicit reloads.
   // A long-lived runner may still hold its original launch arguments.
-  const selectedSource = sourceRuntimeLaunchUpdate?.launch
+  let selectedSource = sourceRuntimeLaunchUpdate?.launch
     ?? runtimeState?.sourceRuntimeLaunch;
+  const sourceActiveCliDir = resolveActiveCliDirForDaemonLaunch(env);
+  const sourceDistSelection = resolveGuardedLocalCliDistSelection({ cliBin, activeCliDir: sourceActiveCliDir }).resolvedDist;
+  if (!selectedSource && !runtimeBacked && isGuardedSourceCliDistEntrypoint({
+    cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand,
+    distEntrypoint: sourceDistSelection?.distEntrypoint,
+    activeCliDir: sourceActiveCliDir,
+  })) {
+    const sourceCliDir = resolveCliDistOwnerDirForDaemonLaunch({ cliBin, distEntrypoint: sourceDistSelection?.distEntrypoint });
+    const sourceRepoDir = coerceHappyMonorepoRootFromPath(sourceCliDir);
+    if (sourceRepoDir) {
+      // Source startup uses the same immutable producer and selection as dev
+      // reload/recovery. No shared package-dist reader spans daemon readiness.
+      sourceRuntimeLaunchUpdate = await (await import('./utils/dev/daemon.mjs')).prepareDevDaemonSourceRuntime({
+        sourceRuntimeOptions: { repoDir: sourceRepoDir,
+          stackBaseDir: runtimeStatePath ? dirname(runtimeStatePath)
+            : resolveStackBaseDir(stackName, env).baseDir },
+        env, reuseSelected: 'if-available',
+      });
+      selectedSource = sourceRuntimeLaunchUpdate.launch;
+    }
+  }
+  let cliLaunchSpec = null;
   if (selectedSource) {
     const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selectedSource });
+    cliLaunchSpec = launch;
     cliBin = join(launch.cliDir, 'bin', 'happier.mjs');
     cliEntrypoint = launch.entrypoint;
     cliNodeEntrypoint = launch.nodeEntrypoint;
@@ -1994,19 +2027,33 @@ export async function startLocalDaemonWithAuth({
     (cliIdentity ?? '').toString().trim() ||
     (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() ||
     'default';
+  // The stack's daemon identity slot describes its default daemon. Named
+  // participants expose their loaded code through their own daemon observations.
+  const recordsDefaultSourceIdentity = resolvedCliIdentity === 'default';
   const baseEnv = { ...env };
   await persistStackDaemonMachineTransferEnv({
     stackName: resolvedStackName,
     env: baseEnv,
   }).catch(() => {});
-  const daemonEnv = getDaemonEnv({
+  const daemonEnv = await getDaemonEnv({
     baseEnv,
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
     stackName: resolvedStackName,
     cliIdentity: resolvedCliIdentity,
+    cliLaunchSpec,
   });
+  if (sourceRuntimeLaunchUpdate) {
+    // The self-restart adapter consumes this same producer-owned projection;
+    // an incumbent started before source command exposure has no shim on PATH.
+    const commandEnv = Object.fromEntries(Object.entries(daemonEnv)
+      .filter(([name]) => /^(PATH|PATHEXT)$/i.test(name)));
+    sourceRuntimeLaunchUpdate = { ...sourceRuntimeLaunchUpdate, launch: {
+      ...sourceRuntimeLaunchUpdate.launch,
+      env: { ...sourceRuntimeLaunchUpdate.launch.env, ...commandEnv },
+    } };
+  }
   const isTui = (baseEnv.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
   const syncRuntimeDaemonState = async ({ runtimeDaemonPid = null, daemonDistFingerprint = undefined } = {}) => {
     await syncStackRuntimeDaemonPidFromDaemonState(
@@ -2181,7 +2228,7 @@ export async function startLocalDaemonWithAuth({
     const { launch, identity } = sourceRuntimeLaunchUpdate;
     await recordStackRuntimeUpdate(runtimeStatePath, {
       sourceRuntimeLaunch: launch,
-      sourceRuntimeIdentities: { daemon: { selected: identity, loaded: null } },
+      ...(recordsDefaultSourceIdentity ? { sourceRuntimeIdentities: { daemon: { selected: identity, loaded: null } } } : {}),
     });
     const replacement = await restartDaemonViaControlServer({
       cliHomeDir, internalServerUrl, serverUrl: internalServerUrl,
@@ -2212,15 +2259,18 @@ export async function startLocalDaemonWithAuth({
         || readProcessInstanceFingerprintSync(replacement.pid, { expectedFingerprint: fingerprint }) !== fingerprint) {
         throw new Error('[stack] selected source daemon is not loaded after /restart; the incumbent may need one initial load of the source-selection launch owner. Sessions were not stopped.');
       }
-      const attestation = await mutateStackRuntimeDaemonMembership(runtimeStatePath, current => {
-        if (current.sourceRuntimeLaunch?.entrypoint !== launch.entrypoint
-          || current.sourceRuntimeIdentities?.daemon?.selected !== identity) return null;
-        return { patch: { sourceRuntimeIdentities: { daemon: { loaded: identity } } }, result: { loaded: true } };
-      });
-      if (!attestation.loaded) throw new Error('[stack] selected source daemon changed before its loaded identity could be confirmed.');
+      if (recordsDefaultSourceIdentity) {
+        const attestation = await mutateStackRuntimeDaemonMembership(runtimeStatePath, current => {
+          if (current.sourceRuntimeLaunch?.entrypoint !== launch.entrypoint
+            || current.sourceRuntimeIdentities?.daemon?.selected !== identity) return null;
+          return { patch: { sourceRuntimeIdentities: { daemon: { loaded: identity } } }, result: { loaded: true } };
+        });
+        if (!attestation.loaded) throw new Error('[stack] selected source daemon changed before its loaded identity could be confirmed.');
+      }
       await recordStackRuntimeDaemonPid(runtimeStatePath, replacement.pid, {
         daemonDistFingerprint: null, daemonProcessInstanceFingerprint: fingerprint,
       });
+      await recordSourceReloadRecovery({ stackBaseDir: dirname(runtimeStatePath), component: 'daemon', env: baseEnv });
       return { ok: true, started: true, ...replacement };
     }
   }
@@ -2624,7 +2674,7 @@ export async function startLocalDaemonWithAuth({
     // below publishes its loaded identity after actual daemon readiness.
     await recordStackRuntimeUpdate(runtimeStatePath, {
       sourceRuntimeLaunch: sourceRuntimeLaunchUpdate.launch,
-      sourceRuntimeIdentities: { daemon: { selected: sourceRuntimeLaunchUpdate.identity, loaded: null } },
+      ...(recordsDefaultSourceIdentity ? { sourceRuntimeIdentities: { daemon: { selected: sourceRuntimeLaunchUpdate.identity, loaded: null } } } : {}),
     });
   }
 
@@ -2665,7 +2715,7 @@ export async function startLocalDaemonWithAuth({
       ? daemonCommand.argsPrefix.find((arg) => !arg.startsWith('-'))
       : daemonCommand.command;
     const sourceRuntime = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
-    const launchedSourceIdentity = sourceRuntime?.sourceRuntimeLaunch?.entrypoint === launchedEntrypoint
+    const launchedSourceIdentity = recordsDefaultSourceIdentity && sourceRuntime?.sourceRuntimeLaunch?.entrypoint === launchedEntrypoint
       ? sourceRuntime.sourceRuntimeIdentities?.daemon?.selected : null;
     const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'start'], daemonEnv, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -2705,11 +2755,14 @@ export async function startLocalDaemonWithAuth({
       // Adopted healthy daemons never reach here, and a changed selection must
       // not be credited with the child launched from the previous entrypoint.
       if (launchedSourceIdentity) {
-        await mutateStackRuntimeDaemonMembership(runtimeStatePath, (current) => {
+        const attestation = await mutateStackRuntimeDaemonMembership(runtimeStatePath, (current) => {
           if (current.sourceRuntimeLaunch?.entrypoint !== launchedEntrypoint
             || current.sourceRuntimeIdentities?.daemon?.selected !== launchedSourceIdentity) return null;
-          return { patch: { sourceRuntimeIdentities: { daemon: { loaded: launchedSourceIdentity } } } };
+          return { patch: { sourceRuntimeIdentities: { daemon: { loaded: launchedSourceIdentity } } }, result: { loaded: true } };
         });
+        if (attestation.loaded) {
+          await recordSourceReloadRecovery({ stackBaseDir: dirname(runtimeStatePath), component: 'daemon', env: baseEnv });
+        }
       }
       return { ok: true, exitCode: resolvedExitCode, excerpt: null, logPath: null };
     }
@@ -2930,7 +2983,7 @@ export async function daemonStatusSummary({
   stackName = null,
   cliIdentity = null,
 }) {
-  const daemonEnv = getDaemonEnv({
+  const daemonEnv = await getDaemonEnv({
     baseEnv: env,
     cliHomeDir,
     internalServerUrl,

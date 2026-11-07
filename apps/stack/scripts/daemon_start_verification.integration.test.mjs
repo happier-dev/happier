@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
+import { recordSourceReloadRefusal } from './runtime/shared/source_reload_refusal.mjs';
 
 import {
   checkDaemonState,
@@ -31,19 +32,21 @@ import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs'
 import { inspectDependencyRefresh } from './utils/proc/dependency_refresh.mjs';
 import { DaemonControlPostError } from './utils/stack/daemonControlClient.mjs';
 import { readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
+import { sanitizeStackTestRunnerEnv } from './utils/test/test_env.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
 const DAEMON_TEST_PROCESS_HELPER_PATH = join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs');
 const PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS = '15000';
 
-test('source restart gives the successor the stack-owned server URLs before create-path attestation', async (t) => {
+for (const identity of ['default', 'broker']) {
+test(`source restart gives the ${identity} successor the stack-owned server URLs before create-path attestation`, async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-control-', registerCleanup: false });
-  const cliHomeDir = fixture.path('cli');
+  const cliHomeDir = fixture.path(identity === 'default' ? 'cli' : `cli-identities/${identity}`);
   await mkdir(cliHomeDir, { recursive: true });
   await writeFile(join(cliHomeDir, 'access.key'), 'fixture-credential\n');
   const stackName = 'source-control-reload';
-  const statePath = join(cliHomeDir, 'servers', `stack_${stackName}__id_default`, 'daemon.state.json');
+  const statePath = join(cliHomeDir, 'servers', `stack_${stackName}__id_${identity}`, 'daemon.state.json');
   const runtimeStatePath = fixture.path('stack.runtime.json');
   const requestPath = fixture.path('request.json');
   const incumbent = fixture.path('incumbent.mjs');
@@ -65,7 +68,8 @@ test('source restart gives the successor the stack-owned server URLs before crea
   const serverUrl = 'http://127.0.0.1:4301';
   const publicServerUrl = 'http://source-control-reload.localhost:4301';
   const staleServerUrl = 'http://127.0.0.1:59671';
-  const env = { ...process.env, HAPPIER_STACK_STACK: stackName,
+  const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }), HAPPIER_STACK_STACK: stackName,
+    HAPPIER_STACK_CLI_IDENTITY: identity,
     HAPPIER_STACK_ENV_FILE: fixture.path('env'), HAPPIER_HOME_DIR: cliHomeDir,
     HAPPIER_STACK_PROCESS_KIND: 'daemon', HAPPIER_SERVER_URL: staleServerUrl,
     HAPPIER_WEBAPP_URL: 'http://stale.localhost:59671',
@@ -133,25 +137,39 @@ server.listen(0, '127.0.0.1', () => {
   children.push(initial);
   await once(initial, 'message');
   const options = { cliBin: incumbent, cliEntrypoint: selected, cliHomeDir,
-    internalServerUrl: serverUrl, publicServerUrl, stackName, runtimeStatePath, env,
+    internalServerUrl: serverUrl, publicServerUrl, stackName, runtimeStatePath, cliIdentity: identity,
+    // The incumbent keeps its old origin; the new connection selects the successor UI.
+    env: { ...env, HAPPIER_WEBAPP_URL: publicServerUrl },
     forceRestart: true, preserveSessionsOnRestart: true,
     sourceRuntimeLaunchUpdate: { launch: { entrypoint: selected, cliDir: fixture.root }, identity: 'next' } };
+  const reloadPath = fixture.path('source-runtime/reload.json');
+  const refusal = Object.assign(new Error('source dependency refresh required'), {
+    component: 'daemon', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED',
+  });
+  await recordSourceReloadRefusal({ stackBaseDir: fixture.root, error: refusal, env });
   const result = await startLocalDaemonWithAuth(options).catch(error => ({ error }));
   assert.deepEqual(JSON.parse(await readFile(requestPath, 'utf8')), {
     path: '/restart',
     body: { successorServerUrls: { serverUrl, webappUrl: publicServerUrl } },
   });
   assert.equal(result.ok, true, result.error?.message);
+  assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).status, 'ready');
+  assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).code, undefined);
   assert.doesNotThrow(() => process.kill(runner.pid, 0));
   let state = await readStackRuntimeStateFile(runtimeStatePath);
-  assert.deepEqual(state.sourceRuntimeIdentities.daemon, { selected: 'next', loaded: 'next' });
+  assert.deepEqual(state.sourceRuntimeIdentities.daemon, identity === 'default'
+    ? { selected: 'next', loaded: 'next' } : { selected: 'old', loaded: 'old' });
   assert.deepEqual(state.sourceRuntimeIdentities.server, { selected: 'server', loaded: 'server' });
+  if (identity !== 'default') return;
+  await recordSourceReloadRefusal({ stackBaseDir: fixture.root, error: refusal, env });
   await assert.rejects(startLocalDaemonWithAuth({ ...options,
     sourceRuntimeLaunchUpdate: { launch: { entrypoint: incumbent, cliDir: fixture.root }, identity: 'unloaded' },
   }), /selected source daemon.*not loaded/);
   state = await readStackRuntimeStateFile(runtimeStatePath);
   assert.equal(state.sourceRuntimeIdentities.daemon.loaded, null);
+  assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).status, 'failed');
 });
+}
 
 test('source restart exposes an HTTP 400 as a typed control failure without replacing the daemon', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-control-failure-', registerCleanup: false });
@@ -181,7 +199,7 @@ test('source restart exposes an HTTP 400 as a typed control failure without repl
   const serverUrl = 'http://127.0.0.1:4301';
   const publicServerUrl = 'http://source-control-failure-reload.localhost:4301';
   const staleServerUrl = 'http://127.0.0.1:59671';
-  const env = { ...process.env, HAPPIER_STACK_STACK: stackName,
+  const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }), HAPPIER_STACK_STACK: stackName,
     HAPPIER_STACK_ENV_FILE: fixture.path('env'), HAPPIER_HOME_DIR: cliHomeDir,
     HAPPIER_STACK_PROCESS_KIND: 'daemon', HAPPIER_SERVER_URL: staleServerUrl,
     HAPPIER_WEBAPP_URL: 'http://stale.localhost:59671',
@@ -228,7 +246,8 @@ server.listen(0, '127.0.0.1', () => {
 
   await assert.rejects(
     startLocalDaemonWithAuth({ cliBin: incumbent, cliEntrypoint: selected, cliHomeDir,
-      internalServerUrl: serverUrl, publicServerUrl, stackName, runtimeStatePath, env,
+      internalServerUrl: serverUrl, publicServerUrl, stackName, runtimeStatePath,
+      env: { ...env, HAPPIER_WEBAPP_URL: publicServerUrl },
       forceRestart: true, preserveSessionsOnRestart: true,
       sourceRuntimeLaunchUpdate: { launch: { entrypoint: selected, cliDir: fixture.root }, identity: 'next' } }),
     (error) => error instanceof DaemonControlPostError && error.status === 400,
@@ -303,12 +322,21 @@ process.exit(0);
       HAPPIER_STACK_AUTO_AUTH_SEED: '0', HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0' } };
+  const reloadPath = join(tmp, 'source-runtime/reload.json');
+  await recordSourceReloadRefusal({ stackBaseDir: tmp,
+    error: Object.assign(new Error('source dependency refresh required'), {
+      component: 'daemon', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED',
+    }), env: options.env });
   assert.equal((await startLocalDaemonWithAuth(options)).started, true);
+  assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).status, 'ready');
   const first = Number(await readFile(pidPath, 'utf8'));
   pids.push(first);
   assert.deepEqual((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon,
     { selected: 'source-a', loaded: 'source-a' });
   for (const pid of pids.slice(0, 2)) assert.throws(() => process.kill(pid, 0));
+  await recordSourceReloadRefusal({ stackBaseDir: tmp,
+    error: Object.assign(new Error('server source remains unavailable'), { component: 'server' }), env: options.env });
+  const serverRefusal = JSON.parse(await readFile(reloadPath, 'utf8'));
   assert.equal((await startLocalDaemonWithAuth({ ...options,
     sourceRuntimeLaunchUpdate: { launch: { entrypoint: successorEntrypoint, cliDir: tmp }, identity: 'source-b' },
   })).started, true);
@@ -319,6 +347,7 @@ process.exit(0);
   assert.doesNotThrow(() => process.kill(second, 0));
   assert.deepEqual((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon,
     { selected: 'source-b', loaded: 'source-b' });
+  assert.deepEqual(JSON.parse(await readFile(reloadPath, 'utf8')), serverRefusal);
 });
 
 function buildDelayedDaemonStartCliScript({
@@ -781,7 +810,9 @@ test('startLocalDaemonWithAuth fails promptly after a non-zero start wrapper exi
     await writeFile(
       cliCommandScript,
       `
-const [scope, action] = process.argv.slice(2);
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+const [scope, action] = args;
 if (scope !== 'daemon') process.exit(0);
 if (action === 'stop' || action === 'status') process.exit(0);
 if (action === 'start') process.exit(1);
@@ -1070,7 +1101,9 @@ test('startLocalDaemonWithAuth does not present a daemon log from before the fai
     await writeFile(
       cliCommandScript,
       `
-const [scope, action] = process.argv.slice(2);
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+const [scope, action] = args;
 if (scope !== 'daemon') process.exit(0);
 if (action === 'stop') process.exit(0);
 if (action === 'status') process.exit(1);
@@ -1139,7 +1172,9 @@ test('startLocalDaemonWithAuth cancels and joins shutdown daemon start wrappers 
       `
 import { writeFileSync } from 'node:fs';
 
-const [scope, action] = process.argv.slice(2);
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+const [scope, action] = args;
 if (scope !== 'daemon') process.exit(0);
 if (action === 'stop') process.exit(0);
 if (action === 'status') process.exit(1);
@@ -2488,6 +2523,10 @@ const dummy = spawnDaemonLikeProcess({
 try {
   await startLocalDaemonWithAuth({
     cliBin: ${JSON.stringify(cliBin)},
+    // This status fixture supplies its executable process boundary directly;
+    // source publication is exercised by the source-runtime fixtures.
+    cliCommand: process.execPath,
+    cliCommandArgs: [${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}],
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
