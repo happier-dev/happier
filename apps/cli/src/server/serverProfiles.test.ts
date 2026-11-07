@@ -3,7 +3,7 @@ import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readCredentials, readSettings, readStoredCredentialsForServerId, updateSettings, writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId, writeStoredCredentialsForServerId } from '@/persistence';
+import { readAccountChangesCursors, writeAccountChangesCursor, readCredentials, readSettings, readStoredCredentialsForServerId, updateSettings, writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { deriveServerIdFromName, deriveServerIdFromUrl } from '@/server/serverId';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -230,9 +230,10 @@ describe('server profiles', () => {
         listServerProfiles,
       } = await import('./serverProfiles');
 
-      const before = await getActiveServerProfile();
-      expect(before.id).toBe('cloud');
-      expect(before.name).toBe('Happier Cloud');
+      const initialIds = (await listServerProfiles()).map(profile => profile.id);
+      const before = await addServerProfile({ name: 'first', serverUrl: 'https://first.example.test',
+        webappUrl: 'https://first.example.test', use: true });
+      expect((await getActiveServerProfile()).id).toBe(before.id);
 
       const created = await addServerProfile({
         name: 'selfhost',
@@ -245,14 +246,14 @@ describe('server profiles', () => {
       const active = await getActiveServerProfile();
       expect(active.id).toBe('selfhost');
 
-      await useServerProfile('cloud');
-      expect((await getActiveServerProfile()).id).toBe('cloud');
+      await useServerProfile(before.id);
+      expect((await getActiveServerProfile()).id).toBe(before.id);
 
       await useServerProfile('SelfHost');
       expect((await getActiveServerProfile()).id).toBe('selfhost');
 
       const list = await listServerProfiles();
-      expect(list.map((s: { id: string }) => s.id).sort()).toEqual(['cloud', 'selfhost']);
+      expect(list.map((s: { id: string }) => s.id).sort()).toEqual([...initialIds, before.id, created.id].sort());
     });
   });
 
@@ -354,6 +355,7 @@ describe('server profiles', () => {
       const original = await addServerProfile({
         name: 'Studio', serverUrl: 'https://old.example.test', webappUrl: 'https://app.example.test', use: true,
       });
+      const profileIds = (await listServerProfiles()).map(profile => profile.id).sort();
       const credentialDir = join(homeDir, 'servers', original.id);
       mkdirSync(credentialDir, { recursive: true });
       await import('node:fs/promises').then(({ writeFile }) => writeFile(join(credentialDir, 'access.key'), 'immutable-owner'));
@@ -376,7 +378,7 @@ describe('server profiles', () => {
       expect(updated.profile.homeConnectionDescriptor?.endpoints).toEqual([{
         kind: 'iroh', endpointId: 'b'.repeat(64), relayUrls: ['https://relay.example.test/'],
       }]);
-      expect(await listServerProfiles()).toHaveLength(2);
+      expect((await listServerProfiles()).map(profile => profile.id).sort()).toEqual(profileIds);
       expect(await readFile(join(credentialDir, 'access.key'), 'utf8')).toBe('immutable-owner');
     });
   });
@@ -533,7 +535,11 @@ describe('server profiles', () => {
       });
 
       vi.resetModules();
-      const { addServerProfile, getActiveServerProfile, removeServerProfile } = await import('./serverProfiles');
+      const { addServerProfile, getActiveServerProfile, removeServerProfile, setServerProfileEndpointsById } = await import('./serverProfiles');
+
+      // This covers retained Cloud profiles; fresh build defaults no longer create one (4cb6c60bd1).
+      await setServerProfileEndpointsById({ id: 'cloud', serverUrl: 'https://api.happier.dev',
+        webappUrl: 'https://cloud.happier.dev', use: true });
 
       await addServerProfile({
         name: 'selfhost',
@@ -664,6 +670,7 @@ describe('server profiles', () => {
         webappUrl: 'https://app.example.test',
         use: false,
       });
+      const profileIds = (await listServerProfiles()).map(profile => profile.id).sort();
 
       const updated = await upsertServerProfileByUrl({
         name: 'custom',
@@ -675,7 +682,7 @@ describe('server profiles', () => {
 
       expect(updated.id).toBe(created.id);
       expect(updated.localServerUrl).toBe('http://127.0.0.1:3012');
-      expect(await listServerProfiles()).toHaveLength(2);
+      expect((await listServerProfiles()).map(profile => profile.id).sort()).toEqual(profileIds);
     });
   });
 
@@ -830,7 +837,6 @@ describe('server profiles', () => {
         machineIdByServerIdByAccountId: { 'account-adopted': 'machine-adopted' },
         lastTokenSubByServerId: 'account-adopted',
         machineIdConfirmedByServerByServerId: true,
-        lastChangesCursorByServerIdByAccountId: { 'account-adopted': 42 },
         machineReplacementCandidatesByServerIdByAccountId: { 'account-adopted': { machineId: 'machine-before-adoption', replacementReason: 'reauth', createdAt: 1 } },
       };
       const targetId = deriveServerIdFromName(name);
@@ -841,9 +847,10 @@ describe('server profiles', () => {
         machineIdByServerIdByAccountId: { [envDerivedServerId]: adoptedState.machineIdByServerIdByAccountId },
         lastTokenSubByServerId: { [envDerivedServerId]: adoptedState.lastTokenSubByServerId },
         machineIdConfirmedByServerByServerId: { [envDerivedServerId]: adoptedState.machineIdConfirmedByServerByServerId },
-        lastChangesCursorByServerIdByAccountId: { [envDerivedServerId]: adoptedState.lastChangesCursorByServerIdByAccountId },
         machineReplacementCandidatesByServerIdByAccountId: { [envDerivedServerId]: adoptedState.machineReplacementCandidatesByServerIdByAccountId },
       }));
+
+      await writeAccountChangesCursor('account-adopted', 42);
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
@@ -870,6 +877,9 @@ describe('server profiles', () => {
       reloadConfiguration();
       expect(existsSync(join(homeDir, 'servers', created.id, 'access.key'))).toBe(!destinationHasState);
       const settings = await readSettings();
+      const cursors = await readAccountChangesCursors();
+      expect(cursors[envDerivedServerId]).toEqual({ 'account-adopted': 42 });
+      expect(cursors[created.id]).toEqual(destinationHasState ? undefined : { 'account-adopted': 42 });
       for (const key of Object.keys(adoptedState) as Array<keyof typeof adoptedState>) {
         expect(settings[key]?.[created.id]).toEqual(destinationHasState
           ? (key === 'machineIdByServerId' ? 'machine-existing' : undefined)
