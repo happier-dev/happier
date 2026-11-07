@@ -1,7 +1,7 @@
-import { PluginUiActionControlEventV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
     PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
     PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
+    PluginUiActionControlEventV1Schema,
     PLUGIN_UI_HOST_API_BASE_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     ComposerSnapshotV1Schema,
@@ -21,6 +21,7 @@ import {
     resolvePluginUiHostApiVersionV1,
     isPluginUiHostMethodSupportedInVersionV1,
     type PluginHostedWebBridgeEnvelopeV1,
+    type PluginHostedWebBridgeBootstrapPayloadV1,
     type PluginHostedWebBridgeHostMessageEnvelopeV1,
     type PluginHostedWebAccountDataBridgeChangeV1,
     type PluginHostedWebAccountDataBridgeOperationV1,
@@ -47,7 +48,6 @@ import {
 import { readHostedFrameIntrinsicHeight } from './hostedFrameIntrinsicHeight';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from './negotiatedMethods';
-import { pluginSurfaceSettlementSurvivesRetirement } from './outwardEffectSettlement';
 import {
     createPluginUiHostReadyStateStore,
     type PluginUiHostReadyStateChange,
@@ -291,6 +291,7 @@ type HostedFrameHostApiBridgeParams<TAuthority> = Readonly<{
     bootstrap?: Readonly<{
         frameOrigin: string;
         launchInput?: PluginUiLaunchInputV1;
+        launch?: PluginHostedWebBridgeBootstrapPayloadV1['launch'];
         subPath?: PluginUiSubPathV1;
         composerRef?: ComposerRefV1;
     }>;
@@ -445,9 +446,9 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         method: PluginUiHostApiRequestMethodV1;
         payload?: PluginUiJsonValueV1;
         options?: PluginSurfaceHostApiRequestOptions;
-    }>): Promise<MountedRequestSettlement> {
-        if (params.handleMountedRequest) return await params.handleMountedRequest(input);
-        return { kind: 'error', payload: { code: 'unavailable', diagnostics: [] } };
+    }>): Promise<MountedRequestSettlement & Readonly<{ requestId: string }>> {
+        if (params.handleMountedRequest) return { ...await params.handleMountedRequest(input), requestId: input.requestId };
+        return { kind: 'error', requestId: input.requestId, payload: { code: 'unavailable', diagnostics: [] } };
     }
 
     /**
@@ -518,6 +519,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                 ...(binding.authorPlugin === undefined ? {} : { authorPlugin: binding.authorPlugin }),
                 ...(bootstrap.subPath === undefined ? {} : { subPath: bootstrap.subPath }),
                 ...(bootstrap.launchInput === undefined ? {} : { launchInput: bootstrap.launchInput }),
+                ...(bootstrap.launch === undefined ? {} : { launch: bootstrap.launch }),
                 ...(bootstrap.composerRef === undefined ? {} : { composerRef: bootstrap.composerRef }),
             },
         });
@@ -584,7 +586,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         code: string,
         diagnostics: readonly string[] = [],
         messageText?: string,
-        metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
+        metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'> & Readonly<{ requestId?: string }>,
     ): PluginHostedWebBridgeResponseEnvelopeV1 {
         return canonicalBridgeResponse(envelope, PluginUiHostApiWireEnvelopeV1Schema.parse({
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -592,7 +594,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             identity: message.identity,
             requestId: message.requestId,
             method: message.method,
-            error: createPluginSurfaceHostApiPluginErrorData(code, diagnostics, messageText, metadata),
+            error: createPluginSurfaceHostApiPluginErrorData(code, diagnostics, messageText, { requestId: message.requestId, ...metadata }),
         }));
     }
 
@@ -728,7 +730,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                         response.payload.code,
                         response.payload.diagnostics,
                         response.payload.message,
-                        response.payload,
+                        { ...response.payload, requestId: response.requestId },
                     );
                 }
                 admission = response.payload;
@@ -864,19 +866,12 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                         }),
                 },
             });
-            if (disposed || cancellation.signal.aborted) return canonicalBridgeAck(envelope);
-            // §3.5: the ONE settlement rule, shared with the React Native
-            // carrier. A retirement observed only AFTER the owner settled an
-            // outward effect must not erase it — `openSurface` routinely causes
-            // that retirement by unmounting its own requester, and answering
-            // the navigation with `stale_surface` reported that nothing
-            // happened after something had, inviting a second navigation.
-            if (
-                !isCurrent()
-                && !pluginSurfaceSettlementSurvivesRetirement({ method: message.method, response, requestPayload: message.payload })
-            ) {
-                return canonicalRequestError(envelope, message, 'stale_surface');
-            }
+            // Admission above is the one currentness decision. An admitted
+            // settlement is answered even when the effect's own consequence
+            // disposed this bridge (opening New Session unmounts its
+            // requester), matching the React Native carrier; only the
+            // guest's own cancel replaces it with the withdrawal ack.
+            if (!disposed && cancellation.signal.aborted) return canonicalBridgeAck(envelope);
             if (response.kind === 'error') {
                 return canonicalRequestError(
                     envelope,
@@ -884,7 +879,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     response.payload.code,
                     response.payload.diagnostics,
                     response.payload.message,
-                    response.payload,
+                    { ...response.payload, requestId: response.requestId },
                 );
             }
             const result = response.payload;

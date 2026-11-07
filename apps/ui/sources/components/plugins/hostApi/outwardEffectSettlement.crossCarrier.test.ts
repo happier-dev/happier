@@ -1,8 +1,3 @@
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
-import { createPluginSurfaceActionControls } from '../surfaces/pluginSurfaceActionControls';
-import { createActionExecutor } from '@happier-dev/protocol/actions';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { createPluginUiHostApiClientFromTransport } from '../../../../../../packages/plugin-sdk/src/ui/clientTransport';
 import type {
     PluginHostedWebBridgeEnvelopeV1,
     PluginHostedWebBridgeHostMessageEnvelopeV1,
@@ -11,12 +6,18 @@ import type {
     PluginUiJsonValueV1,
     PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginHostedWebHostApiBridgeHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createPluginSurfaceHostApiError } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createPluginAccountAvailabilityReaderStore } from '@/sync/domains/plugins/availability/reader';
+import { acquirePluginReactNativeArtifactAvailability } from '@/sync/domains/plugins/availability/reactNativeArtifactAvailability';
+import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { createPluginUiHostApiClientFromTransport } from '../../../../../../packages/plugin-sdk/src/ui/clientTransport';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import {
     createPluginSurfaceOpenSurfaceHandler,
     type PluginSurfaceOpenHandler,
@@ -25,6 +26,10 @@ import type { PluginSurfaceHostApiHandlers } from '@/components/plugins/surfaces
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { createPluginEntityDragDropBinding } from '../surfaces/entityDragDrop/pluginEntityDragDropBinding';
 import { createHostedEntityDragDropHandlers } from './hostedEntityDragDrop';
+import { createPluginSurfaceActionControls } from '../surfaces/pluginSurfaceActionControls';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createPluginSurfaceResourceReadHandler } from '@/components/plugins/surfaces/pluginSurfaceResourceRead';
 
 /**
  * One settlement rule, two physical carriers.
@@ -43,10 +48,10 @@ import { createHostedEntityDragDropHandlers } from './hostedEntityDragDrop';
  * settlement is durable — rewriting it into `stale_surface` would ask the
  * plugin to settle an already-settled input, which can only fail.
  *
- * `confirm` is the discriminating contrast: its settlement is a DECISION about
- * a mount, so a retired mount cannot vouch for it and both carriers still
- * refuse. A rule that delivered everything would pass the openSurface rows and
- * fail these.
+ * Finite requests keep their admitted result across an authority change.
+ * The next request is admitted against current authority. Carrier disposal
+ * after admission (the effect unmounting its own requester) does not rewrite
+ * the outcome either; reads opt into their own delivery fence at the adapter.
  *
  * Caller WITHDRAWAL is a different fact from retirement and is never rewritten
  * into success: a launch the caller cancelled before the owner settled it
@@ -110,12 +115,15 @@ function createMount(input: Readonly<{
     confirm?: () => Promise<PluginUiJsonValueV1>;
     /** Additional canonical handlers under test (openNewSession, settleEphemeralInput, …). */
     handlers?: PluginSurfaceHostApiHandlers;
+    connection?: Readonly<{ pending: () => boolean; available: () => boolean }>;
 }>): MountFixture {
     let current = true;
     const isCurrent = () => current;
     const host = createPluginSurfaceHostApi({
         surfaceContext: surface,
         isCurrent,
+        ...(input.connection ? { isMethodAvailable: (method: PluginUiHostMethodV1) => method === 'context' || input.connection!.available(),
+            isConnectionPending: input.connection.pending } : {}),
         handlers: {
             ...(input.openSurface
                 ? { openSurface: createPluginSurfaceOpenSurfaceHandler(input.openSurface, isCurrent) }
@@ -127,7 +135,7 @@ function createMount(input: Readonly<{
     return {
         retire: () => { current = false; },
         isCurrent,
-        installedMethods: [...host.installedMethods],
+        installedMethods: [...host.admissionMethods],
         host,
     };
 }
@@ -136,7 +144,6 @@ function createNativeCarrier(mount: MountFixture) {
     return createCanonicalPluginReactNativeHostApiAdapter({
         surface: canonicalSurface as unknown as SurfaceContext,
         requestSurface: surface,
-        requestIdPrefix: 'rn-settlement',
         handleRequest: mount.host.handleRequest,
         installedMethods: mount.installedMethods,
         getAdmissionMethods: () => mount.installedMethods,
@@ -217,6 +224,79 @@ function hostedRequest(
 }
 
 describe('outward-effect settlement across the React Native and hosted-web carriers', () => {
+    it.each(['native', 'hosted'] as const)('preserves the canonical Action refusal request id through %s', async kind => {
+        let requestId = '';
+        const mount = createMount({ handlers: { executeAction: request => {
+            requestId = request.requestId;
+            return createPluginSurfaceHostApiError('unavailable', ['plugin_surface_action_projection_unavailable']);
+        } } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        try {
+            const error: unknown = await carrier.api.executeAction({ pluginId: 'happier.channels',
+                localId: 'session-pull-request-binding-v1' }, {}).catch(error => error);
+            expect(requestId).not.toBe('');
+            expect(error).toMatchObject({ code: 'unavailable', details: { requestId },
+                diagnostics: [{ code: 'plugin_surface_action_projection_unavailable', severity: 'error' }] });
+        } finally { carrier.dispose(); mount.host.dispose?.(); }
+    });
+    it.each(['native', 'hosted'] as const)('finishes an admitted Resource read through %s before refusing the next request', async kind => {
+        let release!: () => void;
+        let started = false;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const digest = `sha256:${'a'.repeat(64)}` as const;
+        const readResource = createPluginSurfaceResourceReadHandler({ pluginId: surface.pluginId,
+            isCurrent: () => mount.isCurrent(),
+            resource: { machineId: 'machine-1', expectedCallerOccurrenceId: 'occurrence-1',
+                read: async (_machine, options) => {
+                    started = true;
+                    await pending;
+                    return { supported: true, result: { ok: true, resource: options.resource, kind: 'config',
+                        contentType: 'application/json', digest, bytesBase64: 'e30=' } };
+                } },
+        });
+        const mount = createMount({ handlers: { readResource } });
+        const native = kind === 'native' ? createNativeCarrier(mount) : null;
+        const hosted = kind === 'hosted' ? await createHostedCarrier(mount, mount.installedMethods) : null;
+        try {
+            const read = native ? native.api.readResource('status') : hostedRequest(hosted!, {
+                requestId: 'read', method: 'readResource', payload: { resource: 'status' },
+            });
+            await vi.waitFor(() => expect(started).toBe(true));
+            mount.retire();
+            release();
+            await expect(read).resolves.toMatchObject(native ? { digest }
+                : { kind: 'result', payload: { kind: 'result', result: { digest } } });
+            if (native) await expect(native.api.readResource('status')).rejects.toMatchObject({ code: 'stale_surface' });
+            else await expect(hostedRequest(hosted!, { requestId: 'next-read', method: 'readResource',
+                payload: { resource: 'status' }, sequence: 10,
+            })).resolves.toMatchObject({ kind: 'error', payload: { code: 'stale_surface' } });
+        } finally { release(); native?.dispose(); hosted?.dispose(); mount.host.dispose?.(); }
+    });
+
+    it.each(['native', 'hosted'] as const)('drops a late Resource reply after %s disposal', async kind => {
+        let release!: () => void;
+        let started = false;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const readResource = createPluginSurfaceResourceReadHandler({ pluginId: surface.pluginId,
+            resource: { machineId: 'machine-1', expectedCallerOccurrenceId: 'occurrence-1',
+                read: async (_machine, options) => {
+                    started = true;
+                    await pending;
+                    return { supported: true, result: { ok: true, resource: options.resource, kind: 'config',
+                        contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' } };
+                } },
+        });
+        const mount = createMount({ handlers: { readResource } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        try {
+            const read = carrier.api.readResource('status');
+            const noReply = expect(read).rejects.toBeInstanceOf(Error);
+            await vi.waitFor(() => expect(started).toBe(true));
+            carrier.dispose();
+            release();
+            await noReply;
+        } finally { release(); carrier.dispose(); mount.host.dispose?.(); }
+    });
     it.each(['native', 'hosted'] as const)('preserves host Action preparation and original settlement custody through %s', async kind => {
         const execution = { ok: false as const, errorCode: 'action_outcome_unknown', error: 'Acceptance unknown',
             details: { operationId: 'original-operation' } };
@@ -337,6 +417,58 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         }
     });
 
+    it.each(['native', 'hosted'] as const)('wakes a real pre-invocation transport refusal at the %s author API and keeps domain error-shaped data', async kind => {
+        let connecting = true;
+        let effects = 0;
+        const mount = createMount({ connection: { pending: () => connecting, available: () => !connecting },
+            handlers: { executeAction: () => {
+                effects++;
+                return { code: 'unavailable', value: 'ordinary Action data' };
+            } } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        try {
+            const pending = carrier.api.executeAction({ pluginId: surface.pluginId, localId: 'run' }, null);
+            await Promise.resolve(); await Promise.resolve();
+            expect(effects).toBe(0);
+            connecting = false;
+            mount.host.notifyConnectionSettled?.();
+            await expect(pending).resolves.toEqual({ code: 'unavailable', value: 'ordinary Action data' });
+            mount.host.notifyConnectionSettled?.();
+            expect(effects).toBe(1);
+        } finally { carrier.dispose(); mount.host.dispose?.(); }
+    });
+    it.each(['native', 'hosted'] as const)('preserves a real terminal slot refusal at the %s author API without re-polling', async kind => {
+        const scope = { serverId: 'reason-home', accountId: 'reason-account' };
+        const store = createPluginAccountAvailabilityReaderStore();
+        store.replace({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+        const reader = store.bind(scope);
+        let admissions = 0;
+        const mount = createMount({ handlers: { executeAction: async () => {
+            admissions++;
+            const refusal = await acquirePluginReactNativeArtifactAvailability({ reader,
+                accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+                isCurrent: () => true,
+                // A closed slot is refused before graph/byte acquisition.
+                artifactGraph: null,
+                cacheIdentity: { pluginId: surface.pluginId, contributionId: surface.contributionId,
+                    artifactId: 'ui', artifactDigest: PluginUiArtifactDigestV1Schema.parse(`sha256:${'0'.repeat(64)}`), platform: 'web' },
+            });
+            if (refusal.kind !== 'unavailable') throw new Error('Expected real missing slot');
+            return createPluginSurfaceHostApiError(refusal.code, [], undefined,
+                { layer: refusal.layer, phase: refusal.phase, retryable: refusal.retryable });
+        } } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        try {
+            const error: unknown = await carrier.api.executeAction({ pluginId: surface.pluginId, localId: 'run' }, null).catch(error => error);
+            expect(error).toMatchObject({ code: 'artifact_not_current', retryable: false,
+                details: { layer: 'artifact', phase: 'preparation' },
+                message: resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: 'artifact_not_current' }).body,
+                data: { code: 'artifact_not_current', details: { layer: 'artifact', phase: 'preparation' }, retryable: false } });
+            mount.host.notifyConnectionSettled?.();
+            mount.host.notifyConnectionSettled?.();
+            expect(admissions).toBe(1);
+        } finally { carrier.dispose(); mount.host.dispose?.(); }
+    });
     it('projects exact-source semantic feedback through both real carriers and retires their existing subscription leases', async () => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };
@@ -410,19 +542,25 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         });
     });
 
-    // Discriminating contrast: a DECISION settled by a mount that then retired
-    // is still refused on both carriers. A rule that simply delivered every
-    // known settlement would pass the row above and fail this one.
-    it('still refuses a confirmation whose mount retired, on both carriers', async () => {
+    it('preserves input navigation success when the route retires its requesting mount on both carriers', async () => {
+        const nativeMount = createMount({ handlers: { revealSessionInput: () => { nativeMount.retire(); return null; } } });
+        const native = createNativeCarrier(nativeMount);
+        await expect(native.api.revealSessionInput({ sessionId: 'session-1', localId: 'exact-input' })).resolves.toBeUndefined();
+        const hostedMount = createMount({ handlers: { revealSessionInput: () => { hostedMount.retire(); return null; } } });
+        const hosted = await createHostedCarrier(hostedMount, ['revealSessionInput']);
+        await expect(hostedRequest(hosted, { requestId: 'input-reveal', method: 'revealSessionInput',
+            payload: { sessionId: 'session-1', localId: 'exact-input' } })).resolves.toMatchObject({
+            kind: 'result', payload: { kind: 'result', method: 'revealSessionInput' },
+        });
+    });
+
+    it('preserves an admitted confirmation when authority retires, on both carriers', async () => {
         const nativeMount = createMount({
             openSurface: async () => ({ ok: true as const }),
             confirm: async () => { nativeMount.retire(); return { confirmed: true }; },
         });
         const native = createNativeCarrier(nativeMount);
-        await expect(native.api.confirm('Delete the preview?')).rejects.toMatchObject({
-            name: 'PluginError',
-            code: 'stale_surface',
-        });
+        await expect(native.api.confirm('Delete the preview?')).resolves.toBe(true);
 
         const hostedMount = createMount({
             openSurface: async () => ({ ok: true as const }),
@@ -435,11 +573,11 @@ describe('outward-effect settlement across the React Native and hosted-web carri
             payload: { message: 'Delete the preview?' },
         })).resolves.toMatchObject({
             kind: 'result',
-            payload: { kind: 'error', error: { code: 'stale_surface' } },
+            payload: { kind: 'result', result: { confirmed: true } },
         });
     });
 
-    it('reports stale_surface consistently when a non-outward handler errors as its mount retires', async () => {
+    it('preserves the owner error when authority retires, on both carriers', async () => {
         const nativeMount = createMount({
             confirm: async () => {
                 nativeMount.retire();
@@ -449,7 +587,7 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         const native = createNativeCarrier(nativeMount);
         await expect(native.api.confirm('Delete the preview?')).rejects.toMatchObject({
             name: 'PluginError',
-            code: 'stale_surface',
+            code: 'internal_error',
         });
 
         const hostedMount = createMount({
@@ -465,7 +603,7 @@ describe('outward-effect settlement across the React Native and hosted-web carri
             payload: { message: 'Delete the preview?' },
         })).resolves.toMatchObject({
             kind: 'result',
-            payload: { kind: 'error', error: { code: 'stale_surface' } },
+            payload: { kind: 'error', error: { code: 'internal_error' } },
         });
     });
 
@@ -597,6 +735,60 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         });
     });
 
+    // Scenario: the effect's own consequence TEARS DOWN the requesting surface
+    // (unmount retires the mount and disposes its carrier) before the admitted
+    // settlement reaches the caller — New Session swapping the docked draft
+    // under the picker that asked. Admission already decided currentness; the
+    // settled effect is delivered as success on both carriers.
+    const tornDownEffects = [
+        { method: 'openNewSession', payload: { prompt: 'Repair CI' },
+            invoke: (api: PluginUiHostApi) => api.openNewSession({ prompt: 'Repair CI' }) },
+        { method: 'openSurface', payload: { destination },
+            invoke: (api: PluginUiHostApi) => api.openSurface(destination) },
+        { method: 'revealSessionInput', payload: { sessionId: 'session-1', localId: 'exact-input' },
+            invoke: (api: PluginUiHostApi) => api.revealSessionInput({ sessionId: 'session-1', localId: 'exact-input' }) },
+        { method: 'settleEphemeralInput', payload: { kind: 'completed', input: { answer: 7 } },
+            invoke: (api: PluginUiHostApi) => api.settleEphemeralInput({ kind: 'completed', input: { answer: 7 } }) },
+    ] as const;
+    function createTearingDownMount(method: PluginUiHostMethodV1, tearDown: () => void): MountFixture {
+        const settle = async () => { tearDown(); return method === 'openSurface' ? { ok: true as const } : null; };
+        return method === 'openSurface'
+            ? createMount({ openSurface: settle })
+            : createMount({ handlers: { [method]: settle } });
+    }
+
+    it.each(tornDownEffects)('delivers $method whose settlement tore down its own surface, on both carriers', async ({ method, payload, invoke }) => {
+        let native: ReturnType<typeof createNativeCarrier> | undefined;
+        const nativeMount = createTearingDownMount(method, () => { nativeMount.retire(); native?.dispose(); });
+        native = createNativeCarrier(nativeMount);
+        await expect(invoke(native.api)).resolves.toBeUndefined();
+
+        let hosted: Awaited<ReturnType<typeof createHostedCarrier>> | undefined;
+        const hostedMount = createTearingDownMount(method, () => { hostedMount.retire(); hosted?.dispose(); });
+        hosted = await createHostedCarrier(hostedMount, [method]);
+        await expect(hostedRequest(hosted, { requestId: `torn-down-${method}`, method, payload }))
+            .resolves.toMatchObject({ kind: 'result', payload: { kind: 'result', method } });
+    });
+
+    // Scenario: the surface was torn down BEFORE admission. Nothing ran, so
+    // the request is refused and the owner is never invoked.
+    it.each(tornDownEffects)('refuses $method on a surface torn down before admission, on both carriers', async ({ method, payload, invoke }) => {
+        let invoked = 0;
+        const nativeMount = createTearingDownMount(method, () => { invoked += 1; });
+        const native = createNativeCarrier(nativeMount);
+        nativeMount.retire();
+        native.dispose();
+        await expect(invoke(native.api)).rejects.toMatchObject({ name: 'PluginError', code: 'stale_surface' });
+
+        const hostedMount = createTearingDownMount(method, () => { invoked += 1; });
+        const hosted = await createHostedCarrier(hostedMount, [method]);
+        hostedMount.retire();
+        hosted.dispose();
+        await expect(hostedRequest(hosted, { requestId: `torn-down-early-${method}`, method, payload }))
+            .resolves.not.toMatchObject({ payload: { kind: 'result' } });
+        expect(invoked).toBe(0);
+    });
+
     // Scenario: the placement refused. No effect happened, so the refusal
     // reaches the author unchanged and carries its own retry classification.
     it('carries a placement refusal through unchanged, with its own retry classification', async () => {
@@ -611,11 +803,9 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         await expect(native.api.openSurface(destination)).rejects.toMatchObject({
             name: 'PluginError',
             code: 'unavailable',
-            // `unavailable` is the retryable classification; `stale_surface` is
-            // not. Rewriting a completed navigation into `stale_surface` would
-            // therefore have changed BOTH what the author is told and whether
-            // the SDK considers a retry meaningful.
-            retryable: true,
+            // An unknown destination is terminal. A coarse unavailable code
+            // does not establish retry safety.
+            retryable: false,
             diagnostics: [{ code: 'plugin_surface_open_destination_unknown', severity: 'error' }],
         });
 

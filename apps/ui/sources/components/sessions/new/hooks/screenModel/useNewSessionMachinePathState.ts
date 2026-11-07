@@ -54,6 +54,26 @@ export type NewSessionInitialPlacement = Readonly<{
     path: string;
 }>;
 
+/**
+ * The draft's folder when it belongs on `machineId`. A folder persisted with a Machine belongs
+ * only to that Machine; a folder persisted with no target at all (a `currentTarget` seed) names
+ * the folder on whichever Machine New Session resolves, so it is never replaced by that
+ * Machine's recent folder.
+ */
+function readPersistedPathForMachine(input: Readonly<{
+    persistedExecutionTarget?: SessionAuthoringExecutionTargetV2 | null;
+    persistedMachineId?: unknown;
+    persistedPath?: unknown;
+}>, machineId: string | null): string {
+    if (!machineId) return '';
+    if (input.persistedExecutionTarget !== undefined && input.persistedExecutionTarget?.kind !== 'machine') return '';
+    const persistedMachineId = input.persistedExecutionTarget?.kind === 'machine'
+        ? input.persistedExecutionTarget.target.machineId
+        : normalizeMachineIdParam(input.persistedMachineId);
+    if (persistedMachineId && persistedMachineId !== machineId) return '';
+    return normalizePathParam(input.persistedPath);
+}
+
 export type NewSessionPlacementForPersistence = Readonly<{
     executionTarget: SessionAuthoringExecutionTargetV2 | null | undefined;
     selectedMachineId: string | null;
@@ -102,7 +122,7 @@ export function resolveNewSessionInitialPlacement(input: Readonly<{
     if (!path && keepsPersistedTarget && input.persistedExecutionTarget?.kind === 'temporary_computer') {
         path = persistedPath;
     } else if (!path) {
-        path = (machineId && persistedMachineId === machineId ? persistedPath : '')
+        path = readPersistedPathForMachine(input, machineId)
             || resolveDefaultDirectoryForMachine({
                 machineId,
                 machines: input.machines,
@@ -228,16 +248,11 @@ export function useNewSessionMachinePathState(params: Readonly<{
         })
     ), [readMachines, scope, recentMachinePaths]);
 
-    const getPersistedPathForMachine = React.useCallback((machineId: string | null): string => {
-        if (!machineId) return '';
-        const persistedMachineId = params.persistedExecutionTarget?.kind === 'machine'
-            ? params.persistedExecutionTarget.target.machineId
-            : normalizeMachineIdParam(params.persistedMachineId);
-        if (!persistedMachineId || persistedMachineId !== machineId) {
-            return '';
-        }
-        return normalizePathParam(params.persistedPath);
-    }, [params.persistedExecutionTarget, params.persistedMachineId, params.persistedPath]);
+    const getPersistedPathForMachine = React.useCallback((machineId: string | null): string => readPersistedPathForMachine({
+        persistedExecutionTarget: params.persistedExecutionTarget,
+        persistedMachineId: params.persistedMachineId,
+        persistedPath: params.persistedPath,
+    }, machineId), [params.persistedExecutionTarget, params.persistedMachineId, params.persistedPath]);
 
     const resolvePersistedMachineId = React.useCallback((): string | null => {
         const persistedMachineId = params.persistedExecutionTarget?.kind === 'machine'

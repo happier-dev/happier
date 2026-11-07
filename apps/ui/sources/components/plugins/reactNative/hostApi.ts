@@ -316,15 +316,12 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         const response = await (subscriptionEstablishmentMethods.has(method)
             ? settlement
             : settleWithCallerCancellation(settlement, options?.signal));
-        // Finite work keeps its admitted outcome. A disposed carrier is a dead
-        // sink; subscription establishment owns its own late-lease cleanup.
-        if (
-            method !== 'disposeHostResource'
-            && disposed
-            && !subscriptionEstablishmentMethods.has(method)
-        ) {
-            throwHostApiError('stale_surface');
-        }
+        // Admission (`assertActive` above, then the mounted owner) is the one
+        // currentness decision. Once the owner settled admitted finite work,
+        // that outcome is delivered even when the effect's own consequence tore
+        // this carrier down (opening New Session unmounts its requester); only
+        // the caller's withdrawal, settled by the race above, replaces it.
+        // Subscription establishment owns its own late-lease cleanup.
         if (response.kind === 'error') {
             throw createHostApiError(response.payload.code, response.payload.diagnostics, response.payload.message,
                 { ...response.payload, requestId: response.requestId });
@@ -1156,8 +1153,8 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             );
             // No post-settlement `assertActive`: opening the New Session screen
             // routinely retires the requesting surface, so an accepted launch
-            // stays a success (the shared outward-effect classifier owns that
-            // decision at the request carrier).
+            // stays a success (the request carrier delivers every admitted
+            // settlement, even after that teardown disposed it).
         },
         openAutomationEvent: async (openRequest, options) => {
             assertActive(options?.signal);
@@ -1194,6 +1191,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const result = await transport.request('statOpenableContent', {
                 ref: { kind: ref.kind, handle: ref.handle },
             }, options?.signal ? { signal: options.signal } : undefined);
+            assertDeliveryActive(options?.signal);
             return readCanonicalOpenableContentStat(result);
         },
         readOpenableContent: async (request, options) => {
@@ -1204,6 +1202,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 expectedRevision: request.expectedRevision,
                 ...(request.maxBytes === undefined ? {} : { maxBytes: request.maxBytes }),
             }, options?.signal ? { signal: options.signal } : undefined);
+            assertDeliveryActive(options?.signal);
             return readCanonicalOpenableContentRead(result);
         },
         // EU-4b: a real subscription over the mount's daemon-backed
@@ -1328,6 +1327,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 undefined,
                 options?.signal ? { signal: options.signal } : undefined,
             );
+            assertDeliveryActive(options?.signal);
             return readCanonicalActiveComposer(result);
         },
         readComposer,

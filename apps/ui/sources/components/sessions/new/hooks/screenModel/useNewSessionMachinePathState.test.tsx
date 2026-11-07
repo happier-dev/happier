@@ -1350,6 +1350,35 @@ describe('useNewSessionMachinePathState', () => {
         await hook.unmount();
     });
 
+    // A `currentTarget` seed persists a folder with no Machine: it names the folder on
+    // whichever target New Session resolves, so the resolved Machine's recent folder
+    // must not replace it, whether Machines are already hydrated or arrive later.
+    it.each([
+        ['hydrated', true],
+        ['hydrating later', false],
+    ] as const)('keeps a seeded current-target folder on the resolved Machine (%s)', async (_label, hydrated) => {
+        const home = await network.addHome('https://server-a', 'account-a');
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const machines = toMachines({ id: 'machine-1', metadata: { homeDir: '/home/one' }, activeAt: Date.now() - 10_000 });
+        const initial = {
+            serverId: resolveServerProfileScopeId(home),
+            machines: hydrated ? machines : [],
+            recentMachinePaths: [{ machineId: 'machine-1', path: '/tmp/previous-draft-folder' }],
+            machineIdParam: null,
+            pathParam: null,
+            persistedMachineId: null,
+            persistedPath: '/tmp',
+        } satisfies HookParams;
+        const hook = await renderMachinePathState(initial);
+        if (!hydrated) await hook.rerender({ ...initial, machines });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-1',
+            selectedPath: '/tmp',
+        });
+        await hook.unmount();
+    });
+
     it('tracks a typed draft path separately from the committed selectedPath until the path is committed', async () => {
         const now = Date.now();
 
