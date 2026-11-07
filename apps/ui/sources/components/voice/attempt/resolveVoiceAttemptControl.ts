@@ -18,6 +18,12 @@ export type VoiceAttemptPrimaryAction = 'start' | 'end' | 'recover' | 'setup' | 
 export type VoiceAttemptMarkPose = 'mic' | 'light' | 'shadow' | 'blocked';
 export type VoiceAttemptStatusCell = 'thinking' | 'working' | 'needs_you' | null;
 
+/** The Session attention owner's real requests, excluding hidden-carrier stuck input. */
+export function resolveVoiceSessionNeedsYou(status: Pick<SessionAwarenessPresentationV1, 'state' | 'actionRequiredReason'> | null | undefined, hiddenSession = false): boolean {
+    return status?.state === 'permission_required' || (status?.state === 'action_required'
+        && !(hiddenSession && status.actionRequiredReason === 'blocked_input'));
+}
+
 export function resolveVoiceAttemptActionability(input: Readonly<{
     canStart: boolean;
     canStop: boolean;
@@ -172,8 +178,7 @@ export function resolveVoiceAttemptControl(input: Readonly<{
                 ? 'shadow'
                 : input.status === 'disconnected' ? 'mic' : 'light',
         statusCell: input.status !== 'connected' ? null
-            : input.sessionStatus?.state === 'permission_required' || (input.sessionStatus?.state === 'action_required'
-                && !(input.hiddenSession === true && input.sessionStatus.actionRequiredReason === 'blocked_input'))
+            : resolveVoiceSessionNeedsYou(input.sessionStatus, input.hiddenSession)
                 ? 'needs_you'
                 : input.sessionStatus?.state === 'thinking' ? 'working'
                     : input.surfaceState === 'thinking' ? 'thinking' : null,

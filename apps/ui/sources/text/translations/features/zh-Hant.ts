@@ -13814,7 +13814,7 @@ const voicePresenceTranslations = { 'zh-Hant': {
         mute: "靜音",
         unmute: "取消靜音",
         end: "結束",
-        captions: { connecting: "正在開啟音訊通道", listening: "請說", transcribing: "正在轉成文字", thinking: "正在思考回答", speaking: "你可以隨時打斷", interrupted: "請說", muted: "取消靜音即可說話 · 語音仍可說話", reconnecting: "連線中斷 · 正在重試", blocked: "允許存取麥克風即可說話", failed: "請重試，或檢查語音設定", needsYou: "等待你的決定" },
+        captions: { thinkingInputUnavailable: "請等待回覆後再傳送訊息。", connecting: "正在開啟音訊通道", listening: "請說", transcribing: "正在轉成文字", thinking: "正在思考回答", speaking: "你可以隨時打斷", interrupted: "請說", muted: "取消靜音即可說話 · 語音仍可說話", reconnecting: "連線中斷 · 正在重試", blocked: "允許存取麥克風即可說話", failed: "請重試，或檢查語音設定", needsYou: "等待你的決定" },
         recovery: { allow: "允許", setUp: "設定" },
         readAloud: { preparing: "正在準備朗讀", speaking: "正在朗讀", stop: "停止朗讀" },
         containerA11y: ({ status }) => `語音，${status}`,
@@ -13864,6 +13864,8 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation({
     ready: '語音功能已就緒。',
     permissionAnnouncement: ({ summary }) => `編碼工作階段需要以下權限：${summary}。`,
+    permissionQuestion: ({ approve, deny }) => `是否允許？請說「${approve}」或「${deny}」。`,
+    permissionTapRequired: "請使用核准卡片繼續。",
     userActionAnnouncement: ({ question }) => `編碼工作階段需要你的回答。${question}`,
     userActionFallback: '編碼工作階段需要你的回答。請回答問題，以便我繼續。',
     requestedTool: '要求的工具',

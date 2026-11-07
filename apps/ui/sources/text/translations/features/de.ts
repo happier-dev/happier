@@ -13490,7 +13490,7 @@ const voicePresenceTranslations = { de: {
         mute: "Stumm",
         unmute: "Ton an",
         end: "Beenden",
-        captions: { connecting: "Audiokanal wird geöffnet", listening: "Leg los", transcribing: "Wird in Text umgewandelt", thinking: "Antwort wird erarbeitet", speaking: "Du kannst jederzeit unterbrechen", interrupted: "Leg los", muted: "Stummschaltung aufheben, um zu sprechen · Voice kann weiter sprechen", reconnecting: "Verbindung verloren · neuer Versuch", blocked: "Erlaube den Mikrofonzugriff, um zu sprechen", failed: "Versuch es erneut oder prüfe die Voice-Einstellungen", needsYou: "Wartet auf deine Entscheidung" },
+        captions: { thinkingInputUnavailable: "Warte auf die Antwort, bevor du weitere Nachrichten sendest.", connecting: "Audiokanal wird geöffnet", listening: "Leg los", transcribing: "Wird in Text umgewandelt", thinking: "Antwort wird erarbeitet", speaking: "Du kannst jederzeit unterbrechen", interrupted: "Leg los", muted: "Stummschaltung aufheben, um zu sprechen · Voice kann weiter sprechen", reconnecting: "Verbindung verloren · neuer Versuch", blocked: "Erlaube den Mikrofonzugriff, um zu sprechen", failed: "Versuch es erneut oder prüfe die Voice-Einstellungen", needsYou: "Wartet auf deine Entscheidung" },
         recovery: { allow: "Erlauben", setUp: "Einrichten" },
         readAloud: { preparing: "Vorlesen wird vorbereitet", speaking: "Liest vor", stop: "Vorlesen beenden" },
         containerA11y: ({ status }) => `Voice, ${status}`,
@@ -13540,6 +13540,8 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { de: defineVoiceReadinessTranslation({
     ready: 'Bereit für Voice.',
     permissionAnnouncement: ({ summary }) => `Die Coding-Session benötigt eine Berechtigung für ${summary}.`,
+    permissionQuestion: ({ approve, deny }) => `Soll ich das erlauben? Sage „${approve}“ oder „${deny}“.`,
+    permissionTapRequired: "Verwende die Genehmigungskarte, um fortzufahren.",
     userActionAnnouncement: ({ question }) => `Die Coding-Session benötigt deine Antwort. ${question}`,
     userActionFallback: 'Die Coding-Session benötigt deine Antwort. Beantworte die Frage, damit ich fortfahren kann.',
     requestedTool: 'das angeforderte Werkzeug',

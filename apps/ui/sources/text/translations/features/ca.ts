@@ -13854,7 +13854,7 @@ const voicePresenceTranslations = { ca: {
         mute: "Silencia",
         unmute: "Activa el so",
         end: "Acaba",
-        captions: { connecting: "Obrint el canal d'àudio", listening: "Endavant", transcribing: "Passant-ho a text", thinking: "Pensant una resposta", speaking: "Pots interrompre quan vulguis", interrupted: "Endavant", muted: "Activa el so per parlar · la Veu encara pot parlar", reconnecting: "S'ha perdut la connexió · tornant-ho a provar", blocked: "Permet l'accés al micròfon per parlar", failed: "Torna-ho a provar o revisa la configuració de la Veu", needsYou: "Esperant la teva decisió" },
+        captions: { thinkingInputUnavailable: "Espera la resposta abans d’enviar més missatges.", connecting: "Obrint el canal d'àudio", listening: "Endavant", transcribing: "Passant-ho a text", thinking: "Pensant una resposta", speaking: "Pots interrompre quan vulguis", interrupted: "Endavant", muted: "Activa el so per parlar · la Veu encara pot parlar", reconnecting: "S'ha perdut la connexió · tornant-ho a provar", blocked: "Permet l'accés al micròfon per parlar", failed: "Torna-ho a provar o revisa la configuració de la Veu", needsYou: "Esperant la teva decisió" },
         recovery: { allow: "Permet", setUp: "Configura" },
         readAloud: { preparing: "Preparant la lectura", speaking: "Llegint en veu alta", stop: "Atura la lectura" },
         containerA11y: ({ status }) => `Veu, ${status}`,
@@ -13904,6 +13904,8 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
     ready: 'La funció de veu està a punt.',
     permissionAnnouncement: ({ summary }) => `La sessió de codi necessita permís per a ${summary}.`,
+    permissionQuestion: ({ approve, deny }) => `Ho permeto? Digues «${approve}» o «${deny}».`,
+    permissionTapRequired: "Fes servir la targeta d’aprovació per continuar.",
     userActionAnnouncement: ({ question }) => `La sessió de codi necessita la teva resposta. ${question}`,
     userActionFallback: 'La sessió de codi necessita la teva resposta. Respon la pregunta perquè pugui continuar.',
     requestedTool: 'l’eina sol·licitada',

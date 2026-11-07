@@ -7,6 +7,7 @@ import {
   type VoiceAccountOperationService,
 } from '@happier-dev/plugin-sdk/voice';
 import type { VoiceProviderCatalogItem } from '@happier-dev/plugin-sdk/voice/speech';
+import { toElevenLabsToolParameters } from './toolParameters.js';
 
 import {
   ElevenLabsProvisionRequestSchema,
@@ -166,12 +167,6 @@ export async function listElevenLabsVoicesWithAccountOperations(input: Readonly<
   }
 }
 
-function normalizeToolParameters(value: Record<string, unknown>): VoiceRealtimeJsonValue {
-  const result: Record<string, unknown> = { ...value, type: 'object' };
-  if (!result.properties || typeof result.properties !== 'object' || Array.isArray(result.properties)) result.properties = {};
-  return z.json().parse(result);
-}
-
 function desiredElevenLabsToolConfig(tool: Readonly<{
   name: string;
   description: string;
@@ -181,14 +176,19 @@ function desiredElevenLabsToolConfig(tool: Readonly<{
     type: 'client',
     name: tool.name,
     description: tool.description,
-    parameters: normalizeToolParameters(tool.parameters),
+    parameters: toElevenLabsToolParameters(tool.parameters),
     expects_response: true,
     execution_mode: 'immediate',
     response_timeout_secs: tool.name === 'spawnSession' ? 120 : 60,
     interruption_mode: 'allow',
+    disable_interruptions: false,
     pre_tool_speech: 'auto',
+    force_pre_tool_speech: false,
+    assignments: [],
+    tool_call_sound: null,
     tool_call_sound_behavior: 'auto',
     tool_error_handling_mode: 'passthrough',
+    dynamic_variables: { dynamic_variable_placeholders: {} },
   });
 }
 
@@ -451,11 +451,12 @@ async function runElevenLabsProvision(
       ...existingTags.filter((tag: string) => !tag.startsWith(ELEVENLABS_AGENT_CONFIG_TAG_PREFIX)),
       ELEVENLABS_AGENT_CONFIG_TAG,
     ];
+    const selectedAgentToolIds = selectedAgent ? readElevenLabsSelectedAgentToolIds(selectedAgent) : new Set<string>();
     const existingTools = selectedAgent
       ? await listElevenLabsProvisionTools(
         call,
         new Set(request.tools.map((tool) => tool.name)),
-        readElevenLabsSelectedAgentToolIds(selectedAgent),
+        selectedAgentToolIds,
       )
       : [];
     const toolIds: string[] = [];
@@ -528,8 +529,26 @@ async function runElevenLabsProvision(
         },
       },
     );
-    if (!hasCurrentElevenLabsAgentConfiguration(await readElevenLabsSelectedAgent(call, request.agentId))) {
+    const updatedAgent = await readElevenLabsSelectedAgent(call, request.agentId);
+    if (!hasCurrentElevenLabsAgentConfiguration(updatedAgent)) {
       throw providerError('provider_response_invalid', 'read_agent');
+    }
+    if (existingTags.includes(ELEVENLABS_AGENT_CONFIG_TAG)) {
+      const retainedToolIds = readElevenLabsSelectedAgentToolIds(updatedAgent);
+      let cleanupFailure: unknown;
+      for (const id of selectedAgentToolIds) {
+        if (!retainedToolIds.has(id)) {
+          // The tagged agent owned this dependency before replacement. The
+          // declared DELETE uses force=false: shared/branch references survive.
+          try {
+            await callElevenLabsProvisionStage(call, 'delete_tool', 'delete-tool', { toolId: id });
+          } catch (error) {
+            if (isVoiceAccountOperationCancelled(error)) throw error;
+            cleanupFailure ??= error;
+          }
+        }
+      }
+      if (cleanupFailure !== undefined) throw cleanupFailure;
     }
     return { ok: true, updated: true };
   } catch (error) {
@@ -580,6 +599,8 @@ async function requestElevenLabsAccountOperationJson(input: Readonly<{
   });
   assertProviderHttpSuccess(response.status);
   if (input.signal.aborted) throw providerError('voice_account_operation_cancelled');
+  // The host admits bodyless success only for an operation declaring no body.
+  if (response.body.byteLength === 0) return {};
   try {
     const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
     if (!value || typeof value !== 'object' || Array.isArray(value)) {

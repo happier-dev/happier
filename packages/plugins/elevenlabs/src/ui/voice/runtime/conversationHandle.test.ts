@@ -165,12 +165,12 @@ describe('createElevenLabsConversationHandle event surface', () => {
     handle.subscribe((event) => events.push(event));
     await handle.startSession({});
     const options = startSession.mock.calls[0]![0];
-    const parameters = { message: 'first' };
+    const parameters = { arguments_json: JSON.stringify({ message: 'first' }) };
     options.onIncomingEvent?.({ type: 'client_tool_call', client_tool_call: {
       tool_call_id: 'provider-call', tool_name: 'effect', parameters,
     } });
     const delivery = options.clientTools.effect(parameters);
-    const call = { v: 1, responseId: 'provider-call', callId: 'provider-call', toolName: 'effect', order: 0, arguments: parameters };
+    const call = { v: 1, responseId: 'provider-call', callId: 'provider-call', toolName: 'effect', order: 0, arguments: { message: 'first' } };
     const resultIdentity = { v: 1 as const, responseId: call.responseId, callId: call.callId, toolName: call.toolName, order: call.order };
     expect(events).toEqual([{ type: 'tool_call', call }]);
     expect(execute).not.toHaveBeenCalled();

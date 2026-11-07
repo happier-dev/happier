@@ -5132,6 +5132,33 @@ or target selection. SDK-reported client-tool refusals return a safe error resul
 without ending Voice; terminal session, media and result-transport failures
 still end the connection, and retired callbacks cannot re-enter the host.
 
+In unreleased 0.3, ElevenLabs provisioning adapts the host's full JSON Schema
+to the vendor's restricted client-tool parameter model using one string field,
+`arguments_json`. Its description carries the original argument schema; the
+adapter decodes that JSON before entering the same host validation and approval
+barrier. Retained agents using native arguments remain readable. This avoids
+dropping unions, references or arbitrary JSON inputs to satisfy the vendor
+model (ElevenLabs OpenAPI API 1.0, retrieved 2026-11-06). The mapper authors the
+vendor's neutral readback defaults so reconciling an unchanged selected agent
+reuses its tools instead of creating replacements.
+After an update is read back, reconciliation deletes replaced dependencies that
+belonged to the selected `happier_voice_config_v1`-tagged agent and are absent
+from its updated tool list. The vendor's `force=false` DELETE preserves other
+agents' and branches' references; refusal remains visible as incomplete cleanup.
+Matching workspace tool names never authorize a cleanup sweep.
+Host-mediated JSON HTTP 422 failures may retain validation locations and known
+validation categories within the operation's existing response-byte budget.
+Provider messages, input values, context and registered credentials are excluded;
+Settings Actions project those structural facts into the existing failure alert.
+
+In unreleased 0.3, a recipient operation declares no response body with
+`response: { maxBytes: 0, contentTypes: [] }`; both values must appear together.
+The shared UI/daemon response owner accepts empty successful responses without
+a Content-Type and preserves empty bytes. Operations declaring a representation
+still require their declared media type and valid JSON; bodyless operations
+reject nonempty bodies. Declaration readers and hosts update together under the
+existing unpublished 0.3 direct cut.
+
 Permission-request sharing controls context disclosure, not approval authority.
 In 0.3 development, **Voice agent can approve requests** (`voice.canApproveRequests`)
 defaults on for Local Voice and realtime modes exposing host decision tools. It

@@ -64,6 +64,19 @@ const input = {
 };
 
 describe('RecipientContractV1', () => {
+  it('declares no response body only with zero bytes and no content types together', () => {
+    const withResponse = (response: { maxBytes: number; contentTypes: string[] }) => ({
+      ...input,
+      operations: [{ ...input.operations[0]!, response }],
+    });
+    expect(normalizeRecipientContractV1(withResponse({ maxBytes: 0, contentTypes: [] }))
+      .operations[0]!.response).toEqual({ maxBytes: 0, contentTypes: [] });
+    expect(() => normalizeRecipientContractV1(withResponse({ maxBytes: 0, contentTypes: ['application/json'] })))
+      .toThrow();
+    expect(() => normalizeRecipientContractV1(withResponse({ maxBytes: 1024, contentTypes: [] })))
+      .toThrow();
+  });
+
   it('projects the final Voice credentials owner without reconstructing account mediation', () => {
     expect(createVoiceProviderRecipientContractFromCredentialsV1({
       package: input.package,
