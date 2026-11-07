@@ -14,15 +14,34 @@ function readCapabilitySchema(): CapabilitySchema {
 }
 
 describe('MachineOperationProtocolCapabilitiesV1', () => {
-  it('requires advertised Connected Account authentication support and isolates an unsupported leaf', () => {
-    const capabilities = { connectedAccountAuthentication: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
+  it.each(['connectedAccountAuthentication', 'scmComparisonIndexPaging'] as const)('requires advertised %s support and isolates an unsupported leaf', (capability) => {
+    const capabilities = { [capability]: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
     expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(capabilities).success).toBe(true);
-    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, 'connectedAccountAuthentication')).toBe(true);
-    expect(protocol.supportsMachineOperationProtocolCapabilityV1({}, 'connectedAccountAuthentication')).toBe(false);
-    const newer = { ...capabilities, connectedAccountAuthentication: { protocolVersions: [2] } };
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, capability)).toBe(true);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1({}, capability)).toBe(false);
+    const newer = { ...capabilities, [capability]: { protocolVersions: [2] } };
     expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(newer).success).toBe(false);
-    expect(protocol.supportsMachineOperationProtocolCapabilityV1(newer, 'connectedAccountAuthentication')).toBe(false);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(newer, capability)).toBe(false);
     expect(protocol.supportsMachineOperationProtocolCapabilityV1(newer, 'sessionSpawn')).toBe(true);
+  });
+  it('negotiates asleep birth and pre-Agent setup without inferring it from an older spawn epoch', () => {
+    const current = { sessionSpawn: { protocolVersions: [1, 2, 3, 4] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.parse(current)).toEqual(current);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1(current, 4)).toBe(true);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1({ sessionSpawn: { protocolVersions: [1, 2, 3] } }, 4)).toBe(false);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1({ sessionSpawn: { protocolVersions: [1, 2, 4] } }, 4)).toBe(false);
+  });
+  it('negotiates committed Session observation as spawn epoch three without changing sibling epochs', () => {
+    const capabilities = { sessionSpawn: { protocolVersions: [1, 2, 3] }, pluginWebhookClaim: { protocolVersions: [1] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.parse(capabilities)).toEqual(capabilities);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1(capabilities, 3)).toBe(true);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1({ sessionSpawn: { protocolVersions: [1, 2] } }, 3)).toBe(false);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1({ sessionSpawn: { protocolVersions: [1, 3] } }, 3)).toBe(false);
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1({}, 3)).toBe(false);
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({ pluginWebhookClaim: { protocolVersions: [1, 2, 3] } }).success).toBe(false);
+    expect(protocol.MachineOperationProtocolCapabilitiesV1StoredReadSchema.parse({ ...capabilities,
+      sessionSpawn: { protocolVersions: [1, 2, 3, 4, 5] },
+    })).toMatchObject({ pluginWebhookClaim: capabilities.pluginWebhookClaim });
   });
   it('advertises enforce-or-refuse requester execution without treating native readiness as support', () => {
     const capabilities = { requesterExecutionIsolation: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
@@ -106,7 +125,11 @@ describe('MachineOperationProtocolCapabilitiesV1', () => {
       sessionInputAdmission: { protocolVersions: [1] },
     }, 2)).toBe(false);
     expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({ sessionInputAdmission: { protocolVersions: [2] } }).success).toBe(false);
-    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({ sessionInputAdmission: { protocolVersions: [1, 2, 3] } }).success).toBe(false);
+    const recoveryCapabilities = { sessionInputAdmission: { protocolVersions: [1, 2, 3] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(recoveryCapabilities).success).toBe(true);
+    expect(protocol.supportsMachineSessionInputAdmissionProtocolVersion(recoveryCapabilities, 3)).toBe(true);
+    expect(protocol.supportsMachineSessionInputAdmissionProtocolVersion(capabilities, 3)).toBe(false);
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({ sessionInputAdmission: { protocolVersions: [1, 3] } }).success).toBe(false);
   });
 
   it('admits Follow context only through its strict host-runtime capability leaf', () => {
@@ -216,16 +239,50 @@ describe('MachineOperationProtocolCapabilitiesV1', () => {
     expect(protocol.MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse({ capabilities }).success).toBe(false);
   });
 
-  it('exposes one stored projection that drops extras and rejects malformed known leaves', () => {
+  it.each([
+    { protocolVersions: [1, 2, 3, 99] },
+    { protocolVersions: [2] },
+    { protocolVersions: '1' },
+    {},
+    null,
+  ])('isolates an unsupported admission leaf from valid sibling capabilities: %j', (sessionInputAdmission) => {
+    const capabilities = {
+      sessionInputAdmission,
+      providerBrokerIngress: { protocolVersions: [1, 2] },
+      sessionSpawn: { protocolVersions: [1, 2] },
+      sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true },
+      irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64) },
+    };
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, 'providerBrokerIngress')).toBe(true);
+    expect(protocol.supportsMachineOperationProtocolCapabilityV1(capabilities, 'sessionInputAdmission')).toBe(false);
+    for (const version of [1, 2, 3] as const) {
+      expect(protocol.supportsMachineSessionInputAdmissionProtocolVersion(capabilities, version)).toBe(false);
+    }
+    expect(protocol.supportsMachineSessionSpawnProtocolVersionV1(capabilities, 2)).toBe(true);
+    expect(protocol.supportsMachineSessionFollowContextV1(capabilities)).toBe(true);
+    expect(protocol.supportsMachineSessionFollowWakeOnHumanChangeV1(capabilities)).toBe(true);
+    expect(protocol.readMachineIrohEndpointAuthorityV1({ capabilities, revision: 4 })).toEqual({
+      endpointId: 'a'.repeat(64), revision: 4,
+    });
+    expect(protocol.MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse({ capabilities }).success).toBe(false);
+  });
+
+  it('exposes one stored projection that drops extras and isolates malformed known leaves', () => {
     const schema = protocol.MachineOperationProtocolCapabilitiesV1StoredReadSchema;
     expect(schema.safeParse({
       sessionSpawn: { protocolVersions: [1], future: true },
       futureCapability: { protocolVersions: [1] },
     })).toEqual({ success: true, data: { sessionSpawn: { protocolVersions: [1] } } });
-    expect(schema.safeParse({
+    expect(schema.parse({
       sessionSpawn: { protocolVersions: [1] },
       sessionFollow: { contextV1: false, future: true },
-    }).success).toBe(false);
+    })).toEqual({ sessionSpawn: { protocolVersions: [1] }, sessionFollow: undefined });
+    expect(protocol.supportsMachineSessionFollowContextV1({
+      sessionFollow: { contextV1: false },
+    })).toBe(false);
+    for (const invalid of [null, [], 'capabilities']) {
+      expect(schema.safeParse(invalid).success).toBe(false);
+    }
   });
 
   it('recognizes finite execution only through its explicit V1 leaf', () => {

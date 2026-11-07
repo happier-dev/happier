@@ -28,6 +28,14 @@ export const MachineSessionSpawnProtocolCapabilityV1Schema = lazyZodSchema(() =>
   ]),
 })));
 
+const MachineSessionInputAdmissionCapabilitySchema = lazyZodSchema(() => z.readonly(z.strictObject({
+  protocolVersions: z.union([
+    MachineOperationProtocolVersionsV1Schema,
+    z.readonly(z.tuple([z.literal(1), z.literal(2)])),
+    z.readonly(z.tuple([z.literal(1), z.literal(2), z.literal(3)])),
+  ]),
+})));
+
 /**
  * Current transport identity published by the authenticated daemon through the
  * existing complete Machine projection. The projection's server-assigned
@@ -42,7 +50,7 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
     // Installed ingress enforces the admitted requester's execution/file boundary
     // or refuses before effects. This is not native setup/effectiveness evidence.
     requesterExecutionIsolation: z.optional(MachineOperationProtocolCapabilityV1Schema),
-    sessionInputAdmission: z.optional(MachineOperationProtocolCapabilityThroughV2Schema),
+    sessionInputAdmission: z.optional(MachineSessionInputAdmissionCapabilitySchema),
     sessionMessageReply: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Published only once the admitted host can open B witnesses and release held Pending input.
     sessionPendingResetStart: z.optional(MachineOperationProtocolCapabilityV1Schema),
@@ -65,7 +73,10 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
     // Finite Project execution support is installed-handler-backed, independently
     // of user accepting policy and current queue capacity.
     projectFiniteExecution: z.optional(MachineOperationProtocolCapabilityV1Schema),
+    // Authentication and control RPC family backed by an attached daemon runtime.
     connectedAccountAuthentication: z.optional(MachineOperationProtocolCapabilityV1Schema),
+    // Capture index projections accept the caller's viewport-derived page limit.
+    scmComparisonIndexPaging: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Host-owned optional context composition. Wake is deliberately absent
     // until the centralized context-only producer exists.
     sessionFollow: z.optional(z.readonly(z.strictObject({
@@ -173,7 +184,7 @@ export type MachineUpdateOperationProtocolCapabilitiesResponseV1 = z.infer<
 >;
 
 /**
- * Capability absence or malformed persisted data is incompatible. This is the
+ * Capability absence or a malformed persisted leaf is incompatible. This is the
  * sole predicate for exact Machine-operation protocol leaves; callers must not
  * infer support from daemon version, liveness, or encrypted daemon state.
  */
@@ -198,20 +209,17 @@ export function supportsMachineSessionSpawnProtocolVersionV1(
     && parsed.data.sessionSpawn?.protocolVersions.some((version) => version === protocolVersion) === true;
 }
 
-/** Target input uses V2; a main-only admission leaf must never authorize it. */
+/** Primary input uses V1, exact Run input V2, and explicit Run recovery V3. */
 export function supportsMachineSessionInputAdmissionProtocolVersion(
   capabilities: unknown,
-  version: 1 | 2,
+  version: 1 | 2 | 3,
 ): boolean {
   const parsed = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(capabilities);
   if (!parsed.success) return false;
-  const protocolVersions = parsed.data.sessionInputAdmission?.protocolVersions;
-  return version === 1
-    ? protocolVersions?.[0] === 1
-    : protocolVersions?.[1] === 2;
+  return parsed.data.sessionInputAdmission?.protocolVersions.some((supported) => supported === version) === true;
 }
 
-/** Follow is supported only by a valid complete stored Machine projection. */
+/** Follow is supported only by its own valid stored Machine capability leaf. */
 export function supportsMachineSessionFollowContextV1(capabilities: unknown): boolean {
   const parsed = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(capabilities);
   return parsed.success && parsed.data.sessionFollow?.contextV1 === true;

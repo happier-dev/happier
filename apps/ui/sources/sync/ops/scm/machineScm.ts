@@ -1,4 +1,5 @@
 import type {
+    ScmComparisonCaptureInput,
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
@@ -80,6 +81,7 @@ import { SCM_OPERATION_ERROR_CODES, ScmLogListResponseSchema, ScmHistoryEntriesR
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS, type SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { scmFallbackError, type ScmRpcFailure } from './scmRpcFailure';
 import { runScmRpcWithAdmission, type ScmRpcTransportResult } from './scmRpcAdmission';
@@ -87,6 +89,7 @@ import { invokeUiScmAction, normalizeUiScmFacadeResult } from './scmActionInvoca
 export { assertScmResponse, scmFallbackError } from './scmRpcFailure';
 
 import { storage } from '@/sync/domains/state/storage';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import {
     normalizeScmGitRepoPreferredBackend,
@@ -114,6 +117,7 @@ type MachineScmRpcRequest = Readonly<{
     cwd?: string;
     backendPreference?: unknown;
     results?: ScmDiffSummaryResultClearInput['results'];
+    projection?: ScmComparisonCaptureInput['projection'];
 }>;
 
 function resolveScmRpcTimeoutMs(method: string): number | undefined {
@@ -154,11 +158,20 @@ export async function runMachineScmRpc<
     request: R,
     options?: MachineScmCallOptions,
 ): Promise<ScmRpcTransportResult<T>> {
-    const payload = method.startsWith('scm.diffSummary.') || requiresExplicitScmMachineTarget(method) ? request : withScmBackendPreference({
+    let payload: MachineScmRpcRequest = method.startsWith('scm.diffSummary.') || requiresExplicitScmMachineTarget(method) ? request : withScmBackendPreference({
         ...request,
         outcomeVersion: 1 as const,
         ...(method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { operationStateVersion: 1 as const } : {}),
     });
+    if (method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && request.projection?.limit !== undefined) {
+        const machine = resolveServerScopedMachine(storage.getState(), options?.serverId, machineId);
+        if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'scmComparisonIndexPaging')) {
+            // Older capture handlers accept index/cursor/path but reject limit.
+            // Negotiate once before dispatch, preserving the pinned comparison.
+            const { limit: _limit, ...projection } = request.projection;
+            payload = { ...request, projection };
+        }
+    }
     return await runScmRpcWithAdmission<T>({
         method, request: payload,
         call: (rpcMethod, rpcPayload) => machineRpcWithServerScope<unknown, object>({
@@ -228,13 +241,13 @@ async function callMachineScm<T extends { success: boolean; error?: string; erro
     const schema = getActionSpec(actionId).outputSchema;
     if (!schema) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The SCM Action has no result contract.' };
     const result: unknown = await invokeUiScmAction({ actionId, input: request, schema,
+        confirmed: options?.confirmedByPerson ? true : undefined,
         ...(options?.onDispatched ? { onDispatched: options.onDispatched } : {}),
         context: { externalActionTarget: { kind: 'machine', machineId },
             ...(options?.authorization?.kind === 'session.write' ? { defaultSessionId: options.authorization.sessionId } : {}),
             ...(options?.serverId ? { serverId: options.serverId } : {}),
             ...(options?.accountId ? { expectedAccountId: options.accountId } : {}),
             ...(options?.signal ? { signal: options.signal } : {}),
-            ...(options?.confirmedByPerson ? { presentUserConfirmation: { actionId } } : {}),
         } });
     return normalizeUiScmFacadeResult<T>(result);
 }

@@ -37,6 +37,18 @@ function createCapabilityPublicationClient(): ApiMachineClient {
 }
 
 describe('ApiMachineClient operation protocol capability publication', () => {
+  it('advertises SCM viewport paging only to a Home accepting that operation leaf', async () => {
+    const client = createCapabilityPublicationClient();
+    const internal = client as unknown as {
+      resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
+    };
+    for (const support of [undefined, { protocolVersions: [1] }, { protocolVersions: [2] }]) {
+      const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { scmComparisonIndexPaging: support } } });
+      Reflect.set(client, 'lifecycleDependencies', { resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features }) });
+      const capabilities = await internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication();
+      expect(capabilities?.scmComparisonIndexPaging).toEqual(support?.protocolVersions[0] === 1 ? { protocolVersions: [1] } : undefined);
+    }
+  });
   it('publishes Connected Account support only after runtime attachment and retains it on replacement transport', async () => {
     const client = createCapabilityPublicationClient();
     const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { connectedAccountAuthentication: { protocolVersions: [1] } } } });
@@ -113,6 +125,69 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       expect(published[0]?.projectFiniteExecution).toEqual({ protocolVersions: [1] });
     }
   });
+  it('publishes recovered-birth support only after this Home accepts it and keeps ordinary spawn on older Homes', async () => {
+    for (const [support, expected] of [
+      [undefined, [1, 2]], [{ protocolVersions: [1, 2] }, [1, 2]],
+      [{ protocolVersions: [1, 2, 3] }, [1, 2, 3]], [{ protocolVersions: [1, 2, 3, 4] }, [1, 2, 3, 4]],
+      [{ protocolVersions: [1, 2, 3, 4, 5] }, [1, 2]],
+    ] as const) {
+      const client = createCapabilityPublicationClient();
+      Reflect.set(client, 'sessionSpawnV1OutcomeRequired', true);
+      const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { sessionSpawn: support } } });
+      const internal = client as unknown as {
+        resolveCurrentMachineOperationProtocolCapabilitiesForPublication(includeSessionCapabilities: boolean,
+          features: ReturnType<typeof FeaturesResponseSchema.parse>): Promise<Record<string, unknown> | null>;
+      };
+      expect((await internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication(true, features))?.sessionSpawn)
+        .toEqual({ protocolVersions: expected });
+    }
+  });
+  it('negotiates requester execution enforcement without breaking older Home capability publication', async () => {
+    for (const { support, supported } of [
+      { support: undefined, supported: false },
+      { support: { protocolVersions: ['invalid'] }, supported: false },
+      { support: { protocolVersions: [2] }, supported: false },
+      { support: { protocolVersions: [1] }, supported: true },
+    ]) {
+      const client = createCapabilityPublicationClient();
+      Reflect.set(client, 'externalActionExecutionAuthorizationV1OutcomeRequired', true);
+      const features = FeaturesResponseSchema.parse({
+        features: {}, capabilities: { machines: { requesterExecutionIsolation: support } },
+      });
+      let snapshotReads = 0;
+      Reflect.set(client, 'lifecycleDependencies', {
+        resolveServerFeaturesSnapshot: async () => {
+          snapshotReads += 1;
+          return { status: 'ready', features };
+        },
+      });
+      const internal = client as unknown as {
+        resolveCurrentMachineOperationProtocolCapabilitiesForPublication(includeSessionCapabilities?: boolean,
+          currentServerFeatures?: ReturnType<typeof FeaturesResponseSchema.parse>): Promise<Record<string, unknown> | null>;
+      };
+      const expected = {
+        externalActionExecutionAuthorization: { protocolVersions: [1] },
+        ...(supported ? { requesterExecutionIsolation: { protocolVersions: [1] } } : {}),
+      };
+      expect(await internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication()).toEqual(expected);
+      expect(snapshotReads).toBe(1);
+      expect(await internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication(true, features)).toEqual(expected);
+      expect(snapshotReads).toBe(1);
+      Reflect.set(client, 'externalActionExecutionAuthorizationV1OutcomeRequired', false);
+      expect(await internal.resolveCurrentMachineOperationProtocolCapabilitiesForPublication(true, features)).toEqual(
+        supported ? { requesterExecutionIsolation: { protocolVersions: [1] } } : null,
+      );
+      expect(snapshotReads).toBe(1);
+    }
+    const unavailableHome = createCapabilityPublicationClient();
+    Reflect.set(unavailableHome, 'externalActionExecutionAuthorizationV1OutcomeRequired', true);
+    await expect((unavailableHome as unknown as {
+      resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
+    }).resolveCurrentMachineOperationProtocolCapabilitiesForPublication()).resolves.toEqual({
+      externalActionExecutionAuthorization: { protocolVersions: [1] },
+    });
+  });
+
   it('keeps reset start out of older Home projections and out of daemons without the mounted owner', async () => {
     for (const [protocolVersion, installed] of [[4, true], [4, false], [3, true]] as const) {
       const client = createCapabilityPublicationClient();
@@ -125,12 +200,13 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       });
       // The Home socket ACK is the boundary; projection and replace-all publication remain real.
       const published: Array<Record<string, unknown>> = [];
-      Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck: async (_event: string, body: { capabilities: Record<string, unknown> }) => {
+      const emitWithAck = async (_event: string, body: { capabilities: Record<string, unknown> }) => {
         published.push(body.capabilities); return { v: 1, result: 'success', revision: 3 };
-      } }) });
+      };
+      Reflect.set(client, 'socket', { connected: true, emitWithAck, timeout: () => ({ emitWithAck }) });
       await client.setProjectFiniteExecutionLive(true);
       expect(published[0]?.sessionPendingResetStart).toEqual(protocolVersion >= 4 && installed ? { protocolVersions: [1] } : undefined);
-      expect(published[0]?.sessionInputAdmission).toEqual({ protocolVersions: [1, 2] });
+      expect(published[0]?.sessionInputAdmission).toEqual({ protocolVersions: [1, 2, 3] });
     }
   });
   it('withdraws installed finite execution through Home before shutdown retires its live socket', async () => {
@@ -138,7 +214,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
     // The authenticated Home ACK is the system boundary. Shutdown, socket
     // lifetime and complete capability publication remain their real owners.
     const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 3 }));
-    Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck }) });
+    Reflect.set(client, 'socket', { connected: true, emitWithAck, timeout: () => ({ emitWithAck }) });
     await client.setProjectFiniteExecutionLive(true);
     await client.shutdown();
     expect(emitWithAck).toHaveBeenLastCalledWith('machine-update-operation-protocol-capabilities', {
@@ -150,7 +226,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
   it('publishes finite execution only for the installed handler and withdraws it before retirement', async () => {
     const client = createCapabilityPublicationClient();
     const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 3 }));
-    Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck }) });
+    Reflect.set(client, 'socket', { connected: true, emitWithAck, timeout: () => ({ emitWithAck }) });
     const internal = client as unknown as {
       resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
     };
@@ -170,7 +246,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
     const client = createCapabilityPublicationClient();
     // Socket acknowledgement is the external Home boundary; projection and publication stay real.
     const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 1 }));
-    Reflect.set(client, 'socket', { connected: true, timeout: () => ({ emitWithAck }) });
+    Reflect.set(client, 'socket', { connected: true, emitWithAck, timeout: () => ({ emitWithAck }) });
     const internal = client as unknown as {
       resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
     };
@@ -194,7 +270,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
     const endpoint = { endpointId: 'b'.repeat(64) };
     Reflect.set(client, 'currentIrohMachineEndpoint', endpoint);
     const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 2 }));
-    const socket = { connected: false, timeout: () => ({ emitWithAck }) };
+    const socket = { connected: false, emitWithAck, timeout: () => ({ emitWithAck }) };
     Reflect.set(client, 'socket', socket);
     const internal = client as unknown as {
       resolveCurrentMachineOperationProtocolCapabilitiesForPublication(): Promise<Record<string, unknown> | null>;
@@ -400,7 +476,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       sessionInputAdmission: { protocolVersions: [1] },
     });
     await expect(readProjection(targetAwareServer)).resolves.toMatchObject({
-      sessionInputAdmission: { protocolVersions: [1, 2] },
+      sessionInputAdmission: { protocolVersions: [1, 2, 3] },
     });
   });
 
@@ -409,6 +485,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
     const emitWithAck = vi.fn(async () => ({ v: 1, result: 'success', revision: 4 }));
     const socket = {
       connected: true,
+      emitWithAck,
       timeout: vi.fn(() => ({ emitWithAck })),
     };
     (client as unknown as { socket: unknown }).socket = socket;
@@ -442,6 +519,24 @@ describe('ApiMachineClient operation protocol capability publication', () => {
   });
 
   it('synchronizes the active daemon Iroh endpoint through the same replace-all projection', async () => {
+    const liveState = {
+      status: 'running',
+      peerMediation: {
+        iroh: { endpoint: {
+          endpointId: 'a'.repeat(64),
+          relayUrls: ['https://relay.example.test'],
+          directAddresses: ['192.0.2.10:443'],
+        } },
+      },
+    };
+    const changedRelayState = {
+      status: 'running',
+      peerMediation: { iroh: { endpoint: {
+        endpointId: 'a'.repeat(64),
+        relayUrls: ['https://other-relay.example.test'],
+        directAddresses: ['192.0.2.10:443'],
+      } } },
+    };
     const client = new ApiMachineClient('token', createMachine(), undefined, {
       resolveServerFeaturesSnapshot: async () => ({
         status: 'ready',
@@ -460,9 +555,9 @@ describe('ApiMachineClient operation protocol capability publication', () => {
     });
     (client as unknown as { sessionSpawnV1OutcomeRequired: boolean })
       .sessionSpawnV1OutcomeRequired = true;
-    const emitWithAck = vi.fn(async (event: string, payload: { daemonState?: string }) => {
+    const emitWithAck = vi.fn(async (event: string, payload: { daemonState?: string; expectedVersion?: number }) => {
       if (event === 'machine-update-state') {
-        return { result: 'success', version: 1, daemonState: payload.daemonState };
+        return { result: 'success', version: (payload.expectedVersion ?? 0) + 1, daemonState: payload.daemonState };
       }
       return { v: 1, result: 'success', revision: 4 };
     });
@@ -473,23 +568,14 @@ describe('ApiMachineClient operation protocol capability publication', () => {
     };
     (client as unknown as { socket: unknown }).socket = socket;
 
-    await expect(client.updateDaemonState(() => ({
-      status: 'running',
-      peerMediation: {
-        iroh: { endpoint: {
-          endpointId: 'a'.repeat(64),
-          relayUrls: ['https://relay.example.test'],
-          directAddresses: ['192.0.2.10:443'],
-        } },
-      },
-    }))).resolves.toBe('published');
+    await expect(client.updateDaemonState(() => liveState)).resolves.toBe('published');
 
     expect(emitWithAck).toHaveBeenCalledWith(
       'machine-update-operation-protocol-capabilities',
       {
         machineId: 'machine-1',
         capabilities: {
-          sessionInputAdmission: { protocolVersions: [1, 2] },
+          sessionInputAdmission: { protocolVersions: [1, 2, 3] },
           sessionSpawn: { protocolVersions: [1, 2] },
           sessionSpawnPlacementOrigin: { protocolVersions: [1] },
           sessionSpawnAuthoringOrigin: { protocolVersions: [1] },
@@ -505,21 +591,51 @@ describe('ApiMachineClient operation protocol capability publication', () => {
       },
     );
     emitWithAck.mockClear();
-    await expect(client.updateDaemonState(() => ({
-      status: 'running',
-      peerMediation: { iroh: { endpoint: {
-        endpointId: 'a'.repeat(64),
-        relayUrls: ['https://other-relay.example.test'],
-        directAddresses: ['192.0.2.10:443'],
-      } } },
-    }))).resolves.toBe('published');
-    expect(emitWithAck).toHaveBeenCalledWith(
+    const repeatedOutcome = await client.updateDaemonState(() => structuredClone(liveState));
+    expect({
+      outcome: repeatedOutcome,
+      stateRequests: emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state').length,
+      capabilityPublications: emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-operation-protocol-capabilities').length,
+    }).toEqual({ outcome: 'unchanged', stateRequests: 0, capabilityPublications: 0 });
+    expect(emitWithAck).not.toHaveBeenCalled();
+    expect(emitWithAck).not.toHaveBeenCalledWith(
       'machine-update-operation-protocol-capabilities',
       expect.objectContaining({ capabilities: expect.objectContaining({
         irohMachineEndpoint: expect.objectContaining({
           endpointId: 'a'.repeat(64),
           relayUrls: ['https://other-relay.example.test'],
         }),
+      }) }),
+    );
+    // A different relay hostname is a real endpoint change, even when its
+    // identity and direct addresses remain the same.
+    await expect(client.updateDaemonState(() => changedRelayState)).resolves.toBe('published');
+    expect(emitWithAck.mock.calls.map(([event]) => event)).toEqual([
+      'machine-update-state', 'machine-update-operation-protocol-capabilities',
+    ]);
+    expect(emitWithAck).toHaveBeenLastCalledWith(
+      'machine-update-operation-protocol-capabilities',
+      expect.objectContaining({ capabilities: expect.objectContaining({
+        irohMachineEndpoint: expect.objectContaining(changedRelayState.peerMediation.iroh.endpoint),
+      }) }),
+    );
+    emitWithAck.mockClear();
+    await expect(client.updateDaemonState(() => structuredClone(changedRelayState))).resolves.toBe('unchanged');
+    expect(emitWithAck).not.toHaveBeenCalled();
+
+    await expect(client.updateDaemonState(() => ({
+      ...changedRelayState,
+      peerMediation: { iroh: { endpoint: {
+        ...changedRelayState.peerMediation.iroh.endpoint, directAddresses: ['192.0.2.11:443'],
+      } } },
+    }))).resolves.toBe('published');
+    expect(emitWithAck.mock.calls.map(([event]) => event)).toEqual([
+      'machine-update-state', 'machine-update-operation-protocol-capabilities',
+    ]);
+    expect(emitWithAck).toHaveBeenLastCalledWith(
+      'machine-update-operation-protocol-capabilities',
+      expect.objectContaining({ capabilities: expect.objectContaining({
+        irohMachineEndpoint: expect.objectContaining({ directAddresses: ['192.0.2.11:443'] }),
       }) }),
     );
   });
@@ -608,7 +724,7 @@ describe('ApiMachineClient operation protocol capability publication', () => {
 
   it('does not rehydrate a stale endpoint from a version-mismatch response', async () => {
     const machine = createMachine();
-    machine.daemonState = { status: 'running' };
+    machine.daemonState = { status: 'starting' };
     const codec = createMachineContentCodec(machine);
     const client = new ApiMachineClient('token', machine);
     let stateAttempts = 0;

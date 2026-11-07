@@ -7,6 +7,9 @@ import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } fr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { createHash } from 'node:crypto';
+import { z } from 'zod/mini';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const harness = createHomeGovernanceHarness();
@@ -43,6 +46,54 @@ describe('machineScm', () => {
     afterEach(() => {
         machineRpcWithServerScopeMock.mockReset();
         standardCleanup();
+    });
+
+    it('loads captured Review from an older daemon in one legacy-shaped index request', async () => {
+        const { runMachineScmRpc } = await import('./machineScm');
+        // Exact projection reader before 2867466524, also observed in VALIDATE92's
+        // runtime-ed46ff64 fixture. It accepts cursor/path, but rejects limit.
+        const legacyProjection = z.strictObject({ kind: z.literal('index'),
+            cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
+            path: z.optional(z.string().check(z.minLength(1))) });
+        const comparison = { id: 'a'.repeat(64), source: { kind: 'workingTree' as const },
+            repository: { rootPath: '/repo' }, endpoints: {},
+            inventory: { state: 'complete' as const, files: [], reasons: [] } };
+        const output = { success: true, comparison, metadata: { source: comparison.source, sourceKey: comparison.id },
+            page: { totalFiles: 0, nextCursor: null } };
+        machineRpcWithServerScopeMock.mockImplementation(async ({ payload }: { payload: unknown }) => {
+            const request = ScmComparisonCaptureInputSchema.parse(payload);
+            return legacyProjection.safeParse(request.projection).success ? output
+                : { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        });
+        const input = { cwd: '/repo', source: comparison.source, comparisonId: comparison.id,
+            projection: { kind: 'index' as const, cursor: 2, path: 'src/file.ts', limit: 23 } };
+        const result = await runMachineScmRpc('older-machine', RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, input, { serverId });
+        expect(ScmComparisonCaptureOutputSchema.parse(result)).toMatchObject({ success: true, comparison });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({ payload: {
+            ...input, projection: { kind: 'index', cursor: 2, path: 'src/file.ts' },
+        } }));
+    });
+
+    it('keeps viewport demand only for the addressed Home Machine advertising index paging', async () => {
+        const { runMachineScmRpc } = await import('./machineScm');
+        const machine = createMachineFixture({ id: 'paged-machine',
+            operationProtocolCapabilities: { scmComparisonIndexPaging: { protocolVersions: [1] } } });
+        storage.setState({ machines: { [machine.id]: machine },
+            machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true });
+        const input = { cwd: '/repo', source: { kind: 'workingTree' as const }, projection: { kind: 'index' as const, limit: 19 } };
+        await runMachineScmRpc(machine.id, RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, input, { serverId });
+        expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({ payload: input }));
+        const otherHome = await harness.addHome({ name: 'Older Home', serverUrl: 'https://older-scm.example', accountId: 'account-b', active: false });
+        storage.setState({ machineListByServerId: { [serverId]: [machine],
+            [otherHome]: [createMachineFixture({ id: machine.id })] },
+            machineListStatusByServerId: { [serverId]: 'idle', [otherHome]: 'idle' } });
+        await runMachineScmRpc(machine.id, RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, input, { serverId: otherHome });
+        expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            payload: { ...input, projection: { kind: 'index' } },
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
     });
 
     it('keeps blame alignment failures and validates commit indexes at the Machine transport boundary', async () => {

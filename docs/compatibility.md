@@ -2,22 +2,6 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
-## Session row-only change wakes (unreleased 0.3)
-
-Secondary Home routing reuses the existing `sessionSystemRecords` fact. For a
-Session-only wake, an explicit empty array proves that every coalesced Session
-publication passed the canonical strict row-hint classifier. Unknown or
-membership-changing writes retain a Session record target. The Home change
-planner combines this existing proof with retained row membership to select
-exact row reads. Missing proof, mixed domains, unknown rows and recovery retain
-snapshot refreshes.
-
-This changes no envelope, wire epoch, capability gate or persistence format.
-Older publishers may omit the existing proof; new readers remain conservative.
-The inspected 0.2 frontier at `ead3f779118d6a3d17e167517a64660f9e2c2c0d` has
-no Account-change wake in `packages/protocol/src/updates.ts` (no local changes to
-that file), so this routing correction needs no released compatibility adapter.
-
 ## Browser view discovery push (unreleased 0.3)
 
 `daemon.browser.view.watch` is a new closed V1 request with the list request's
@@ -31,6 +15,24 @@ method together for push discovery. The inspected 0.2 frontier at
 `7607f9dc568d462e61ce73583881e4ce6def549e` has no browser control protocol or
 daemon Browser RPC handler (including local changes at those paths); no released
 predecessor adapter or persistence migration is introduced.
+
+## Browser extension profile choices (unreleased 0.3)
+
+The existing `browser.extensions.list` ready result adds optional closed
+`profiles` entries containing only `profileId` and optional `displayName`. The
+daemon projects its persistent-profile inventory, including profiles with no
+extensions. New readers still accept a ready result without this field and
+report profile suggestions unavailable rather than inferring an empty inventory.
+The shared select hint `allowCustomValue` permits typed string answers while
+retaining input-schema validation; ordinary selects keep their membership check.
+
+Matching development Protocol, daemon, SDK and UI readers must reload together:
+older strict development readers reject the additional result and hint fields.
+This adds no Action, RPC, persistence format or wire epoch. The inspected 0.2
+frontier at `7607f9dc568d462e61ce73583881e4ce6def549e` has neither the Browser
+extension Action contract, shared input-field contract nor daemon profile store
+at the affected paths, including local changes; no released predecessor adapter
+is introduced.
 
 ## Deployment Domain, binding and preview facts (unreleased 0.3)
 
@@ -63,6 +65,35 @@ directories nor the GitHub preview-status admission path, including local
 changes in those paths, so no released predecessor adapter is added.
 
 ## Event source failure codes (unreleased 0.3)
+
+Availability's existing `intent.read` and paged `intents.list` responses also
+expose the optional closed `currentDeclaration`: the Account-selected manifest
+and its declaration digest, including a host-claimed release-less declaration.
+An explicit null means no current declaration; omission from an older producer
+does not prove eligibility. Event watcher admission and server Create share the
+canonical Event contribution reader for eligibility and source-contract version.
+This leaves Account execution selection, persistence and mutation inputs
+unchanged. Matching development Protocol, Home and UI readers load together;
+older strict development response readers reject the additional field. No new
+transport, Action, wire epoch or reverse-development adapter is introduced.
+The inspected `../0.2` frontier at `7607f9dc56` has neither the Availability V1
+Protocol nor its server operations owner, so this field has no released
+predecessor response contract to adapt.
+
+Release-less Availability claims now reuse the existing installation-publisher
+header. The server verifies its Account, Machine, installation and body binding;
+no claimed body field establishes Machine identity. The existing private intent
+JSON column stores version-2 per-Machine entries and retains readable unsigned
+development declarations separately. An unsigned claim cannot replace an
+attributed entry; no Machine provenance is fabricated for historical rows.
+`intent.read` and `intents.list` optionally project closed `machineDeclarations`
+entries. Machine-specific Event consumers use those entries, and an Account-wide
+single declaration is derived only when the entries agree. Matching development
+Protocol, Home, daemon and UI must reload together; older strict development
+response readers reject the additional field. The inspected `../0.2` HEAD
+`7607f9dc568d462e61ce73583881e4ce6def549e` has neither affected Availability
+server nor CLI publisher paths, including local changes at those paths. This
+adds no released predecessor adapter, database column, registry or wire epoch.
 
 Event source status keeps the existing persisted `code` column and accepts all
 legacy values plus producer error codes validated by the canonical Action error
@@ -734,13 +765,22 @@ closed and continue reading their pinned evidence.
 
 ## Paged SCM capture reads (unreleased 0.3)
 
-Capture inputs add the closed `projection: { kind: 'index', cursor?, path? }`
+Capture inputs add the closed `projection: { kind: 'index', cursor?, path?, limit? }`
 request. Its success adds `page: { totalFiles, nextCursor }`; projected files
 carry explicit deferred evidence without patch strings. Source, comparison,
 page and file envelopes remain closed; persistence still writes full evidence.
 The existing captured source union and RPC wire epoch are unchanged. This
-request cannot be safely ignored: older strict capture handlers reject it, and
-the UI reports that refusal without retrying a legacy whole-evidence request.
+request cannot be safely ignored: daemons predating index projections reject it,
+and the UI reports that refusal without retrying a legacy whole-evidence request.
+Viewport-sized pages are negotiated separately through the existing pushed
+Machine operation capability `scmComparisonIndexPaging: { protocolVersions: [1] }`.
+The daemon publishes this installed-handler capability only when Home's existing
+feature response accepts the leaf. The UI's Machine SCM transport reads the
+addressed Home's Machine projection once before dispatch. Missing or unsupported
+support omits only `projection.limit`, retaining the older index/cursor/path
+shape, pinned comparison and ordinary authorization. It adds no probe or retry.
+This covers the pre-`2867466524be0e077dc680f7f60032fc278a88fa` 0.3 index reader
+observed in VALIDATE92's older daemon; it does not establish 0.2 capture support.
 Older development clients can still read small legacy replies; oversized
 legacy reads fail within the existing reply budget with a client-update reason.
 
@@ -3241,6 +3281,12 @@ uses its requester relationship owner and signed target phases; it does not fall
 back to a raw bootstrap that reads the destination custodian's Account graph.
 The destination obtains the finite source seed through that same signed
 relationship authority, rather than its own custodian's Account credential.
+Later authenticated recovery uses the receiving target authority's retained
+signed native loan, matching its Home, actor, receiving Machine installation,
+relationship and target WorkspaceRef. It does not require an isolated execution
+capture for that native loan or acquire a second admission. A missing loan,
+including after receiver restart, still refuses with
+`agent_isolation_unavailable`; a raw recovery request cannot recreate custody.
 Project Open retains its original source packet; a normal relationship root
 retains its own admitted source and target without inventing a Project packet.
 Signed target and seed socket phases accept the installed daemon's paired
@@ -7077,6 +7123,17 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `doc.comment.reply` accepts optional initial `participants` through
+the existing `DiscussionInitialParticipantsV1` schema, only when starting a new
+passage Discussion. The Action input, participant identities and nested passage
+references remain closed; omission preserves ordinary comments. Nonempty initial
+invitations use the existing present-user sharing classification and canonical
+Discussion creation owner. Older strict development readers reject the operand,
+so matching Protocol and UI readers reload together. No persisted format, wire
+epoch or compatibility adapter changes. The inspected `../0.2` frontier at
+`7607f9dc568d462e61ce73583881e4ce6def549e` has neither the Doc collaboration Action
+schema nor spec, including scoped staged and unstaged changes.
+
 Unreleased 0.3 `workspace.tabs.open` adds the optional closed SCM `resource`
 input, reusing `PluginUiResourceIntentV1`. The Action envelope stays closed;
 resource addressing is mutually exclusive with href/file and placement controls.
@@ -8119,6 +8176,19 @@ page, and excludes the mutable watch revision from its occurrence tuple.
 Infrastructure remains a purpose rather than an identity kind. Deployment
 health, drift and runtime-log reads retain the deployment-only arm.
 
+Machine service list/detail rows project that admitted value as optional
+`identity`; Workspace services have no Machine-service identity. Consumers pass
+it directly to the existing service-subject entry point rather than parsing a
+service id. The daemon also owns the human label in `name`: an adopted watch's
+name, or the managed service's name. Native discovery projects the same label
+and identity for an admitted candidate. Ordinary unowned Compose candidates
+retain their discovered project names. A Happier hash whose Environment
+instance cannot be resolved retains the native name in rows and discovery and carries
+`nameResolution: 'unresolved_environment'`; consumers present an unresolved
+Happier Environment rather than stripping or interpreting the hash. This is a
+display result, not proof of Environment provenance: native Workspace Compose
+projects can have the same hashed name shape. An adopted identity stays adopted.
+
 Selected Machine service detail may carry optional `runtimeFacts` with
 `configuration`, `observedAt` and `freshness`. Every nested object stays closed;
 the redacted configuration shares the existing deployment-review service
@@ -8552,6 +8622,21 @@ extending operation lifetime or retaining results across the restart.
 Older closed snapshot readers drop this unknown setup domain; matching current
 clients are needed to show that completion push. V1 RPC responses retain their
 released projection.
+
+Current development V2 setup references also carry optional ordered `steps`:
+`planIndex`, `stepId`, the reviewed localized `label`, execution `state`, and
+an optional native `failureCause` code. The admitted plan owns these display
+facts; script bodies, commands, native output and credentials are excluded.
+Apply, removal and update operations project the same native progress callbacks
+through the existing operation store. Equal step facts publish nothing. Finite
+toolchain and daemon-user script stages retain their existing phase and terminal
+attachments; they do not invent native plan steps.
+
+The snapshot, setup reference, step entries and localized label objects remain
+closed. Matching Protocol, daemon and UI development readers reload together;
+new readers accept references without steps. Released V1 readers still receive
+the existing projection without a setup reference, so no released wire epoch,
+persisted format, additional channel or compatibility adapter changes.
 
 Managed controller failures in the current development V2 read retain a strict
 `managedControllerRequest` diagnostic: the static request path, failure category,

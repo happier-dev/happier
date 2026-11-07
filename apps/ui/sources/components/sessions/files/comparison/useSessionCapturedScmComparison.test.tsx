@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { z } from 'zod/mini';
 import { ScmComparisonSchema, ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -92,11 +93,12 @@ afterEach(async () => { standardCleanup(); for (const scope of scopes.splice(0))
     await homes.reset();
     getStorage().setState(initialStorage, true); boundary.calls = []; boundary.response = null; boundary.savedResponse = null; boundary.savedResponses = null; boundary.savedInventory = null; });
 
-async function mount(comparison: SessionScmReviewComparison, active = true) {
+async function mount(comparison: SessionScmReviewComparison, active = true, pagingSupported = true) {
     const sessionId = `capture-${comparison.kind}`;
     const serverId = await homes.addHome({ name: sessionId, serverUrl: `https://${sessionId}.example.test`, accountId: 'captured-account' });
     scopes.push({ serverId, accountId: 'captured-account' });
-    const machine = createMachineFixture({ id: `machine:${sessionId}`, activeAt: Date.now() });
+    const machine = createMachineFixture({ id: `machine:${sessionId}`, activeAt: Date.now(),
+        operationProtocolCapabilities: pagingSupported ? { scmComparisonIndexPaging: { protocolVersions: [1] } } : undefined });
     const session = createSessionFixture({ id: sessionId, serverId, active: true,
         metadata: { path: '/repo/exact', host: 'tester.local', machineId: machine.id, flavor: 'codex' } });
     getStorage().setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
@@ -109,6 +111,23 @@ const changedFile = { path: 'src/changed.ts', changeKind: 'modified', binary: fa
     evidence: { state: 'available', unifiedDiff: 'diff --git a/src/changed.ts b/src/changed.ts\n--- a/src/changed.ts\n+++ b/src/changed.ts\n@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] } as const;
 
 describe('Files reads the canonical captured comparison through authenticated RPC', () => {
+    it('loads Review through the Session Action when the daemon accepts only the older index projection', async () => {
+        const comparison = ScmComparisonSchema.parse({ id: 'b'.repeat(64), source: { kind: 'session', sessionId: 'capture-session' },
+            repository: { rootPath: '/repo/exact' }, endpoints: {},
+            inventory: { state: 'complete', reasons: [], files: [changedFile] } });
+        const legacyProjection = z.strictObject({ kind: z.literal('index'),
+            cursor: z.optional(z.number().check(z.int(), z.nonnegative())), path: z.optional(z.string().check(z.minLength(1))) });
+        boundary.response = (payload: { projection?: unknown }) => legacyProjection.safeParse(payload.projection).success
+            ? { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source },
+                page: { totalFiles: 1, nextCursor: null } }
+            : { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        const hook = await mount({ kind: 'session' }, true, false);
+        await vi.waitFor(() => expect(hook.getCurrent().comparison).toEqual(comparison));
+        expect(hook.getCurrent().error).toBeNull();
+        expect(boundary.calls.filter(call => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE)).toEqual([
+            expect.objectContaining({ payload: expect.objectContaining({ projection: { kind: 'index' } }) }),
+        ]);
+    });
     it('reads only presented viewport summaries from a 9119-file capture and pages on explicit demand', async () => {
         const setup = await mount({ kind: 'session' }, false);
         await setup.unmount();

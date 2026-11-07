@@ -7,7 +7,9 @@ import { PLUGIN_COLLECTION_LIMITS_V1 } from '../../../plugins/data/collectionLim
  * Deployment ceilings advertised for diagnostic Collection preflight only.
  * The server mutation transaction remains the enforcement owner.
  */
-export const PluginDataCollectionsCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+function createPluginDataCollectionsCapabilitiesSchema(strict: boolean) {
+  const object = strict ? z.strictObject : z.object;
+  return object({
   maxRowEncodedBytes: z.number().check(z.int(), z.positive(), z.maximum(PLUGIN_COLLECTION_LIMITS_V1.maximumStoredRowEncodedBytes)),
   maxBatchBytes: z.number().check(z.int(), z.positive(), z.maximum(PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchEncodedBytes)),
   maxBatchRows: z.number().check(z.int(), z.positive(), z.maximum(PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows)),
@@ -35,7 +37,13 @@ export const PluginDataCollectionsCapabilitiesSchema = lazyZodSchema(() => z.str
       message: 'Collection batch row limit cannot exceed the Account row limit.',
     });
   }
-})));
+}));
+}
+
+export const PluginDataCollectionsCapabilitiesReadSchema = lazyZodSchema(() => createPluginDataCollectionsCapabilitiesSchema(false));
+
+/** Strict deployment-policy authoring; response reads share the same checks. */
+export const PluginDataCollectionsCapabilitiesSchema = lazyZodSchema(() => createPluginDataCollectionsCapabilitiesSchema(true));
 
 export type PluginDataCollectionsCapabilities = z.infer<
   typeof PluginDataCollectionsCapabilitiesSchema

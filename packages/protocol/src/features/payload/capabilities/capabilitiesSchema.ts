@@ -1,7 +1,7 @@
-import { MachineOperationProtocolCapabilityV1Schema, MachineSessionSpawnProtocolCapabilityV1Schema } from '../../../machines/operationProtocolCapabilitiesV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { AccountStoredContentCompatibilityServerRequirementsV1Schema } from '../../../clientCompatibility/accountStoredContentCompatibilityV1.js';
+import { MachineOperationProtocolCapabilityV1Schema, MachineSessionSpawnProtocolCapabilityV1Schema } from '../../../machines/operationProtocolCapabilitiesV1.js';
 
 import { OAuthProviderStatusSchema } from '../oauthProviderStatus.js';
 import {
@@ -82,14 +82,18 @@ import {
   DEFAULT_PLUGINS_CAPABILITIES,
   PluginsCapabilitiesSchema,
 } from './pluginsCapabilities.js';
-import { PluginDataCollectionsCapabilitiesSchema } from './pluginDataCollectionsCapabilities.js';
+import { PluginDataCollectionsCapabilitiesReadSchema } from './pluginDataCollectionsCapabilities.js';
 import { AccountDirectoryCapabilitiesSchema } from './accountDirectoryCapabilities.js';
 import { HomeSearchCapabilitiesSchema } from './homeSearchCapabilities.js';
 import { TeamCredentialCapabilitiesSchema } from './teamCredentialCapabilities.js';
 
 export const CapabilitiesSchema = lazyZodSchema(() => z.object({
+  // Representation negotiation only: the change feed remains available with query cursors.
+  changes: z.catch(z.optional(z.object({
+    cursorHeaderVersion: z.catch(z.optional(z.literal(1)), undefined),
+  })), undefined),
   /** Operation epoch, separate from package version and product enablement. */
-  providerBroker: z.optional(z.strictObject({ protocolVersions: z.tuple([z.literal(1), z.literal(2)]) })),
+  providerBroker: z.optional(z.object({ protocolVersions: z.tuple([z.literal(1), z.literal(2)]) })),
   homeSearch: z.optional(HomeSearchCapabilitiesSchema),
   accountDirectory: z.optional(AccountDirectoryCapabilitiesSchema),
   accountStoredContentCompatibility:
@@ -103,7 +107,10 @@ export const CapabilitiesSchema = lazyZodSchema(() => z.object({
   serverRelease: z.optional(ServerReleaseCapabilitiesSchema),
   machines: z._default(z.optional(z
     .object({
+      // Accepted operation representation, not a product/native-readiness gate.
+      requesterExecutionIsolation: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
       connectedAccountAuthentication: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
+      scmComparisonIndexPaging: z.catch(z.optional(MachineOperationProtocolCapabilityV1Schema), undefined),
       sessionSpawn: z.catch(z.optional(MachineSessionSpawnProtocolCapabilityV1Schema), undefined),
       transfer: z._default(z.optional(MachineTransferCapabilitiesSchema), DEFAULT_MACHINE_TRANSFER_CAPABILITIES),
       tunnel: z._default(z.optional(MachineTunnelCapabilitiesSchema), DEFAULT_MACHINE_TUNNEL_CAPABILITIES),
@@ -119,9 +126,8 @@ export const CapabilitiesSchema = lazyZodSchema(() => z.object({
   browser: z._default(z.optional(BrowserCapabilitiesSchema), DEFAULT_BROWSER_CAPABILITIES),
   devices: z._default(z.optional(DeviceCapabilitiesSchema), DEFAULT_DEVICE_CAPABILITIES),
   plugins: z._default(z.optional(PluginsCapabilitiesSchema), DEFAULT_PLUGINS_CAPABILITIES),
-  // This must remain a root-level optional family: `server` and `plugins` are
-  // strict incumbent children, while the outer capability envelope is additive.
-  pluginDataCollections: z.optional(PluginDataCollectionsCapabilitiesSchema),
+  // Keep the published root-level family; capability response reads are additive.
+  pluginDataCollections: z.optional(PluginDataCollectionsCapabilitiesReadSchema),
   social: z._default(z.optional(z
     .object({
       friends: z._default(z.optional(SocialFriendsCapabilitiesSchema), DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),

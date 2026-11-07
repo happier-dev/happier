@@ -34,11 +34,31 @@ function readProducedEnabledBit(delta: FeaturesPayloadDelta, featureId: FeatureI
 describe('features/serverFeatureRegistry', () => {
     afterEach(() => resetSessionSystemRecordsProtocolV1ActivationForTests());
 
+    it('advertises Home acceptance of SCM viewport paging capability publications', () => {
+        expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.machines)
+            .toMatchObject({ scmComparisonIndexPaging: { protocolVersions: [1] } });
+    });
+
     it('advertises Home acceptance of the Connected Account operation capability leaf', () => {
         expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.machines)
             .toMatchObject({ connectedAccountAuthentication: { protocolVersions: [1] } });
     });
 
+    it('publishes Home requester-isolation admission support independently of product decisions', () => {
+        for (const env of [{}, { HAPPIER_BUILD_FEATURES_DENY: 'machines.rpc.directPeer' }]) {
+            expect(resolveServerFeaturePayload(env, serverFeatureRegistry).capabilities.machines)
+                .toMatchObject({ requesterExecutionIsolation: { protocolVersions: [1] } });
+        }
+    });
+
+    it('publishes committed observation and asleep birth through Home session-spawn protocol support', () => {
+        const payload = resolveServerFeaturePayload({}, serverFeatureRegistry);
+
+        expect(payload.capabilities.machines).toMatchObject({
+            sessionSpawn: { protocolVersions: [1, 2, 3, 4] },
+        });
+        expect(featuresSchema.safeParse(payload).success).toBe(true);
+    });
 
     it('assigns every server-represented catalog feature to exactly one registry or fixed-policy resolver', () => {
         const featureProducers = [

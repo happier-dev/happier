@@ -4857,6 +4857,12 @@ export class ApiMachineClient {
             && snapshot.features.capabilities.machines.connectedAccountAuthentication?.protocolVersions.includes(1) === true) {
             capabilities = { ...capabilities, connectedAccountAuthentication: { protocolVersions: [1] } };
         }
+        // SCM handlers are installed by this client. Publish their paging support
+        // only when Home accepts the leaf in its strict complete projection.
+        if (snapshot?.status === 'ready'
+            && snapshot.features.capabilities.machines.scmComparisonIndexPaging?.protocolVersions.includes(1) === true) {
+            capabilities = { ...capabilities, scmComparisonIndexPaging: { protocolVersions: [1] } };
+        }
         if (!capabilities) return null;
         const personalBroker = this.providerBrokerAccountConnectionIngressLive
             && snapshot?.status === 'ready'
