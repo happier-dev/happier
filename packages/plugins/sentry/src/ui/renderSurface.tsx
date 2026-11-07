@@ -29,6 +29,8 @@ import {
   Badge,
   Banner,
   Button,
+  Card,
+  CountedDisclosureItem,
   Divider,
   EmptyState,
   ErrorState,
@@ -197,6 +199,9 @@ function firstException(
  * here stays inside this region — the header, the facts and the Tags section below it
  * are unaffected, because a failed event read is not a failed detail.
  */
+/** The frame's line gives way before its Open control does. */
+const FRAME_LINE_STYLE = Object.freeze({ flex: 1, minWidth: 0 });
+
 function SelectedOccurrenceSummary({
   controller,
   locale,
@@ -245,6 +250,38 @@ function SelectedOccurrenceSummary({
 
   return (
     <Stack gap="small">
+      {/* The exception is the thing itself (lab c7 error): its words and innermost app frame in one card, the
+          way to the whole trace a quiet press on the frame's line. */}
+      <Card padding="small">
+        <Stack gap="small">
+          {/* The disclosure sits directly above the values it qualifies (`SENTRY.md` §8.2): a notice under them has
+              already let the reader take a scrubbed value at face value. Quiet text, so the exception still leads. */}
+          <RedactionNotice projection={projection} presentation="line" />
+          {exception === null
+            ? <Text variant="code">{projection.message === '' ? projection.title : projection.message}</Text>
+            : <Text variant="code">{`${exception.type}: ${exception.value}`}</Text>}
+          {(exception === null || frame === undefined) && (!sentryProjectionHasTrace(projection) || onOpenStackTrace === undefined)
+            ? null
+            : (
+              <Row gap="small" align="center">
+                {exception === null || frame === undefined ? null : (
+                  <Stack style={FRAME_LINE_STYLE}>
+                    <Text variant="code" tone="secondary" numberOfLines={1}>{frameLabel(frame)}</Text>
+                  </Stack>
+                )}
+                {!sentryProjectionHasTrace(projection) || onOpenStackTrace === undefined ? null : (
+                  <Button
+                    title="Open the stack trace"
+                    titleKey="plugins.sentry.ui.openStack"
+                    variant="plain"
+                    size="small"
+                    onPress={onOpenStackTrace}
+                  />
+                )}
+              </Row>
+            )}
+        </Stack>
+      </Card>
       <Text
         variant="micro"
         tone="neutral"
@@ -257,34 +294,6 @@ function SelectedOccurrenceSummary({
         values={{ selection: selectionLabel(controller), when: when ?? '' }}
       />
       <SelectedEventRefreshNotice read={read} />
-      {/*
-        * Overview is the default tab and renders the exception value and the
-        * innermost app frame below, so it owes its reader the same disclosure
-        * the other two Tier-B/C regions already carry (`SENTRY.md` §8.2). It
-        * sits ABOVE the values it qualifies: a notice under them has already
-        * let the reader take a scrubbed value at face value.
-        */}
-      <RedactionNotice projection={projection} />
-      {exception === null
-        ? <Text variant="meta">{projection.message === '' ? projection.title : projection.message}</Text>
-        : (
-          <Stack gap="small">
-            <Text variant="meta">{`${exception.type}: ${exception.value}`}</Text>
-            {frame === undefined
-              ? null
-              : <Text variant="micro" tone="neutral">{frameLabel(frame)}</Text>}
-          </Stack>
-        )}
-      {!sentryProjectionHasTrace(projection) || onOpenStackTrace === undefined
-        ? null
-        : (
-          <Button
-            title="Open the stack trace"
-            titleKey="plugins.sentry.ui.openStack"
-            variant="secondary"
-            onPress={onOpenStackTrace}
-          />
-        )}
       <Button
         title="Reread this occurrence"
         titleKey="plugins.sentry.ui.rereadOccurrence"
@@ -337,7 +346,12 @@ function SelectedEventRefreshNotice({
  */
 function RedactionNotice({
   projection,
-}: Readonly<{ projection: SentryEventProjectionV1 }>): React.ReactElement | null {
+  presentation = 'banner',
+}: Readonly<{
+  projection: SentryEventProjectionV1;
+  /** `line`: quiet text inside the exception card, above its values; `banner` elsewhere. */
+  presentation?: 'banner' | 'line';
+}>): React.ReactElement | null {
   const text = usePluginTranslation();
   const disclosure = summarizeSentryEvidenceDisclosure(projection);
   const { providerScrubbed, pluginWithheld, sensitivePaths } = disclosure;
@@ -376,6 +390,14 @@ function RedactionNotice({
     ),
   ].filter((line): line is string => line !== null).join(' ');
 
+  if (presentation === 'line') {
+    return (
+      <Stack gap="xsmall">
+        <Text variant="micro" tone="secondary" value={title} />
+        {description === '' ? null : <Text variant="micro" tone="neutral" value={description} />}
+      </Stack>
+    );
+  }
   return <Banner tone="neutral" title={title} description={description} />;
 }
 
@@ -385,12 +407,16 @@ function LiveSummary({
   summary,
   locale,
   nowMs,
+  part,
 }: Readonly<{
   summary: SentryReadStateV1<SentryIssueSummaryV1>;
   locale: string;
   nowMs: number;
-}>): React.ReactElement {
+  /** The story shows the status in its chapter and the rest behind its Facts line; absent, both together. */
+  part?: 'status' | 'facts';
+}>): React.ReactElement | null {
   const text = usePluginTranslation();
+  if (part === 'facts' && summary.kind !== 'ready') return null;
   if (summary.kind === 'loading') {
     return <LoadingState title="Reading this issue from Sentry" titleKey="plugins.sentry.ui.readingIssue" />;
   }
@@ -425,23 +451,33 @@ function LiveSummary({
       }]),
   ];
 
+  const status = (
+    <Row gap="small">
+      <Status
+        tone={STATE_TONES[value.statePresentation]}
+        label={value.nativeStateLabel ?? value.statePresentation}
+      />
+    </Row>
+  );
+  const caveat = (
+    <Text
+      variant="micro"
+      tone="neutral"
+      valueKey="plugins.sentry.ui.retainedCount.description"
+      fallback="Sentry counts what it retained for this project’s window, never every occurrence."
+    />
+  );
+  if (part === 'status') return status;
+  if (part === 'facts') {
+    return <Stack gap="small">{entries.length === 0 ? null : <Metadata entries={entries} />}{caveat}</Stack>;
+  }
   return (
     <Stack gap="small">
-      <Row gap="small">
-        <Status
-          tone={STATE_TONES[value.statePresentation]}
-          label={value.nativeStateLabel ?? value.statePresentation}
-        />
-      </Row>
+      {status}
       {entries.length === 0
         ? null
         : <Metadata title="Sentry now" titleKey="plugins.sentry.ui.sentryNow" entries={entries} />}
-      <Text
-        variant="micro"
-        tone="neutral"
-        valueKey="plugins.sentry.ui.retainedCount.description"
-        fallback="Sentry counts what it retained for this project’s window, never every occurrence."
-      />
+      {caveat}
     </Stack>
   );
 }
@@ -660,6 +696,8 @@ function TagsSection({
 
 /** The observation facts the spread states as tiles, so no other Overview row repeats them. */
 const SPREAD_FACT_IDS: ReadonlySet<string> = new Set(['events', 'users']);
+/** The fact a reader triages an error by stays in the story; the other facts wait behind its one Facts line. */
+const STORY_LEAD_FACT_IDS: ReadonlySet<string> = new Set(['level']);
 
 function observedCount(fields: readonly SentryDetailFieldV1[], id: string): number | null {
   const field = fields.find((candidate) => candidate.id === id);
@@ -754,13 +792,59 @@ function OverviewPanel({
   );
   // The story answers these in the panels beside it; only the standalone tabs list them.
   const pendingFields = story ? [] : overview.fields.filter((field) => field.kind === 'pending');
-  const entries: readonly MetadataEntry[] = overview.fields.flatMap((field) => {
+  const factEntries = overview.fields.flatMap((field) => {
     if (field.kind === 'pending' || field.kind === 'status' || SPREAD_FACT_IDS.has(field.id)) return [];
     const value = fieldValueText(field, locale, nowMs);
-    return value === null ? [] : [{ label: factLabel(field), value }];
+    return value === null ? [] : [{ id: field.id, entry: { label: factLabel(field), value } satisfies MetadataEntry }];
   });
+  const entries: readonly MetadataEntry[] = factEntries.map(({ entry }) => entry);
   const { tiles, trend } = useSentrySpread(summary, overview.fields, locale);
   const spread = <TriageDetailSpread tiles={tiles} trend={trend} locale={locale} nowMs={nowMs} />;
+
+  if (story) {
+    // The story (lab c7 error, as PostHog's): what happened leads as the exception itself, then the issue's
+    // status and the fact a reader triages by; Sentry's own times, its caveat and the reference facts wait behind
+    // one Facts line, so the chapter's preview never cuts a fact in half. Writes are the frame's `actions` panel.
+    const lead = factEntries.filter(({ id }) => STORY_LEAD_FACT_IDS.has(id)).map(({ entry }) => entry);
+    const reference = factEntries.filter(({ id }) => !STORY_LEAD_FACT_IDS.has(id)).map(({ entry }) => entry);
+    return (
+      <TriageDetailStory kind="error" changes={spread}>
+        <SelectedOccurrenceSummary
+          controller={selectedEvent}
+          locale={locale}
+          nowMs={nowMs}
+          onOpenStackTrace={onOpenStackTrace}
+        />
+        {overview.summary === null ? null : <Text variant="meta">{overview.summary}</Text>}
+        <LiveSummary summary={summary} locale={locale} nowMs={nowMs} part="status" />
+        {statusFields.length === 0 ? null : (
+          <Row gap="small">
+            {statusFields.map((field) => (
+              <Status key={field.id} tone={resolveTriageRowFactStatusToneV1(field.tone)} label={`${factLabel(field)}: ${field.value}`} />
+            ))}
+          </Row>
+        )}
+        {lead.length === 0 ? null : <Metadata entries={lead} />}
+        <CountedDisclosureItem testID="sentry-facts" title={text('plugins.sentry.ui.facts', 'Facts')}
+          {...(reference.length === 0 ? {} : { count: reference.length })}>
+          <Stack gap="small">
+            <LiveSummary summary={summary} locale={locale} nowMs={nowMs} part="facts" />
+            {reference.length === 0 ? null : <Metadata entries={reference} />}
+            {!overview.projectionTruncated ? null : (
+              <Banner
+                tone="neutral"
+                title="Some details were shortened"
+                titleKey="plugins.sentry.ui.shortened"
+                description="Open the issue in Sentry to read the complete text."
+                descriptionKey="plugins.sentry.ui.shortened.description"
+              />
+            )}
+          </Stack>
+        </CountedDisclosureItem>
+        <TagsSection input={input} distribution={distribution} locale={locale} nowMs={nowMs} />
+      </TriageDetailStory>
+    );
+  }
 
   return (
       <TriageDetailStory kind={story ? 'error' : undefined} changes={story ? spread : undefined}>

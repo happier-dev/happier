@@ -530,8 +530,11 @@ describe('the mounted Sentry issue detail body', () => {
     const bodyText = document.body.textContent ?? '';
     expect(bodyText.match(/112/gu) ?? []).toHaveLength(1);
     expect(bodyText.match(/4k|4021|4,021/giu) ?? []).toHaveLength(1);
-    // Facts the spread does not own stay.
+    // Facts the spread does not own stay: the level leads in the story, the rest wait behind one Facts line.
     await expect(page.getByText('fatal')).resolves.toBeDefined();
+    await expect(page.queryByText('Sentry now')).resolves.toBeUndefined();
+    const facts = document.querySelector<HTMLElement>('[data-testid="sentry-facts.header"] [role="button"], [data-testid="sentry-facts.header"][role="button"]');
+    expect(facts).not.toBeNull();
     // Chrome the story no longer carries.
     for (const gone of ['Observation', 'Observed', 'No projected facts', 'Read only in this detail body:']) {
       await expect(page.queryByText(gone)).resolves.toBeUndefined();
@@ -571,6 +574,13 @@ describe('the mounted Sentry issue detail body', () => {
     // with nothing on screen saying so — indistinguishable from a value that
     // was never touched.
     await expect(page.getByText('Sentry redacted some values')).resolves.toBeDefined();
+    // The exception leads the chapter: the notice is quiet text directly above the values it qualifies, and the
+    // occurrence's own "Showing …" line follows the card, so a clamped preview still shows the exception.
+    const body = document.body.textContent ?? '';
+    const notice = body.indexOf('Sentry redacted some values');
+    const showing = body.indexOf('Showing ');
+    expect(notice).toBeGreaterThanOrEqual(0);
+    expect(showing).toBeGreaterThan(notice);
   });
 
   it('keeps every issue tag and discloses that their values are unclassified', async () => {
