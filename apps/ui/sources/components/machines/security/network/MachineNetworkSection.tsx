@@ -640,7 +640,9 @@ function PrivateNetworksGroup(
   }>,
 ) {
   const facts = props.network.facts;
-  const entries = (facts.access ?? projectMachineNetworkAccessFacts(facts))?.privateNetworks ?? [];
+  const access = facts.access ?? projectMachineNetworkAccessFacts(facts);
+  const entries = access?.privateNetworks ?? [];
+  const join = access?.privateNetworkJoin;
   // Membership changes go through the same one review; never while another change is pending.
   const canChange = props.editable && props.controls.review.kind === 'idle' && props.controls.draft === null;
   return (
@@ -671,6 +673,27 @@ function PrivateNetworksGroup(
           />
         ))
       )}
+      {entries.length === 0 && props.editable && join?.kind === 'available'
+        ? join.selections.map((selection, index) => (
+          <Item
+            key={index}
+            icon={<Icon name="tree-structure" />}
+            title={props.providerTitle(selection.provider) ?? t('machineDetailPage.network.privateTitle')}
+            rightElement={(
+              <RoundButton
+                testID={`machine-network-private-join-${index}`}
+                size="small"
+                display="secondary"
+                title={t('machineDetailPage.network.joinNetwork')}
+                disabled={!canChange}
+                onPress={() => props.controls.onPrepareChange({ kind: 'privateNetwork', intent: 'join', selection })}
+              />
+            )}
+            accessoryLayout="adaptive"
+            showChevron={false}
+          />
+        ))
+        : null}
     </ItemGroup>
   );
 }

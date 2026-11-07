@@ -155,10 +155,18 @@ const inspected = MachineReachabilityInspectResultV1Schema.parse({
 });
 
 describe('Machine → Network reviewed change', () => {
-  it('applies exactly the host-reviewed plan once; waiting for approval leaves no second Apply', async () => {
+  it.each([
+    { scenario: 'posture', change },
+    { scenario: 'private-network Join', change: MachineReachabilityChangeV1Schema.parse({
+      kind: 'privateNetwork', intent: 'join', selection: {
+        provider: { kind: 'builtin', id: 'tailscale' }, config: { profile: 'work' }, credentialRefs: [],
+      },
+    }) },
+  ])('applies exactly the host-reviewed $scenario plan once; waiting for approval leaves no second Apply', async ({ change }) => {
+    const reviewedPlan = MachineReachabilityPlanV1Schema.parse({ ...plan, basis: { ...plan.basis, change } });
     executions['machines.reachability.inspect'] = {
       ok: true,
-      result: inspected,
+      result: { ...inspected, plan: reviewedPlan },
     };
     executions['machines.reachability.configure'] = {
       ok: true,
@@ -177,7 +185,7 @@ describe('Machine → Network reviewed change', () => {
       });
       expect(hook.getCurrent().review).toMatchObject({
         kind: 'review',
-        plan: { reviewedPlanDigest: plan.reviewedPlanDigest },
+        plan: { reviewedPlanDigest: reviewedPlan.reviewedPlanDigest },
       });
       expect(requests).toEqual([
         {
@@ -203,8 +211,8 @@ describe('Machine → Network reviewed change', () => {
       );
       expect(configures).toHaveLength(1);
       expect(configures[0]?.input).toMatchObject({
-        reviewedPlanDigest: plan.reviewedPlanDigest,
-        reviewedPlanBasis: plan.basis,
+        reviewedPlanDigest: reviewedPlan.reviewedPlanDigest,
+        reviewedPlanBasis: reviewedPlan.basis,
         change,
       });
     } finally {

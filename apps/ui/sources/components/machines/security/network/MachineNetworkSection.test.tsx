@@ -22,6 +22,7 @@ import {
   type MachineNetworkRead,
 } from './networkSurface';
 import type { MachineNetworkExposureFacts } from './networkExposureFacts';
+import { projectMachineNetworkAccessFacts } from './networkAccessFacts';
 import type { MachineNetworkViewModel } from './MachineNetworkSection';
 import type { MachineNetworkReview } from './useMachineNetworkReview';
 
@@ -464,6 +465,38 @@ describe('Machine → Network page', () => {
       facts: { ...facts, exposure: { domains: [], services: [], ports: [] } } }, true);
     expect(findTestInstanceByTypeWithProps(read, Item, { testID: 'machine-network-ports-unread' })).toBeFalsy();
     expect(findTestInstanceByTypeWithProps(read, Item, { testID: 'machine-network-ports-none' })).toBeTruthy();
+  });
+
+  it('offers each produced Join choice to an owner with empty membership and reviews its exact saved profile', async () => {
+    const selections = ['work', 'personal'].map(profile => ({
+      provider: { kind: 'builtin' as const, id: 'tailscale' }, config: { profile }, credentialRefs: [],
+    }));
+    const empty = { ...facts, selections, observation: { ...observation, privateNetworks: [] } };
+    const network = { ...model({ kind: 'settled' }, true),
+      facts: { ...empty, access: projectMachineNetworkAccessFacts(empty) } };
+    const onPrepareChange = vi.fn();
+    const screen = await render(network, true, { kind: 'idle' }, { onPrepareChange });
+    for (const [index, selection] of selections.entries()) {
+      const join = findTestInstanceByTypeWithProps(screen, RoundButton, { testID: `machine-network-private-join-${index}` });
+      expect(join).toBeTruthy();
+      expect(join?.props.disabled).not.toBe(true);
+      join?.props.onPress();
+      expect(onPrepareChange).toHaveBeenLastCalledWith({ kind: 'privateNetwork', intent: 'join', selection });
+    }
+    const reviewing = await render(network, true, { kind: 'review', plan });
+    expect(findTestInstanceByTypeWithProps(reviewing, RoundButton, { testID: 'machine-network-private-join-0' })?.props.disabled).toBe(true);
+  });
+
+  it('offers no Join to a Use member even with published choices and empty membership', async () => {
+    const selection = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: { profile: 'work' }, credentialRefs: [] };
+    const empty = { ...facts, selections: [selection], observation: { ...observation, privateNetworks: [] } };
+    const read: MachineNetworkRead = { kind: 'unrequested' };
+    const network = { ...model(read, true), ...presentMachineNetwork({
+      facts: { ...empty, access: projectMachineNetworkAccessFacts(empty) }, read, reachable: true, needsManage: true,
+    }) };
+    const screen = await render(network, true);
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-private-empty' })).toBeTruthy();
+    expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-private-join-0' })).toBeFalsy();
   });
 
   it('offers Leave only for a network whose exact saved selection is known, and reviews that exact change', async () => {
