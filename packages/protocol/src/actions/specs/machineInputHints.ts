@@ -46,7 +46,7 @@ export const MACHINE_PRESET_INPUT_FIELDS = {
     { path: 'cursor', title: 'Page cursor', widget: 'text' }],
   'machines.presets.get': [home, preset],
   'machines.presets.create': [home, preset, name, { ...owner, required: true },
-    { path: 'launch', title: 'Provisioning launch', widget: 'json', required: true }, controller,
+    { path: 'launch', title: 'Provisioning launch', widget: 'json' }, { ...controller, required: false },
     { path: 'setup', title: 'Machine setup', widget: 'json' },
     { ...retention, required: false }, { ...wake, required: false },
     { path: 'simultaneousLimit', title: 'Simultaneous machine limit', widget: 'json' }],

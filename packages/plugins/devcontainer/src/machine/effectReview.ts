@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
-import { canonicalizePath, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { DevcontainerReviewQuerySchema } from './schemas.js';
-import type { DevcontainerReviewQuery } from './schemas.js';
+import type { DevcontainerLaunch } from './schemas.js';
+import { containedDevcontainerPath as contained, materializeDevcontainerConfiguration } from './configuration.js';
 
 type NativeReviewInput = Readonly<{ exec: Pick<ExecService, 'run'>; docker: ManagedExecutableRef;
   devcontainer: ManagedExecutableRef; signal: AbortSignal; environment?: Readonly<Record<string, string>> }>;
@@ -79,11 +79,6 @@ function metadata(value: unknown): Record<string, unknown>[] {
   try { const parsed: unknown = JSON.parse(value); return (Array.isArray(parsed) ? parsed : [parsed]).map(record); }
   catch { return fail('native_observation_unavailable'); }
 }
-async function contained(root: string, candidate: string): Promise<string> {
-  const path = await canonicalizePath(candidate);
-  if (!isCanonicalAbsolutePathInsideRoot(root, path)) fail('invalid_request');
-  return path;
-}
 async function optionalSource(root: string, path: string): Promise<string | undefined> {
   try { return await readFile(await contained(root, path), 'utf8'); }
   catch (error) {
@@ -96,13 +91,12 @@ async function optionalSource(root: string, path: string): Promise<string | unde
 /** Native read-configuration does not launch or run lifecycle hooks. It resolves
  * Feature staging and image metadata; cache paths are not reviewed effects.
  * CLI main/spec-node/devContainersSpecCLI.ts:990–1146 and featureUtils.ts:5–22. */
-export async function readDevcontainerEffectReview(input: NativeReviewInput, rawQuery: DevcontainerReviewQuery) {
+export async function readDevcontainerEffectReview(input: NativeReviewInput, rawQuery: unknown) {
   const environment = input.environment ?? readDevcontainerNativeEnvironment();
   const reviewEnvironment = { ...environment, COMPOSE_PROJECT_NAME: reviewComposeNamespace };
   const query = DevcontainerReviewQuerySchema.parse(rawQuery);
-  if (!isAbsolute(query.workspaceFolder) || !isAbsolute(query.configPath)) fail('invalid_request');
-  const workspaceFolder = await canonicalizePath(query.workspaceFolder);
-  const configPath = await contained(workspaceFolder, query.configPath);
+  const materialized = await materializeDevcontainerConfiguration(query);
+  const { workspaceFolder, configPath } = materialized;
   const configSource = await optionalSource(workspaceFolder, configPath);
   if (configSource === undefined) fail('native_observation_unavailable');
   // Reuse the repository's Devcontainer JSONC display parser, without making
@@ -365,12 +359,13 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   const reviewedEffectDigest = createHash('sha256').update(canonical({ workspaceFolder, configPath,
     observed: { configuration, workspace, mergedConfiguration: merged,
       featureSets: authoritativeFeatureSets, compose: compose ?? null, evidence }, sources })).digest('hex');
-  return { launch: { workspaceFolder, configPath, reviewedEffectDigest },
+  return { launch: { ...materialized, reviewedEffectDigest },
     effectReview: { kind: 'devcontainer' as const, reviewedEffectDigest, effects } };
 }
 
-export async function assertDevcontainerEffectReview(input: NativeReviewInput, query: DevcontainerReviewQuery,
+export async function assertDevcontainerEffectReview(input: NativeReviewInput, query: Pick<DevcontainerLaunch, 'workspaceFolder' | 'configPath' | 'configuration'>,
   reviewedEffectDigest: string): Promise<void> {
-  const current = await readDevcontainerEffectReview(input, { workspaceFolder: query.workspaceFolder, configPath: query.configPath });
+  const current = await readDevcontainerEffectReview(input, { workspaceFolder: query.workspaceFolder,
+    configPath: query.configPath, ...(query.configuration ? { configuration: query.configuration } : {}) });
   if (current.launch.reviewedEffectDigest !== reviewedEffectDigest) fail('request_conflict');
 }

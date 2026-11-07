@@ -38,6 +38,8 @@ function bytes(value: string) {
 }
 export const DEVCONTAINER_MACHINE_PROVISIONER = {
   title: 'Devcontainer', icon: 'cube', resourceKind: 'devcontainer', schemaVersion: 1,
+  description: 'Standard Docker containers; requires Docker and the Devcontainer CLI.',
+  enrollmentRole: 'sandbox',
   launchSchema: DevcontainerLaunchSchema.jsonSchema, resourceSchema: DevcontainerResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'],
   prerequisites: [{ kind: 'managedDependency', id: 'docker' }, { kind: 'managedDependency', id: devcontainerDependencyId }],
@@ -50,8 +52,7 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
 
 export const DEVCONTAINER_PLUGIN = definePlugin({
   id: DEVCONTAINER_PLUGIN_ID, version: '0.0.0', displayName: 'Devcontainer Machines' satisfies PluginLocalizedStringV2,
-  description: 'Ordinary managed children on their physical Docker controller.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Ordinary managed children on their physical Docker controller.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Realize and manage the reviewed Devcontainer on this controller.',
     scope: { executables: [{ kind: 'managedDependency', id: 'docker' }, { kind: 'managedDependency', id: devcontainerDependencyId }] } }], optional: [] },
   managedDependencies: {
@@ -64,11 +65,20 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       inputSchema: DevcontainerReviewQuerySchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
         { path: 'workspaceFolder', title: 'Workspace folder on the controller', widget: 'text', required: true },
-        { path: 'configPath', title: 'Devcontainer configuration path on the controller', widget: 'text', required: true },
+        { path: 'configuration.kind', title: 'Configuration source', widget: 'select', defaultValue: 'file', options: [
+          { value: 'file', label: 'Existing file' }, { value: 'image', label: 'Container image' }, { value: 'inline', label: 'Inline configuration' },
+        ] },
+        { path: 'configPath', title: 'Devcontainer configuration path on the controller', widget: 'text',
+          visibleWhen: { op: 'or', any: [{ op: 'eq', path: 'configuration.kind', value: 'file' }, { op: 'not', predicate: { op: 'truthy', path: 'configuration.kind' } }] },
+          requiredWhen: { op: 'or', any: [{ op: 'eq', path: 'configuration.kind', value: 'file' }, { op: 'not', predicate: { op: 'truthy', path: 'configuration.kind' } }] } },
+        { path: 'configuration.image', title: 'Container image', widget: 'text',
+          visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' }, requiredWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },
+        { path: 'configuration.config', title: 'Devcontainer configuration', description: 'JSON or JSONC. Relative paths resolve from the workspace .devcontainer folder.', widget: 'textarea',
+          visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'inline' }, requiredWhen: { op: 'eq', path: 'configuration.kind', value: 'inline' } },
       ] },
       async run(input, context) {
         const reviewed = await readDevcontainerEffectReview(await nativeTools(context), input);
-        return { base: { available: true, ...reviewed },
+        return { base: { available: true, guestPlatform: 'linux' as const, ...reviewed },
           dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
       } },
     check: { ...defaults, title: 'Check Devcontainer availability', dangerLevel: 'safe', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.checkInput,

@@ -1,3 +1,5 @@
+import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -137,15 +139,32 @@ export function createDevcontainerProvider(input: Readonly<{
       .trim().split(/\r?\n/u).filter(Boolean);
   }
   async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath) {
+    let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
     try {
       // Only admitted acquire/rebuild roles reach evaluation of host and child
       // hooks. Discovery and retained-resource inspection never evaluate them.
-      const up = record(json(await run(input.devcontainer, ['up', ...managedFlags(launch, managedMachineId)], undefined, false, managedMachineId, launch.workspaceFolder)));
+      let result: PluginProcessResult;
+      try { result = await run(input.devcontainer, ['up', ...managedFlags(launch, managedMachineId)], undefined, false, managedMachineId, launch.workspaceFolder); }
+      catch { nativeCause = { localCause: 'native_command_failed', command: 'up', exitCode: null };
+        fail('native_realization_unknown'); }
+      if (!completed(result)) {
+        const observed = result.termination.observed;
+        const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
+        nativeCause = { localCause: 'native_command_failed', command: 'up',
+          exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
+          ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+          ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
+        } satisfies MachineProvisionerNativeCauseV1;
+        fail('native_realization_unknown');
+      }
+      if (result.stdoutTruncated) fail('native_observation_unavailable');
+      const up = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout)));
       if (typeof up.containerId === 'string' && /^[a-f0-9]{64}$/u.test(up.containerId)) recoveryReference = up.containerId;
       if (up.outcome !== 'success' || typeof up.containerId !== 'string' || !/^[a-f0-9]{64}$/u.test(up.containerId)
         || typeof up.remoteUser !== 'string' || typeof up.remoteWorkspaceFolder !== 'string') fail('native_realization_unknown');
       return await observe(launch, up.containerId, managedMachineId);
-    } catch (error) { return { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) } }; }
+    } catch (error) { return { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) },
+      ...(nativeCause ? { nativeCause } : {}) }; }
   }
   return {
     async check() {
@@ -165,7 +184,7 @@ export function createDevcontainerProvider(input: Readonly<{
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
       }
       const result = await realize(launch, managedMachineId);
-      return result.kind === 'bound' ? result : { kind: 'pending' as const, nativeOperationRef: {
+      return result.kind === 'bound' ? result : { kind: 'pending' as const, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}), nativeOperationRef: {
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
           ...(/^[a-f0-9]{64}$/u.test(result.recovery.reference) ? { nativeResourceId: result.recovery.reference } : {}) },
       } };
@@ -193,7 +212,7 @@ export function createDevcontainerProvider(input: Readonly<{
         if (matching.length !== 1 || matching[0] !== resource.containerId) fail('resource_mismatch');
         await assertDevcontainerEffectReview(nativeInput, resource, reviewedEffectDigest);
         const replacementLaunch = DevcontainerLaunchSchema.parse({ workspaceFolder: resource.workspaceFolder,
-          configPath: resource.configPath, reviewedEffectDigest });
+          configPath: resource.configPath, ...(resource.configuration ? { configuration: resource.configuration } : {}), reviewedEffectDigest });
         issued = true;
         // The CLI's remove-existing flag selects by labels (or Compose
         // project/service), so deletion uses the retained exact Docker id.

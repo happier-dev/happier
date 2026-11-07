@@ -348,6 +348,7 @@ describe('managed configurator draft owner', () => {
         const values = { workspaceFolder: '/projects/source', configPath: '/projects/source/.devcontainer/devcontainer.json' };
         let selectors: Readonly<Record<string, unknown>> = {};
         for (const field of resolveEffectiveActionInputFields({ inputHints: normalizePluginActionInputHintsV2(action.inputHints) }, {})) {
+            if (!field.visible || !(field.path in values)) continue;
             selectors = writeInputPath(selectors, field.path, values[field.path as keyof typeof values]);
         }
         const draft = setManagedConfiguratorOptionsSelectors(createManagedConfiguratorDraft({
@@ -355,6 +356,21 @@ describe('managed configurator draft owner', () => {
             controller, name: 'Project child',
         }), selectors);
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(values);
+    });
+    it.each([
+        { kind: 'image', image: 'example:latest' },
+        { kind: 'inline', config: '{"image":"example:latest"}' },
+    ])('edits a Devcontainer $kind preset through the same Action fields used by agents', configuration => {
+        const descriptor = MachineProvisionerContributionV1Schema.parse(DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
+        const action = PluginActionContributionV2Schema.parse(DEVCONTAINER_PLUGIN.manifest.contributes.actions?.find(action => action.id === descriptor.actions.options));
+        const input = { workspaceFolder: '/projects/source', configuration };
+        const fields = resolveEffectiveActionInputFields({ inputHints: normalizePluginActionInputHintsV2(action.inputHints) }, input);
+        expect(fields.filter(field => field.visible).map(field => field.path)).toContain(`configuration.${configuration.kind === 'image' ? 'image' : 'config'}`);
+        const draft = setManagedConfiguratorOptionsSelectors(createManagedConfiguratorDraft({
+            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', descriptor },
+            controller, name: 'Project child',
+        }), input);
+        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(input);
     });
     it('starts a Cua sandbox launch from the provider\u2019s declared size defaults, so its options read is complete without typing', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
@@ -395,10 +411,10 @@ describe('managed configurator draft owner', () => {
         const reply = { server_types: [
             { id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86',
                 locations: ['fsn1', 'nbg1'].map((name, index) => ({ id: index + 1, name, available: true, deprecation: null })),
-                prices: ['fsn1', 'nbg1'].map(location => ({ location, price_hourly: pair('0.0050'), price_monthly: pair('3.49') })) },
+                prices: ['fsn1', 'nbg1'].map(location => ({ location, price_hourly: pair('0.0050'), price_monthly: pair(location === 'fsn1' ? '3.49' : '4.49') })) },
             { id: 2, name: 'cpx11', cores: 2, memory: 2, disk: 40, architecture: 'x86',
                 locations: ['fsn1', 'nbg1'].map((name, index) => ({ id: index + 1, name, available: true, deprecation: null })),
-                prices: ['fsn1', 'nbg1'].map(location => ({ location, price_hourly: pair('0.0070'), price_monthly: pair('4.99') })) },
+                prices: ['fsn1', 'nbg1'].map(location => ({ location, price_hourly: pair('0.0070'), price_monthly: pair(location === 'fsn1' ? '4.99' : '5.99') })) },
         ], images: [{ id: 10, name: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS', architecture: 'x86', type: 'system', status: 'available', deprecated: null }],
         locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein', country: 'DE' }, { id: 2, name: 'nbg1', description: 'Nuremberg', country: 'DE' }],
         pricing: { currency: 'EUR', primary_ips: [{ type: 'ipv4', prices: ['fsn1', 'nbg1'].map(location => ({ location, price_hourly: pair('0.0010810000000000'), price_monthly: pair('0.60') })) }] },
@@ -418,6 +434,9 @@ describe('managed configurator draft owner', () => {
         const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: hetzner, controller, name: 'Build box' }),
             MachineProvisionerOptionsResultV1Schema.parse(produced));
         const priced = (draft: ManagedConfiguratorDraft) => managedConfiguratorDimensionChoices(draft, 'size').map(row => row.choice.prices?.find(price => price.unit === 'month')?.amount);
+        // J2: the leaf's initial place is visible, and sizes are priced before any choice is pressed.
+        expect(managedConfiguratorDimensionSelection(loaded)).toMatchObject({ image: '10', location: 'fsn1' });
+        expect(priced(loaded)).toEqual(['3.49', '4.99']);
 
         // The provider's returned networking is a selectable dimension, in the provider's own order.
         expect(managedConfiguratorDimensionChoices(loaded, 'network').map(row => row.choice.nativeFacts?.network?.id)).toEqual(['10', '01', '11']);
@@ -437,7 +456,9 @@ describe('managed configurator draft owner', () => {
         expect(managedConfiguratorFacts(ipv6)?.nativeFacts?.network?.id).toBe('01');
         expect(priced(ipv6)).toEqual(['3.49', '4.99']);
         // Changing another dimension keeps the person's network choice.
-        expect(selectManagedConfiguratorDimension(ipv6, 'location', 'nbg1').selected?.launch).toMatchObject({ locationId: 'nbg1', publicNetworking: { ipv4: false, ipv6: true } });
+        const nuremberg = selectManagedConfiguratorDimension(ipv6, 'location', 'nbg1');
+        expect(nuremberg.selected?.launch).toMatchObject({ locationId: 'nbg1', publicNetworking: { ipv4: false, ipv6: true } });
+        expect(priced(nuremberg)).toEqual(['4.49', '5.99']);
     });
     it('keeps actual Fly volume branch switches queryable without rewriting the retained launch', () => {
         const fly = { ...provisioner, contribution: { pluginId: 'happier.machine.fly', localId: 'fly' },

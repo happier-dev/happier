@@ -976,7 +976,8 @@ contract. See the [author example](../apps/docs/content/docs/plugins/agent-runti
 
 The 0.3 development `backupDestinations` family is a cold descriptor with a
 recursively closed nonsecret configuration schema, canonical credential roles,
-restic transport/locality facts and qualified `test` / `open` Action references.
+restic transport/locality facts and `test` / `open` Action references. Open remains
+a qualified contributed Action; test can instead name the native repository probe.
 Protocol's contribution catalog owns admission and reference extraction;
 `definePlugin` uses its existing descriptor adapter. CLI projection and the UI
 catalog/fleet union carry the supplying occurrence and execution origin through
@@ -989,8 +990,17 @@ result contains a repository locator, canonical credential-binding identities
 and optional nonsecret S3 region/addressing facts. The own-server host invokes
 the configured descriptor's Action from its retained registry, then P42 resolves
 the exact database binding and lends destination credentials through its existing
-attachment. The S3 test Action reports `destination_probe_unavailable` until a
-real probe owner is connected; registration does not prove storage reachability.
+attachment. The S3 descriptor binds `test` to the read-only
+`deployments.backups.test` Action through `{ kind: 'hostAction', actionId }`.
+It reads the selected repository configuration with the existing restic 0.19.1
+runner and P42 custody, without taking a backup or requiring capture history.
+Its closed result reports reachability or a repository-step failure with a typed
+remedy; native output and credential values remain private. This read does not
+prove write access, durability or restore integrity.
+The read-only `deployments.backups.history` Action returns retained operation
+facts for the exact target, including failed attempts, pruned snapshot ids and
+the last verification. It does not open the repository and is not a permanent
+audit log; the existing operation store owns retention.
 SFTP/local destination writers and scheduled backups remain outside this slice. See the
 [public contribution guide](../apps/docs/content/docs/plugins/manifest/contributions.mdx#backup-destination-declarations-03-development-source)
 and maintained SDK external-author descriptor fixture.
@@ -1101,6 +1111,16 @@ including its Runs on and Then selections. The current Event editor serves the a
 Account only; an addressed nonactive Account is refused before navigation. Both native
 and hosted transports negotiate the method, and an older host reports unsupported.
 Generated SDK governance and loaded-runtime verification remain separate checks.
+
+The development `openDeployment({ environmentId, serverId?, receiptId?, tab?, section? })` UI
+host method opens a deployment Environment on Happier's Deployments page: its Overview, one
+receipt, a tab or a Settings section, the same destinations the page's own tabs use. It is
+navigation only and grants nothing. The host reads the Environment with the viewer's own
+`deployments.environments.get` to find its Project, then routes; an Environment the viewer
+cannot read, another Home than the mount's active one, or a retired mount navigates nowhere
+and settles `unavailable` or `stale_surface`. Unknown tab or section ids open Overview or the
+Settings landing. Owner: `apps/ui/sources/components/plugins/surfaces/pluginSurfaceOpenDeployment.ts`
+over `deploymentEnvironmentRoute`; consumer: the GitHub PR Overview Preview step.
 
 The development `revealSessionInput({sessionId, localId})` UI host method opens one
 committed main user input in the Session transcript. The mounted Account supplies
@@ -1733,6 +1753,17 @@ Session or the globally focused Home. Current consumers include qualified PR
 navigation, Local Act form context and release-read authority keys. This public
 hint remains independent of the acknowledged-link placement operation; removing
 an old caller callback does not remove those consumers or grant them authority.
+
+In 0.3 development, an Agent's Account settings can contribute an inline
+`ui.views` surface with role `agentSettings`, App target and content presentation.
+The existing scoped settings section mounts it inside its one Account projection.
+Launch input carries the selected Agent identity, that contribution's declared
+nonsecret Account values and revision/state, and narrow pushed machine facts for
+that Agent. It does not expose other plugins' settings, secret values or the full
+machine record. The contribution uses the existing scoped settings Actions with
+the expected revision; acknowledged writes invalidate the existing projection.
+The Claude retention control consumes this slot. Core owns the generic mount and
+settings lifecycle; the Claude plugin owns the control and retention semantics.
 
 The development SCM cards bind contributed PR presentation through the existing
 `ui.views` inline role `scmPullRequest`, with Session or App context and content
@@ -3363,6 +3394,20 @@ current row custody and releases its temporary delivery; no native key is kept
 between invocations.
 
 Safe checks may return an optional prerequisite `repairAction` containing a qualified Action reference and JSON invocation input. The host validates that reference and input against the current Action catalog without activating or running the repair. The fact is descriptive, not installation authority: an explicit repair uses the ordinary Action front door and its current approval and execution policy. A missing system tool does not imply a managed installer exists.
+
+In 0.3 development source, Devcontainer options accept the existing controller
+`workspaceFolder` and `configPath`, or a saved `configuration` with `kind: image`
+and `image`, or `kind: inline` and JSON/JSONC `config`. The provider writes embedded
+sources into `.devcontainer/happier-<content digest>.json` in that workspace;
+relative configuration paths resolve from `.devcontainer`. Distinct sources
+keep separate files so presets sharing a workspace do not overwrite each other.
+The launch and retained resource keep the embedded source for later realization
+and rebuild. Existing file launches continue to read the authored file. The same
+options Action fields drive agents and the preset editor, and native effect
+review discloses workspace and additional bind mounts. Existing Machine labels
+and Compose namespaces select a separate primary container per managed Machine.
+This is an unpublished plugin schema extension: reload matching controller
+declarations and clients together; existing file-based presets need no migration.
 
 In 0.3 development source, native options return one optional `base` launch/query projection and independent `dimensions` arrays for size, image, location, network and duration. Each entry declares its executable selector `assignments` as input paths and JSON values, with its localized native facts and prices. Empty arrays mean no control; a missing base means the query is incomplete. Complete launch combinations are not enumerated. The public SDK's machine-provisioner entrypoint exposes `projectMachineProvisionerSelectionV1`, the single Protocol selection owner. It applies the declared paths with the shared input writer, checks compact directed native adjacency constraints, and accepts an executable selection only when every offered dimension is selected and the contributed closed launch schema validates. Native acquire still revalidates current availability. Form-qualified providers can return the reviewed complete launch with singleton dimensions and empty assignments. Devcontainer's effect review remains bound to that exact unchanged base launch. Stored recipe/receipt `choices` continues to hold one executable launch, not an options catalog; no data migration is needed. During the CD31 QA/dev daemon transition, one UI parse-boundary adapter accepts the earlier complete-choice result and retains each exact launch as one selectable row; producers write only the dimension shape. Remove that old reader once every QA/dev daemon runs a bundle with CD31 producers, after the orchestrator confirms reloads. Reader removal is the last migration step; source publication alone does not establish loaded-runtime compatibility.
 
@@ -9459,6 +9504,16 @@ evidence.
 
 ### Capture viewing and Session images (0.3 development)
 
+Browser and Computer recording share `apps/cli/src/daemon/recording`: lifecycle,
+stream encoding, Session-media persistence, retention and attachment. Computer
+supplies its existing registered screen source and target identity; Browser
+supplies its view-specific admission and frame adapters. Additive
+`computer.recording.*` Actions use Computer capture consent and Session media
+custody, while shipped `browser.recording.*` contracts remain unchanged. Recording
+start requires a Session-bound Computer source and a media target in that Session.
+An unavailable encoder returns the shared recording unavailable result rather
+than starting another recorder. No recording work runs while idle.
+
 Manifest-owned `captureSources` register through the same activation rights and
 occurrence lifecycle as other executable contributions. The existing daemon
 capture registry owns exact sources and retirement; replacement aborts viewers
@@ -9576,7 +9631,7 @@ In 0.3 development, the host selects the oldest supported semantic generation
 matching the requested range: an installed `^1.0.0` client receives exactly 1.0.0,
 while the current SDK requests `^1.1.0`. The Protocol-owned method introduction
 facts project each reply's method set; 1.1 adds `actionControl`,
-`openManagedMachineConfiguration`, and `openResource`. The latter submits a typed
+`openManagedMachineConfiguration`, `openDeployment` and `openResource`. The latter submits a typed
 resource intent to core's Account preference, contributed-handler selection and
 external-URL fallback; plugins do not choose that opening policy. The method-free pre-negotiation bootstrap
 retains its 1.0.0 shape. Semantic version is a per-client representation and
@@ -10773,6 +10828,9 @@ the existing `action.options.resolve` partial-draft query contract above.
 Its read-only backing Action retains credential custody; draft account, product,
 project and environment selections do not grant authority. This is source
 wiring, not a claim that the platform-link UI or a real tenant journey is complete.
+Vercel account choices use the selected Connected Account's configured Team
+scope and connection label. They do not enumerate personal or unrelated Team
+identities, so project-scoped tokens need no user or Team metadata access.
 
 The optional closed `preparedNative` operand retains the captured native project
 name, GitHub repository id, optional Cloudflare build-trigger UUID and captured

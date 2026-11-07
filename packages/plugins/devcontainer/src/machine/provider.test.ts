@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createDevcontainerProvider } from './provider.js';
 import { readDevcontainerEffectReview } from './effectReview.js';
-import type { DevcontainerLaunch, DevcontainerResource } from './schemas.js';
+import { DevcontainerReviewQuerySchema, type DevcontainerLaunch, type DevcontainerResource } from './schemas.js';
 import { DEVCONTAINER_PLUGIN } from '../manifest.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 
@@ -38,8 +38,8 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
   let managedMachineId = 'managed-a';
   const exec: Pick<ExecService, 'run'> = { run: async request => {
     requests.push(request);
-    if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(launch.configPath, 'utf8')),
-      workspace: { workspaceFolder: '/work/custom' }, mergedConfiguration: { remoteUser: 'coder', workspaceFolder: '/work/custom' },
+    if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(request.args[request.args.indexOf('--config') + 1]!, 'utf8')),
+      workspace: { workspaceFolder: '/work/custom', workspaceMount: `type=bind,source=${configurationRoot},target=/work/custom` }, mergedConfiguration: { remoteUser: 'coder', workspaceFolder: '/work/custom' },
       featuresConfiguration: { featureSets: [] } });
     if (request.args?.[0] === 'image') return result([{ Id: 'sha256:image', Config: { Labels: {} } }]);
     if (request.args?.[0] === 'up') {
@@ -72,6 +72,38 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
 }
 
 describe('Devcontainer native roles', () => {
+  it.each([
+    { kind: 'image', image: 'example:latest' },
+    { kind: 'inline', config: '{ // Saved JSONC configuration\n "image": "example:latest", "mounts": ["type=bind,source=/host/data,target=/data"], }' },
+  ])('materializes a preset $kind configuration and creates a separate container per Machine', async configuration => {
+    const query = DevcontainerReviewQuerySchema.parse({ workspaceFolder: configurationRoot, configPath: '',
+      configuration: { ...configuration, ...(configuration.kind === 'image' ? { config: '' } : { image: '' }) } });
+    const h = native({ rowScoped: true });
+    const reviewed = await readDevcontainerEffectReview(h.tools, query);
+    launch = reviewed.launch;
+    expect(JSON.parse(await readFile(launch.configPath, 'utf8'))).toMatchObject({ image: 'example:latest' });
+    expect(launch).toMatchObject({ configuration });
+    expect(reviewed.effectReview.effects).toContainEqual(expect.objectContaining({ kind: 'mount', details: expect.arrayContaining([
+      `type=bind,source=${configurationRoot},target=/work/custom`,
+    ]) }));
+    if (configuration.kind === 'inline') expect(reviewed.effectReview.effects).toContainEqual(expect.objectContaining({ kind: 'mount',
+      details: expect.arrayContaining(['type=bind,source=/host/data,target=/data']) }));
+    const other = await readDevcontainerEffectReview(h.tools, { workspaceFolder: configurationRoot,
+      configuration: { kind: 'image', image: 'example:other' } });
+    expect(other.launch.configPath).not.toBe(launch.configPath);
+    expect(JSON.parse(await readFile(launch.configPath, 'utf8'))).toMatchObject({ image: 'example:latest' });
+    await rm(launch.configPath);
+    expect(await h.provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: { containerId } } });
+    expect(await h.provider.acquire(launch, 'managed-b')).toMatchObject({ kind: 'bound', resource: { value: { containerId: 'b'.repeat(64) } } });
+    expect(await native().provider.rebuild({ ...resource, ...launch }, launch.reviewedEffectDigest)).toMatchObject({ kind: 'bound',
+      resource: { value: { configuration, containerId: 'b'.repeat(64) } } });
+  });
+  it('retains projected native up failure beside the exact pending acquisition handle', async () => {
+    const h = native({ up: { ...result('', 1), stderr: new TextEncoder().encode('boot failed token=private-acquisition-token') } });
+    const acquired = await h.provider.acquire(launch, 'managed-a');
+    expect(acquired).toMatchObject({ kind: 'pending', nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: 1 } });
+    expect(JSON.stringify(acquired)).not.toContain('private-acquisition-token');
+  });
   it('writes shared-admitted padding bits exactly through the activated file Action', async () => {
     const h = native();
     const services = {

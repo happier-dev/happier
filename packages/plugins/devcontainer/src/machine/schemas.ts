@@ -4,20 +4,33 @@ import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '^[^\\u0000\\r\\n]+$' });
 const path = defineProtocolString({ minLength: 1, pattern: '^[^\\u0000]+$' });
+const inactiveOperand = defineProtocolString({ pattern: '^[^\\u0000]*$' });
 const childPath = defineProtocolString({ pattern: '^/[^\\u0000]*$' });
-export const DevcontainerReviewQuerySchema = defineProtocolObject({
-  workspaceFolder: path, configPath: path,
-}, closed);
+const configuration = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('file') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('image'), image: text }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('inline'), config: path }, closed),
+]);
+// Editors retain hidden operands when switching source kinds. Only the active
+// operand is required; materialization retains the selected source alone.
+export const DevcontainerReviewQuerySchema = defineProtocolUnion([
+  defineProtocolObject({ workspaceFolder: path, configPath: path,
+    configuration: defineProtocolObject({ kind: defineProtocolLiteral('file'), image: inactiveOperand.optional(), config: inactiveOperand.optional() }, closed).optional() }, closed),
+  defineProtocolObject({ workspaceFolder: path, configPath: inactiveOperand.optional(),
+    configuration: defineProtocolObject({ kind: defineProtocolLiteral('image'), image: text, config: inactiveOperand.optional() }, closed) }, closed),
+  defineProtocolObject({ workspaceFolder: path, configPath: inactiveOperand.optional(),
+    configuration: defineProtocolObject({ kind: defineProtocolLiteral('inline'), config: path, image: inactiveOperand.optional() }, closed) }, closed),
+]);
 const reviewedEffectDigest = defineProtocolString({ pattern: '^[a-f0-9]{64}$' });
 export const DevcontainerLaunchSchema = defineProtocolObject({
-  workspaceFolder: path, configPath: path, reviewedEffectDigest,
+  workspaceFolder: path, configPath: path, configuration: configuration.optional(), reviewedEffectDigest,
 }, closed);
 export const DevcontainerStorageSchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('bind'), hostPath: path, childPath }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('child'), childPath }, closed),
 ]);
 export const DevcontainerResourceSchema = defineProtocolObject({
-  workspaceFolder: path, configPath: path, reviewedEffectDigest,
+  workspaceFolder: path, configPath: path, configuration: configuration.optional(), reviewedEffectDigest,
   managedMachineId: text,
   containerId: defineProtocolString({ pattern: '^[a-f0-9]{64}$' }),
   user: text, workspaceRoot: childPath, storage: DevcontainerStorageSchema,

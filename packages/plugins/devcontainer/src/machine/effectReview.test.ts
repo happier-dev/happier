@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { DEVCONTAINER_PLUGIN } from '../manifest.js';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { DEVCONTAINER_PLUGIN, DEVCONTAINER_ROLE_SCHEMAS } from '../manifest.js';
+import { DevcontainerLaunchSchema } from './schemas.js';
 
 const roots: string[] = [];
 const pinnedFeature = `example/feature@sha256:${'a'.repeat(64)}`;
@@ -106,7 +107,7 @@ async function reviewBoundary() {
 }
 
 describe('Devcontainer public passive effect review', () => {
-  it('offers reviewed launch choices and typed host/child effects through the existing options role without evaluating hooks', async () => {
+  it('offers the reviewed base launch and independent dimensions without evaluating host or child hooks', async () => {
     const boundary = await reviewBoundary();
     expect(DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners[0]?.actions.options).toBe('options');
     const value = await boundary.handlers.get('options')!({ workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context);
@@ -162,8 +163,14 @@ describe('Devcontainer public passive effect review', () => {
     const boundary = await reviewBoundary();
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
+    const selected = projectMachineProvisionerSelectionV1({ options, selection: {}, launchSchema: DevcontainerLaunchSchema.jsonSchema });
+    expect(selected.kind).toBe('ready');
+    if (selected.kind !== 'ready') throw new Error('Reviewed Devcontainer launch must be executable');
+    expect(selected.launch).toEqual(options.base?.launch);
+    expect(selected.effectReview).toEqual(options.base?.effectReview);
+    const input = DEVCONTAINER_ROLE_SCHEMAS.acquireInput.parse({ launch: selected.launch, managedId: 'managed-review' });
     boundary.nativeConfiguration.configuration.initializeCommand = 'different-host-setup';
-    const acquired = await boundary.handlers.get('acquire')!({ launch: options.base?.launch, managedId: 'managed-review' }, boundary.context);
+    const acquired = await boundary.handlers.get('acquire')!(input, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
