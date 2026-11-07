@@ -39,16 +39,21 @@ function trimTextTailToMaxBytes(input: string, maxBytes: number): string {
   return input.slice(low);
 }
 
-export async function readBugReportLogTail(path: string, maxBytes: number): Promise<string> {
+export async function readBugReportLogTail(path: string, maxBytes: number,
+  options?: Readonly<{ assertCurrentAuthority?: () => Promise<void> }>,
+): Promise<string> {
   const normalizedMax = Math.max(1_024, Math.floor(maxBytes));
+  await options?.assertCurrentAuthority?.();
   const file = await open(path, 'r');
   try {
     const metadata = await file.stat();
     const start = Math.max(0, metadata.size - normalizedMax);
     const size = Math.max(0, metadata.size - start);
+    await options?.assertCurrentAuthority?.();
     if (size <= 0) return '';
     const buffer = Buffer.alloc(size);
     const { bytesRead } = await file.read(buffer, 0, size, start);
+    await options?.assertCurrentAuthority?.();
     const tail = buffer.subarray(0, bytesRead).toString('utf8');
     const redacted = redactBugReportSensitiveText(tail);
     return trimTextTailToMaxBytes(redacted, normalizedMax);
