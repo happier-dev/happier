@@ -1,12 +1,14 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { HappierShareSheet } from '@happier-dev/plugin-ui/presentation';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { SelectionList } from '@/components/ui/selectionList';
+import { Text } from '@/components/ui/text/Text';
 import { createDefaultDynamicSectionCache } from '@/components/ui/selectionList/selectionListDynamicSectionCache';
 import { resolvePublicShareApplicationBaseUrl } from '@/components/sessions/sharing/publicShareApplicationUrl';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { buildShareSheetSelectionStep, ShareHelp, ShareHandoffIcon, shareSheetStepId } from './buildShareSheetSelectionStep';
 import { useSharePresentationHost, ShareSheetButton } from './sharePresentationHost';
@@ -20,6 +22,9 @@ import type {
 } from './shareSheetTypes';
 
 const noop = () => {};
+const styles = StyleSheet.create(theme => ({
+    description: { paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
+}));
 
 export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
     model: ShareSheetModel<TRow>;
@@ -27,6 +32,8 @@ export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
     adapter: ShareSheetAdapter<TRow>;
     presentation: ShareSheetPresentation;
     onRequestClose?: () => void;
+    /** Reviewed flows replace Done with their commit action in the one primary slot. */
+    primaryAction?: NonNullable<React.ComponentProps<typeof HappierShareSheet>['done']> & Readonly<{ loading?: boolean }>;
     /** A host's explicit navigation intent opens a row without replacing the sheet or its state. */
     openRowRequest?: Readonly<{ key: string }>;
     testID: string;
@@ -44,6 +51,7 @@ export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
  */
 export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetProps<TRow>): React.ReactElement {
     const { model, actions, adapter, presentation, onRequestClose, testID } = props;
+    const writeClipboard = useClipboardWrite();
     const phone = useDeviceType() === 'phone';
     const host = useSharePresentationHost();
     const [expanded, setExpanded] = React.useState<string | null>(props.openRowRequest?.key ?? null);
@@ -82,7 +90,7 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
         copied: copiedPath === linkPath,
         onCopy: () => {
             void (async () => {
-                const copied = await setClipboardStringSafe(`${resolvePublicShareApplicationBaseUrl()}${linkPath}`);
+                const copied = await writeClipboard(`${resolvePublicShareApplicationBaseUrl()}${linkPath}`);
                 if (!copied) {
                     Modal.alert(t('common.error'), t('shareSheet.copyLinkFailed'));
                     return;
@@ -93,7 +101,8 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
         },
     } : undefined;
     const idPrefix = testID === `${adapter.namespace}-editor` ? '' : `${testID}:`;
-    const input = { model, actions, adapter, presentation, onExpand: setExpanded, idPrefix, revealSuggestions, ...(copyLink ? { copyLink } : {}) };
+    const input = { model, actions, adapter, presentation, onExpand: setExpanded, expandedKey: expanded, idPrefix, revealSuggestions,
+        ...(copyLink ? { copyLink } : {}) };
     const rootStep = buildShareSheetSelectionStep(input);
     const source = directoryKind && model.directory.sections.find((section) => section.kind === directoryKind);
     const activeStep = directoryKind ? buildShareSheetSelectionStep({ ...input, directoryKind }) : null;
@@ -104,7 +113,8 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             ...(adapter.sendCopy ? [{ testID: `${idPrefix}${adapter.namespace}-send-copy`, label: t('shareSheet.sendCopy'),
                 leading: <ShareHandoffIcon name="copy" />, onPress: adapter.sendCopy }] : []),
         ]}
-        done={onRequestClose ? { testID: `${idPrefix}${adapter.namespace}-done`, label: t('common.done'), onPress: onRequestClose } : undefined}>
+        done={props.primaryAction ?? (onRequestClose ? { testID: `${idPrefix}${adapter.namespace}-done`, label: t('common.done'), onPress: onRequestClose } : undefined)}>
+        {adapter.description ? <Text variant="body" style={styles.description}>{adapter.description}</Text> : null}
         <SelectionList rootStep={rootStep} syncActiveStep={activeStep ?? undefined}
             onActiveStepChange={(step) => {
                 setDirectoryKind(model.directory.sections.find((section) => step.id === shareSheetStepId(adapter.namespace, section.kind))?.kind);
@@ -118,7 +128,7 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             inputTestID={idPrefix ? `${testID}:${adapter.namespace}-search` : `${adapter.namespace}-search`}
             autoFocusInputOnWeb={presentation === 'compact'} autoFocusInputOnNative={false}
             surface={presentation === 'inline' ? 'none' : undefined}
-            bodyFooter={presentation !== 'compact' && !directoryKind ? <ShareHelp adapter={adapter} testID={`${idPrefix}${adapter.namespace}-help`} /> : undefined}
+            bodyFooter={presentation === 'inline' && !directoryKind ? <ShareHelp adapter={adapter} testID={`${idPrefix}${adapter.namespace}-help`} /> : undefined}
             fillAvailableSpace={presentation === 'full'}
             {...(props.maxHeight === undefined ? { heightBehavior: presentation === 'full' ? 'content' as const : 'stabilizedContentHeight' as const }
                 : { maxHeight: props.maxHeight, heightBehavior: 'fixedToMaxHeight' as const })}

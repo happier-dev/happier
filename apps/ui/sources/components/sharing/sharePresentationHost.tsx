@@ -1,11 +1,9 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { HappierShareChoiceProps, HappierShareHost, HappierShareTextProps, HappierShareSheetButtonProps } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 const styles = StyleSheet.create(theme => ({
     primary: { color: theme.colors.text.primary },
@@ -32,10 +30,10 @@ function ShareLevelChoice(props: HappierShareChoiceProps) {
 export function useSharePresentationHost(): HappierShareHost {
     const { theme } = useUnistyles();
     return { Text: ShareText, Choice: ShareLevelChoice, focusColor: theme.colors.border.focus, borderColor: theme.colors.border.subtle,
-        noteColor: theme.colors.surface.elevated, minimumTargetSize: resolveMinimumInteractiveTargetSize(Platform.OS) };
+        noteColor: theme.colors.surface.elevated };
 }
 
-export function ShareSheetButton({ label, emphasis, leading, style, ...props }: HappierShareSheetButtonProps) {
+export function ShareSheetButton({ label, emphasis, leading, style, ...props }: HappierShareSheetButtonProps & Readonly<{ loading?: boolean }>) {
     return <RoundButton {...props} title={label} size="small" display={emphasis === 'secondary' ? 'inverted' : undefined}
         leading={leading} style={style} titleNumberOfLines="complete" />;
 }

@@ -1,4 +1,4 @@
-import type { AccountDisplayProfileV1 } from '@happier-dev/protocol';
+import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { useShallow } from 'zustand/react/shallow';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { PrincipalRefV1 } from '@happier-dev/protocol';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 
 import type { SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
@@ -128,6 +128,8 @@ export type ShareSheetAdapter<TRow extends ShareGrantRowModel = ShareGrantRowMod
     namespace: string;
     /** The list's accessible name. */
     title: string;
+    /** The item's owner explains what sharing this item gives the recipient. */
+    description?: string;
     /** The add field's words when this domain adds more than people and Teams (for example agents). */
     searchPlaceholder?: string;
     /** Only levels the domain actually accepts. The sheet never invents missing levels. */

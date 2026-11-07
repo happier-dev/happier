@@ -74,7 +74,9 @@ export type ShareSheetStepInput<TRow extends ShareGrantRowModel> = Readonly<{
     actions: ShareSheetActions;
     adapter: ShareSheetAdapter<TRow>;
     presentation: ShareSheetPresentation;
-    onExpand(key: string): void;
+    onExpand(key: string | null): void;
+    /** The open row (a grant, the public link or Details), so a disclosure row can close again. */
+    expandedKey?: string | null;
     /** Set when a directory kind is browsed on its own pushed step. */
     directoryKind?: ShareDirectoryKind;
     /** Prefix for every rendered testID; empty for the default host. */
@@ -123,6 +125,8 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         id: row.principal.key, testID: `${idPrefix}${ns}-grant-${row.principal.key}`,
         label: row.principal.displayName,
         subtitle: subtitle(row.principal, row, [row.operation.kind === 'error' ? row.operation.error.message : undefined]),
+        // A domain tag or failure on a grant is the reason it behaves differently; it wraps rather than truncates on a phone.
+        subtitleLines: 2,
         accessibilityLabel: accessiblePrincipal(row.principal, row),
         icon: visual(row.principal),
         loading: row.operation.kind === 'saving' || row.operation.kind === 'removing',
@@ -130,7 +134,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         rightAccessoryOutsidePressable: true,
         rightAccessory: () => <ShareLevelControl row={row} adapter={adapter} actions={actions} editable={model.editable}
             onExpand={() => input.onExpand(row.principal.key)} testID={`${idPrefix}${ns}-level:${row.principal.key}`} />,
-        expandedContentInset: 'row',
+        expandedContentInset: 'text',
         expandedContent: () => <ShareGrantRow row={row} adapter={adapter} actions={actions} context={context} />,
     });
 
@@ -171,10 +175,18 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         // moved everything below it twice on every open (RUX-11.2).
         showSkeletonsOnFirstLoad: input.directoryKind !== undefined, loadingSkeletonRows: 1,
         // The list owns debounce, cancellation and stale result rejection. No network or store access lives here.
-        resolve: async (query, signal) => ({
-            options: candidateOptions(source.resolveCandidates ? await source.resolveCandidates(query, signal) : source.candidates),
-            resultHint: !source.resolveCandidates && (source.status === 'loading' || source.status === 'refreshing') ? t('common.loading') : undefined,
-        }),
+        resolve: async (query, signal) => {
+            const options = candidateOptions(source.resolveCandidates ? await source.resolveCandidates(query, signal) : source.candidates);
+            // Only friends and teammates can be found, so a people search that finds no one says so and leads to
+            // connecting first (the people directory's own empty prompt), instead of a bare "No matches".
+            const typed = query.trim();
+            const noOne = source.kind === 'account' && source.resolveCandidates !== undefined && typed !== '' && options.length === 0;
+            return {
+                options: noOne ? [{ id: 'search-empty', label: t('shareSheet.noMatchingPeople', { query: typed }), disabled: true,
+                    content: <ShareConnectedPeoplePrompt query={typed} testID={`${idPrefix}${ns}-search-empty`} /> }] : options,
+                resultHint: !source.resolveCandidates && (source.status === 'loading' || source.status === 'refreshing') ? t('common.loading') : undefined,
+            };
+        },
     });
 
     const sections: SelectionListSectionDescriptor[] = [];
@@ -195,7 +207,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             accessibilityLabel: `${publicLink.label ?? t('session.sharing.publicLink')}, ${publicLink.stateLabel}`,
             rightAccessory: () => <SharePublicLinkState stateLabel={publicLink.stateLabel} />,
             onSelect: publicLink.onOpen ?? (() => input.onExpand('public-link')),
-            ...(publicLink.renderContent ? { expandedContentInset: 'row', expandedContent: () => publicLink.renderContent!(context) } : {}),
+            ...(publicLink.renderContent ? { expandedContentInset: 'text', expandedContent: () => publicLink.renderContent!(context) } : {}),
         }] });
     }
     if (!searching) sections.push(...roster);
@@ -210,9 +222,10 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,
             rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction label={t('common.retry')}
                 testID={`${idPrefix}${ns}-directory-retry:${kind}`} onPress={() => actions.retryDirectory(kind)} /> });
-        // With suggestions listed, people beyond them are one Browse away; collapsed, every kind that has anyone is.
-        const browsable = kind === 'account' && suggestionsShown ? source.hasMore
-            : source.candidates.length > 0 || source.hasMore || (!suggestionsShown && source.resolveCandidates !== undefined);
+        // A searchable directory (a resolver) is always one Browse away: a query's page says nothing about everyone
+        // else. A fixed people list already shown as suggestions needs Browse only for its next page.
+        const browsable = source.resolveCandidates !== undefined || source.hasMore
+            || (source.candidates.length > 0 && !(kind === 'account' && suggestionsShown));
         if (!input.directoryKind && browsable) controls.push({ id: `browse:${kind}`,
             label: t(kind === 'account' ? 'shareSheet.browsePeople' : kind === 'team' ? 'shareSheet.browseTeams' : 'shareSheet.browseGroups'),
             icon: () => <ShareDirectoryIcon />,
@@ -236,12 +249,13 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     sections.push(...adapterSections.trailing ?? []);
     if (searching) sections.push(...roster);
 
-    // Compact popovers disclose help; full and inline sheets show it directly in the body footer.
-    if (input.presentation === 'compact' && (Object.values(adapter.levels).some(level => level.help) || adapter.notes?.length)) {
+    // Popovers and full sheets disclose the level meanings and sharing rules behind one row, so they never
+    // trail the list as an orphan legend; an inline sheet inside a host's form shows them in its footer.
+    if (input.presentation !== 'inline' && (Object.values(adapter.levels).some(level => level.help) || adapter.notes?.length)) {
         // A disclosure row, not a heading: it carries its mark so it reads as something to open.
         sections.push({ kind: 'static', id: 'help', options: [{ id: 'access-help', testID: `${idPrefix}${ns}-help`, label: t('common.details'),
-            icon: () => <ShareHelpIcon />,
-            onSelect: () => input.onExpand('access-help'), expandedContentInset: 'none',
+            icon: () => <ShareHelpIcon />, disclosure: true,
+            onSelect: () => input.onExpand(input.expandedKey === 'access-help' ? null : 'access-help'), expandedContentInset: 'none',
             expandedContent: () => <ShareHelp adapter={adapter} markNote={false} testID={`${idPrefix}${ns}-help-content`} /> }] });
     }
 

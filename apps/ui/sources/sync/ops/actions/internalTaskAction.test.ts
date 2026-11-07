@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -53,6 +54,32 @@ describe('internal Task Action captured Account authority', () => {
         const credentials = sync.getCredentials(); if (!credentials) throw new Error('Expected current Account');
         expect(await fetchTodos(credentials)).toMatchObject({ todos: { same: own }, undoneOrder: ['same'], versions: { 'todo.same': 2 } });
         expect(homes.requests.filter(request => request.method === 'POST' && new URL(request.path, request.serverUrl).pathname === '/v1/kv')).toHaveLength(0);
+    });
+    it('feeds acknowledged grant readiness through the loaded share controller without a census fan-out', async () => {
+        const serverId = await homes.addHome({ name: 'Task Share Home', serverUrl: 'https://task-readiness.test', accountId: 'owner', currentAccount: true });
+        await restoreHome(serverId, 'https://task-readiness.test');
+        const { TaskAccessGrantsListResponseV1Schema } = await import('@happier-dev/protocol/actions/internalTaskActions');
+        const readiness = { readyCount: 1, pendingCount: 2, unavailableCounts: {
+            plain_account: 1, encryption_setup_required: 1, encryption_inconsistent: 1,
+        } };
+        const address = { ownerAccountId: 'other', taskId: 'shared' };
+        homes.answer(serverId, 'GET /v1/tasks/other/shared/grants', { body: TaskAccessGrantsListResponseV1Schema.parse({
+            ...address, access: 'view', grants: [{ principal: { kind: 'team', teamId: 'core' }, accessLevel: 'view',
+                createdByAccountId: 'other', createdAt: 1, display: { name: 'Core' }, readiness }],
+        }) });
+        homes.answer(serverId, 'GET /v1/tasks/other/shared', { body: TaskResourceV1Schema.parse({ ...address,
+            access: 'view', encryptionMode: 'plain', encryptedDataKey: null, version: 1,
+            content: { t: 'plain', v: { id: 'shared', title: 'Shared task', done: false, createdAt: 1, updatedAt: 1 } },
+        }) });
+        const { useTaskShareController } = await import('@/components/sharing/tasks/useTaskShareController');
+        const hook = await renderHook(() => useTaskShareController({ ...address, scope: { serverId, accountId: 'owner' } }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
+            expect(hook.getCurrent().model.grants).toHaveLength(1);
+            expect(hook.getCurrent().readiness.get('team:core')).toEqual(readiness);
+            expect(homes.requests.filter(request => request.path.includes('/recipients/'))).toHaveLength(0);
+            expect(homes.requests.filter(request => request.path === '/v1/tasks/other/shared/grants')).toHaveLength(1);
+        } finally { await hook.unmount(); }
     });
     it('captures credentials once rather than reevaluating the live bearer through an admitted read', async () => {
         const serverId = await homes.addHome({ name: 'Task Home', serverUrl: 'https://task-admission.test', accountId: 'owner', currentAccount: true });

@@ -1,4 +1,5 @@
-import type { AccountDisplayProfileV1, PrincipalRefV1 } from '@happier-dev/protocol';
+import type { AccountDisplayProfileV1} from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { formatAccountDisplayName, resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
 import type { SharePrincipalPresentation } from './shareSheetTypes';
