@@ -28,8 +28,14 @@ import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createApprovalArtifact, writeApprovalRequestArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 // The real Registry read, App preparation hook, Action front door and Store listing body run; only the Home's
 // HTTP boundary answers (the same harness as the App data owner's own test).
@@ -48,6 +54,8 @@ installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } =
   await import('@/sync/ops/actions/actionAccountContext');
 const { storage } = await import('@/sync/domains/state/storage');
+const { resolveActionsSettingsV1FromState } = await import('@/sync/domains/settings/actionsSettings');
+const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
 const { StoreListingBody } = await import('./StoreListing');
 const { StoreKindSurface } = await import('./StoreKindSurface');
 const { useStoreAppListing } = await import('./useStoreAppListing');
@@ -56,7 +64,7 @@ afterEach(standardCleanup);
 
 let sequence = 0;
 async function createFixture(extraDomains: ReadonlyArray<{ key: string; required: boolean }> = [],
-  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains'] }> = {}) {
+  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; deferredCreate?: 'applied' | 'unknown'; receivingTemplate?: boolean }> = {}) {
   const serverUrl = `https://store-app-presenter-${++sequence}.test`;
   const catalogUrl = `${serverUrl}/apps.json`;
   const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -197,10 +205,9 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     },
   });
   const creations: Record<string, unknown>[] = [];
+  let deferred = false;
   const createMode = { value: 'created' as 'created' | 'refused' | 'approval' | 'domainRouteRequired' | 'needsReview' | 'ownerDenied' };
-  await answerExternalActionAccountForHome(homes, serverId, {
-    actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
-    execute: (raw) => {
+  const templateHost = async (raw: unknown) => {
       const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
       // The same template owner previews and applies the Store install through the real Action front door.
       if (input.mode === 'preview') {
@@ -212,13 +219,34 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
           : {};
         const preview = DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'preview',
           review: { templateRef: input.templateRef,
-            profiles: app.compose.profiles, services: app.compose.services, bindings: [], generatedSecrets: [], domains: [],
+            profiles: app.compose.profiles, services: app.compose.services, bindings: [], generatedSecrets: [],
+            domains: options.receivingTemplate ? app.domains.flatMap(domain => {
+              const binding = input.domainBindings?.find(binding => binding.templateDomainId === domain.key);
+              return binding ? [{ ...domain, hostname: binding.hostname }] : [];
+            }) : [],
             firstRunSetup: app.firstRunSetup, creationDefaults, ...basis,
             ...(input.environment.kind === 'create' && app.domains.some(domain => domain.required)
               ? { deploy: { requestKey: input.environment.requestKey } } : {}) } });
         return preview;
       }
+      if (options.deferredCreate && !deferred) {
+        deferred = true;
+        // The remote admission returns a durable approval. Its real lifecycle is
+        // settled through the Inbox below, rather than inventing a terminal Artifact.
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const result = await createDefaultActionExecutor({ resolveServerIdForSessionId: () => null }).execute('approval.request.create', {
+          actionId: 'deployments.templates.instantiate', actionArgs: input,
+          summary: 'Review the template install', createdBy: { surface: 'system' },
+        }, { serverId, surface: 'ui', authority: 'present_user' });
+        if (!result.ok) return result;
+        return result.result;
+      }
       creations.push(input as Record<string, unknown>);
+      if (options.deferredCreate === 'unknown') return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown',
+        effectAttempted: true, details: DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'deploy',
+          errorCode: 'outcome_unknown', environmentId: 'status-page', revision: 4, targetLinkId: 'target-link', savedSecrets: [],
+          definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+          deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'uncertain-deploy', deploymentRevision: 5, state: 'outcome_unknown' } }) };
       return createMode.value === 'domainRouteRequired'
             ? { ok: false, errorCode: 'template_domain_route_required', error: 'template_domain_route_required' }
             : createMode.value === 'needsReview'
@@ -232,6 +260,42 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
               : DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'applied', environmentId: 'status-page', revision: 1,
                 targetLinkId: 'target-link', savedSecrets: [],
                 definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` } });
+  };
+  const readTemplateHostResult = async (input: unknown) => {
+    const response = await templateHost(input);
+    const refusal = ActionExecuteFailureSchema.safeParse(response);
+    if (refusal.success) return refusal.data;
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(response);
+    return approval.success ? approval.data : DeploymentTemplateInstantiateResultV1Schema.parse(response);
+  };
+  let receiver: ReturnType<typeof createActionExecutor> | null = null;
+  const receiverOutcomes: { mode: 'preview' | 'apply'; ok: boolean; errorCode?: string; resultKind?: string }[] = [];
+  const templateBoundary = await answerExternalActionAccountForHome(homes, serverId, {
+    actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
+    execute: async (raw, transport) => {
+      if (!receiver) return templateHost(raw);
+      if (!('authentication' in transport.authorization.binding) || !account.serverIdentityId)
+        throw new Error('Expected the actual Account-authorized Home ingress');
+      const result = await receiver.execute('deployments.templates.instantiate', raw, {
+        surface: transport.invocation.surface,
+        authority: transport.invocation.authority === 'present_user'
+          ? resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+            surface: transport.invocation.surface, actionId: 'deployments.templates.instantiate' })
+          : transport.invocation.authority,
+        actionCaller: transport.invocation.caller,
+        presentUserConfirmation: transport.invocation.presentUserConfirmation,
+        serverId, serverIdentityId: account.serverIdentityId, runtimeAccountId: account.accountId,
+        externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+        originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId,
+        actionsSettings: resolveActionsSettingsV1FromState(storage.getState()),
+        signExternalActionApprovalInput: ({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
+          templateBoundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input, target,
+            ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+      });
+      receiverOutcomes.push({ mode: DeploymentTemplateInstantiateInputV1Schema.parse(raw).mode, ok: result.ok,
+        ...(!result.ok ? { errorCode: result.errorCode } : result.result && typeof result.result === 'object' && 'kind' in result.result && typeof result.result.kind === 'string'
+          ? { resultKind: result.result.kind } : {}) });
+      return result.ok ? result.result : result;
     },
   });
   // The created Environment as the Home reads it back: a new Project's Source exists only after apply.
@@ -240,6 +304,49 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     body: { ok: true, environment: createdEnvironment, targetLinks: [] },
   });
   const account = await captureLazyActionAccountContext(serverId);
+  const templateHostDeps = {
+    // The installed host is the external template preparation/effect boundary.
+    // Protocol preparation, child policy and exact confirmation admission remain real.
+    prepareDeploymentTemplateInstantiation: async ({ input }) => {
+      const preview = DeploymentTemplateInstantiateResultV1Schema.parse(await templateHost({ ...input, mode: 'preview' }));
+      if (preview.kind !== 'preview') throw new Error('Expected template host preview');
+      const prepared = DeploymentTemplateInstantiateInputV1Schema.parse({ ...input,
+        ...(input.environment.kind === 'create' && input.deploy === undefined && preview.review.deploy
+          ? { deploy: preview.review.deploy } : {}) });
+      return { input: prepared, preview: projectNativeJsonValueForTransport(preview.review), hostReviewedChildren: {
+        children: [...preview.review.domains.map(domain => ({ action: 'deployments.domains.add' as const,
+          role: `template.domain:${domain.key}` })), ...(preview.review.deploy
+          ? [{ action: 'deployments.deploy' as const, role: 'template.deploy' }] : [])],
+        executeAdmittedAction: async () => {
+          const result = await readTemplateHostResult(prepared);
+          return 'errorCode' in result ? result : { ok: true as const, result };
+        },
+      } };
+    },
+    deploymentTemplateInstantiate: readTemplateHostResult,
+  } satisfies Partial<import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps>;
+  if (options.receivingTemplate) receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+    resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(account).resolveEnvironmentApprovalScope,
+    ...templateHostDeps,
+    approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
+      read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
+      create: async (artifactId, header, body, idScope) =>
+        (await account.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
+  }));
+  // The template process is outside this UI test. Replay uses the shipped Protocol
+  // lifecycle and the Home's real Artifact CAS, with only that host effect supplied here.
+  const approvalExecutor = createActionExecutor(createActionExecutorBoundaryFixture({
+    ...templateHostDeps,
+    approvalsGet: async ({ artifactId }) => {
+      const artifact = await account.fetchArtifact(artifactId);
+      if (!artifact?.header || typeof artifact.body !== 'string') return null;
+      const matched = approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body);
+      return matched?.family === 'built_in' ? matched.request : null;
+    },
+    approvalsUpdate: ({ artifactId, request }) => writeApprovalRequestArtifact({ artifactId, request,
+      read: id => account.fetchArtifact(id),
+      write: (basis, header, body) => account.updateArtifact(artifactId, header, body, basis) }),
+  }));
   storage.setState({
     settingsScope: account.accountLifetime.scope,
     profileScope: account.accountLifetime.scope,
@@ -298,6 +405,14 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     lifetime,
     preparations,
     creations,
+    receiverOutcomes,
+    decideCreateApproval: async (artifactId: string) => {
+      let result;
+      await act(async () => { result = await approvalExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+        { surface: 'ui', authority: 'present_user', serverId, serverIdentityId: account.serverIdentityId,
+          runtimeAccountId: account.accountId }); });
+      return result;
+    },
     createMode,
     mode,
     dispose: () => account.dispose(),
@@ -342,6 +457,86 @@ async function nameIt(
 }
 const hasProjectChoice = (screen: Parameters<typeof projectSelect>[0], id: string) =>
   ((projectSelect(screen)?.props.items ?? []) as readonly { id: string }[]).some((item) => item.id === id);
+
+it('installs from the person’s Store confirmation without a self-approval Artifact', async () => {
+  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
+  const fixture = await createFixture([], { receivingTemplate: true });
+  const serverId = fixture.lifetime.scope.serverId;
+  await homes.requireActionApproval(serverId, 'deployments.templates.instantiate', 'ui');
+  function Harness() {
+    const state = useStoreAppListing({
+      selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true },
+    });
+    return state.kind === 'ready'
+      ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<Harness />);
+  try {
+    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
+    await chooseMachine(screen, 'target');
+    await chooseProject(screen, 'new');
+    await act(async () => { changeTextTestInstance(screen.findHostByTestId('store.app.prepare.project.newName')!, 'Status'); });
+    await nameIt(screen);
+    await screen.pressByTestIdAsync('store.app.prepare.review');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
+    await screen.pressByTestIdAsync('store.app.prepare.confirm');
+    expect(homes.artifacts(serverId).list().length).toBe(0);
+    expect(fixture.creations, JSON.stringify(fixture.receiverOutcomes)).toHaveLength(1);
+    expect(fixture.creations[0]).toMatchObject({ mode: 'apply',
+      newProject: { name: 'Status', owner: { kind: 'account', accountId: 'owner' } },
+      environment: { kind: 'create', name: 'Status page' } });
+    expect(fixture.creations[0]).not.toHaveProperty('projectSourceId');
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
+
+it.each(['applied', 'unknown'] as const)('settles an approved Store install as %s without losing its created Environment', async deferredCreate => {
+  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
+  const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+  const fixture = await createFixture([], { deferredCreate });
+  const serverId = fixture.lifetime.scope.serverId;
+  const pushed: unknown[] = [];
+  const push = (value: unknown) => { pushed.push(value); };
+  function Harness() {
+    const state = useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true } });
+    return state.kind === 'ready'
+      ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<DestinationInstanceHost tabId="store" ref={{ kind: 'plugins', params: {} }} pathname="/plugins" focused visible
+    navigation={{ push, pushRetainingCurrent: push, replace: () => {}, back: () => {} }}><Harness /></DestinationInstanceHost>);
+  try {
+    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
+    await chooseMachine(screen, 'target');
+    await chooseProject(screen, 'storefront');
+    await nameIt(screen);
+    await screen.pressByTestIdAsync('store.app.prepare.review');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
+    await screen.pressByTestIdAsync('store.app.prepare.confirm');
+    await waitForHomeGovernance(() => expect(homes.artifacts(serverId).list(), screen.getTextContent()).toHaveLength(1));
+    const artifactId = homes.artifacts(serverId).list()[0]!.id;
+    const decision = await fixture.decideCreateApproval(artifactId);
+    expect(decision, JSON.stringify(decision)).toMatchObject(deferredCreate === 'applied'
+      ? { ok: true } : { ok: false, errorCode: 'outcome_unknown' });
+    await waitForHomeGovernance(() => expect(fixture.creations, screen.getTextContent()).toHaveLength(1));
+    if (deferredCreate === 'applied') {
+      await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
+      expect(String(pushed[0])).toContain('status-page');
+    } else {
+      await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.progress')).toBeTruthy());
+      expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+      expect(screen.getTextContent()).toContain(t('projects.deployments.stateUnknown'));
+      expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
+      await screen.pressByTestIdAsync('store.app.prepare.recover');
+      await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
+      expect(new URL(String(pushed[0]), 'https://ui.test').searchParams.get('deploymentTab')).toBe('overview');
+      expect(fixture.creations).toHaveLength(1);
+    }
+  } finally { await screen.unmount(); await fixture.dispose(); }
+});
 
 it('opens an App through the Store listing body in its native ready, needs-review and unavailable states', async () => {
   const fixture = await createFixture();

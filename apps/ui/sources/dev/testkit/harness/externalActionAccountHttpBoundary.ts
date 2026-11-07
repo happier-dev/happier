@@ -13,6 +13,7 @@ import {
     ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionResponseEnvelopeV1Schema,
     ExternalActionRequestEnvelopeSchema,
+    type ExternalActionRequestEnvelope,
     type ExternalActionRequestEnvelopeV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -94,6 +95,9 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
         execute(input: unknown, context: Readonly<{
             target: Extract<NonNullable<ExternalActionRequestEnvelopeV1['target']>, { kind: 'machine' }>;
             invocation: ExternalActionRequesterInvocationV1;
+            /** The actual Home-issued root, consumed by the receiving Protocol executor. */
+            authorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
+            envelope: ExternalActionRequestEnvelope;
             requesterAccountContext: NonNullable<ReturnType<typeof openExternalActionRequesterAccountContextV1>>;
             pluginInvocation?: ExternalActionRequestEnvelopeV1['pluginInvocation'];
             requestId?: string;
@@ -212,7 +216,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 if (request?.executionAuthorization?.requesterAccountContext) throw new Error('Unexpected private requester Account carrier');
                 result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else {
-                if (!request) throw new Error('Expected an authorized private requester Account carrier');
+                if (!request?.executionAuthorization) throw new Error('Expected an authorized private requester Account carrier');
                 const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
                     purpose: { kind: 'external_action' }, machineId: machine.id, installationId: machine.installationId!,
                     serverIdentityId: params.serverIdentityId, installationPrivateKey: installation.privateKey, includeInvocation: true });
@@ -222,7 +226,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 });
                 else {
                     if (!opened.invocation) throw new Error('Missing private requester invocation');
-                    result = await params.execute(input, { target, invocation: opened.invocation, requesterAccountContext: opened.credentials,
+                    result = await params.execute(input, { target, invocation: opened.invocation,
+                    authorization: request.executionAuthorization, envelope, requesterAccountContext: opened.credentials,
                     ...(envelope.pluginInvocation ? { pluginInvocation: envelope.pluginInvocation } : {}),
                     requestId: envelope.requestId, signal: init?.signal, requestHeaders });
                 }

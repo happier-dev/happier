@@ -159,7 +159,7 @@ export function useStoreAppListing(input: Readonly<{
                         deploy: { requestKey: randomUUID() },
                     };
                 }
-                const result = await execute('deployments.templates.instantiate', installInput, {
+                const result = await execute.confirmed('deployments.templates.instantiate', installInput, {
                     surface: 'ui', serverId: input.lifetime.scope.serverId,
                     expectedAccountId: input.lifetime.scope.accountId, signal,
                 });
