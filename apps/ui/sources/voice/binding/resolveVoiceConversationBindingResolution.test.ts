@@ -202,6 +202,14 @@ describe('ensureVoiceConversationBindingResolution', () => {
     expect(selection({ conversationSelection: deliberateNew })).toBe(deliberateNew);
     expect(selection({ requestedConversationSessionAddress: address(earlier.id) }))
       .toEqual({ kind: 'continue', conversationSessionAddress: address(earlier.id) });
+    const otherMachineConversation = { ...carrier('newer-other-machine', undefined, 'other-machine', 900), meaningfulActivityAt: 900 };
+    storage.setState({ sessionListRowsByServerId: { [connection.home.id]: {
+      [latest.id]: buildSessionListRenderableFromSession(latest),
+      [otherMachineConversation.id]: buildSessionListRenderableFromSession(otherMachineConversation),
+    } } });
+    expect(selection()).toEqual({ kind: 'continue', conversationSessionAddress: address(latest.id) });
+    expect(selection({ conversationSelection: { kind: 'continue', conversationSessionAddress: address(otherMachineConversation.id) } }))
+      .toEqual({ kind: 'continue', conversationSessionAddress: address(otherMachineConversation.id) });
     storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
     expect(selection()).toMatchObject({ kind: 'new', creationKey: expect.any(String) });
   });

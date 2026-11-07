@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ProviderErrorV1Schema } from '../providers/errors.js';
 
 /** Host-classified failure identities; provider-native codes remain diagnostic input only. */
 export const VoiceAttemptFailureKindSchema = lazyZodSchema(() => z.enum([
@@ -29,6 +30,7 @@ export const VoiceAttemptPresentationSchema = lazyZodSchema(() => z.strictObject
   canDismissFailedAttempt: z.boolean(), canDismissEnded: z.boolean(),
   failureKind: z.nullable(VoiceAttemptFailureKindSchema), failureMessage: z.nullable(z.string()),
   failureTitle: z.optional(z.string()),
+  providerError: z.optional(ProviderErrorV1Schema),
   recovery: z.nullable(z.strictObject({
     action: z.nullable(VoiceAttemptRecoveryActionSchema), label: z.string(),
     icon: z.enum(['microphone', 'gear', 'arrow-clockwise']),

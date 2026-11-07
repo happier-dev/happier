@@ -152,10 +152,10 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.provider' } });
   });
 
-  it('opens the canonical execution-machine settings section for an unavailable machine', async () => {
+  it('opens the canonical Machine picker destination for an unavailable machine', async () => {
     const navigate = vi.fn();
     (await dispatch('select_execution_machine', navigate))();
-    expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.executionMachine' } });
+    expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.executionMachine', focus: 'execution_machine' } });
   });
 
   it('reveals the Conversations speech engine without opening system microphone settings or retrying', async () => {

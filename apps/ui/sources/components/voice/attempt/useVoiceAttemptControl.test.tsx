@@ -2364,6 +2364,20 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
     await hook.unmount();
   });
 
+  it('names the unreachable Machine in the top bar through the shared typed failure presentation', async () => {
+    const hook = await renderControl({
+      adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle', canStop: false,
+      errorCode: 'execution_machine_unavailable', errorMessage: 'voice_agent_target_machine_offline',
+      errorPresentation: 'error', errorRecoveryAction: 'select_execution_machine',
+    });
+    expect(hook.getCurrent()).toMatchObject({
+      surfaceState: 'error', statusWord: t('voice.readiness.execution_machine_incompatible'),
+      failureMessage: t('voice.readiness.execution_machine_incompatible'),
+      recoveryLabel: t('voice.readiness.actions.select_execution_machine'),
+    });
+    await hook.unmount();
+  });
+
   it('keeps speech unavailability visible with settings recovery and Dismiss', async () => {
     const hook = await renderControl({
       adapterId: 'local_direct',

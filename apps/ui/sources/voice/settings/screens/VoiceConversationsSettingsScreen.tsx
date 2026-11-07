@@ -46,6 +46,9 @@ export function VoiceConversationsSettingsScreen() {
   );
   // A card that needs a machine opens the header's "Runs on" chooser: one machine control per page.
   const [machineChooserOpen, setMachineChooserOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (routeFocus === 'execution_machine') setMachineChooserOpen(true);
+  }, [routeFocus]);
   const focusRecovery = React.useCallback((action: Parameters<typeof resolveVoiceSettingsRecoveryTarget>[0]) => {
     if (resolveVoiceSettingsRecoveryFocus(action) === 'execution_machine') {
       setMachineChooserOpen(true);

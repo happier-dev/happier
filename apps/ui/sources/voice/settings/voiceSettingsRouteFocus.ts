@@ -19,7 +19,7 @@ export const VOICE_SETTINGS_PROVIDER_FOCUS_TARGET = {
 
 export const VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET = {
   pathname: SETTINGS_ROUTES.voiceConversations,
-  params: { [SETTING_ANCHOR_QUERY_PARAM]: VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine.anchor },
+  params: { [SETTING_ANCHOR_QUERY_PARAM]: VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine.anchor, focus: 'execution_machine' },
 } as const satisfies Href;
 
 export type VoiceSettingsRouteFocus = 'privacy' | 'provider' | 'execution_machine' | 'local';

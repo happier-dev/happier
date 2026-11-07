@@ -11,8 +11,11 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
 import { createVoiceProviderRegistry, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from './voiceSettingsAccountTestHarness';
@@ -86,6 +89,27 @@ async function loadSection() {
 
 // Resolve the real registry/settings graph during collection rather than inside a timed interaction.
 const VoiceExecutionMachineSection = await loadSection();
+const { VoiceConversationsSettingsScreen } = await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
+
+it('opens the Machine picker when typed Voice recovery navigates to the Conversations screen', async () => {
+  account.replaceVoice(localVoice('local_conversation'));
+  const writesBeforeRecovery = account.writes.length;
+  const target = VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET;
+  const screen = await renderSettingsView(
+    <AuthProvider initialCredentials={account.credentials}>
+      <DestinationInstanceHost tabId="voice-machine-recovery" ref={{ kind: 'settings', params: target.params }}
+        pathname={target.pathname} navigation={{ push: vi.fn(), replace: vi.fn(), back: vi.fn() }} focused visible>
+        <VoiceConversationsSettingsScreen />
+      </DestinationInstanceHost>
+    </AuthProvider>,
+  );
+  try {
+    expect(screen.findHostByTestId('settings.voice.executionMachine.chip:auto')).not.toBeNull();
+    expect(account.writes.length - writesBeforeRecovery).toBe(0);
+  } finally {
+    await screen.unmount();
+  }
+});
 
 it('keeps the Advanced Voice computer available for model management when conversations are off', async () => {
   const voice: VoiceSettings = { ...voiceSettingsDefaults, providerId: null, dictation: {

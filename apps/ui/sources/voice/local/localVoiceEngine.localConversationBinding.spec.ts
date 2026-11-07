@@ -7,6 +7,8 @@ import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { createDeferred, createMachineFixture, createSessionFixture, waitForTestEvent } from '@/dev/testkit';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { PartialOptions as ElevenLabsStartOptions } from '@elevenlabs/client';
@@ -90,6 +92,55 @@ describe('local voice engine local conversation binding', () => {
     beforeEach(async () => {
         localVoiceEngine = await loadLocalVoiceEngineWithCompatState();
     }, 180_000);
+
+    it('uses the configured Voice Machine on Home Start when the last conversation belongs to another Machine on the same Account', async () => {
+        await configureAgentMode();
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        const config = readLocalConversationVoiceSettings(voice);
+        const previousConversation = createSessionFixture({ id: 'previous-voice-conversation', serverId: localVoiceHomeId,
+            active: true, meaningfulActivityAt: Date.now(), metadata: {
+                ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }),
+                machineId: 'previous-machine', path: '/previous/voice-home', host: 'previous.test', flavor: 'claude',
+                permissionMode: config.agent.permissionIntent,
+            } });
+        storage.__setState({
+            machines: { ...storage.getState().machines,
+                'previous-machine': createMachineFixture({ ...storage.getState().machines['machine-1'], id: 'previous-machine' }),
+            },
+            sessions: { ...storage.getState().sessions, [previousConversation.id]: previousConversation },
+            settings: { ...storage.getState().settings, voice: { ...voice,
+                providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: { ...config,
+                    agent: { ...config.agent, rootSessionPolicy: 'continue' },
+                } } },
+            } },
+        });
+        replaceLocalVoiceSessionHttpSeed(previousConversation.id, createPlainSessionCurrentProjectionRecordFixture({
+            id: previousConversation.id, active: true, metadataVersion: previousConversation.metadataVersion,
+            metadata: previousConversation.metadata,
+        }));
+        const { resolveVoiceExecutionMachineSelectionFromState } = await import('@/voice/settings/executionMachine');
+        expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState())).toEqual({ kind: 'resolved', machineId: 'machine-1' });
+        const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+        const lifecycle = createVoiceSessionLifecycleController();
+        lifecycle.setConfiguredProviderId('local_conversation');
+        try {
+            let failure: unknown;
+            await lifecycle.toggle(null).catch(error => { failure = error; });
+            const catalogRequests = machineRpcWithServerScope.mock.calls.map(([request]) => request)
+                .filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+            expect(catalogRequests.length).toBeGreaterThan(0);
+            expect([...new Set(catalogRequests.map(request => request.machineId))]).toEqual(['machine-1']);
+            const spawns = machineRpcWithServerScope.mock.calls.map(([request]) => request)
+                .filter(request => request.method === RPC_METHODS.SESSION_SPAWN_NEW);
+            expect(spawns).toHaveLength(1);
+            expect(spawns[0]).toMatchObject({ machineId: 'machine-1', payload: { executionTarget: { machineId: 'machine-1' } } });
+            expect(failure).toBeUndefined();
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
+        } finally {
+            await lifecycle.dispose();
+        }
+    }, 60_000);
 
     it('resolves agent-mode device speech through the hidden global control session despite an offline speech Machine', async () => {
         await configureAgentMode();
