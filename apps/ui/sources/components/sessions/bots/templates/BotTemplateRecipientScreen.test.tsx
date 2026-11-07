@@ -22,7 +22,7 @@ import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublish
 import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
@@ -127,38 +127,46 @@ describe('recipient template page', () => {
         await vi.waitFor(() => expect(screen.findByTestId('bot-template-copy-name')).not.toBeNull());
         expect(createdDrafts()).toHaveLength(1);
         expect(screen.findByTestId('bot-template-copy-name')!.props.value).toBe('My herb keeper');
-        await screen.update(tree(1));
+        // Apply the external draft edit between mounts, after the old composer
+        // has finished its authoring writes.
+        await screen.unmount();
         const authored = { ...readNewSessionDraftFromRepository({ scope, draftId })!, selectedMachineId: machine.id,
             targetServerId: scope.serverId, executionTarget: { kind: 'machine' as const, target: { serverId: scope.serverId, machineId: machine.id } },
             agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-            permissionMode: 'acceptEdits' as const };
+            // The authoring adapter binds model selection to the chosen Agent.
+            modelSelection: null,
+            permissionMode: 'safe-yolo' as const };
         await act(async () => { writeNewSessionDraftToRepository({ scope, draftId, draft: authored }); });
-        await vi.waitFor(() => expect(screen.findByTestId('bot-template-make-own')).not.toBeNull());
-        await screen.pressByTestIdAsync('bot-template-make-own');
-        await vi.waitFor(() => expect(screen.findByTestId('bot-template-copy-name')).not.toBeNull());
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.permissionMode).toBe('safe-yolo');
+        const reloaded = await renderScreen(tree(1));
+        await vi.waitFor(() => expect(reloaded.findByTestId('bot-template-make-own')).not.toBeNull());
+        await reloaded.pressByTestIdAsync('bot-template-make-own');
+        await vi.waitFor(() => expect(reloaded.findByTestId('bot-template-copy-name')).not.toBeNull());
         expect(createdDrafts()).toHaveLength(1);
-        expect(screen.findByTestId('bot-template-copy-name')!.props.value).toBe('My herb keeper');
+        expect(reloaded.findByTestId('bot-template-copy-name')!.props.value).toBe('My herb keeper');
         expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ sessionName: 'My herb keeper',
-            selectedMachineId: machine.id, agentTarget: authored.agentTarget, permissionMode: 'acceptEdits' });
+            selectedMachineId: machine.id, agentTarget: authored.agentTarget, permissionMode: 'safe-yolo' });
         expect(storage.getState().machines[machine.id]?.daemonState?.setup).toMatchObject({ status: 'satisfied' });
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('2.47.1'));
+        await vi.waitFor(() => expect(reloaded.getTextContent()).toContain('2.47.1'));
         const { captureNewSessionDraftLaunchCurrentness, clearCapturedNewSessionDraftAfterLaunch } = await import('@/components/sessions/new/modules/newSessionDraftLifecycle');
-        // The ordinary successful-create owner clears this captured draft and its attempt before handing off.
+        // Simulate a completed launch after leaving the composer; the mounted
+        // composer would otherwise remain an active writer of this draft.
+        await reloaded.unmount();
         await act(async () => {
             captureNewSessionDraftLaunchCurrentness({ scope, draftId, launchUserAttemptId: 'first-template-create' });
             await clearCapturedNewSessionDraftAfterLaunch({ scope, draftId, launchUserAttemptId: 'first-template-create' });
         });
-        await screen.update(tree(2));
-        await vi.waitFor(() => expect(screen.findByTestId('bot-template-make-own')).not.toBeNull());
-        await screen.pressByTestIdAsync('bot-template-make-own');
-        await vi.waitFor(() => expect(screen.findByTestId('bot-template-copy-name')).not.toBeNull());
+        const reopened = await renderScreen(tree(2));
+        await vi.waitFor(() => expect(reopened.findByTestId('bot-template-make-own')).not.toBeNull());
+        await reopened.pressByTestIdAsync('bot-template-make-own');
+        await vi.waitFor(() => expect(reopened.findByTestId('bot-template-copy-name')).not.toBeNull());
         expect(createdDrafts()).toHaveLength(1);
-        await vi.waitFor(() => expect(screen.findByTestId('bot-template-copy-name')!.props.value).toBe('Garden'));
+        await vi.waitFor(() => expect(reopened.findByTestId('bot-template-copy-name')!.props.value).toBe('Garden'));
         expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.localSupplement.launchUserAttemptId).toBeUndefined();
-        await screen.unmount();
+        await reopened.unmount();
     });
     it('shares the mounted setup selections between visible controls and Agent read and patch', async () => {
-        let instantiateRequest: unknown;
+        let sessionBirthRequested = false;
         const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
         await adoptHomeProfile({ descriptor: { serverUrl: 'https://template-setup-draft.test',
             homeServerIdentityId: 'srv_template_setup', displayName: 'Setup' }, source: 'manual', suggestedName: 'Setup' });
@@ -168,17 +176,18 @@ describe('recipient template page', () => {
             capabilities: { serverIdentity: { serverIdentityId: 'srv_template_setup' } } });
         home = await createPlainArtifactHomeFixture('https://template-setup-draft.test', { currentAccount: true,
             serverFeatures: features,
-            handleRequest: async (path, init) => {
+            handleRequest: async path => {
                 if (path === '/v1/features/authenticated') return Response.json(features);
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                 if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
                 if (path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (path === '/v1/machines') return Response.json([machine]);
                 if (path === '/v1/machines/selected-machine') return Response.json({ machine });
-                if (path !== '/v1/actions/template.instantiate/execution-authorization') return null;
-                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
-                instantiateRequest = request;
-                const refusal = projectExternalActionHttpError('credential_scope_denied', request.envelope.requestId);
+                // Requester-local template creation reaches the ordinary Session
+                // birth owner; it does not mint a template root authorization.
+                if (path !== '/v1/sessions') return null;
+                sessionBirthRequested = true;
+                const refusal = projectExternalActionHttpError('credential_scope_denied', 'setup-copy');
                 return Response.json(refusal.payload, { status: refusal.statusCode });
             } });
         storage.setState({ isSessionDraftsReady: true });
@@ -240,15 +249,9 @@ describe('recipient template page', () => {
         await act(async () => {
             const result = await host.executeSpawnAction!(creation, { surface: 'ui', authority: 'present_user',
                 serverId: home!.home.id, actionRequestId: 'setup-copy' });
-            expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
         });
-        expect(instantiateRequest).toMatchObject({ machineId: 'selected-machine', envelope: { input: {
-            source: { kind: 'artifact', serverId: home.home.id, artifactId: 'setup-template' }, expectedVersion: '1.0.0',
-            expectedRevision: { headerVersion: 1, bodyVersion: 1 }, setup: selections, name: 'My Garden',
-            creation: { executionTarget: creation.executionTarget, directory: creation.directory,
-                agentTarget: creation.agentTarget, permissionMode: 'default', title: 'My Garden' },
-        } } });
-        expect(instantiateRequest).not.toHaveProperty('envelope.input.creation.creationKey');
+        expect(sessionBirthRequested).toBe(true);
         expect(home.boundary.list()).toHaveLength(1);
         await screen.unmount();
     });

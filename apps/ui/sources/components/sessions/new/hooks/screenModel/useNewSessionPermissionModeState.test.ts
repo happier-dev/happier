@@ -25,6 +25,19 @@ describe('useNewSessionPermissionModeState authored draft intent', () => {
         expect(hook.getCurrent().hasUserSelectedPermissionModeRef.current).toBe(false);
     });
 
+    it('hydrates a persisted permission choice after mount without replacing a later personal choice', async () => {
+        const initialProps: Parameters<typeof useNewSessionPermissionModeState>[0] = {
+            ...input, sessionDefaultPermissionModeByTargetKey: {},
+        };
+        const hook = await renderHook(useNewSessionPermissionModeState, { initialProps });
+        await hook.rerender({ ...initialProps, hydratedPersistedAuthoringDraft: { permissionMode: 'safe-yolo' } });
+        expect(hook.getCurrent().permissionMode).toBe('safe-yolo');
+        expect(hook.getCurrent().hasUserSelectedPermissionModeRef.current).toBe(true);
+        await act(async () => { hook.getCurrent().handlePermissionModeChange('read-only'); });
+        await hook.rerender({ ...initialProps, hydratedPersistedAuthoringDraft: { permissionMode: 'yolo' } });
+        expect(hook.getCurrent().permissionMode).toBe('read-only');
+    });
+
     const managedDefaults: ManagedSessionDefaultsContext = {
         teamDefaults: ManagedDefaultsV1Schema.parse({
             team: { permissionModeByAgentTargetKey: { 'agent:happier.agent.claude/claude': 'read-only' } },

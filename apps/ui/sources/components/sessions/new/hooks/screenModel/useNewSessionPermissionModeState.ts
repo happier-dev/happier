@@ -8,7 +8,6 @@ import {
     resolveNewSessionDefaultPermissionMode,
     resolveNewSessionDefaultPermissionModeDecision,
 } from '@/sync/domains/permissions/permissionDefaults';
-import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -60,23 +59,18 @@ export function useNewSessionPermissionModeState(params: Readonly<{
         });
     }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults]);
 
-    const [permissionSelection, setPermissionSelection] = React.useState<Readonly<{ mode: PermissionMode; explicit: boolean }>>(() => {
-        if (isPermissionMode(params.hydratedTempAuthoringDraft?.permissionMode)) {
-            return { mode: normalizePermissionModeForAgentType(params.hydratedTempAuthoringDraft.permissionMode, params.agentType), explicit: true };
-        }
-
-        const selectedProfile = params.selectedProfileId
-            ? (params.profileMap.get(params.selectedProfileId) || getBuiltInProfile(params.selectedProfileId))
-            : null;
-        const draftPermissionMode = params.hydratedPersistedAuthoringDraft?.permissionMode;
-        if (isPermissionMode(draftPermissionMode)) {
-            return { mode: normalizePermissionModeForAgentType(draftPermissionMode, params.agentType), explicit: draftPermissionMode !== 'default' };
-        }
-
-        return { mode: resolveDefaultPermissionMode(selectedProfile), explicit: false };
-    });
-
-    const hasUserSelectedPermissionModeRef = React.useRef(permissionSelection.explicit);
+    // Draft hydration can finish after mount. Store only a choice made in this
+    // editor; until then the hydrated draft remains the source of intent.
+    const [authoredPermissionMode, setAuthoredPermissionMode] = React.useState<PermissionMode | null>(null);
+    const tempPermissionMode = params.hydratedTempAuthoringDraft?.permissionMode;
+    const persistedPermissionMode = params.hydratedPersistedAuthoringDraft?.permissionMode;
+    const draftPermissionMode = isPermissionMode(tempPermissionMode)
+        ? tempPermissionMode
+        : isPermissionMode(persistedPermissionMode) && persistedPermissionMode !== 'default'
+            ? persistedPermissionMode : undefined;
+    const explicitPermissionMode = authoredPermissionMode ?? draftPermissionMode;
+    const hasUserSelectedPermissionModeRef = React.useRef(explicitPermissionMode !== undefined);
+    hasUserSelectedPermissionModeRef.current = explicitPermissionMode !== undefined;
 
     const selectedProfile = params.selectedProfileId
         ? (params.profileMap.get(params.selectedProfileId) || getBuiltInProfile(params.selectedProfileId))
@@ -92,9 +86,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
             explicitPermissionMode,
         });
     }, [accountDefaults, params.agentType, params.backendTarget, params.managedDefaults, selectedProfile]);
-    const decision = resolvePermissionModeDecision(
-        permissionSelection.explicit ? permissionSelection.mode : undefined,
-    );
+    const decision = resolvePermissionModeDecision(explicitPermissionMode);
     const permissionMode = decision.permissionMode;
 
     const permissionModeRef = React.useRef(permissionMode);
@@ -105,15 +97,10 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     const applyPermissionMode = React.useCallback((mode: PermissionMode, source: 'user' | 'auto') => {
         const next = resolvePermissionModeDecision(mode);
         if (next.lock) return;
-        if (source === 'user') {
+        if (source === 'user' || hasUserSelectedPermissionModeRef.current) {
             hasUserSelectedPermissionModeRef.current = true;
+            setAuthoredPermissionMode(next.permissionMode);
         }
-        setPermissionSelection((prev) => {
-            const explicit = prev.explicit || source === 'user';
-            return prev.mode === next.permissionMode && prev.explicit === explicit
-                ? prev
-                : { mode: next.permissionMode, explicit };
-        });
     }, [resolvePermissionModeDecision]);
 
     const handlePermissionModeChange = React.useCallback((mode: PermissionMode) => {
