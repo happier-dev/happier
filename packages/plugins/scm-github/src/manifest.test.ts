@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import * as tar from 'tar';
-import { createPluginActionPresentUserGate, ingestPluginManifestV2, PluginActionContributionV2Schema } from '@happier-dev/protocol';
+import { createPluginActionPresentUserGate, ingestPluginManifestV2, PluginActionContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -34,6 +34,14 @@ const GITHUB_BRAND_ASSET_PROVENANCE = {
 } as const;
 
 const BRAND_ASSET_ARCHIVE_PATH = 'assets/brand.png';
+it('takes the person’s own press as consent for the review workspace while agents and a saved Ask still ask', () => {
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace));
+  // Owner ruling "Agent actions: one shared flow" (2026-11-07): no second approval for the checkout the person asked for.
+  expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(false);
+  expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'account_automation')).toBe(true);
+  for (const surface of ['agent', 'mcp'] as const) expect(pluginActionRequiresPresentUserIntent(action, surface)).toBe(true);
+  expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true }, 'ui', undefined, 'present_user')).toBe(true);
+});
 const NPM_PACK_TIMEOUT_MS = 60_000;
 /**
  * The package-wide per-test budget is the same 60s this one test already

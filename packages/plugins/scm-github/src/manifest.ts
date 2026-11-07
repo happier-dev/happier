@@ -592,6 +592,9 @@ function createGithubPlugin() {
       description: 'Rereads one GitHub pull request and prepares its source branch in the selected workspace.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      // The person's own press is the consent for the checkout they asked for;
+      // agents, MCP and a saved Ask keep the writes-local default.
+      confirmationWhen: { presentUserUi: false },
       inputSchema: TriageSourceCredentialInputsV1.prepareReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
