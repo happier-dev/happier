@@ -24,60 +24,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const irreversible = id === 'deployments.backups.prune' || id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.targets.unlink' || id === 'deployments.environments.delete' || id === 'deployments.domains.remove';
   const preparedContentRequired = id !== 'deployments.environments.create' && id !== 'deployments.targets.link'
     && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !isDeploymentPromoteActionIdV1(id);
-  const spec = {
-    id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
-    ...(id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' || id === 'deployments.teardown' ? { safetyForInput: (input: unknown): 'safe' | 'danger' => {
+  const previewForInput = id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' || id === 'deployments.teardown'
+    ? (input: unknown): boolean => {
       const parsed = DeploymentActionInputSchemasV1[id].safeParse(input);
-      return parsed.success && 'mode' in parsed.data && parsed.data.mode === 'preview' ? 'safe' : 'danger';
-    } } : {}),
-    ...(id === 'deployments.environments.update' ? { permissionChangingForInput: (input: unknown): boolean => {
-      const parsed = DeploymentActionInputSchemasV1['deployments.environments.update'].safeParse(input);
-      return parsed.success && (parsed.data.patch?.deployerMode !== undefined || parsed.data.patch?.deployerPrincipals !== undefined);
-    } } : {}),
-    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible ? 'policy' : 'direct' },
-    ...(irreversible ? { irreversible: true as const } : {}),
-    ...(id === 'deployments.bindings.set' ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
-    ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish.prepare'
-      ? { approvalScope: 'environment' } : {}),
-    executionPlacement: backup || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
-    ...(id === 'deployments.environments.create' ? {
-      executionPlacements: ['account', 'machine'],
-      executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
-        const intent = readRecord(input);
-        return intent.copyFrom !== undefined || intent.contentArtifactId === undefined ? 'machine' : 'account';
-      },
-    } : {}),
-    ...(id === 'deployments.teardown' ? { executionPlacements: ['account', 'machine'],
-      executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
-        readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
-    ...(id === 'deployments.environments.create'
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || id === 'deployments.backups.restore'
-        ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
-    // Machine placement uses the original Action dispatcher, not a standalone RPC method.
-    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
-    bindings: { mcpToolName: id.replaceAll('.', '_'), ...(id === 'deployments.publish.prepare' ? { sdkMethod: 'deployments.preparePublishCatalog' } : {}) },
-    cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
-    ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === 'deployments.environments.update' ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),
-    inputSchema: DeploymentActionInputSchemasV1[id], outputSchema: DeploymentActionOutputSchemasV1[id],
-    invocationServerIdForInput: actionInputServerId(DeploymentActionInputSchemasV1[id], (input) => {
-      const serverId = readRecord(input).serverId;
-      return typeof serverId === 'string' ? serverId : undefined;
-    }),
-    ...(id === 'deployments.deploy' ? { completion: deploymentDeployActionCompletionV1 } : {}),
-    // The retry key, target link and prepared-content pins say which request and bytes, not what it does; the
-    // request's summary and the host's deploy review say that. Approval reads them under Technical details.
-    ...(id === 'deployments.deploy' || id === 'deployments.promote' ? { approvalPresentation: { summary: () => null,
-      technicalInputPaths: ['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion',
-        ...(id === 'deployments.promote' ? ['destinationContent'] : [])] } } : {}),
-    // A restore is approved by its consequence; every id only correlates the request with the Environment, the
-    // capture receipt and the prepared operation, so they read under Technical details. The Machine stays named.
-    ...(id === 'deployments.backups.restore' ? { approvalPresentation: {
-      summary: (input: unknown) => readRecord(input).mode === 'confirm'
-        ? 'Replace this Environment\'s data with the checked backup. The running code stays as it is.'
-        : 'Check the backup and take a safety backup first. Nothing is replaced yet.',
-      technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
-        'restoreBackupId', 'expectedRevision', 'prepareOperationId'] } } : {}),
-    inputHints: backup ? { fields: [
+      return parsed.success && 'mode' in parsed.data && parsed.data.mode === 'preview';
+    } : undefined;
+  const secretPath = id === 'deployments.bindings.set' ? 'set.[].source.ref'
+    : id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' ? 'bindings.[].source.ref' : null;
+  const inputHints = backup ? { fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'machineId', title: 'Runtime Machine', widget: 'text', required: true },
@@ -94,7 +48,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ...(id === 'deployments.backups.prune' ? [
         { path: 'retention', title: 'Chosen retention policy', widget: 'json' as const, required: true },
       ] : []),
-    ] } : id === 'deployments.backups.restore' ? { fields: [
+    ] } as const : id === 'deployments.backups.restore' ? { fields: [
       { path: 'mode', title: 'Prepare or confirm restore', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
@@ -105,7 +59,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'restoreBackupId', title: 'Backup', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
       { path: 'prepareOperationId', title: 'Prepared restore operation', widget: 'text' },
-    ] } : id === 'deployments.publish.prepare' ? { fields: [
+    ] } as const : id === 'deployments.publish.prepare' ? { fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'machineId', title: 'Runtime Machine', widget: 'text', required: true },
       { path: 'installationId', title: 'Machine installation', widget: 'text', required: true },
@@ -114,7 +68,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'newProject', title: 'New repository-free Project and owner', widget: 'json' },
       { path: 'templateRef', title: 'Pinned catalog app', widget: 'json', required: true },
       { path: 'explicit', title: 'Your creation choices', widget: 'json' },
-    ] } : id === 'deployments.templates.instantiate' ? { fields: [
+    ] } as const : id === 'deployments.templates.instantiate' ? { fields: [
       { path: 'mode', title: 'Preview or apply', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'machineId', title: 'Target Machine', widget: 'text', required: true },
@@ -130,13 +84,13 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'replace', title: 'Explicit key replacements', widget: 'json' },
       { path: 'domainBindings', title: 'Domain bindings', widget: 'json' },
       { path: 'deploy', title: 'Deploy after committing the definition and bindings', widget: 'json' },
-    ] } : id === 'deployments.bindings.set' ? { fields: [
+    ] } as const : id === 'deployments.bindings.set' ? { fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
       { path: 'set', title: 'Bindings to set', widget: 'json', required: true },
       { path: 'remove', title: 'Bindings to remove', widget: 'json', required: true },
-    ] } : id === 'deployments.prepare' ? { fields: [
+    ] } as const : id === 'deployments.prepare' ? { fields: [
       { path: 'projectSourceId', title: 'Project source', widget: 'text', required: true },
       { path: 'sourceRevision', title: 'Source revision', widget: 'number', required: true },
       { path: 'repository', title: 'Repository', widget: 'json', required: true },
@@ -146,7 +100,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'target', title: 'Target reference', widget: 'json' },
       { path: 'sessionRef', title: 'Existing Session', widget: 'json' },
       { path: 'importFrom', title: 'Import configuration references', widget: 'json' },
-    ] } : { fields: [
+    ] } as const : { fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       ...(id === 'deployments.environments.create' || id === 'deployments.environments.list'
         ? [{ path: 'projectSourceId', title: 'Project source', widget: 'text' as const }]
@@ -215,19 +169,69 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         { path: 'contentHeaderVersion', title: 'Content header revision', widget: 'number' as const, required: preparedContentRequired },
         { path: 'contentBodyVersion', title: 'Content body revision', widget: 'number' as const, required: preparedContentRequired },
       ]),
-    ] },
+    ] } as const;
+  return {
+    id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
+    ...(previewForInput ? { safetyForInput: (input: unknown): 'safe' | 'danger' => previewForInput(input) ? 'safe' : 'danger' } : {}),
+    ...(id === 'deployments.environments.update' ? { permissionChangingForInput: (input: unknown): boolean => {
+      const parsed = DeploymentActionInputSchemasV1['deployments.environments.update'].safeParse(input);
+      return parsed.success && (parsed.data.patch?.deployerMode !== undefined || parsed.data.patch?.deployerPrincipals !== undefined);
+    } } : {}),
+    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible ? 'policy' : 'direct',
+      ...(id === 'deployments.teardown' && previewForInput
+        ? { uiConfirmationForInput: (input: unknown): boolean => !previewForInput(input) } : {}) },
+    ...(irreversible ? { irreversible: true as const } : {}),
+    ...(id === 'deployments.bindings.set' ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
+    ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish.prepare'
+      ? { approvalScope: 'environment' } : {}),
+    executionPlacement: backup || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    ...(id === 'deployments.environments.create' ? {
+      executionPlacements: ['account', 'machine'],
+      executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
+        const intent = readRecord(input);
+        return intent.copyFrom !== undefined || intent.contentArtifactId === undefined ? 'machine' : 'account';
+      },
+    } : {}),
+    ...(id === 'deployments.teardown' ? { executionPlacements: ['account', 'machine'],
+      executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
+        readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
+    ...(id === 'deployments.environments.create'
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || id === 'deployments.backups.restore'
+        ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
+    // Machine placement uses the original Action dispatcher, not a standalone RPC method.
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
+    bindings: { mcpToolName: id.replaceAll('.', '_'), ...(id === 'deployments.publish.prepare' ? { sdkMethod: 'deployments.preparePublishCatalog' } : {}) },
+    cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
+    ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === 'deployments.environments.update' ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),
+    inputSchema: DeploymentActionInputSchemasV1[id], outputSchema: DeploymentActionOutputSchemasV1[id],
+    invocationServerIdForInput: actionInputServerId(DeploymentActionInputSchemasV1[id], (input) => {
+      const serverId = readRecord(input).serverId;
+      return typeof serverId === 'string' ? serverId : undefined;
+    }),
+    ...(id === 'deployments.deploy' ? { completion: deploymentDeployActionCompletionV1 } : {}),
+    // The retry key, target link and prepared-content pins say which request and bytes, not what it does; the
+    // request's summary and the host's deploy review say that. Approval reads them under Technical details.
+    ...(id === 'deployments.deploy' || id === 'deployments.promote' ? { approvalPresentation: { summary: () => null,
+      technicalInputPaths: ['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion',
+        ...(id === 'deployments.promote' ? ['destinationContent'] : [])] } } : {}),
+    // A restore is approved by its consequence; every id only correlates the request with the Environment, the
+    // capture receipt and the prepared operation, so they read under Technical details. The Machine stays named.
+    ...(id === 'deployments.backups.restore' ? { approvalPresentation: {
+      summary: (input: unknown) => readRecord(input).mode === 'confirm'
+        ? 'Replace this Environment\'s data with the checked backup. The running code stays as it is.'
+        : 'Check the backup and take a safety backup first. Nothing is replaced yet.',
+      technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
+        'restoreBackupId', 'expectedRevision', 'prepareOperationId'] } } : {}),
+    inputHints,
     ...(backup && !isDeploymentBackupReadActionIdV1(id) || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
+    // Review describes the stored ref string; the interactive picker selects a ref/revision pair.
+    ...(secretPath ? { approvalPresentation: { inputHints: { fields: [
+      ...inputHints.fields,
+      { path: secretPath, title: 'Saved Secret', widget: 'text', inputType: { hostType: 'savedSecretReference' } },
+    ] } } } : {}),
   } as const satisfies DeploymentActionSpec<TId>;
-  const secretPath = id === 'deployments.bindings.set' ? 'set.[].source.ref'
-    : id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' ? 'bindings.[].source.ref' : null;
-  if (!secretPath) return spec;
-  // Review describes the stored ref string; the interactive Saved Secret picker instead selects a ref/revision pair.
-  return { ...spec, approvalPresentation: { ...spec.approvalPresentation, inputHints: { fields: [
-    ...spec.inputHints.fields,
-    { path: secretPath, title: 'Saved Secret', widget: 'text', inputType: { hostType: 'savedSecretReference' } },
-  ] } } };
 }
 
 /** Storage declarations and real daemon effects share this single Action front door. */

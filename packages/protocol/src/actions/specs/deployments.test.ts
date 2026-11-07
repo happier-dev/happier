@@ -5,17 +5,28 @@ import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
 import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 import { bindHomeDomainHttpRequestV1 } from '../homeDomainHttpBinding.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../../deployments/deploymentApprovalScopeV1.js';
-import { DeploymentPublishInputV1Schema, type DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentEnvironmentCreateInputV1Schema, DeploymentTemplateInstantiateInputV1Schema, type DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
 import { formatSharedSavedSecretRefV1 } from '../../account/settings/savedSecretReferenceV1.js';
 import tweetnacl from 'tweetnacl';
-import { ApprovalRequestV2Schema, StoredApprovalRequestSchema, requiresExactDaemonApprovalReplay,
+import { ApprovalRequestV2Schema, StoredApprovalRequestSchema,
   type ApprovalRequestV2 } from '../../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition, settleApprovalRequestReplayInputs } from '../../approvals/approvalRequestTransition.js';
-import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionApi.js';
+import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor.js';
+import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1 } from '../externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope,
   signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
 
 describe('Deployment Action front door', () => {
+  it('reviews teardown volumes before confirmation and requires confirmation for removal', () => {
+    const actionId = 'deployments.teardown';
+    const spec = getActionSpec(actionId);
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    const input = { serverId: 'home', environmentId: 'production', reason: 'manual' } as const;
+    expect(resolveActionApprovalRouting({ actionId, spec, context, input: { ...input, mode: 'preview' } }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId, spec, context, input }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, input,
+      context: { ...context, presentUserConfirmation: { actionId } } }).required).toBe(false);
+  });
   it('approves retained Domain removal through durable review without prepared-content input', async () => {
     const input = { serverId: 'home', environmentId: 'production', domainId: 'domain',
       expectedRevision: 4, expectedDomainRevision: 2, requestKey: 'remove-domain' };
@@ -74,7 +85,173 @@ describe('Deployment Action front door', () => {
       expect.objectContaining({ path: 'contentBodyVersion', required: true }),
     ]));
   });
-  it.each(['prepared', 'durableAsk'] as const)('rechecks the reviewed template facts before effects through %s', async path => {
+  it.each(['prepared', 'durableAsk', 'changedCapacity'] as const)('carries catalog create review to the same apply owner without resolving defaults twice (%s)', async path => {
+    const input = { serverId: 'home', newProject: { name: 'App Project', requestKey: 'project',
+      owner: { kind: 'account', accountId: 'owner' } }, requestKey: 'app', name: 'App',
+      definition: { from: 'catalogApp', templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } }, protection: 'nonProduction', purpose: 'standard',
+      deployerMode: 'managers', firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'installed' }] } };
+    const defaults = { values: { controllerMachineId: 'runtime', buildMachineId: 'runtime', retainPreviousDeployments: 7 },
+      sources: { controllerMachineId: 'builtin', buildMachineId: 'builtin', retainPreviousDeployments: 'account' } };
+    let observedBytes: number | null = 1024;
+    const currentReview = () => ({ creationDefaults: defaults, template: { templateRef: input.definition.templateRef,
+      profiles: [], services: ['app'], bindings: [], generatedSecrets: [], domains: [], creationDefaults: defaults,
+      capacity: [{ resource: 'memoryBytes', minimumBytes: 2048, observedBytes, observedAt: 1,
+        state: observedBytes === null ? 'unknown' : 'shortfall' }] } });
+    const review = currentReview();
+    let stored: ApprovalRequestV2 | undefined;
+    let preparations = 0;
+    let effects = 0;
+    let appliedReview: unknown;
+    const executor = createActionExecutor({
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('New Project'); }),
+      prepareDeploymentEnvironmentCreate: async ({ input: authored }) => {
+        preparations++;
+        return { input: { ...authored, mode: 'apply', ...defaults.values }, preview: currentReview() };
+      },
+      // The installed host is the boundary: it must receive the exact admitted review, not rediscover it.
+      deploymentAction: async (...args: unknown[]) => {
+        appliedReview = args[3];
+        effects++;
+        return { ok: true, environmentId: 'created', revision: 1 };
+      },
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(structuredClone(request)); return { artifactId: 'review' }; },
+      approvalsGet: async () => stored ?? null,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true as const }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const prepared = await executor.prepare('deployments.environments.create', input, {
+      surface: path === 'prepared' ? 'ui' : 'cli', authority: path === 'prepared' ? 'present_user' : 'account_automation',
+      actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
+      actionRequestId: 'catalog-create', executionRunTargetMachineId: 'runtime' });
+    expect(effects).toBe(0);
+    if (path === 'prepared') {
+      expect(prepared.kind).toBe('ready');
+      if (prepared.kind !== 'ready') throw new Error('Expected reviewed catalog create');
+      expect(await prepared.invocation.run()).toMatchObject({ ok: true, result: { environmentId: 'created' } });
+      expect(preparations).toBe(1);
+    } else {
+      const open = ApprovalRequestV2Schema.parse(stored);
+      const approved = ApprovalRequestV2Schema.parse({ ...open, status: 'approved', updatedAtMs: open.updatedAtMs + 1,
+        decision: { kind: 'approve', authority: 'present_user', decidedAtMs: open.updatedAtMs + 1 } });
+      expect(decideApprovalRequestTransition(open, approved)).toMatchObject({ ok: true });
+      stored = approved;
+      if (path === 'changedCapacity') observedBytes = null;
+      await executor.replayApprovedApprovalRequest({ artifactId: 'review', callerAuthority: 'present_user',
+        currentAccount: { accountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home' } });
+      expect(stored?.execution).toMatchObject({ ok: path !== 'changedCapacity',
+        ...(path === 'changedCapacity' ? { errorCode: 'approval_stale' } : {}) });
+      if (path === 'changedCapacity') { expect(effects).toBe(0); return; }
+    }
+    expect(appliedReview).toEqual(review);
+    expect(effects).toBe(1);
+  });
+  it.each(['deployments.targets.unlink', 'deployments.environments.delete'] as const)(
+    'admits %s only through the irreversible scoped Action front door', async id => {
+      const spec = listActionSpecsForSurface('ui').find(candidate => String(candidate.id) === id);
+      expect(spec, 'Environment removal must be a registered Action').toBeDefined();
+      if (!spec) return;
+      const input = { serverId: 'home', environmentId: 'production', expectedRevision: 3, requestKey: 'remove-a',
+        detachKeepRunning: true, ...(id === 'deployments.targets.unlink'
+          ? { targetLinkId: 'runtime', expectedTargetLinkRevision: 2 } : {}) };
+      expect(spec.inputSchema.parse(input)).toEqual(input);
+      expect(spec.irreversible).toBe(true);
+      expect(spec.approvalPolicy?.uiConfirmation).toBe('policy');
+      expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface: 'agent' } }).required).toBe(true);
+      const result = { ok: true as const, environmentId: 'production', revision: 4, detached: true,
+        ...(id === 'deployments.targets.unlink' ? { targetLinkId: 'runtime', targetLinkRevision: 3 } : {}) };
+      const transported: unknown[] = [];
+      const executor = createActionExecutor({
+        resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'production' } }),
+        deploymentAction: async (actionId, admitted) => { transported.push({ actionId, input: admitted }); return result; },
+        presentUserActionConfirmation: async () => true,
+      });
+      const executed = await executor.execute(spec.id, input, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' });
+      expect(executed).toEqual({ ok: true, result });
+      expect(transported).toEqual([{ actionId: id, input }]);
+      expect(spec.inputSchema.safeParse({ ...input, volumeDisposition: [] }).success).toBe(false);
+    });
+  it('retains ordinary create preparation and exact Artifact refs through review without preparing again', async () => {
+    const input = { serverId: 'home', projectSourceId: 'source', requestKey: 'new-environment', name: 'App',
+      definition: { from: 'image', image: 'nginx:1', port: 80 }, protection: 'nonProduction', purpose: 'standard',
+      deployerMode: 'managers', firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'installed' }] } };
+    const preparedInput = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'home', projectSourceId: 'source', requestKey: 'new-environment',
+      protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+      controllerMachineId: 'project-controller', buildMachineId: 'project-builder',
+      contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+      firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'installed' }],
+        contentArtifactId: 'reviewed-link', contentHeaderVersion: 1, contentBodyVersion: 1 } });
+    const review = { creationDefaults: { values: { buildMachineId: 'project-builder', controllerMachineId: 'project-controller', retainPreviousDeployments: 0 },
+      sources: { buildMachineId: 'project', controllerMachineId: 'project', retainPreviousDeployments: 'project' } },
+      creationDefaultsBasis: { projectSourceId: 'source', sourceRevision: 1, projectDefaultsRevision: 2, content: null } };
+    let preparations = 0;
+    let reviewedInput = preparedInput;
+    const writes: unknown[] = [];
+    // Protocol's installed daemon preparation/storage ports are process boundaries.
+    // CLI coverage runs their real Source/Account/Artifact owners in both modes.
+    const executor = createActionExecutor({
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('A new Environment has no previous record'); }),
+      prepareDeploymentEnvironmentCreate: async () => {
+        preparations += 1;
+        return { input: reviewedInput, preview: review };
+      },
+      deploymentAction: async (_actionId, admitted) => {
+        writes.push(admitted);
+        return { ok: true, environmentId: 'created', revision: 1 };
+      },
+    });
+    const prepared = await executor.prepare('deployments.environments.create', input, { surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' });
+    expect(prepared.kind).toBe('ready');
+    expect(preparations).toBe(1);
+    expect(writes).toEqual([]);
+    if (prepared.kind !== 'ready') throw new Error('Expected reviewed creation');
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true });
+    expect(preparations).toBe(1);
+    expect(writes).toEqual([preparedInput]);
+    reviewedInput = { ...preparedInput, projectSourceId: 'foreign-project' };
+    await expect(executor.prepare('deployments.environments.create', input, { surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' })).resolves.toMatchObject({
+        kind: 'settled', result: { ok: false, errorCode: 'approval_stale' },
+      });
+    expect(writes).toEqual([preparedInput]);
+  });
+
+  it('offers catalog Publish preparation as a read-only Action without deployment approval', () => {
+    const spec = getActionSpec('deployments.publish.prepare');
+    expect(spec.bindings?.sdkMethod).toBe('deployments.preparePublishCatalog');
+    expect(spec.sideEffectClass).toBe('read');
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface: 'agent' } }).required).toBe(false);
+    expect(listActionSpecsForSurface('mcp').some(action => action.id === spec.id)).toBe(true);
+    expect(spec.inputSchema.safeParse({ serverId: 'home', machineId: 'target', installationId: 'installed',
+      projectSourceId: 'source', sourceRevision: 1, templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } }).success).toBe(true);
+  });
+  it.each(['deploy', 'target', 'authoredDeploy'] as const)('refuses template preparation that changes an unreviewed %s operand', async mutation => {
+    const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', serverId: 'home', machineId: 'target', projectSourceId: 'source',
+      templateRef: { sourceId: 'apps', itemId: 'app', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'create', name: 'App', requestKey: 'create-app', protection: 'nonProduction',
+        purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target' },
+      target: { kind: 'new', installationId: 'installed' }, destination: { kind: 'stored' }, bindings: [],
+      ...(mutation === 'authoredDeploy' ? { deploy: { requestKey: 'authored' } } : {}) });
+    // Installed Machine preparation is the external boundary; it may only add the deploy it reviewed.
+    const executor = createActionExecutor({
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('New Environment'); }),
+      prepareDeploymentTemplateInstantiation: async ({ input: admitted }) => ({
+        input: { ...admitted, ...(mutation === 'target' ? { machineId: 'another' } : {}),
+          deploy: { requestKey: mutation === 'deploy' ? 'unreviewed' : 'reviewed' } },
+        preview: { templateRef: admitted.templateRef, profiles: [], services: ['web'], bindings: [], generatedSecrets: [], domains: [],
+          deploy: { requestKey: 'reviewed' } },
+      }),
+      deploymentTemplateInstantiate: async () => { throw new Error('Unreviewed effects must not run'); },
+    } as ActionExecutorDeps);
+    expect(await executor.prepare('deployments.templates.instantiate', input, { surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner' })).toMatchObject({
+      kind: 'settled', result: { ok: false, errorCode: 'approval_stale' },
+    });
+  });
+  it.each(['prepared', 'durableAsk'] as const)('normalizes reviewed template deployment and rechecks facts before effects through %s', async path => {
     const input = { mode: 'apply', serverId: 'home', machineId: 'target', projectSourceId: 'source',
       templateRef: { sourceId: 'apps', itemId: 'database', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
       environment: { kind: 'create', name: 'Database', requestKey: 'create-database', protection: 'nonProduction',
@@ -91,8 +268,9 @@ describe('Deployment Action front door', () => {
       // registry, defaults reader and template preparation behind those ports.
       const deps = {
         resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('New Environment'); }),
-        prepareDeploymentTemplateInstantiation: async ({ input: admitted }) => ({ input: admitted, preview: {
-          templateRef: admitted.templateRef, profiles: [], services: ['db'], bindings: [], generatedSecrets: [], domains: [],
+        prepareDeploymentTemplateInstantiation: async ({ input: admitted }) => ({
+          input: { ...admitted, deploy: { requestKey: 'reviewed-deploy' } }, preview: {
+          deploy: { requestKey: 'reviewed-deploy' }, templateRef: admitted.templateRef, profiles: [], services: ['db'], bindings: [], generatedSecrets: [], domains: [],
           creationDefaults: { values: { retainPreviousDeployments: 0 }, sources: { retainPreviousDeployments: 'project' } },
           creationDefaultsBasis: { projectSourceId: 'source', sourceRevision: 1, projectDefaultsRevision: defaultsRevision, content: null },
           capacity: [{ resource: 'memoryBytes', minimumBytes: 2048, observedBytes, observedAt,
@@ -173,8 +351,7 @@ describe('Deployment Action front door', () => {
     const originalInput = { serverId: 'home', environmentId: 'production', expectedRevision: 4,
       targetLinkId: 'production-runtime', expectedTargetLinkRevision: 2, requestKey: 'promote-a',
       contentArtifactId: 'original-receipt', contentHeaderVersion: 1, contentBodyVersion: 1,
-      sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-a', sourceExpectedRevision: 3,
-      sourceExpectedDeploymentRevision: 2, artifact: 'image', destinationContent: {
+      sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-a', artifact: 'image', destinationContent: {
         contentArtifactId: 'original-destination', contentHeaderVersion: 1, contentBodyVersion: 1 } };
     const preparedInput = { ...originalInput, contentArtifactId: 'reviewed-receipt', destinationContent: {
       contentArtifactId: 'reviewed-destination', contentHeaderVersion: 1, contentBodyVersion: 1 } };
@@ -183,13 +360,19 @@ describe('Deployment Action front door', () => {
     const caller = { kind: 'session' as const, sessionId: 'proposer', starterDepth: 0, turnDepth: 0 };
     const sessionActionOrigin = { v: 1, caller, sourceTurnId: 'proposing-turn', callerPermissionMode: 'default',
       requestId: envelope.requestId };
+    const serverIdentityId = `srv_${'a'.repeat(32)}`;
+    const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-root', binding: {
       accountId: 'requester', authentication: { kind: actor === 'session' ? 'account' : 'terminal', tokenEpoch: 1 }, custodianAccountId: 'requester',
-      serverIdentityId: `srv_${'a'.repeat(32)}`, machineId: target.machineId, installationId: 'controller-installation',
+      serverIdentityId, machineId: target.machineId, installationId: 'controller-installation',
       accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
       ...(actor === 'session' ? { sessionActionOrigin,
         sessionActionSource: { machineId: target.machineId, installationId: 'controller-installation' } } : {}),
-      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target } });
+      requestEnvelopeDigest, target,
+      deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'requester', serverIdentityId,
+        actionId, requestId: envelope.requestId, requestEnvelopeDigest, environmentId: originalInput.environmentId,
+        source: { id: 'destination-source', revision: 1 } }),
+    } });
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(27));
     let stored: ApprovalRequestV2 | undefined;
     // Only Artifact persistence is substituted. Origin capture, input signing,
@@ -220,7 +403,7 @@ describe('Deployment Action front door', () => {
       decision: { kind: 'approve', authority: 'present_user', decidedAtMs: open.updatedAtMs + 1 } });
     expect(decideApprovalRequestTransition(open, approved)).toMatchObject({ ok: true });
     const resumed = StoredApprovalRequestSchema.parse(JSON.parse(JSON.stringify(approved)));
-    expect(requiresExactDaemonApprovalReplay(resumed)).toBe(true);
+    expect(resolveApprovalExecutor(resumed)).toEqual({ kind: 'daemon', machineId: target.machineId });
     expect(resumed.actionArgs).toEqual(preparedInput);
     const origin = resumed.v === 2 ? resumed.executionOriginV1 : undefined;
     expect(origin?.originalActionEnvelope).toEqual(envelope);
@@ -240,40 +423,6 @@ describe('Deployment Action front door', () => {
       execution: { ok: false, executedAtMs: resumed.updatedAtMs + 1, errorCode: 'target_unavailable', error: 'target_unavailable' } };
     expect(decideApprovalRequestTransition(resumed, settled)).toMatchObject({ ok: true });
     expect(settled.v === 2 ? settled.executionOriginV1.originalActionEnvelope : undefined).toBeUndefined();
-  });
-
-  it('prepares one exact Publish through DF host admission before handing off to the Workflow boundary', async () => {
-    const content = { contentArtifactId: 'reviewed', contentHeaderVersion: 1, contentBodyVersion: 1 };
-    const input = { serverId: 'home', requestKey: 'publish-a', hostMachineId: 'parent-host',
-      project: { kind: 'existing', projectSourceId: 'source', sourceRevision: 1 },
-      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
-      destination: { kind: 'ownServer', machines: [{ machineId: 'runtime', installationId: 'installed' }],
-        controllerMachineId: 'controller', buildMachineId: 'builder' },
-      environment: { kind: 'existing', environmentId: 'staging', expectedRevision: 1 },
-      preparedChildren: { deploy: { serverId: 'home', environmentId: 'staging', expectedRevision: 1,
-        requestKey: 'deploy-a', targetLinkId: 'runtime-link', expectedTargetLinkRevision: 1, ...content } } };
-    const admitted = DeploymentPublishInputV1Schema.parse(input);
-    const receipt = { kind: 'started' as const, operationRef: { serverId: 'home', machineId: 'parent-host', operationId: 'workflow-parent' } };
-    let dispatched: unknown;
-    let createdHost = false;
-    // The installed Workflow/Machine adapter is the process boundary. The real
-    // schema, DF host admission, generic approval and semantic dispatcher run here.
-    const deps = {
-      prepareDeploymentPublish: async () => ({ input: admitted, preview: { summary: 'Reviewed publish' },
-        host: { machines: [{ machineId: 'parent-host', online: true }], createdMachineIds: createdHost ? ['parent-host'] : [] } }),
-      deploymentPublish: async (value: unknown) => { dispatched = value; return receipt; },
-    } satisfies Pick<ActionExecutorDeps, 'prepareDeploymentPublish' | 'deploymentPublish'>;
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
-    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', runtimeAccountId: 'account',
-      actionCaller: { kind: 'host' as const } };
-    expect(await executor.execute('deployments.publish', input, context)).toEqual({ ok: true, result: receipt });
-    expect(dispatched).toEqual(input);
-    createdHost = true;
-    dispatched = undefined;
-    expect(await executor.execute('deployments.publish', input, context)).toMatchObject({ ok: false, errorCode: 'machine_unavailable' });
-    expect(dispatched).toBeUndefined();
-    expect(await createActionExecutor({} as ActionExecutorDeps).execute('deployments.publish', input, context))
-      .toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
   });
 
   it('hands off personal Prepare only through authenticated workspace context, without a child approval waiver', async () => {
@@ -307,23 +456,6 @@ describe('Deployment Action front door', () => {
     expect(await executor.execute('deployments.prepare', input, { ...context, runtimeAccountId: undefined }))
       .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     expect(handedOff).toBeUndefined();
-  });
-
-  it('registers one reviewed Publish composition without a storage transport', () => {
-    const spec = listActionSpecsForSurface('agent').find(row => String(row.id) === 'deployments.publish');
-    expect(spec, 'P40 registers Publish; P60 composes through the existing Workflow owner').toBeDefined();
-    if (!spec) return;
-    expect(spec).toMatchObject({ safety: 'danger', sideEffectClass: 'write', executionPlacement: 'account',
-      approvalPolicy: { uiConfirmation: 'direct' } });
-    expect(spec.serverTransport).toBeUndefined();
-    expect(spec.operation).toMatchObject({ version: 1, visibility: 'activity', progress: 'reported' });
-    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface: 'agent' } }).required).toBe(true);
-    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface: 'ui',
-      authority: 'present_user', actionCaller: { kind: 'host' } } }).required).toBe(false);
-    expect(spec.inputSchema.safeParse({ actions: [{ actionId: 'anything', input: {} }], approved: true }).success).toBe(false);
-    for (const surface of ['ui', 'cli', 'agent', 'mcp'] as const) {
-      expect(listActionSpecsForSurface(surface).filter(row => String(row.id) === 'deployments.publish')).toHaveLength(1);
-    }
   });
 
   it('registers bounded native reads without a server-storage route or default approval', () => {
@@ -426,8 +558,7 @@ describe('Deployment Action front door', () => {
     const input = { serverId: 'home', environmentId: 'production', expectedRevision: 4,
       targetLinkId: 'production-runtime', expectedTargetLinkRevision: 2, requestKey: 'promote-a',
       contentArtifactId: 'promoted-receipt', contentHeaderVersion: 1, contentBodyVersion: 1,
-      sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-a', sourceExpectedRevision: 3,
-      sourceExpectedDeploymentRevision: 2, artifact: 'image', destinationContent: {
+      sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-a', artifact: 'image', destinationContent: {
         contentArtifactId: 'production-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } };
     expect(spec!.inputSchema.parse(input)).toEqual(input);
     expect(spec!.inputSchema.safeParse({ ...input, destinationContent: undefined }).success).toBe(false);
@@ -479,6 +610,28 @@ describe('Deployment Action front door', () => {
       serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', actionRequestId: 'explicit-deploy',
       actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
     expect(persisted).toMatchObject({ actionArgs: reviewed, preview: { deploymentReview: { images: ['pinned-image'] } } });
+  });
+  it.each([true, false])('prepares a simple promotion once and requires reviewed destination references (prepared=%s)', async prepared => {
+    const input = { serverId: 'home', environmentId: 'production', sourceEnvironmentId: 'staging',
+      sourceDeploymentId: 'retained-source', artifact: 'image', requestKey: 'promote-simple' };
+    const reviewed = { ...input, expectedRevision: 4, targetLinkId: 'runtime', expectedTargetLinkRevision: 2,
+      contentArtifactId: 'reviewed-receipt', contentHeaderVersion: 1, contentBodyVersion: 2,
+      destinationContent: { contentArtifactId: 'reviewed-destination', contentHeaderVersion: 1, contentBodyVersion: 1 } };
+    let persisted: unknown;
+    // Native preparation and durable approval storage are the host/network boundaries.
+    const executor = createActionExecutor({
+      prepareDeploymentAction: async request => {
+        expect(request.input).toEqual(input);
+        return { input: prepared ? reviewed : input, preview: { promotion: { artifact: 'image' } } };
+      },
+      approvalsCreate: async ({ request }) => { persisted = request; return { artifactId: 'promotion-approval' }; },
+    } as ActionExecutorDeps);
+    expect(await executor.execute('approval.request.create', { actionId: 'deployments.promote', actionArgs: input,
+      summary: 'Promote', createdBy: { surface: 'system' } }, { surface: 'ui', authority: 'present_user',
+      serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', actionRequestId: 'explicit-promote',
+      actionCaller: { kind: 'host' } })).toMatchObject(prepared ? { ok: true } : { ok: false, errorCode: 'invalid_parameters' });
+    if (prepared) expect(persisted).toMatchObject({ actionArgs: reviewed, preview: { deploymentReview: { promotion: { artifact: 'image' } } } });
+    else expect(persisted).toBeUndefined();
   });
   it('retains the installed host reviewed Artifact before effect admission', async () => {
     const input = { serverId: 'home', environmentId: 'staging', expectedRevision: 1, requestKey: 'deploy-a',
