@@ -1,6 +1,7 @@
 import { formatReleaseChannel } from '@/ui/format/releaseChannel';
 import { code, compactHomePath, glyph, sectionHeader, severity } from '@/ui/format/styles';
 import type { CurrentCliInfo } from '@/diagnostics/doctorRepair';
+import { configuration } from '@/configuration';
 
 import { SECTION_CURRENT_CLI } from '../prompts/_copy';
 
@@ -16,6 +17,9 @@ export function renderCurrentCli(cli: CurrentCliInfo): string[] {
     ? `${cli.shim} → ${compactedPath}`
     : compactedPath ?? '';
   lines.push(`  ${summary}   ${severity.info(shimHint)}`);
+
+  const compactedHomeDir = compactHomePath(configuration.happyHomeDir);
+  lines.push(`  ${severity.info(`Profile: ${configuration.activeServerId}   Home: ${compactedHomeDir}`)}`);
 
   if (cli.pathWinnerResolvesToThisBinary === false && cli.pathWinnerShim) {
     lines.push(`  ${glyph.action()} ${severity.action('`happier` on your PATH resolves to a different install')}`);
