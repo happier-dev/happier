@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -8,6 +9,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import type { PluginUiContextEnrichmentV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
@@ -35,10 +37,11 @@ import {
 } from '../actions/actionsCatalogProtocol.js';
 import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
-import { readTriageSavedViewsForSurface } from '../actions/savedViews.js';
+import { administerTriageSavedView, readTriageSavedViewsForSurface } from '../actions/savedViews.js';
 import {
     TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1,
     TriageReadSavedViewsInputV1Schema,
+    TriageAdministerSavedViewInputV1Schema,
 } from '../actions/savedViewsProtocol.js';
 import { listTriagePinnedEntries } from '../actions/userMarks.js';
 import {
@@ -66,6 +69,8 @@ import { TRIAGE_UI_TRANSLATIONS } from './translations.js';
 import { filterFacetOption } from './shell/toolbarMenus.test-support.js';
 import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import { invokeTriageMountedUiAction } from './mountedActions.js';
+import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 import {
     buildTriageRouteSubPathV1,
     parseTriageRouteSubPathV1,
@@ -169,7 +174,7 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
 
     const scans = new Map<object, ScanFn>();
     const scanCalls = { count: 0 };
-    const state = { sourceAFails: false, sourceBFails: false };
+    const state = { sourceAFails: false, sourceBFails: false, savedViewsUnavailable: false };
 
     function admittedSource(
         source: Readonly<{ pluginId: string; localId: string }>,
@@ -274,6 +279,7 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
         // The shell also reads the reader's saved views. It is Account
         // Account KV rather than a Collection, and it reaches no source either.
         if (String(request.action) === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
+            if (state.savedViewsUnavailable) throw new PluginError({ code: 'server_unavailable', retryable: true });
             return await readTriageSavedViewsForSurface(
                 TriageReadSavedViewsInputV1Schema.parse(request.input),
                 { catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1), mintViewId: () => 'unused' },
@@ -312,6 +318,8 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
         ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         publishedContexts,
         settledLocations,
+        accountKv,
+        admitted,
         scanCalls,
         state,
         unroutedActions,
@@ -320,6 +328,17 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
 
 const mounted: PluginUiTestkit[] = [];
 const scopeByHost = new WeakMap<object, PluginUiEphemeralSharedScope>();
+
+function sourceContextFixture(harness: ReturnType<typeof createHarness>) {
+    return createSurfaceContextFixture({ targetedContributions: {
+        target: { pluginId: PLUGIN_MANIFEST.id, occurrenceId: 'triage-generation',
+            sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
+        points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol: {
+            id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+        }, contributions: harness.admitted.map(source => ({ contributor: source.contributor,
+            protocol: source.protocol, descriptor: source.descriptor, operations: [], surfaces: [] })) }] }],
+    } });
+}
 
 async function mountSurface(
     surface: RenderSurface,
@@ -347,9 +366,15 @@ async function mountSurface(
                 publishCurrentUiContext: ({ enrichment }) => {
                     harness.publishedContexts.push(enrichment);
                 },
-                executeAction: async ({ action, input }) => (
-                    await harness.executeAction({ action, input })
-                ),
+                executeAction: async ({ action, input }) => {
+                    if (action === 'ui/mounted-v1') return await createTriageMountedUiActionHandler()(TriageMountedUiInputV1Schema.parse(input), {
+                        plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                        contribution: { id: 'ui/mounted-v1', qualifiedId: `${PLUGIN_MANIFEST.id}/actions/ui/mounted-v1` },
+                        invocationSurface: 'ui', signal: new AbortController().signal,
+                        ui: fixture.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+                    });
+                    return await harness.executeAction({ action, input });
+                },
                 // Lens edits are route-owned. These cases exercise list/window
                 // projection, so let the host settle their canonical location;
                 // rejection/rollback is covered at the mounted route boundary.
@@ -425,6 +450,73 @@ const SOURCE_REACHING_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 
 describe('the mounted PRs & Issues surface', () => {
+    it('selects an externally created saved view through the mounted Action using the current Account catalog', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'external-saved-view', sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        const catalogReads = () => harness.actionCalls.filter(action => action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1).length;
+        const initialReads = catalogReads();
+        expect(initialReads).toBeGreaterThan(0);
+        const detail = harness.publishedContexts.at(-1)?.detail;
+        if (!detail || typeof detail !== 'object' || Array.isArray(detail)) throw new Error('Expected current list context');
+        const address = detail.mountedAction;
+        if (!address || typeof address !== 'object' || Array.isArray(address) || typeof address.mountId !== 'string') {
+            throw new Error('Expected mounted list Action address');
+        }
+        const mountId = address.mountId;
+        const select = async (viewId: string | null) => await shell.context.hostApi.executeAction('ui/mounted-v1', {
+            mountId, operation: { kind: 'selectSavedView', viewId },
+        });
+        const viewId = '00000001-0000-4000-8000-000000000000';
+        const externalWrite = async (kind: 'create' | 'update' | 'delete', query = 'normalizer') => {
+            const input = { v: 1, kind, expectedRevision: harness.accountKv.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+                ...(kind === 'create' ? {} : { viewId }),
+                ...(kind === 'delete' ? {} : { label: 'External view', query,
+                    filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'newest',
+                    smartPolicy: TRIAGE_ROUTE_DEFAULT_LENS_V1.smartPolicy }) };
+            return await administerTriageSavedView(TriageAdministerSavedViewInputV1Schema.parse(input), {
+                catalog: harness.accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1), mintViewId: () => viewId,
+            });
+        };
+        expect((await externalWrite('create')).status).toBe('applied');
+        const writesAfterCreate = harness.accountKv.setCallCount();
+        // An external write is not a local subscription event. Selection is
+        // the explicit demand; merely retaining the mount starts no new read.
+        expect(catalogReads()).toBe(initialReads);
+        await act(async () => { expect(await select(viewId)).toEqual({ status: 'applied' }); });
+        await settleWindow('view', shell);
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ selectedViewId: viewId, query: 'normalizer' });
+        expect(catalogReads() - initialReads).toBe(1);
+        expect(harness.accountKv.setCallCount()).toBe(writesAfterCreate);
+
+        expect((await externalWrite('update', 'Older')).status).toBe('applied');
+        const readsBeforeUpdate = catalogReads();
+        const writesAfterUpdate = harness.accountKv.setCallCount();
+        await act(async () => { expect(await select(viewId)).toEqual({ status: 'applied' }); });
+        await settleWindow('view', shell);
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ selectedViewId: viewId, query: 'Older' });
+        expect(catalogReads() - readsBeforeUpdate).toBe(1);
+        expect(harness.accountKv.setCallCount()).toBe(writesAfterUpdate);
+
+        harness.state.savedViewsUnavailable = true;
+        const beforeFailedRead = { reads: catalogReads(), locations: harness.settledLocations.length };
+        await act(async () => { expect(await select(viewId)).toEqual({ status: 'unavailable' }); });
+        expect(catalogReads() - beforeFailedRead.reads).toBe(1);
+        expect(harness.settledLocations).toHaveLength(beforeFailedRead.locations);
+        expect(harness.accountKv.setCallCount()).toBe(writesAfterUpdate);
+        harness.state.savedViewsUnavailable = false;
+
+        expect((await externalWrite('delete')).status).toBe('applied');
+        const readsBeforeDelete = catalogReads();
+        await act(async () => { expect(await select(viewId)).toEqual({ status: 'unavailable' }); });
+        expect(catalogReads() - readsBeforeDelete).toBe(1);
+        const readsBeforeClear = catalogReads();
+        await act(async () => { expect(await select(null)).toEqual({ status: 'applied' }); });
+        expect(catalogReads()).toBe(readsBeforeClear);
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.selectedViewId).toBeNull();
+    });
+
+
     it('opens New task as a draft in the detail\'s place without a second list mount or a provider write', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'tasks-create-entry', {}, { subPath: 'tasks,everyone' });

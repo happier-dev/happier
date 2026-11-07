@@ -52,6 +52,8 @@ export type TriageMountedSavedViewsV1 = Readonly<{
   unavailableReason: string | null;
   /** Retry the authoritative Account-KV read after a transient failure. */
   retry(): void;
+  /** Read the current catalog for an explicit selection; refusals never return the retained set. */
+  refresh(signal: AbortSignal): Promise<CorpusSavedViewsReadV1 | null>;
   /**
    * Run one explicit create/rename/update/delete/select.
    *
@@ -90,21 +92,24 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   // Reads settle out of order; only the newest one may publish.
   const generation = useRef(0);
 
-  const read = useCallback(async (signal: AbortSignal): Promise<void> => {
-    if (readiness.pending || readiness.ready === false) return;
+  const read = useCallback(async (signal: AbortSignal): Promise<CorpusSavedViewsReadV1 | null> => {
+    if (readiness.pending || readiness.ready === false || signal.aborted) return null;
     generation.current += 1;
     const current = generation.current;
     try {
       const projection = await transport.read({ signal });
-      if (signal.aborted || current !== generation.current) return;
-      setSaved(readTriageSavedViewsProjectionV1(projection));
+      if (signal.aborted || current !== generation.current) return null;
+      const saved = readTriageSavedViewsProjectionV1(projection);
+      setSaved(saved);
       setRevision(projection.revision);
       setUnavailableReason(null);
+      return saved;
     } catch {
-      if (signal.aborted || current !== generation.current) return;
+      if (signal.aborted || current !== generation.current) return null;
       // The retained set stays on screen: it is the last thing the Account
       // actually said, and blanking it would read as "you saved no views".
       setUnavailableReason(text('plugins.triage.surface.views.unavailable', UNAVAILABLE_REASON));
+      return null;
     }
   }, [text, transport, readiness.pending, readiness.ready]);
 
@@ -185,8 +190,9 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
     notice,
     unavailableReason: readiness.pending ? null : unavailableReason,
     retry,
+    refresh: read,
     administer,
-  }), [administer, busy, notice, retry, revision, saved, unavailableReason, readiness.pending]);
+  }), [administer, busy, notice, read, retry, revision, saved, unavailableReason, readiness.pending]);
 }
 
 /**
