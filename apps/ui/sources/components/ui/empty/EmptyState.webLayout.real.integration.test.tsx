@@ -146,3 +146,35 @@ it('puts a list line\'s links under its sentence on the sentence\'s edge, not be
         host.remove();
     }
 });
+
+it('starts a wrapped line link\'s words on the line\'s text edge in a narrow sidebar column', async () => {
+    // Coordination visual acceptance 11-07: "Search older sessions" stood 4 px in from "No matches in loaded sessions".
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(
+            <View style={{ width: 236 }}>
+                <EmptyState
+                    layout="line"
+                    testID="line"
+                    title="No matches in loaded sessions"
+                    titleTestID="line-title"
+                    primaryAction={{ label: 'Search older sessions', onPress: () => {}, testID: 'line-link' }}
+                />
+            </View>,
+        ));
+        const layout = await measureWebLayout(host, {
+            viewport: { width: 1200, height: 900 },
+            settle: async replay => { await act(replay); },
+        });
+        const words = layout.rect('line-title');
+        const label = layout.rect('line-link:label');
+        // Wrapped beneath the words, the link's own words start where the line's words start.
+        expect(label.top).toBeGreaterThanOrEqual(words.bottom - 1);
+        expect(Math.abs(label.left - words.left)).toBeLessThanOrEqual(0.5);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});

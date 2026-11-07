@@ -113,12 +113,13 @@ type EmptyStateProps = Readonly<{
     paddingVertical?: number;
 }>;
 
-const LINE_LINK_HIT_REACH = { left: 4, right: 4 } as const;
+/** Half the gap between two line links: a finger reaches each one without padding that moves its words. */
+const LINE_LINK_HIT_REACH = { left: 8, right: 8 } as const;
 
 const EmptyStateLineLink = React.memo(function EmptyStateLineLink(props: Readonly<{ link: EmptyStatePrimaryAction }>) {
     // The link draws as its text line; a finger reaches the touch target through the shared hit area
     // (sideways half the gap to the next link).
-    const hitArea = useHappierHitArea({ restingStyle: () => null, hitReach: LINE_LINK_HIT_REACH, hitSlop: 6 });
+    const hitArea = useHappierHitArea({ restingStyle: () => null, hitReach: LINE_LINK_HIT_REACH });
     return (
         <Pressable
             testID={props.link.testID}
@@ -132,7 +133,7 @@ const EmptyStateLineLink = React.memo(function EmptyStateLineLink(props: Readonl
             style={stylesheet.lineLink}
         >
             {hitArea.frame}
-            <Text style={stylesheet.lineLinkLabel}>{props.link.label}</Text>
+            <Text testID={props.link.testID === undefined ? undefined : `${props.link.testID}:label`} style={stylesheet.lineLinkLabel}>{props.link.label}</Text>
         </Pressable>
     );
 });
@@ -190,7 +191,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                 action={lineAction ?? undefined}
                 density={props.lineDensity}
             >
-                <Text style={stylesheet.lineText}>
+                <Text testID={props.titleTestID} style={stylesheet.lineText}>
                     {props.title}
                     {sentence ? ' · ' : null}
                     {sentence ? <Text testID={props.subtitleTestID} style={stylesheet.lineText}>{sentence}</Text> : null}
@@ -336,11 +337,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     lineLinks: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s8,
+        gap: theme.space.s16,
     },
+    // No padding of its own: its words start on the line's text edge when it wraps beneath them (the hit area
+    // gives a finger its reach).
     lineLink: {
         justifyContent: 'center',
-        paddingHorizontal: theme.space.s4,
     },
     // A quiet inline link: primary ink with an underline, not a button and not an accent colour.
     lineLinkLabel: {
