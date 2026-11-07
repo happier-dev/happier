@@ -8,6 +8,16 @@ import { ForgeCiElapsedText } from './ForgeCiElapsedText.js';
 import { formatForgeCiDurationV1, readForgeCiElapsedMsV1, shortForgeCiShaV1 } from './format.js';
 
 /** The workflow-and-number identity every CI surface uses for a run ("CI #4820", or "#4820" without a name). */
+/**
+ * The run's number under its title, naming the workflow only where the title does not already: a run titled
+ * with its workflow's name reads "#7", one with its own title "Deploy #7", and an untitled run, whose title is
+ * already "Deploy #7", none.
+ */
+export function forgeCiRunNumberFactV1(run: ForgeCiRunV1, workflowName?: string | null): string | null {
+  if (run.title === undefined) return null;
+  return workflowName && run.title !== workflowName ? forgeCiRunLabelV1(run, workflowName) : forgeCiRunLabelV1(run, null);
+}
+
 export function forgeCiRunLabelV1(run: ForgeCiRunV1, workflowName?: string | null): string {
   const number = run.number === undefined ? `#${run.ref.runId}` : `#${run.number}`;
   return workflowName ? `${workflowName} ${number}` : number;
@@ -51,7 +61,7 @@ export function ForgeCiRunRow({ run, workflowName, reason, selected, onPress, de
   const t = usePluginTranslation();
   const { locale } = useSurfaceContext();
   const status = presentForgeCiStatusV1(run.state);
-  const facts = [forgeCiRunLabelV1(run, workflowName), run.headRef, shortForgeCiShaV1(run.headSha)].filter((part): part is string => !!part);
+  const facts = [forgeCiRunNumberFactV1(run, workflowName), run.headRef, shortForgeCiShaV1(run.headSha)].filter((part): part is string => !!part);
   const running = run.state.phase === 'running';
   const time = running ? undefined : settledTime(run, locale);
   return (

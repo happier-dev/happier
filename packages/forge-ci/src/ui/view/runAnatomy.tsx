@@ -12,7 +12,7 @@ import type { ForgeCiRunV1 } from '@happier-dev/triage-protocol/ci/v1';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 import { presentForgeCiStatusV1 } from './ciStatus.js';
 import { ForgeCiElapsedText } from './ForgeCiElapsedText.js';
-import { forgeCiRunLabelV1 } from './ForgeCiRows.js';
+import { forgeCiRunLabelV1, forgeCiRunNumberFactV1 } from './ForgeCiRows.js';
 
 export type ForgeCiRunAnatomyOptionsV1 = Readonly<{
   /** Workflow display names by workflow id, when the host has them; runs carry only the workflow reference. */
@@ -88,7 +88,7 @@ export function useForgeCiRunAnatomyV1({
       },
       title: (run) => run.title ?? forgeCiRunLabelV1(run, name(run)),
       description: (run) =>
-        [forgeCiRunLabelV1(run, name(run)), run.headRef]
+        [forgeCiRunNumberFactV1(run, name(run)), run.headRef]
           .filter(Boolean)
           .join(' · '),
       reason: (run) => {
