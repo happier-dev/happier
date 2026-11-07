@@ -34,7 +34,7 @@ const { Item } = await import('@/components/ui/lists/Item');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } = await import('./deploymentPlatformTargetPlugin.testFixture');
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
-const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
 const { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
 await import('@/sync/ops/actions/defaultActionExecutor');
 
@@ -62,21 +62,15 @@ describe('Environment draft Machine Home', () => {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
         createdByAccountId: 'alice', defaultRef: 'main' } } });
-      const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-      const runtime = createPlainMachineRowFixture({ id: 'runtime', accountId: 'alice' });
-      homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === runtime.id ? runtime : null).json(),
-      }) });
-      homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(envelope.input);
-        return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-          execution: { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' } } };
-      } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+          return { ok: false, error: 'deployment_conflict' };
+        } });
       // Another answering Machine comes first; a copy still starts on the source's own Machine.
       await publishMachineInventoryForTest(account.accountLifetime.scope,
-        [createMachineFixture({ id: 'elsewhere', installationId: 'elsewhere-installation' }),
-          createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+        [createMachineFixture({ id: 'elsewhere', installationId: 'elsewhere-installation', activeAt: Date.now() }),
+          createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')} copyFrom={detail}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
@@ -104,7 +98,9 @@ describe('Environment draft Machine Home', () => {
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);
       await screen.pressByTestIdAsync('project-deployments.draft.refused.details');
       expect(screen.getTextContent()).toContain('deployment_conflict');
-      expect(screen.getTextContent()).toContain('Refresh');
+      // The typed recovery owner's remedy for this refusal, not a draft-local copy.
+      const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+      expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1('deployment_conflict')!.remedy);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -132,33 +128,30 @@ describe('Environment draft Machine Home', () => {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
         createdByAccountId: 'alice', defaultRef: 'main' } } });
-      const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-      const runtime = createPlainMachineRowFixture({ id: 'runtime', accountId: 'alice' });
-      homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === runtime.id ? runtime : null).json(),
-      }) });
-      homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        if (typeof envelope.input === 'object' && envelope.input !== null && 'mode' in envelope.input) {
-          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(envelope.input);
-          const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview',
-            input: { serverId, projectSourceId: 'source-app', requestKey: 'copy-review', protection: 'nonProduction',
-              purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'runtime',
-              contentArtifactId: 'copied-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
-            review: { creationDefaults: { values: { controllerMachineId: 'runtime', buildMachineId: 'runtime', retainPreviousDeployments: 5 },
-              sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
-              creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
-          return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-            execution: { ok: true, result: preview } } };
-        }
-        creates++;
-        const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'bindings',
-          errorCode: 'action_forbidden', environmentId: 'copied-environment', revision: 1, savedSecrets: [] });
-        return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-          execution: { ok: false, errorCode: 'action_forbidden', error: 'action_forbidden', details: partial } } };
-      } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        execute: input => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+            const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview',
+              input: { serverId, projectSourceId: 'source-app', requestKey: 'copy-review', protection: 'nonProduction',
+                purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'runtime',
+                contentArtifactId: 'copied-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
+              review: { creationDefaults: { values: { controllerMachineId: 'runtime', buildMachineId: 'runtime', retainPreviousDeployments: 5 },
+                sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
+                creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
+            return preview;
+          }
+          creates++;
+          const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'bindings',
+            errorCode: 'action_forbidden', environmentId: 'copied-environment', revision: 1, savedSecrets: [] });
+          return partial;
+        }, failure: result => {
+          const partial = DeploymentTemplateInstantiationPartialV1Schema.safeParse(result);
+          return partial.success ? { errorCode: partial.data.errorCode, error: partial.data.errorCode, details: partial.data } : null;
+        } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
-        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')} copyFrom={detail}
         onApprovalRequested={() => {}} onSaved={(...args) => saved.push(args)} onDiscard={() => {}} />);
@@ -254,45 +247,40 @@ describe('Environment draft Machine Home', () => {
       homes.answer(serverId, 'GET /v1/deployments/environments/created-environment', {
         status: 403, body: { ok: false, error: 'deployment_access_denied' },
       });
-      const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-      const controllers = ['runtime', 'project-controller', 'account-controller'].map(id => createPlainMachineRowFixture({ id, accountId: 'alice' }));
-      homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => controllers.find(machine => machine.id === id) ?? null).json(),
-      }) });
-      homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        if (typeof envelope.input === 'object' && envelope.input !== null && 'mode' in envelope.input) {
-          const authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(envelope.input);
-          expect(authored).toMatchObject({ mode: 'preview', name: 'Created app',
-            definition: { from: 'repository', ref: 'main', compose: { path: 'compose.yaml' } },
-            firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } });
-          expect(authored).not.toHaveProperty('controllerMachineId');
-          expect(authored).not.toHaveProperty('buildMachineId');
-          expect(authored).not.toHaveProperty('retainPreviousDeployments');
-          expect(envelope.target).toEqual({ kind: 'machine', machineId: 'runtime' });
-          previewRequests++;
-          // The daemon response is a genuine system boundary. Its canonical
-          // defaults resolution/Team exclusion is exercised by D1's CLI owners.
-          const { mode: _mode, name: _name, definition: _definition, firstTargetLink, ...selectors } = authored;
-          const source = projectDefaults ? 'project' : owner.kind === 'team' ? 'builtin' : 'account';
-          const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
-            ...selectors, controllerMachineId: expected.controllerMachineId, buildMachineId: expected.buildMachineId,
-            contentArtifactId: `host-prepared-content-${previewRequests}`, contentHeaderVersion: 2, contentBodyVersion: 3,
-            firstTargetLink: { ...firstTargetLink, contentArtifactId: `host-prepared-link-${previewRequests}`, contentHeaderVersion: 4, contentBodyVersion: 5 },
-          }, review: { creationDefaults: { values: expected, sources: {
-            controllerMachineId: source, buildMachineId: source, retainPreviousDeployments: source,
-          } }, creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3,
-            projectDefaultsRevision: projectDefaults ? 1 : 0, content: null } } });
-          return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-            execution: { ok: true, result: preview } } };
-        }
-        const prepared = DeploymentEnvironmentCreateInputV1Schema.parse(envelope.input);
-        placements = prepared;
-        expect(envelope.target).toEqual({ kind: 'machine', machineId: expected.controllerMachineId });
-        return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-          execution: { ok: true, result: { ok: true, environmentId: 'created-environment', revision: 1 } } } };
-      } });
-      await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        additionalMachines: [{ machineId: 'project-controller' }, { machineId: 'account-controller' }],
+        execute: (input, { target }) => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            const authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+            expect(authored).toMatchObject({ mode: 'preview', name: 'Created app',
+              definition: { from: 'repository', ref: 'main', compose: { path: 'compose.yaml' } },
+              firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } });
+            expect(authored).not.toHaveProperty('controllerMachineId');
+            expect(authored).not.toHaveProperty('buildMachineId');
+            expect(authored).not.toHaveProperty('retainPreviousDeployments');
+            expect(target).toEqual({ kind: 'machine', machineId: 'runtime' });
+            previewRequests++;
+            // The daemon response is a genuine system boundary. Its canonical
+            // defaults resolution/Team exclusion is exercised by D1's CLI owners.
+            const { mode: _mode, name: _name, definition: _definition, firstTargetLink, ...selectors } = authored;
+            const source = projectDefaults ? 'project' : owner.kind === 'team' ? 'builtin' : 'account';
+            const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+              ...selectors, controllerMachineId: expected.controllerMachineId, buildMachineId: expected.buildMachineId,
+              contentArtifactId: `host-prepared-content-${previewRequests}`, contentHeaderVersion: 2, contentBodyVersion: 3,
+              firstTargetLink: { ...firstTargetLink, contentArtifactId: `host-prepared-link-${previewRequests}`, contentHeaderVersion: 4, contentBodyVersion: 5 },
+            }, review: { creationDefaults: { values: expected, sources: {
+              controllerMachineId: source, buildMachineId: source, retainPreviousDeployments: source,
+            } }, creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3,
+              projectDefaultsRevision: projectDefaults ? 1 : 0, content: null } } });
+            return preview;
+          }
+          const prepared = DeploymentEnvironmentCreateInputV1Schema.parse(input);
+          placements = prepared;
+          expect(target).toEqual({ kind: 'machine', machineId: expected.controllerMachineId });
+          return { ok: true, environmentId: 'created-environment', revision: 1 };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const screen = await renderScreen(<ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
         controller={controller} demand={{ mounted: true, visible: true, focused: true }}
         accountId="alice" serverId={serverId} actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
@@ -370,19 +358,14 @@ describe('Environment draft Machine Home', () => {
         resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
         intentRevision: 4, retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true });
       homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: managed ? [allocation] : [] } });
-      const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-      const runtime = createPlainMachineRowFixture({ id: 'runtime', accountId: 'alice' });
-      homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === runtime.id ? runtime : null).json(),
-      }) });
-      homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(envelope.input) as Record<string, unknown>;
-        return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-          execution: { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' } } };
-      } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        execute: input => {
+          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input) as Record<string, unknown>;
+          return { ok: false, error: 'deployment_unavailable' };
+        } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
-        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
@@ -391,10 +374,7 @@ describe('Environment draft Machine Home', () => {
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, disabled => disabled === false);
       const row = 'project-deployments.draft.retention';
       if (managed) {
-        await act(async () => { await Promise.race([
-          waitForTestEvent(screen.subscribe, () => screen.findHostByTestId(row), node => node !== null),
-          new Promise(resolve => setTimeout(resolve, 5_000)),
-        ]); });
+        await waitForTestEvent(screen.subscribe, () => screen.findHostByTestId(row), node => node !== null);
         expect(screen.findHostByTestId(row), 'a finite managed rule offers the choice').not.toBeNull();
       } else {
         await flushHookEffects({ cycles: 20 });
@@ -404,6 +384,44 @@ describe('Environment draft Machine Home', () => {
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
       expect(authored?.managedRetention).toBe(sent);
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
+  it('starts on an answering Machine, never an unreachable one, and says the typed remedy when the target is unavailable', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-reachable.test', accountId: 'alice',
+      serverIdentityId: `srv_${'r'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    let authored = false;
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', defaultRef: 'main' } } });
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'here', installationId: 'here-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        execute: () => { authored = true; return null; },
+        failure: () => ({ errorCode: 'target_unavailable', error: 'target_unavailable' }) });
+      const away = createMachineFixture({ id: 'away', installationId: 'away-installation', active: false });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [away, createMachineFixture({ id: 'here', installationId: 'here-installation', activeAt: Date.now() })]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const machine = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')!;
+      expect(machine().props.selectedId).toBe('here');
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      await act(async () => header().props.titleEditor.onChangeText('Shop'));
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, disabled => disabled === false);
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(homes.subscribe, () => authored, value => value);
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);
+      expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1('target_unavailable')!.remedy);
+      // With only an unreachable Machine left, nothing is chosen for the person.
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [away]);
+      await waitForTestEvent(screen.subscribe, () => machine().props.selectedId, selected => selected === null);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -425,31 +443,25 @@ describe('Environment draft Machine Home', () => {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
         createdByAccountId: 'alice', defaultRef: 'main' } } });
-      const { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-      const runtime = createPlainMachineRowFixture({ id: 'runtime', accountId: 'alice' });
-      homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === runtime.id ? runtime : null).json(),
-      }) });
-      homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        if (typeof envelope.input === 'object' && envelope.input !== null && 'mode' in envelope.input) {
-          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(envelope.input) as Record<string, unknown>;
-          const { mode: _mode, name: _name, definition: _definition, ...selectors } = authored;
-          const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
-            ...selectors, controllerMachineId: 'runtime', buildMachineId: 'runtime',
-            contentArtifactId: 'host-prepared-content', contentHeaderVersion: 2, contentBodyVersion: 3,
-          }, review: { creationDefaults: { values: { buildMachineId: 'runtime', controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
-            sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
-          creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
-          return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-            execution: { ok: true, result: preview } } };
-        }
-        committed = DeploymentEnvironmentCreateInputV1Schema.parse(envelope.input) as Record<string, unknown>;
-        return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-          execution: { ok: true, result: { ok: true, environmentId: 'platform-environment', revision: 1 } } } };
-      } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        execute: input => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input) as Record<string, unknown>;
+            const { mode: _mode, name: _name, definition: _definition, ...selectors } = authored;
+            const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+              ...selectors, controllerMachineId: 'runtime', buildMachineId: 'runtime',
+              contentArtifactId: 'host-prepared-content', contentHeaderVersion: 2, contentBodyVersion: 3,
+            }, review: { creationDefaults: { values: { buildMachineId: 'runtime', controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
+              sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
+            creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
+            return preview;
+          }
+          committed = DeploymentEnvironmentCreateInputV1Schema.parse(input) as Record<string, unknown>;
+          return { ok: true, environmentId: 'platform-environment', revision: 1 };
+        } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
-        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')}
         onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />);
@@ -496,7 +508,7 @@ describe('Environment draft Machine Home', () => {
       accountLifetime: account.accountLifetime, publishProjection: true });
     try {
       await publishMachineInventoryForTest(account.accountLifetime.scope,
-        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const draft = (platformAvailable: boolean) => <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} platformAvailable={platformAvailable} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
@@ -520,7 +532,7 @@ describe('Environment draft Machine Home', () => {
     const previous = storage.getState();
     const elsewhere = createMachineFixture({ id: 'personal-machine', installationId: 'personal-installation',
       metadata: { ...createMachineFixture().metadata!, displayName: 'Personal runner' } });
-    const projectMachine = createMachineFixture({ id: 'project-machine', installationId: 'project-installation',
+    const projectMachine = createMachineFixture({ id: 'project-machine', installationId: 'project-installation', activeAt: Date.now(),
       metadata: { ...createMachineFixture().metadata!, displayName: 'Project runner' } });
     try {
       await publishMachineInventoryForTest({ serverId: activeHome, accountId: 'alice' }, [elsewhere]);

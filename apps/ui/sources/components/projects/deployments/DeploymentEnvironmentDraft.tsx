@@ -41,6 +41,7 @@ import type { createDeploymentActions } from './deploymentActions';
 import { renderDeploymentCreationDefaultsRows } from './DeploymentCreationDefaultsRows';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
 import { MachineSetupPlanReview } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
@@ -104,8 +105,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [name, setName] = React.useState(() => props.copyFrom
       ? t('projects.deployments.copy.name', { name: props.copyFrom.content.name }) : '');
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
-    // A copy starts on the Machine its source runs on; the person can choose another.
-    const [machineId, setMachineId] = React.useState<string | null>(() => props.copyFrom ? copySourceMachineId(props.copyFrom) : null);
+    const [machineId, setMachineId] = React.useState<string | null>(null);
     const router = useRouter();
     // Create takes a machine as its first target; a platform is linked on the new Environment right after.
     const platforms = useDeploymentPlatformTargets(props.platformAvailable === true ? props.lifetime : null);
@@ -131,10 +131,13 @@ export const DeploymentEnvironmentDraft = React.memo(
     React.useEffect(() => () => draftTitle.publish(''), [draftTitle]);
 
     // The first Machine that answers is the likely home; the person can choose another.
+    // The person's choice wins. Otherwise a copy starts on its source's Machine and a new draft on the first one that
+    // answers; an unreachable Machine is never chosen for the person, so with none answering nothing is chosen.
+    const preferredId = props.copyFrom ? copySourceMachineId(props.copyFrom) : null;
     const chosen =
       machines.find((machine) => machine.id === machineId) ??
+      machines.find((machine) => machine.id === preferredId && isMachineOnline(machine)) ??
       machines.find((machine) => isMachineOnline(machine)) ??
-      machines[0] ??
       null;
     const branch = ref ?? source?.defaultRef ?? null;
     // A Compose Environment runs on the chosen Machine: its Docker host setup is planned once per choice, and a
@@ -330,7 +333,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID="project-deployments.draft.refused"
               tone="danger"
               title={t('projects.deployments.createFailedTitle')}
-              description={deploymentActionRefusalRemedy(refusal.code)}
+              description={readDeploymentRefusalRecoveryV1(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
               details={[refusal.code]}
             />
           ) : null}
