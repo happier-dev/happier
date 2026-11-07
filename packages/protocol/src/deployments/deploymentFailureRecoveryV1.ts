@@ -237,3 +237,12 @@ export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unk
                 : authored === legacyGenericRemedy || authored === fallback.remedy ? selected.remedy : authored,
         nextAction: selected.nextAction };
 }
+
+/**
+ * A refused press's typed recovery: the remedy and the one route to fix it (the Environment's Deploy banner, the
+ * platform target sheet). Null when this owner has no recovery for the code, so the caller keeps its own sentence.
+ */
+export function readDeploymentRefusalRecoveryV1(errorCode: string, details?: unknown): DeploymentFailureRecoveryPresentationV1 | null {
+    return recoveryFor(isRecord(details) ? details : {}, errorCode) === fallback ? null : readDeploymentFailureRecoveryV1(errorCode, details);
+}
+

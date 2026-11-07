@@ -147,7 +147,7 @@ export const ProjectDeploymentsView = React.memo(
       /** The Action owner's callbacks; the dev specimen renders without them. */
       actions?: (Pick<NonNullable<ReturnType<typeof useDeploymentProject>['actions']>,
         'rollback' | 'restore' | 'restart' | 'cancel' | 'deploy' | 'readLogs' | 'prepareCreate' | 'setBindings' | 'deleteEnvironment' | 'unlink' | 'teardown' | 'link' | 'inspectPlatformTarget' | 'addDomain' | 'removeDomain' | 'verifyDomain' | 'setController' | 'updateEnvironment'> &
-        Partial<Pick<NonNullable<ReturnType<typeof useDeploymentProject>['actions']>, 'openPreparation' | 'promote'>>) | null;
+        Partial<Pick<NonNullable<ReturnType<typeof useDeploymentProject>['actions']>, 'promote'>>) | null;
       demand: DeploymentReadDemandV1;
       accountId: string;
       serverId: string;
@@ -464,10 +464,10 @@ const ProjectDeploymentsPage = React.memo(
           disposition={disposition}
           restore={props.actions?.restore ?? null}
           restart={props.actions?.restart ?? null}
+          onOpenRecoveryDestination={openRecoveryDestination}
           readLogs={props.actions?.readLogs ?? null}
           domainActions={props.actions ?? null}
           environmentActions={props.actions ?? null}
-          openPreparation={props.actions?.openPreparation ?? null}
           onDuplicate={newWorkEnabled && props.actions?.prepareCreate ? source => {
             setDraftSource(source);
             setSelection(DRAFTING);

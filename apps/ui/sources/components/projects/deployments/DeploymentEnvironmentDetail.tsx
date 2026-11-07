@@ -68,7 +68,6 @@ import {
   deploymentWorkStatus,
   deploymentDeployAvailability,
   deploymentHealthFact,
-  deploymentActionRefusalRemedy,
   deploymentEnvironmentAttention,
   deploymentAttentionLeaves,
 } from './deploymentPresentation';
@@ -78,6 +77,7 @@ import {
   type DeploymentActionOutcome,
 } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
+import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
@@ -115,6 +115,7 @@ import { useEnvironmentNavigation, selectEnvironmentNavigationItem } from './env
 import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
+import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
@@ -170,6 +171,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       disposition?: Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'> | null;
       /** The Environment was deleted: the page leaves it. */
       onDeleted?: () => void;
+      /** Opens where a refused press's typed recovery leads (the Source, Variables, Machines…), as the receipt does. */
+      onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
       /** The Action owner's masked stage-log reader for the Logs companion's Build view; absent where it cannot read. */
       readLogs?: DeploymentReadLogs | null;
       /** The Action owner's `deployments.restart` for a service row's ⋯; absent where the page cannot write. */
@@ -182,7 +185,6 @@ export const DeploymentEnvironmentDetail = React.memo(
       environmentActions?: DeploymentEnvironmentEditing['actions'] | null;
       /** Duplicate opens the existing creation draft with this loaded source. */
       onDuplicate?: (source: DeploymentEnvironmentDetailV1) => void;
-      openPreparation?: ReturnType<typeof createDeploymentActions>['openPreparation'] | null;
       /** The Action owner's platform inspect and Link; absent where the page cannot write. */
       platformLink?: DeploymentPlatformLinkActions | null;
       /** A platform draft was just created: open Add platform target once its detail is here. */
@@ -193,8 +195,6 @@ export const DeploymentEnvironmentDetail = React.memo(
   ) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const [preparing, setPreparing] = React.useState(false);
-    const [preparationOutcome, setPreparationOutcome] = React.useState<DeploymentActionOutcome | null>(null);
     const {
       running: deploying, outcome, reviewPending, press,
     } = useDeploymentPress(props.review, props.onOpenReceipt);
@@ -563,7 +563,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         case undefined:
           // A just-accepted Deploy says so once, when nothing above it needs saying.
           return outcome?.kind === 'started' ? (
-            <DeployOutcomeBanner outcome={outcome} pending={reviewPending}
+            <DeployOutcomeBanner outcome={outcome} pending={reviewPending} onOpenRecovery={props.onOpenRecoveryDestination}
               machine={runtime?.source.kind === 'plugin' ? null : machineLabel} onOpenReview={review.open} />
           ) : null;
         case 'machineOffline':
@@ -608,7 +608,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         case 'actionRefused':
         case 'approvalWaiting':
           return outcome ? (
-            <DeployOutcomeBanner outcome={outcome} pending={reviewPending}
+            <DeployOutcomeBanner outcome={outcome} pending={reviewPending} onOpenRecovery={props.onOpenRecoveryDestination}
               machine={runtime?.source.kind === 'plugin' ? null : machineLabel} onOpenReview={review.open} />
           ) : null;
         case 'latestFailed': {
@@ -819,35 +819,13 @@ export const DeploymentEnvironmentDetail = React.memo(
                     mode="info"
                   />
                 )}
-                {!activeId && props.openPreparation && detail.content.definition.kind === 'repository' && !detail.content.definition.compose && runtime?.source.kind === 'host' ? (
-                  <Item testID="project-deployments.environment.prepare"
-                    title={t('projects.deployments.copy.prepareTitle')}
-                    subtitle={t('projects.deployments.copy.prepareBody')}
-                    disabled={preparing}
-                    onPress={() => {
-                      setPreparing(true);
-                      setPreparationOutcome(null);
-                      void props.openPreparation?.({ environmentId: detail.environment.id, name: detail.content.name })
-                        .catch(error => {
-                          const result = readDeploymentActionError(error);
-                          if (result.kind === 'approval') review.request(result.artifactId);
-                          setPreparationOutcome(result);
-                        }).finally(() => setPreparing(false));
-                    }} />
+                {!activeId && detail.content.definition.kind === 'repository' && !detail.content.definition.compose && runtime?.source.kind === 'host' ? (
+                  <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id} compact={props.phone} />
                 ) : null}
                 <EnvironmentDefinitionRow
                   definition={detail.content.definition}
                   servingSource={activeReceipt?.content.sourceIntent ?? null}
                 />
-                {preparationOutcome?.kind === 'refused' ? (
-                  <SurfaceStateCard kind="error" size="line"
-                    title={t('projects.deployments.copy.prepareTitle')}
-                    diagnosticCode={preparationOutcome.code}
-                    reason={deploymentActionRefusalRemedy(preparationOutcome.code)} />
-                ) : preparationOutcome?.kind === 'approval' ? (
-                  <DeployOutcomeBanner outcome={preparationOutcome}
-                    pending={props.review.pendingId === preparationOutcome.artifactId} machine={null} onOpenReview={review.open} copy="setting" />
-                ) : null}
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
               {runtime && runtime.members.length > 1 ? (
@@ -1048,6 +1026,8 @@ export function DeployOutcomeBanner(
     onOpenReview: () => void;
     copy?: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'setting';
     placement?: 'inline';
+    /** Opens the typed recovery's destination; absent where the page has nowhere to send the person. */
+    onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
   }>,
 ) {
   const { outcome, placement } = props;
@@ -1099,6 +1079,11 @@ export function DeployOutcomeBanner(
   // A cancel has no build to explain: an unsupported refusal reads as any other "couldn't cancel".
   const unsupported = outcome.reason === 'unsupported' && !cancel && !domain;
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;
+  // The recovery owner's remedy and route for this refusal (E4): a stored generic remedy never hides a typed cause.
+  const recovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details);
+  const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
+  const canonicalReason = failure && failure.reason !== storedRemedy ? failure.reason : null;
+  const { onOpenRecovery } = props;
   return (
     <AttentionBanner
       testID={`project-deployments.outcome.refused.${outcome.reason}`}
@@ -1122,7 +1107,7 @@ export function DeployOutcomeBanner(
                 : t('projects.deployments.deployFailedTitle')
       }
       description={
-        failure?.reason ?? (outcome.reason === 'permission'
+        canonicalReason ?? (outcome.reason === 'permission'
           ? t('projects.deployments.managersOnly')
           : outcome.reason === 'machine' && props.machine !== null
             ? t('projects.deployments.machineOffline', {
@@ -1132,8 +1117,10 @@ export function DeployOutcomeBanner(
               ? t('projects.deployments.deployNeedsBuild', {
                   machine: props.machine,
                 })
-              : refusalConsequence(outcome.code))
+              : recovery?.remedy ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
+      {...(recovery && onOpenRecovery ? { action: { label: recovery.nextAction.label,
+        onPress: () => onOpenRecovery(recovery.nextAction.destination) } } : {})}
       // The typed code is for support; the sentence says what it left.
       details={failure ? failure.technicalDetails.map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />

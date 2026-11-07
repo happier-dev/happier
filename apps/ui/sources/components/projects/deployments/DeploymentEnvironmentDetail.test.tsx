@@ -166,66 +166,23 @@ function controllerFor(
 }
 
 describe('Project deployments page', () => {
-  it('opens repository preparation in the existing Start pane through the authoring Action', async () => {
-    const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
-    const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-    const previous = storage.getState();
-    const previousRuntime = runtime.getAppliedActiveServerSnapshot();
-    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
-    const http = createHomeHubArtifactHttpBoundary(scope.accountId);
-    const serverUrl = 'https://environment-navigation.test';
-    await http.request(`${serverUrl}/v2/account/settings`, { method: 'POST', body: JSON.stringify({ expectedVersion: 1,
-      content: { t: 'plain', v: { newSessionPresentationModeV1: 'docked' } } }) });
-    const connection = await restoreServerAccountForTest({ serverUrl, accountId: scope.accountId, request: http.request });
-    scope.serverId = connection.serverId;
-    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-    await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime) throw new Error('Expected restored deployment Account');
-    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
-    await prepareSessionDraftPersistenceStorage();
+  it('draws no setup control and opens no prompt-only authoring until the person has a record for Environments', async () => {
     const base = environmentDetailForHome();
-    const detail = { ...base, content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } }, targetLinks: base.targetLinks.map(row => ({ ...row,
-      targetLink: { ...row.targetLink, activeDeploymentId: undefined } })) };
+    const detail = { ...base, content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } },
+      targetLinks: base.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink, activeDeploymentId: undefined } })) };
     const { controller } = controllerFor({ detail });
-    const { createDeploymentActions } = await import('./deploymentActions');
-    const { NewSessionShellHostProvider, useNewSessionShellHost } = await import('@/components/sessions/new/navigation/newSessionEntry');
-    const shell: { current: ReturnType<typeof useNewSessionShellHost> } = { current: null };
-    function ObserveStart() { shell.current = useNewSessionShellHost(); return null; }
     try {
-      const { Modal } = await import('@/modal');
-      vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
-      const screen = await renderScreen(<NewSessionShellHostProvider><ObserveStart />
-        <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
-          accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} review={noReview}
-          onOpenReceipt={() => {}} lifetime={lifetime} openPreparation={createDeploymentActions(lifetime, scope.projectSourceId).openPreparation} />
-      </NewSessionShellHostProvider>);
-      await waitForContent(screen, 'project-deployments.environment.prepare');
-      expect(shell.current?.enabled).toBe(true);
-      expect(shell.current?.visible).toBe(false);
-      await screen.pressByTestIdAsync('project-deployments.environment.prepare');
-      await waitForHomeGovernance(async () => {
-        await act(async () => {});
-        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-        const codes = screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode).filter(Boolean);
-        expect(shell.current?.visible, `${screen.getTextContent()} ${codes.join(',')}`).toBe(true);
-      });
-      expect(shell.current?.host.params.draftId).toBeTruthy();
-      const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
-      const draft = readNewSessionDraftFromRepository({ scope: lifetime.scope, draftId: shell.current!.host.params.draftId! });
-      expect(draft?.input).toContain(detail.environment.id);
-      expect(draft?.input).toContain(scope.projectSourceId);
-      expect(routerMock.spies.push).not.toHaveBeenCalledWith(expect.objectContaining({ pathname: '/new' }));
+      // Setup runs only through a configured record ("Set it up", declared by its subject owner) and
+      // sessions/run-configured-v1; this Home's catalog has none, so nothing stands in for it.
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} />);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+      expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
+      expect(screen.findByTestId('project-deployments.environment.prepare')).toBeNull();
       await screen.unmount();
-    } finally {
-      await act(async () => { controller.retire(); });
-      await connection.dispose();
-      storage.setState(previous);
-      runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
-      installHomeGovernanceBoundaries(homes);
-    }
+    } finally { await act(async () => { controller.retire(); }); }
   });
 
   it('does not offer missing-compose preparation when the Environment already declares compose', async () => {
@@ -233,12 +190,10 @@ describe('Project deployments page', () => {
     const detail = { ...base, targetLinks: base.targetLinks.map(row => ({ ...row,
       targetLink: { ...row.targetLink, activeDeploymentId: undefined } })) };
     const { controller } = controllerFor({ detail });
-    const { createDeploymentActions } = await import('./deploymentActions');
-    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     try {
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
-        review={noReview} onOpenReceipt={() => {}} openPreparation={createDeploymentActions(lifetime, scope.projectSourceId).openPreparation} />);
+        review={noReview} onOpenReceipt={() => {}} />);
       await waitForContent(screen, 'project-deployments.environment.menu');
       expect(screen.findByTestId('project-deployments.environment.prepare')).toBeNull();
     } finally { await act(async () => { controller.retire(); }); }
@@ -1669,6 +1624,31 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
         expect(text.includes('not deployed yet')).toBe(notDeployed);
       } finally { controller.retire(); }
     }
+  });
+
+  it('says a refused deploy\'s typed Source remedy and opens the Source from the banner (E4)', async () => {
+    const { HappyError } = await import('@/utils/errors/errors');
+    const { readDeploymentRefusalRecoveryV1, projectDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    // The server stored only its generic fallback remedy beside the typed code (JOURNEY-OPUS-84 j2-02).
+    const details = projectDeploymentFailureRecoveryV1({});
+    const deploy = vi.fn(async () => { throw new HappyError('deployment_source_unavailable', false,
+      { code: 'deployment_source_unavailable', details }); });
+    const opened: string[] = [];
+    const { controller, detail } = controllerFor({});
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={noReview}
+        onOpenReceipt={() => {}} onOpenRecoveryDestination={destination => { opened.push(destination); }} />);
+      await waitForContent(screen, 'project-deployments.environment.deploy');
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      const recovery = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', details)!;
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(recovery.remedy));
+      expect(screen.getTextContent()).not.toContain(details.remedy);
+      const banner = screen.root.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('project-deployments.outcome.refused.') && !node.props.testID.includes('.', 'project-deployments.outcome.refused.'.length))[0];
+      await screen.pressByTestIdAsync(`${banner!.props.testID}.action`);
+      expect(opened).toEqual(['source']);
+    } finally { controller.retire(); }
   });
 
   it('keeps a single-server Environment free of a Servers section', async () => {

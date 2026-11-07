@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1 } from './deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 
@@ -227,5 +227,21 @@ describe('deployment failure recovery', () => {
         const projected = readDeploymentFailureRecoveryV1('future_failure', details);
         expect(projected).toEqual(readDeploymentFailureRecoveryV1('future_failure'));
         expect(projected.nextAction).toMatchObject({ kind: 'navigate', destination: 'history' });
+    });
+});
+
+describe('deployment refusal recovery (a refused press: banner and platform sheet)', () => {
+    it('names the Source remedy and its route for a missing repository or source, even when the stored remedy is the generic fallback', () => {
+        const stored = projectDeploymentFailureRecoveryV1({});
+        for (const code of ['deployment_source_unavailable', 'repository_required'] as const) {
+            const recovery = readDeploymentRefusalRecoveryV1(code, stored);
+            expect(recovery?.nextAction).toMatchObject({ kind: 'navigate', destination: 'source' });
+            expect(recovery?.remedy).not.toBe(stored.remedy);
+            expect(recovery).toEqual(readDeploymentFailureRecoveryV1(code, stored));
+        }
+    });
+
+    it('has nothing to say for a code it does not know, so the caller keeps its own sentence', () => {
+        expect(readDeploymentRefusalRecoveryV1('some_unknown_refusal')).toBeNull();
     });
 });
