@@ -14,6 +14,7 @@ import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } fr
 import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
 import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema } from '../activity/usageNoticeArtifactV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
+import { BotTemplateArtifactV1Schema, projectBotTemplateArtifactHeaderV1 } from '../bots/templates/botTemplateV1.js';
 
 function usageNoticeArtifact() {
   const notice = { topic: 'connected_service_usage', kind: 'credit_expiry', serviceId: 'cloud', profileId: 'account',
@@ -86,6 +87,89 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
+  it.each(['draft', 'released'] as const)('deletes an owned template %s through the existing Action on every caller surface', async state => {
+    const content = { v: 1, identity: { name: 'Helper', description: 'Reusable helper' }, instructions: { markdown: 'Help with work.' },
+      memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } };
+    const template = BotTemplateArtifactV1Schema.parse(state === 'draft'
+      ? { v: 1, state, sourceSessionRef: { serverId: 'home', sessionId: 'source' },
+        releaseArtifactId: '22222222-2222-4222-8222-222222222222', content, candidates: { memoryRules: [], skills: [] } }
+      : { v: 1, state, release: { v: 1, version: '1.0.0', releasedAtMs: 1, changelog: '', content } });
+    const initial = { ...usageNoticeArtifact(), header: projectBotTemplateArtifactHeaderV1(template), body: JSON.stringify(template) };
+    for (const surface of ['ui', 'cli', 'mcp', 'agent'] as const) {
+      const boundary = openedArtifactBoundary(initial);
+      const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: () => false });
+      const context = { surface, authority: surface === 'agent' || surface === 'mcp' ? 'account_automation' : 'present_user',
+        runtimeAccountId: 'owner', expectedAccountId: 'owner', actionCaller: { kind: 'host' } } as const;
+      const remove = (expectedRevision = initial.revision) => executor.execute('artifact.delete', { artifactId: initial.artifactId, expectedRevision }, context);
+      expect(await remove({ headerVersion: 2, bodyVersion: 2 })).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+      expect(boundary.read()).toEqual(initial);
+      expect(await remove()).toMatchObject({ ok: true, result: { artifactId: initial.artifactId, deleted: true } });
+      expect(boundary.read()).toBeNull();
+      for (const access of ['view', 'edit', 'admin'] as const) {
+        const shared = { ...initial, access };
+        const recipient = openedArtifactBoundary(shared);
+        const recipientExecutor = createActionExecutor({ artifactAction: recipient.action, isActionApprovalRequired: () => false });
+        expect(await recipientExecutor.execute('artifact.delete', { artifactId: initial.artifactId, expectedRevision: initial.revision }, context))
+          .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+        expect(recipient.read()).toEqual(shared);
+      }
+    }
+  });
+
+  it('admits private notice evidence reads by scoped plugins without granting acknowledgement or producer authority', async () => {
+    const initial = accountNoticeArtifact();
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: () => false });
+    const context = { surface: 'plugin', authority: 'account_automation', expectedAccountId: 'owner', runtimeAccountId: 'owner',
+      actionCaller: { kind: 'plugin', pluginId: 'acme.investigator' } } as const;
+    expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, context))
+      .toMatchObject({ ok: true, result: { artifact: initial } });
+    for (const invalid of [{ ...context, expectedAccountId: 'foreign' }, { ...context, expectedAccountId: undefined, runtimeAccountId: undefined },
+      { ...context, rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session' } } as const,
+      { ...context, externalActionCredential: { accountId: 'owner', principalId: 'api', credentialId: 'token', grant: API_TOKEN_FULL_GRANT_V1 } }]) {
+      expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, invalid)).toMatchObject({ ok: false });
+    }
+    for (const artifact of [{ ...initial, ownerAccountId: 'foreign' }, { ...initial, access: 'view' as const },
+      { ...initial, publicAudience: 'retained' as const }, { ...initial, body: '{}' }]) {
+      const reader = createActionExecutor({ artifactAction: openedArtifactBoundary(artifact).action });
+      expect(await reader.execute('artifact.get', { artifactId: initial.artifactId }, context)).toMatchObject({ ok: false });
+    }
+    expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
+      header: { ...initial.header, status: 'dismissed' }, body: initial.body }, context)).toMatchObject({ ok: false });
+    expect(await executor.execute('artifact.delete', { artifactId: initial.artifactId, expectedRevision: initial.revision }, context))
+      .toMatchObject({ ok: false });
+    expect(await executor.execute('artifact.create', { artifactId: '22222222-2222-4222-8222-222222222222',
+      header: initial.header, body: initial.body }, context)).toMatchObject({ ok: false });
+    expect(boundary.read()).toEqual(initial);
+  });
+  it.each([['read', 'host'], ['dismiss', 'host'], ['read', 'plugin'], ['dismiss', 'plugin']] as const)(
+  'settles only recovered health on %s for %s through private Inbox admission', async (intent, source) => {
+    const service = { kind: 'deployment', machineId: 'machine', environmentId: 'environment',
+      environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' };
+    const content = AccountNoticeArtifactBodyV1Schema.parse({ v: 1, ...(source === 'host' ? {
+      source: { kind: 'host', topic: 'service_health', subject: service },
+      page: { kind: 'host', page: 'machine_service', machine: { serverId: 'home', machineId: 'machine' }, service },
+    } : { source: { kind: 'plugin', pluginId: 'acme.issues', itemId: 'issue-42' } }),
+      type: 'update', healthPhase: 'recovered', resolved: false, body: 'Healthy again' });
+    const initial = { ...accountNoticeArtifact(), header: AccountNoticeArtifactHeaderV1Schema.parse({ ...content,
+      kind: 'account_notice.v1', title: 'db recovered', status: 'open' }), body: JSON.stringify(content) };
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const context = { surface: 'ui', authority: 'present_user', expectedAccountId: 'owner', actionCaller: { kind: 'host' },
+      actionsSettings: usageNoticeActionsSettings } as const;
+    const header = { ...initial.header, resolved: true, ...(intent === 'read' ? { readAt: 2000 } : { status: 'dismissed' }) };
+    const request = { artifactId: initial.artifactId, expectedRevision: initial.revision, header, body: JSON.stringify({ ...content, resolved: true }) };
+    for (const invalid of [
+      { ...request, body: JSON.stringify({ ...content, resolved: true, body: 'Replacement instructions' }) },
+      { ...request, header: { ...header, title: 'Another service' } },
+      { ...request, body: initial.body },
+    ]) expect(await executor.execute('artifact.update', invalid, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(boundary.read()).toEqual(initial);
+    expect(await executor.execute('artifact.update', request, context)).toMatchObject({ ok: true });
+    expect(boundary.read()).toMatchObject({ header: { healthPhase: 'recovered', resolved: true } });
+    expect(JSON.parse(boundary.read()!.body as string)).toMatchObject({ healthPhase: 'recovered', resolved: true });
+  });
+
   it('captures the explicit publication Machine instead of the ambient Session Machine in approval origin', () => {
     const request = { actionId: 'artifact.publish_from_file' as const,
       input: { path: 'docs/note.txt', workspace: { machineId: 'selected-machine', rootPath: '/selected' } },
@@ -410,7 +494,7 @@ describe('ordinary Artifact Actions', () => {
     expect(observeActionExecution).toHaveBeenCalled();
     expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain('SECRET_FOR_CALLER');
   });
-  it.each(['artifact.public_link.create', 'session.public_link.create'] as const)('refuses %s without human authority despite an agent policy waiver', async actionId => {
+  it.each(['artifact.public_link.create', 'session.public_link.create'] as const)('publishes %s for an agent once the user waives its Ask (no present-user floor)', async actionId => {
     let published = false;
     const publish = async () => { published = true; return actionId === 'artifact.public_link.create'
       ? { publicShare: { id: 'share', subject: { kind: 'artifact', id: 'artifact' }, expiresAt: null, maxUses: null,
@@ -425,9 +509,8 @@ describe('ordinary Artifact Actions', () => {
       { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account',
         defaultSessionId: 'session', actionRequestId: 'share',
         actionCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 }, actionsSettings });
-    expect(result, JSON.stringify(result))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(published).toBe(false);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(published).toBe(true);
   });
   it('offers reads and approval-based writes to Agents, MCP and CLI through the canonical catalog', () => {
     for (const id of ids) {

@@ -4,7 +4,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { BotTemplateActionOutputSchemasV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { projectBotTemplateContentV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { BotTemplateHeader } from './BotTemplateHeader';
-import { BotTemplatePreview } from './BotTemplatePreview';
+import { BotTemplateInstructions } from './BotTemplatePreview';
+import { BotTemplatePinnedFooter, BotTemplateWhatYouGet } from './BotTemplatePageLayout';
+import { PageAsideColumns } from '@/components/ui/layout/PageAsideColumns';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { BotTemplatePublishButton } from './BotTemplatePublishButton';
 import { useBotTemplateEditor, useBotTemplateEditorValue } from './useBotTemplateEditor';
@@ -34,6 +37,7 @@ import { readUiBotTemplateAuthorDraft } from '@/sync/ops/actions/botTemplateActi
 import { BotTemplateMemorySection, BotTemplateSkillsSection } from './BotTemplateCandidateSections';
 import { BotTemplateNeedsSection } from './BotTemplateNeedsSection';
 import { BotTemplateAgentSection } from './BotTemplateAgentSection';
+import { requestBotTemplateDraft } from './openBotTemplate';
 
 const styles = StyleSheet.create(theme => ({
     root: { flex: 1, minHeight: 0 },
@@ -43,12 +47,17 @@ const styles = StyleSheet.create(theme => ({
     saveText: { color: theme.colors.text.secondary },
 }));
 
-export function BotTemplateEditor(props: Readonly<{ artifactId: string; serverId: string; presentation?: 'pane' | 'page' }>) {
+export function BotTemplateEditor(props: Readonly<{ artifactId: string; serverId: string; sourceSessionId?: string; presentation?: 'pane' | 'page' }>) {
     const editor = useBotTemplateEditor(props.artifactId, props.serverId);
+    const createTemplate = props.sourceSessionId && editor.errorCode === 'artifact_not_found'
+        ? { label: t('botTemplates.createTemplate'), onPress: async () => {
+            const result = await requestBotTemplateDraft(editor.execute, props.sourceSessionId!);
+            if (!result.ok) await Modal.alert(t('common.error'), t('botTemplates.unavailable'));
+        } } : null;
     if (!editor.buffer || !editor.scope) return <SurfaceStateCard testID="bot-template-load" kind={editor.failed ? 'error' : 'loading'}
         title={editor.errorCode === 'update_required' ? t('connect.updateRequiredTitle')
             : editor.failed ? t('botTemplates.unavailable') : t('common.loading')}
-        action={editor.failed ? { label: t('common.retry'), onPress: editor.retry } : undefined} />;
+        action={createTemplate ?? (editor.failed ? { label: t('common.retry'), onPress: editor.retry } : undefined)} />;
     return <BotTemplateEditorBody {...props} buffer={editor.buffer} scope={editor.scope} save={editor.save} execute={editor.execute} />;
 }
 
@@ -59,20 +68,23 @@ type LoadedProps = BotTemplateEditorBodyProps;
 
 /** The loaded editor; the dev specimen renders it with seed data. */
 export function BotTemplateEditorBody(props: LoadedProps) {
+    const compact = useDeviceType() === 'phone';
     return <ReleaseControls {...props}>{(controls, action) => <View style={styles.root} testID="bot-template-editor">
             <EditorLeaveGuard buffer={props.buffer} save={props.save} />
-            <ItemList keyboardAware>
+            <ItemList keyboardAware {...(props.presentation === 'page' ? { pageColumn: 'wide' as const } : {})}>
                 <EditorIdentity {...props} />
-                <TemplateField buffer={props.buffer} save={props.save} field="instructions" />
-                <BotTemplateMemorySection buffer={props.buffer} save={props.save} />
-                <BotTemplateSkillsSection buffer={props.buffer} save={props.save} />
-                <BotTemplateNeedsSection buffer={props.buffer} save={props.save} scope={props.scope} />
-                <BotTemplateAgentSection buffer={props.buffer} save={props.save} />
-                <TemplateField buffer={props.buffer} save={props.save} field="firstTask" />
-                {props.presentation === 'page' ? <AuthorPreview buffer={props.buffer} /> : null}
-                {controls}
+                {props.presentation === 'page'
+                    // The full page sets the sections beside what the recipient gets (lab r2 make-page); the pane stays one column.
+                    ? <PageAsideColumns compact={compact} aside={<AuthorAside buffer={props.buffer} />}>
+                        <EditorSections {...props} />
+                        {controls}
+                    </PageAsideColumns>
+                    : <><EditorSections {...props} />{controls}</>}
             </ItemList>
-            <KeyboardStickyFooter style={styles.footer}><View style={styles.saveState}><SaveState {...props} /></View><BotTemplatePublishButton {...props} />{action}</KeyboardStickyFooter>
+            {props.presentation === 'page'
+                // The full page's bar shares the page column, like the recipient pages' pinned step.
+                ? <BotTemplatePinnedFooter column="wide" note={<SaveState {...props} />}><BotTemplatePublishButton {...props} />{action}</BotTemplatePinnedFooter>
+                : <KeyboardStickyFooter style={styles.footer}><View style={styles.saveState}><SaveState {...props} /></View><BotTemplatePublishButton {...props} />{action}</KeyboardStickyFooter>}
         </View>}</ReleaseControls>;
 }
 
@@ -100,13 +112,22 @@ function EditorLeaveGuard({ buffer, save }: Pick<LoadedProps, 'buffer' | 'save'>
     return null;
 }
 
-function AuthorPreview({ buffer }: Readonly<{ buffer: BotTemplateEditorBuffer }>) {
+function EditorSections(props: LoadedProps) {
+    return <>
+        <TemplateField buffer={props.buffer} save={props.save} field="instructions" />
+        <BotTemplateMemorySection buffer={props.buffer} save={props.save} />
+        <BotTemplateSkillsSection buffer={props.buffer} save={props.save} />
+        <BotTemplateNeedsSection buffer={props.buffer} save={props.save} scope={props.scope} />
+        <BotTemplateAgentSection buffer={props.buffer} save={props.save} />
+        <TemplateField buffer={props.buffer} save={props.save} field="firstTask" />
+    </>;
+}
+
+/** The recipient's summary of this draft, said once beside the sections it summarises. */
+function AuthorAside({ buffer }: Readonly<{ buffer: BotTemplateEditorBuffer }>) {
     const draft = useBotTemplateEditorValue(buffer, state => state.draft);
     const content = React.useMemo(() => projectBotTemplateContentV1(draft), [draft]);
-    return <>
-        <ItemGroup title={t('botTemplates.preview')}>{null}</ItemGroup>
-        <BotTemplatePreview content={content} />
-    </>;
+    return <BotTemplateWhatYouGet content={content} />;
 }
 
 function EditorIdentity(props: LoadedProps) {
@@ -133,11 +154,14 @@ function TemplateField(props: Readonly<{ buffer: BotTemplateEditorBuffer; save: 
     const value = useBotTemplateEditorValue(props.buffer, state => props.field === 'instructions'
         ? state.draft.content.instructions.markdown : state.draft.content.firstTask ?? '');
     const label = t(props.field === 'instructions' ? 'botTemplates.instructions' : 'botTemplates.firstTask');
-    return <ItemGroup title={label} description={props.field === 'instructions' ? t('botTemplates.copiedInstructions') : undefined}><SectionContentRow><InlineTextField multiline style={styles.field} editor={{ value,
+    const field = <SectionContentRow><InlineTextField multiline style={styles.field} editor={{ value,
         placeholder: label, accessibilityLabel: label, testID: `bot-template-${props.field}`,
         onChangeText: text => props.buffer.edit(draft => ({ ...draft, content: { ...draft.content,
             ...(props.field === 'instructions' ? { instructions: { markdown: text } } : { firstTask: text }) } })),
-        onCommit: () => { void props.buffer.commit(props.save); } }} /></SectionContentRow></ItemGroup>;
+        onCommit: () => { void props.buffer.commit(props.save); } }} /></SectionContentRow>;
+    return props.field === 'instructions'
+        ? <BotTemplateInstructions description={t('botTemplates.copiedInstructions')}>{field}</BotTemplateInstructions>
+        : <ItemGroup title={label}>{field}</ItemGroup>;
 }
 
 function SaveState(props: LoadedProps) {
@@ -176,7 +200,9 @@ function ReleaseControls(props: LoadedProps & Readonly<{ children: (controls: Re
         if (releasing || !version.trim()) return;
         const draft = props.buffer.getSnapshot().draft;
         showDocumentShareSheet({ artifactId: draft.releaseArtifactId, kind: 'bot_template.v1', scope: props.scope,
-            name: draft.content.identity.name, reviewedSelection: { onSubmit: async selection => {
+            name: draft.content.identity.name, kindLabel: t('botTemplates.templateSection'), subtitle: `v${version.trim()}`,
+            description: `${t('botTemplates.templateSectionDescription', { name: draft.content.identity.name })} ${t('botTemplates.notIncluded')}`,
+            reviewedSelection: { onSubmit: async selection => {
                 setReleasing(true);
                 const releaseOptions = props.buffer.getSnapshot().releaseOptions;
                 try {
@@ -203,7 +229,8 @@ function ReleaseControls(props: LoadedProps & Readonly<{ children: (controls: Re
         {shared ? <Item title={t('shareSheet.documents.title')} subtitle={t('botTemplates.shared')} onPress={() => {
             const draft = props.buffer.getSnapshot().draft;
             showDocumentShareSheet({ artifactId: draft.releaseArtifactId, kind: 'bot_template.v1', scope: props.scope,
-                name: draft.content.identity.name });
+                name: draft.content.identity.name, kindLabel: t('botTemplates.templateSection'),
+                description: `${t('botTemplates.templateSectionDescription', { name: draft.content.identity.name })} ${t('botTemplates.notIncluded')}` });
         }} /> : null}
     </ItemGroup>, <RoundButton size="normal" title={t('botTemplates.shareEllipsis')} loading={releasing}
             disabled={!version.trim() || releasing} onPress={release} testID="bot-template-release" />

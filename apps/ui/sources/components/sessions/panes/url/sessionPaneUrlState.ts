@@ -1,5 +1,5 @@
 import { RIGHT_SIDEBAR_BUILTIN_TABS, type RightSidebarBuiltInTabId } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
-import { ScmComparisonSourceSchema } from '@happier-dev/protocol/scm';
+import { ScmComparisonSourceSchema, ScmDiffSummaryResultReadInputSchema } from '@happier-dev/protocol/scm';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import {
     createPrimarySessionDetailsTerminalTab,
@@ -34,7 +34,8 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 import { FILE_TARGET_ANCHOR_PARAM_KEYS, parseSessionFileDeepLinkAnchor, readFileTargetAnchorResource, readWorkspaceFileLinkView, serializeFileTargetAnchor, type FileTargetAnchor, type WorkspaceFileLinkView } from '@/utils/url/sessionFileDeepLink';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { readWorkspaceFileView } from '@/components/workspaces/files/details/workspaceFileDetails/workspaceFileView';
-import { resolveFileChangesScope } from '@/components/workspaces/files/file/changes/fileChangesScope';
+import { fileChangesComparisonOfScope, resolveFileChangesScope } from '@/components/workspaces/files/file/changes/fileChangesScope';
+import type { WorkspaceFileOpenInput } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { serializeScmReviewTarget } from '@/utils/url/scmReviewTargetUrl';
 import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
 
@@ -55,7 +56,7 @@ export type SessionPaneUrlDetailsTarget =
  */
 export const SESSION_PANE_URL_PARAM_KEYS = [
     'right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId', 'machineId', 'boardItemId',
-    'comparison', 'comparisonId', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'commit', 'parent', 'view', 'explain', 'pullRequest', 'evidenceSessionId',
+    'comparison', 'comparisonId', 'scmResultId', 'scmResultCwd', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'baseOid', 'headOid', 'commit', 'parent', 'view', 'explain', 'pullRequest', 'evidenceSessionId',
     'fileView', 'blame', 'fileOpenAs', 'rootPath',
     ...FILE_TARGET_ANCHOR_PARAM_KEYS,
 ] as const;
@@ -118,6 +119,11 @@ function parseScmReviewTarget(params: Readonly<Record<string, unknown>>): Sessio
             if (commit) comparison = parent ? { kind: 'commit', commit, parent } : { kind: 'commit', commit };
             break;
         }
+        case 'revisionRange': {
+            const source = ScmComparisonSourceSchema.safeParse({ kind: 'revisionRange', baseOid: read('baseOid'), headOid: read('headOid') });
+            if (source.success && source.data.kind === 'revisionRange') comparison = source.data;
+            break;
+        }
         case 'pullRequest': {
             try {
                 const source = ScmComparisonSourceSchema.safeParse({ kind: 'pullRequest', locator: JSON.parse(read('pullRequest') ?? 'null') });
@@ -128,16 +134,26 @@ function parseScmReviewTarget(params: Readonly<Record<string, unknown>>): Sessio
     }
     const viewRaw = read('view');
     const comparisonId = read('comparisonId');
+    const savedResult = ScmDiffSummaryResultReadInputSchema.safeParse({
+        resultId: read('scmResultId'), cwd: readSingleStringParam(params, 'scmResultCwd'),
+    });
     const view = SESSION_SCM_REVIEW_VIEWS.find((candidate) => candidate === viewRaw) ?? null;
     const explainRaw = read('explain');
     const explain = explainRaw === 'true' ? true : explainRaw === 'false' ? false : undefined;
     const evidenceSessionId = read('evidenceSessionId');
     return {
-        ...(comparison ? { comparison: comparisonId ? { ...comparison, comparisonId } : comparison } : null),
+        ...(comparison ? { comparison: { ...comparison, ...(comparisonId ? { comparisonId } : {}),
+            ...(comparisonId && savedResult.success ? { savedResult: savedResult.data } : {}) } } : null),
         ...(view ? { view } : null),
         ...(typeof explain === 'boolean' ? { explain } : null),
         ...(evidenceSessionId ? { evidenceSessionId } : null),
     };
+}
+
+/** The comparison a File tab was opened on (its link or opener), validated like a link's. */
+export function readFileTabChanges(resource: unknown): SessionScmReviewComparison | undefined {
+    const record = resource && typeof resource === 'object' ? resource as { changes?: unknown } : null;
+    return readSessionScmReviewTarget({ comparison: record?.changes }).comparison;
 }
 
 /** A stored tab's comparison and view, validated by the same reader a link goes through. */
@@ -282,7 +298,7 @@ function readActiveDetailsUrlTarget(
         const path = typeof resource?.path === 'string' ? resource.path : '';
         if (!path || !isSafeWorkspaceRelativePath(path)) return null;
         const parsed = readFileTargetAnchorResource(activeTab.resource);
-        const initialChanges = readSessionScmReviewTarget({ comparison: resource?.changes }).comparison;
+        const initialChanges = readFileTabChanges(resource);
         const fileView = readWorkspaceFileView(tabState?.[activeTab.key]);
         const storedScope = fileView.changesScope;
         const changes = storedScope ? resolveFileChangesScope({ storedScope, initialChanges }).selector : initialChanges;
@@ -290,7 +306,7 @@ function readActiveDetailsUrlTarget(
         // A launch hint cannot keep replaying after a real page control changes the view.
         // Preview has no opener-mode arm; omit the hint and retain it in tab memory.
         const view = fileView.mode === 'diff' ? 'changes' : fileView.mode === 'file' ? 'view'
-            : fileView.mode === 'markdown' ? undefined : openingView;
+            : fileView.mode === 'edit' ? 'edit' : fileView.mode === 'markdown' ? undefined : openingView;
         return { kind: 'file', path, ...(parsed ? { anchor: parsed.anchor } : {}),
             ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}), ...(changes ? { changes } : {}),
             ...linkView, ...(view ? { view } : {}),
@@ -431,6 +447,17 @@ export function createSessionPaneDetailsTab(
             break;
     }
     return tab ? { ...tab, isPinned: true, isPreview: false } : null;
+}
+
+/** A Session file tab for one file open (the Action's input or an in-app opener), unpinned so the pane decides. */
+export function createSessionFileDetailsTab(file: Readonly<Omit<WorkspaceFileOpenInput, 'target'>>): DetailsTab | null {
+    const { changesScope, ...rest } = file;
+    const constructed = createSessionPaneDetailsTab({ kind: 'file', ...rest,
+        ...(changesScope ? { changes: fileChangesComparisonOfScope(changesScope) } : {}),
+    });
+    if (!constructed) return null;
+    const { isPinned: _pinned, isPreview: _preview, ...tab } = constructed;
+    return tab;
 }
 
 export function applySessionPaneUrlState(

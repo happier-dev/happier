@@ -6,8 +6,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 export function WorkspaceRouteBody() {
-    const { artifactId, serverId } = useLocalSearchParams<{ artifactId?: string; serverId?: string }>();
-    return artifactId && serverId ? <BotTemplateEditor artifactId={artifactId} serverId={serverId} presentation="page" />
+    const { id, artifactId, serverId } = useLocalSearchParams<{ id?: string; artifactId?: string; serverId?: string }>();
+    return artifactId && serverId ? <BotTemplateEditor artifactId={artifactId} serverId={serverId} sourceSessionId={id} presentation="page" />
         : <SurfaceStateCard testID="bot-template-invalid-route" kind="error" title={t('botTemplates.unavailable')} />;
 }
 

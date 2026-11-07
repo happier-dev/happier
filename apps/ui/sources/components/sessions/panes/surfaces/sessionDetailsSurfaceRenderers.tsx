@@ -1,6 +1,8 @@
+import { BotTemplateEditor } from '@/components/sessions/bots/templates/BotTemplateEditor';
+import { readBotTemplateEditorResource } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
 import * as React from 'react';
 
-import { readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { readFileTabChanges, readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 import type {
     DetailsSurfaceRendererV1,
@@ -21,13 +23,15 @@ import {
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { readFileTargetAnchorResource, readWorkspaceFileLinkView } from '@/utils/url/sessionFileDeepLink';
 import { createExecutionRunDetailsSurfaceRenderers } from '@/components/sessions/runs/launcher/executionRunDetailsSurfaceRenderers';
+import { createWorkflowDetailsSurfaceRenderers } from '@/components/workflows/run/WorkflowStartDetails';
+import { SessionWorkflowStartDetails } from '@/components/sessions/agents/launch/SessionWorkflowStartDetails';
+import { DiscussionWorkflowStartDetails, isDiscussionWorkflowStartResource } from '@/components/discussions/DiscussionWorkflowStartDetails';
 import { isSessionPeekDetailsResource } from '@/components/sessions/work/createSessionPeekDetailsTab';
 import { SessionPeekDetailsView } from '@/components/sessions/work/SessionPeekDetailsView';
-import { isWorkflowRunPeekDetailsResource } from '@/components/sessions/work/createWorkflowRunPeekDetailsTab';
-import { WorkflowRunPeekDetailsView } from '@/components/sessions/work/WorkflowRunPeekDetailsView';
 import { SessionWorkMapDetailsView, isSessionWorkMapDetailsResource } from '@/components/sessions/work/SessionWorkMapDetailsView';
 import { SessionBoardDetailsSurface } from '@/components/sessions/board/SessionBoardDetailsSurface';
 import { DiscussionDetailsView } from '@/components/discussions/DiscussionDetailsView';
+import { DiscussionSecondOpinionPaneTab } from '@/components/discussions/DiscussionSecondOpinionPaneTab';
 import { readDiscussionRouteDraftId } from '@/components/discussions/discussionRoutes';
 import { DiscussionAnchorV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
 import {
@@ -35,7 +39,7 @@ import {
     createSessionDiscussionDetailsTab,
     type SessionDiscussionDetailsTarget,
 } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { SessionEmbeddedTerminalPane } from '@/components/sessions/terminal/SessionEmbeddedTerminalPane';
+import { SessionTerminalSurface } from './SessionTerminalSurface';
 import { SESSION_PRIMARY_TERMINAL_INSTANCE_ID } from '@/components/sessions/terminal/embeddedTerminalDocking';
 import { readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import {
@@ -44,15 +48,12 @@ import {
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/actions';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
-import type { PeerMediationObservabilityUiStore } from '@/sync/domains/machines/peer/mediation/observability';
-import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 import type { PluginUiDestinationRuntimeFormFactorV1 } from '@happier-dev/protocol/plugins/ui';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
@@ -96,27 +97,24 @@ type SessionDetailsSurfaceRendererOptions = Readonly<{
     callerHostedHtmlRuntime?: CallerHostedHtmlRuntime | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     localServiceLauncherState?: BrowserDetailsSurfaceRendererOptions['localServiceLauncherState'];
-    peerMediationObservabilityState?: PeerMediationObservabilityUiStore | null;
-    peerMediationObservabilityScope?: PeerMediationObservabilityScopeV1 | null;
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
     platform?: LocalServicePreviewPlatform;
     formFactor?: PluginUiDestinationRuntimeFormFactorV1;
     productModels?: BrowserSurfaceProductModels;
     browserRecording?: React.ComponentProps<typeof BrowserDetailsSurface>['browserRecording'];
     launchpadRows?: BrowserDetailsSurfaceRendererOptions['launchpadRows'];
+    localServiceTargets?: BrowserDetailsSurfaceRendererOptions['localServiceTargets'];
     launchpadRefreshStatus?: BrowserDetailsSurfaceRendererOptions['launchpadRefreshStatus'];
     launchpadRefreshError?: BrowserDetailsSurfaceRendererOptions['launchpadRefreshError'];
     onRefreshLaunchpad?: BrowserDetailsSurfaceRendererOptions['onRefreshLaunchpad'];
     onOpenTarget?: BrowserDetailsSurfaceRendererOptions['onOpenTarget'];
     nowMs?: () => number;
-    requestClose: () => void;
     openFileTab: SessionDetailsOpenFile;
     getStartEditingFileHandler: (tabKey: string, isPreview: boolean) => () => void;
     sessionScreenTestIdsEnabled: boolean;
     closeDetailsTab: (tabKey: string) => void;
     openDetailsTab?: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
     boardHost?: 'details' | 'focusedDetails';
-    resolveBoardPrimaryHost?: SessionBoardPrimaryMountResolver;
 }>;
 
 function readResourceKind(input: DetailsSurfaceRenderInputV1): string | null {
@@ -200,6 +198,14 @@ function readSessionDiscussionDetailsTarget(value: unknown): SessionDiscussionDe
     };
 }
 
+function readSessionSecondOpinionDetailsTarget(value: unknown): Readonly<{ address: { serverId: string; sessionId: string }; requestId: string }> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const resource = value as { kind?: unknown; requestId?: unknown; address?: { serverId?: unknown; sessionId?: unknown } };
+    if (resource.kind !== 'secondOpinion' || typeof resource.requestId !== 'string' || !resource.address
+        || typeof resource.address.serverId !== 'string' || typeof resource.address.sessionId !== 'string') return null;
+    return { address: { serverId: resource.address.serverId, sessionId: resource.address.sessionId }, requestId: resource.requestId };
+}
+
 function discussionTargetMatchesSession(
     target: SessionDiscussionDetailsTarget,
     options: Pick<SessionDetailsSurfaceRendererOptions, 'sessionId' | 'serverId'>,
@@ -242,6 +248,14 @@ export function createSessionDetailsSurfaceRenderers(
 
     return [
         {
+            id: 'bot-template-editor', owner: 'session', order: -6,
+            canRender: input => readBotTemplateEditorResource(input.tab.resource) !== null,
+            render: input => {
+                const resource = readBotTemplateEditorResource(input.tab.resource);
+                return resource ? <BotTemplateEditor artifactId={resource.artifactId} serverId={resource.serverId} sourceSessionId={options.sessionId} presentation="pane" /> : null;
+            },
+        },
+        {
             id: 'session-board',
             owner: 'session',
             order: -5,
@@ -261,7 +275,6 @@ export function createSessionDetailsSurfaceRenderers(
                         paneScopeId={options.scopeId}
                         host={host}
                         active={input.active}
-                        resolvePrimaryHost={options.resolveBoardPrimaryHost}
                         {...(focusedItemId ? { focusedItemId } : {})}
                         {...(focusedItemId && openDetailsTab
                             ? { onLeaveFocusedItem: () => openDetailsTab(createSessionBoardDetailsTab(), { intent: 'pinned' }) }
@@ -338,6 +351,7 @@ export function createSessionDetailsSurfaceRenderers(
             platform: resolveBrowserSurfacePlatform(options.platform),
             productModels,
             launchpadRows: options.launchpadRows,
+            localServiceTargets: options.localServiceTargets,
             launchpadRefreshStatus: options.launchpadRefreshStatus,
             launchpadRefreshError: options.launchpadRefreshError,
             onRefreshLaunchpad: options.onRefreshLaunchpad,
@@ -359,6 +373,7 @@ export function createSessionDetailsSurfaceRenderers(
                         filePath={input.tab.resource.path}
                         deepLinkAnchor={readFileTargetAnchorResource(input.tab.resource)}
                         initialView={readWorkspaceFileLinkView(input.tab.resource)}
+                        initialChanges={readFileTabChanges(input.tab.resource)}
                         presentation="panel"
                         scopeId={options.scopeId}
                         openableContentViewer={{
@@ -427,6 +442,34 @@ export function createSessionDetailsSurfaceRenderers(
             },
         },
         {
+            // Lab T3: Second opinion / Discuss… beside the transcript; it becomes the Discussion it starts.
+            id: 'session-second-opinion',
+            owner: 'session',
+            order: 15,
+            canRender: (input) => {
+                const target = readSessionSecondOpinionDetailsTarget(input.tab.resource);
+                return target !== null && target.address.sessionId === options.sessionId;
+            },
+            render: (input) => {
+                const target = readSessionSecondOpinionDetailsTarget(input.tab.resource);
+                if (!target) return null;
+                return (
+                    <DiscussionSecondOpinionPaneTab
+                        active={input.active}
+                        requestId={target.requestId}
+                        paneScopeId={options.scopeId}
+                        tabKey={input.tab.key}
+                        onCloseTab={() => options.closeDetailsTab(input.tab.key)}
+                        onOpenDiscussion={(discussionId, title, messageId) => {
+                            input.callbacks.replaceTab?.(input.tab.key, createSessionDiscussionDetailsTab({
+                                kind: 'discussion', address: target.address, discussionId, title, messageId,
+                            }), { intent: 'pinned' });
+                        }}
+                    />
+                );
+            },
+        },
+        {
             id: 'session-commit',
             owner: 'scm',
             order: 20,
@@ -458,7 +501,6 @@ export function createSessionDetailsSurfaceRenderers(
                     scopeId={options.scopeId}
                     active={input.active}
                     resource={input.tab.resource}
-                    onRequestClose={options.requestClose}
                     onOpenDetailsTab={options.openDetailsTab}
                 />
             ),
@@ -504,10 +546,10 @@ export function createSessionDetailsSurfaceRenderers(
                 const terminalInstanceId = readTerminalDetailsInstanceId(input.tab.resource, fallbackTerminalInstanceId);
                 if (!terminalInstanceId) return null;
                 return (
-                    <SessionEmbeddedTerminalPane
+                    <SessionTerminalSurface
                         sessionId={options.sessionId}
                         scopeId={options.scopeId}
-                        currentDockLocation="details"
+                        presentation="details"
                         terminalInstanceId={terminalInstanceId}
                         testIdPrefix={options.sessionScreenTestIdsEnabled ? 'session-details-terminal' : null}
                     />
@@ -548,23 +590,6 @@ export function createSessionDetailsSurfaceRenderers(
             },
         },
         {
-            id: 'session-workflow-run-peek',
-            owner: 'session',
-            order: 63,
-            canRender: (input) => isWorkflowRunPeekDetailsResource(input.tab.resource),
-            render: (input) => {
-                if (!isWorkflowRunPeekDetailsResource(input.tab.resource)) return null;
-                return (
-                    <WorkflowRunPeekDetailsView
-                        runId={input.tab.resource.runId}
-                        serverId={input.tab.resource.serverId}
-                        active={input.active}
-                        onClose={() => options.closeDetailsTab(input.tab.key)}
-                    />
-                );
-            },
-        },
-        {
             id: 'session-work-map',
             owner: 'session',
             order: 62,
@@ -582,6 +607,9 @@ export function createSessionDetailsSurfaceRenderers(
         },
         ...createExecutionRunDetailsSurfaceRenderers({ owner: 'session', sessionId: options.sessionId,
             serverId: options.serverId, closeDetailsTab: options.closeDetailsTab }),
+        ...createWorkflowDetailsSurfaceRenderers({ owner: 'session', renderStart: input => isDiscussionWorkflowStartResource(input.tab.resource)
+            ? <DiscussionWorkflowStartDetails input={input} />
+            : <SessionWorkflowStartDetails input={input} sessionId={options.sessionId} serverId={options.serverId} /> }),
         {
             id: 'session-provider-details',
             owner: 'session',

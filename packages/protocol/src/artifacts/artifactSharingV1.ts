@@ -1,4 +1,3 @@
-import { botTemplateArtifactSharingAdapterV1 } from '../bots/templates/botTemplateArtifactSharingV1.js';
 import type { ArtifactCallerAccessV1 } from './artifactAccessV1.js';
 import type { ArtifactAccessGrantsListResponseV1 } from './artifactAccessV1.js';
 import type { ArtifactPublicAudienceV1 } from './artifactActionsV1.js';
@@ -13,6 +12,8 @@ import { USAGE_NOTICE_ARTIFACT_KIND_V1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '
 import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '../workflows/workflowDefinitionV1.js';
 import { roleArtifactSharingAdapterV1 } from '../prompts/roles/roleArtifactSharingV1.js';
 import { launchProfileArtifactSharingAdapterV1 } from '../launchProfiles/launchProfileArtifactV1.js';
+import { botTemplateArtifactSharingAdapterV1 } from '../bots/templates/botTemplateArtifactSharingV1.js';
+import { BotTemplateArtifactHeaderV1Schema } from '../bots/templates/botTemplateV1.js';
 import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
 import { getWidgetSharedInputIssuesV1 } from '../widgets/widgetSharedInputAdmissionV1.js';
 import { WIDGET_DEFINITION_ARTIFACT_KIND_V1 } from '../widgets/widgetDefinitionArtifactV1.js';
@@ -68,7 +69,7 @@ export type ArtifactSharingKindAdapterV1 = Readonly<{
 /** Recipient intent and content admission only. Grants and content opening belong to the store. */
 export type ArtifactUseTargetV1 = Readonly<{
   artifactId: string;
-  kind: 'open' | 'prompt_doc' | 'prompt_bundle' | 'memory' | 'workflow' | 'role' | 'launch_profile' | 'board' | 'widget' | 'approval';
+  kind: 'open' | 'prompt_doc' | 'prompt_bundle' | 'memory' | 'workflow' | 'role' | 'launch_profile' | 'board' | 'widget' | 'approval' | 'bot_template';
   canShare: boolean;
   browserListed: boolean;
   publicLinkAllowed: boolean;
@@ -77,6 +78,7 @@ export type ArtifactUseTargetV1 = Readonly<{
 /** Kind admission is shared by browser, grant and publication consumers. */
 export type ArtifactKindPolicyV1 = Readonly<{
   browserListed: boolean;
+  ownerDeleteAllowed: boolean;
   publicLinkAllowed: boolean;
   peopleSharingAllowed: boolean;
   grantInspection: 'all' | 'owner_only';
@@ -183,8 +185,8 @@ export const widgetDefinitionArtifactSharingAdapterV1 = {
   },
 } as const satisfies ArtifactSharingKindAdapterV1;
 
-const documentPolicy = { browserListed: true, publicLinkAllowed: true, peopleSharingAllowed: true, grantInspection: 'all' } as const;
-const privatePolicy = { browserListed: false, publicLinkAllowed: false, peopleSharingAllowed: false, grantInspection: 'all' } as const;
+const documentPolicy = { browserListed: true, ownerDeleteAllowed: true, publicLinkAllowed: true, peopleSharingAllowed: true, grantInspection: 'all' } as const;
+const privatePolicy = { browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false, peopleSharingAllowed: false, grantInspection: 'all' } as const;
 
 // One table owns presentation, grant/public admission, intent and content validation.
 const kindPolicies: readonly Readonly<ArtifactKindPolicyV1 & {
@@ -205,14 +207,15 @@ const kindPolicies: readonly Readonly<ArtifactKindPolicyV1 & {
   { ...documentPolicy, kind: botTemplateArtifactSharingAdapterV1.kind, adapter: botTemplateArtifactSharingAdapterV1,
     useKind: 'open', requiresTextBody: true, browserListed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
   { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,
-    browserListed: false, publicLinkAllowed: false },
+    browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false },
   { ...privatePolicy, kind: HOME_HUB_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false },
   { ...privatePolicy, kind: WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: ACCOUNT_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
-  // Deployment intent and native receipts stay with the Deployments owner, never listed or shared as documents.
+  // Deployments stay unlisted and have no public links; Source Move shares their
+  // existing content through the ordinary authenticated grant writer.
   ...[DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1]
-    .map(kind => ({ ...privatePolicy, kind, useKind: 'open' as const, requiresTextBody: true })),
+    .map(kind => ({ ...privatePolicy, kind, peopleSharingAllowed: true, useKind: 'open' as const, requiresTextBody: true })),
 ];
 
 /** Indexed browser selection is the complement of this policy, including unknown kinds. */
@@ -227,9 +230,23 @@ export function getArtifactKindPolicyV1(kind: unknown, audience: 'anonymous' | '
     ? { ...policy, publicLinkAllowed: true } : policy;
 }
 
+/** The server combines kind policy with admitted access before collecting audience details. */
+export function getArtifactGrantInspectionPolicyV1(kind: unknown): ArtifactKindPolicyV1['grantInspection'] {
+  return getArtifactKindPolicyV1(kind).grantInspection;
+}
+
 /** The current specialized kind owners all require a JSON text document, never a blob reference. */
 export function artifactKindRequiresTextBodyV1(kind: unknown): boolean {
   return kindPolicies.find(policy => policy.kind === kind)?.requiresTextBody ?? false;
+}
+
+/**
+ * Whether people edit and comment on this kind's body as text. A kind whose policy says it needs no
+ * text body (a dashboard layout, the Home hub) is changed only through its own owner; unknown and
+ * untyped documents stay text documents.
+ */
+export function artifactKindIsTextDocumentV1(kind: unknown): boolean {
+  return kindPolicies.find(policy => policy.kind === kind)?.requiresTextBody !== false;
 }
 
 /** Collaboration edits ordinary prose only; structured content retains its existing kind-owned writer. */
@@ -239,7 +256,7 @@ export function artifactSupportsProseCollaborationV1(resource: ArtifactSharingRe
     && !isArtifactHtmlHeaderV1(resource.header) && typeof resource.body === 'string';
 }
 
-/** Only these existing content adapters own shared widget-input admission. */
+/** These kind-owned readers need the Artifact owner's shared-audience fact. */
 export function artifactKindRequiresSharedAudienceV1(kind: unknown): boolean {
   const adapter = kindPolicies.find(policy => policy.kind === kind)?.adapter;
   return adapter === workBoardArtifactSharingAdapterV1 || adapter === widgetSurfaceArtifactSharingAdapterV1
@@ -250,9 +267,12 @@ export function getArtifactUseTargetV1(resource: ArtifactSharingResourceV1, audi
   const policy = kindPolicies.find(policy => policy.kind === resource.header.kind);
   const admission = getArtifactKindPolicyV1(resource.header.kind, audience);
   const validContent = policy?.adapter ? policy.adapter.canShare(resource) : true;
+  const templateHeader = policy?.adapter === botTemplateArtifactSharingAdapterV1
+    ? BotTemplateArtifactHeaderV1Schema.safeParse(resource.header) : null;
+  const useKind = templateHeader?.success && templateHeader.data.state === 'released' ? 'bot_template' : policy?.useKind ?? 'open';
   // The authenticated ordinary reader excludes plugin-owned storage. Untyped/predecessor and
   // unknown ordinary documents use the generic viewer; this does not confer grant authority.
-  return { artifactId: resource.artifactId, kind: policy?.useKind ?? 'open',
+  return { artifactId: resource.artifactId, kind: useKind,
     browserListed: admission.browserListed, publicLinkAllowed: admission.publicLinkAllowed && validContent,
     canShare: admission.peopleSharingAllowed && validContent };
 }
@@ -262,8 +282,4 @@ export function filterArtifactSharingResourcesByKindV1<T extends ArtifactSharing
   resources: readonly T[], adapter: ArtifactSharingKindAdapterV1,
 ): T[] {
   return resources.filter((resource) => resource.header.kind === adapter.kind && adapter.canShare(resource));
-}
-
-export function getArtifactGrantInspectionPolicyV1(kind: unknown): ArtifactKindPolicyV1['grantInspection'] {
-  return getArtifactKindPolicyV1(kind).grantInspection;
 }

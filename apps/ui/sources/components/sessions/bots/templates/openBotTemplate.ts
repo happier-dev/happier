@@ -1,0 +1,69 @@
+import * as React from 'react';
+import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
+import type { BotTemplateOpenInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { t } from '@/text';
+import { Modal } from '@/modal';
+import { buildBotTemplateEditorRoute, BOT_TEMPLATE_EDITOR_DESTINATION, createBotTemplateEditorDetailsTab } from './botTemplateEditorDestination';
+import { useOptionalDetailsRegionTabOpener } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+export { buildBotTemplateEditorRoute, createBotTemplateEditorDetailsTab, readBotTemplateEditorResource } from './botTemplateEditorDestination';
+export type SessionBotTemplateSource = Pick<Session, 'id' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'access'>;
+
+/** Every authored entry reads the owner-private address, never a whole Artifact inventory. */
+export function readSessionTemplateDraftRef(session: SessionBotTemplateSource) {
+    const metadata = readSessionOwnerMetadataView(session);
+    return metadata ? readSessionStateFieldFromMetadata(metadata, 'intent.templateDraftRef') ?? null : null;
+}
+
+/** Initial creation and a deleted/dangling draft ask the source Bot through the same Action. */
+export function requestBotTemplateDraft(execute: ReturnType<typeof useMountedActionExecution>['execute'], sessionId: string): Promise<ActionExecuteResult> {
+    return execute('session.message.send', { sessionId, message: t('botTemplates.draftRequest'), reply: 'none' }, { defaultSessionId: sessionId });
+}
+
+export function useOpenBotTemplate(session: SessionBotTemplateSource | null, serverId: string, registerCommand = false) {
+    const sessionId = session?.id ?? '';
+    const open = usePresentBotTemplate(sessionId, serverId);
+    const executorOptions = React.useMemo(() => ({ openBotTemplate: open }), [open]);
+    const actions = useMountedActionExecution(serverId, { executorOptions });
+    const current = React.useRef(session);
+    current.current = session;
+    const available = session !== null && readSessionBotV1(session.metadata?.bot)?.kind === 'bot'
+        && (readSessionTemplateDraftRef(session) !== null || session.access?.capabilities.submitAgentInput === true);
+    const invoke = React.useCallback(async () => {
+        const source = current.current;
+        if (!source) return;
+        const ref = readSessionTemplateDraftRef(source);
+        const result = ref ? await actions.execute('template.open', { draftArtifactId: ref.artifactId,
+            sourceSessionRef: { serverId: ref.serverId, sessionId }, presentation: 'pane' })
+            : await requestBotTemplateDraft(actions.execute, sessionId);
+        // Taking Info's pane retires its mounted command. That cancellation says
+        // nothing about the template now presented by the successor view.
+        if (!result.ok && actions.isCurrent()) await Modal.alert(t('common.error'), t('botTemplates.unavailable'));
+    }, [actions.execute, actions.isCurrent, sessionId]);
+    const commands = React.useMemo(() => registerCommand && available ? [{ key: BOT_TEMPLATE_EDITOR_DESTINATION,
+        title: t('botTemplates.giveCopy'), description: t('botTemplates.giveCopyDescription'), invoke }] : [], [invoke, registerCommand, available]);
+    useCurrentUiContextLocalCommands(commands);
+    return available ? invoke : null;
+}
+
+export function usePresentBotTemplate(sessionId: string, serverId: string) {
+    const router = useRouter();
+    const scopeId = useDestinationPaneScopeId(createSessionPaneScopeId(sessionId, serverId));
+    const openDetailsTab = useOptionalDetailsRegionTabOpener();
+    const open = React.useCallback(async (input: BotTemplateOpenInputV1) => {
+        if (input.presentation === 'page') router.pushRetainingCurrent(buildBotTemplateEditorRoute(input) as never);
+        else {
+            const tab = createBotTemplateEditorDetailsTab({ artifactId: input.draftArtifactId, serverId: input.sourceSessionRef.serverId });
+            openDetailsTab?.(scopeId, tab, { intent: 'pinned', start: true });
+        }
+    }, [router, openDetailsTab, scopeId]);
+    return open;
+}

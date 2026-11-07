@@ -18,9 +18,29 @@ import { t } from '@/text';
 export type BotTemplatePreviewProps = Readonly<{
     content: BotTemplateContentV1;
     onDownloadFile?: (skillKey: string, path: string) => void;
+    showNeeds?: boolean;
 }>;
 
 type SkillFile = BotTemplateSkillV1['entries'][number];
+
+/** Instructions and carried files share one closed-by-default inspection control. */
+function BotTemplateDisclosure(props: Readonly<{
+    children: React.ReactNode; title: string; description?: string; testID: string; icon?: React.ReactNode;
+}>) {
+    const [expanded, setExpanded] = React.useState(false);
+    return <ExpandableItem expanded={expanded} onExpandedChange={setExpanded} testID={`${props.testID}:disclosure`}
+        header={({ headerProps }) => <Item {...headerProps} testID={props.testID}
+            title={props.title} subtitle={props.description} icon={props.icon} showChevron={false} />}>
+        {expanded ? props.children : null}
+    </ExpandableItem>;
+}
+
+export function BotTemplateInstructions(props: Readonly<{ children: React.ReactNode; description?: string }>) {
+    return <ItemGroup><BotTemplateDisclosure testID="bot-template-instructions-disclosure"
+        title={t('botTemplates.instructions')} description={props.description} icon={<Icon name="book-open" />}>
+        {props.children}
+    </BotTemplateDisclosure></ItemGroup>;
+}
 
 /** Decode carried bytes only while the person is inspecting this file. */
 export function BotTemplateFilePreview(props: Readonly<{
@@ -42,17 +62,14 @@ export function BotTemplateFilePreview(props: Readonly<{
 }
 
 function PreviewFile(props: Readonly<{ file: SkillFile; skillKey: string; onDownloadFile?: BotTemplatePreviewProps['onDownloadFile'] }>) {
-    const [expanded, setExpanded] = React.useState(props.file.path === 'SKILL.md');
     const testID = `bot-template:file:${props.skillKey}:${props.file.path}`;
     const downloadFile = props.onDownloadFile;
     const mode = props.file.unixMode;
     const subtitle = typeof mode === 'number' ? `0o${mode.toString(8)}${mode & 0o111 ? ` · ${t('botTemplateRecipient.executable')}` : ''}` : undefined;
-    return <ExpandableItem expanded={expanded} onExpandedChange={setExpanded}
-        testID={`${testID}:disclosure`} header={({ headerProps }) =>
-            <Item {...headerProps} testID={testID} title={props.file.path} subtitle={subtitle} showChevron={false} />}>
-        {expanded ? <SectionContentRow><BotTemplateFilePreview file={props.file} testID={testID}
-            onDownload={downloadFile ? () => downloadFile(props.skillKey, props.file.path) : undefined} /></SectionContentRow> : null}
-    </ExpandableItem>;
+    return <BotTemplateDisclosure testID={testID} title={props.file.path} description={subtitle}>
+        <SectionContentRow><BotTemplateFilePreview file={props.file} testID={testID}
+            onDownload={downloadFile ? () => downloadFile(props.skillKey, props.file.path) : undefined} /></SectionContentRow>
+    </BotTemplateDisclosure>;
 }
 
 type Need = BotTemplateContentV1['needs'][keyof BotTemplateContentV1['needs']][number];
@@ -74,8 +91,8 @@ function needLine(need: Need) {
  * as a person decides: its first task, what it needs, then everything it carries, complete, before
  * anything is created (MCP definitions stay visible, never folded).
  */
-export function BotTemplatePreview({ content, onDownloadFile }: BotTemplatePreviewProps) {
-    const hasNeeds = NEED_KINDS.some(({ kind }) => content.needs[kind].length > 0);
+export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }: BotTemplatePreviewProps) {
+    const hasNeeds = showNeeds && NEED_KINDS.some(({ kind }) => content.needs[kind].length > 0);
     return <>
         {content.firstTask ? <ItemGroup title={t('botTemplates.tryItWith')}>
             <Item testID="bot-template-first-task" title={content.firstTask} subtitle={t('botTemplates.firstTaskHint')}
@@ -90,9 +107,9 @@ export function BotTemplatePreview({ content, onDownloadFile }: BotTemplatePrevi
                 </SectionContentRow> : null}
             </React.Fragment>))}
         </ItemGroup> : null}
-        <ItemGroup title={t('botTemplates.instructions')}>
+        <BotTemplateInstructions>
             <SectionContentRow><Text selectable style={styles.instructions}>{content.instructions.markdown}</Text></SectionContentRow>
-        </ItemGroup>
+        </BotTemplateInstructions>
         {content.memoryRules.length > 0 ? <ItemGroup title={t('botTemplateRecipient.memoryRules')}>
             {content.memoryRules.map(rule => <Item key={rule.key} title={rule.text} subtitle={rule.topic} showChevron={false} />)}
         </ItemGroup> : null}

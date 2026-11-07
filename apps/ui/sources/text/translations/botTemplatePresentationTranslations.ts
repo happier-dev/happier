@@ -3,6 +3,10 @@ import type { SupportedLanguage } from '../_all';
 type Count = { count: number };
 type Words = Readonly<{
   draftKind: string;
+  templateCheck: string;
+  templateCheckDescription: string;
+  firstRunFromAuthor: (p: { name: string }) => string;
+  firstRunFromTemplate: (p: { name: string }) => string;
   whatPeopleGet: string;
   getsInstructions: string;
   getsMemory: (p: Count) => string;
@@ -38,6 +42,10 @@ type Words = Readonly<{
   templateSectionDescription: (p: { name: string }) => string;
   namedTemplate: (p: { name: string }) => string;
   giveCopyEllipsis: string;
+  deleteTemplate: string;
+  deleteTemplateEllipsis: string;
+  deleteTemplateDescription: string;
+  createTemplate: string;
 }>;
 
 const named = (text: string) => ({ name }: { name: string }) => text.replace('{name}', () => name);
@@ -49,6 +57,13 @@ const n =
 /** Bot template card, preview and summary copy (round-2 lab language). */
 export const botTemplatePresentationTranslations = {
   en: {
+    deleteTemplate: 'Delete template', deleteTemplateEllipsis: 'Delete template…',
+    deleteTemplateDescription: 'Copies people already made from this template will keep working.',
+    createTemplate: 'Create template',
+    templateCheck: "Template check",
+    templateCheckDescription: "Review that no facts about you, keys or tokens are included.",
+    firstRunFromAuthor: named("Made from {name}’s template"),
+    firstRunFromTemplate: named("Made from {name}"),
     draftKind: 'Bot template · private draft',
     whatPeopleGet: 'What people get',
     getsInstructions: 'Its instructions, as a general copy',
@@ -90,6 +105,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Template', templateSectionDescription: named('What others start their own {name} from.'), namedTemplate: named('{name} template'), giveCopyEllipsis: 'Give a copy…',
   },
   fr: {
+    deleteTemplate: 'Supprimer le modèle', deleteTemplateEllipsis: 'Supprimer le modèle…',
+    deleteTemplateDescription: 'Les copies déjà créées à partir de ce modèle continueront de fonctionner.',
+    createTemplate: 'Créer un modèle',
+    templateCheck: "Vérification du modèle",
+    templateCheckDescription: "Vérifiez qu’aucune information personnelle, clé ou jeton n’est inclus.",
+    firstRunFromAuthor: named("Créé à partir du modèle de {name}"),
+    firstRunFromTemplate: named("Créé à partir de {name}"),
     draftKind: 'Modèle de Bot · brouillon privé',
     whatPeopleGet: 'Ce que les autres reçoivent',
     getsInstructions: 'Ses instructions, en copie générale',
@@ -135,6 +157,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Modèle', templateSectionDescription: named('Ce à partir de quoi les autres créent leur propre {name}.'), namedTemplate: named('Modèle {name}'), giveCopyEllipsis: 'Donner une copie…',
   },
   de: {
+    deleteTemplate: 'Vorlage löschen', deleteTemplateEllipsis: 'Vorlage löschen…',
+    deleteTemplateDescription: 'Bereits aus dieser Vorlage erstellte Kopien funktionieren weiterhin.',
+    createTemplate: 'Vorlage erstellen',
+    templateCheck: "Vorlagenprüfung",
+    templateCheckDescription: "Prüfe, dass keine persönlichen Angaben, Schlüssel oder Tokens enthalten sind.",
+    firstRunFromAuthor: named("Aus der Vorlage von {name} erstellt"),
+    firstRunFromTemplate: named("Aus {name} erstellt"),
     draftKind: 'Bot-Vorlage · privater Entwurf',
     whatPeopleGet: 'Was andere bekommen',
     getsInstructions: 'Seine Anweisungen, als allgemeine Kopie',
@@ -183,6 +212,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Vorlage', templateSectionDescription: named('Woraus andere ihren eigenen {name} starten.'), namedTemplate: named('Vorlage {name}'), giveCopyEllipsis: 'Kopie weitergeben…',
   },
   es: {
+    deleteTemplate: 'Eliminar plantilla', deleteTemplateEllipsis: 'Eliminar plantilla…',
+    deleteTemplateDescription: 'Las copias que otras personas ya hayan creado a partir de esta plantilla seguirán funcionando.',
+    createTemplate: 'Crear plantilla',
+    templateCheck: "Revisión de la plantilla",
+    templateCheckDescription: "Comprueba que no se incluyan datos personales, claves ni tokens.",
+    firstRunFromAuthor: named("Creado con la plantilla de {name}"),
+    firstRunFromTemplate: named("Creado con {name}"),
     draftKind: 'Plantilla de Bot · borrador privado',
     whatPeopleGet: 'Qué reciben los demás',
     getsInstructions: 'Sus instrucciones, como copia general',
@@ -224,6 +260,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Plantilla', templateSectionDescription: named('De dónde otros crean su propio {name}.'), namedTemplate: named('Plantilla de {name}'), giveCopyEllipsis: 'Dar una copia…',
   },
   it: {
+    deleteTemplate: 'Elimina modello', deleteTemplateEllipsis: 'Elimina modello…',
+    deleteTemplateDescription: 'Le copie già create da questo modello continueranno a funzionare.',
+    createTemplate: 'Crea modello',
+    templateCheck: "Controllo del modello",
+    templateCheckDescription: "Verifica che non siano inclusi dati personali, chiavi o token.",
+    firstRunFromAuthor: named("Creato dal modello di {name}"),
+    firstRunFromTemplate: named("Creato da {name}"),
     draftKind: 'Modello di Bot · bozza privata',
     whatPeopleGet: 'Cosa ricevono gli altri',
     getsInstructions: 'Le sue istruzioni, come copia generale',
@@ -268,6 +311,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Modello', templateSectionDescription: named('Da cui altri creano il proprio {name}.'), namedTemplate: named('Modello {name}'), giveCopyEllipsis: 'Dai una copia…',
   },
   pt: {
+    deleteTemplate: 'Excluir modelo', deleteTemplateEllipsis: 'Excluir modelo…',
+    deleteTemplateDescription: 'As cópias que as pessoas já criaram a partir deste modelo continuarão funcionando.',
+    createTemplate: 'Criar modelo',
+    templateCheck: "Verificação do modelo",
+    templateCheckDescription: "Verifique se não há dados pessoais, chaves ou tokens incluídos.",
+    firstRunFromAuthor: named("Criado a partir do modelo de {name}"),
+    firstRunFromTemplate: named("Criado a partir de {name}"),
     draftKind: 'Modelo de Bot · rascunho privado',
     whatPeopleGet: 'O que os outros recebem',
     getsInstructions: 'As instruções, como cópia geral',
@@ -312,6 +362,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Modelo', templateSectionDescription: named('A partir do qual outros criam o seu próprio {name}.'), namedTemplate: named('Modelo {name}'), giveCopyEllipsis: 'Dar uma cópia…',
   },
   ca: {
+    deleteTemplate: 'Suprimeix la plantilla', deleteTemplateEllipsis: 'Suprimeix la plantilla…',
+    deleteTemplateDescription: 'Les còpies que altres persones ja hagin creat a partir d’aquesta plantilla continuaran funcionant.',
+    createTemplate: 'Crea una plantilla',
+    templateCheck: "Revisió de la plantilla",
+    templateCheckDescription: "Comprova que no s’hi incloguin dades personals, claus ni tokens.",
+    firstRunFromAuthor: named("Creat amb la plantilla de {name}"),
+    firstRunFromTemplate: named("Creat amb {name}"),
     draftKind: 'Plantilla de Bot · esborrany privat',
     whatPeopleGet: 'Què reben els altres',
     getsInstructions: 'Les seves instruccions, com a còpia general',
@@ -353,6 +410,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Plantilla', templateSectionDescription: named('D’on altres creen el seu propi {name}.'), namedTemplate: named('Plantilla de {name}'), giveCopyEllipsis: 'Dona una còpia…',
   },
   ja: {
+    deleteTemplate: 'テンプレートを削除', deleteTemplateEllipsis: 'テンプレートを削除…',
+    deleteTemplateDescription: 'このテンプレートからすでに作成されたコピーは引き続き利用できます。',
+    createTemplate: 'テンプレートを作成',
+    templateCheck: "テンプレートの確認",
+    templateCheckDescription: "個人情報、キー、トークンが含まれていないことを確認してください。",
+    firstRunFromAuthor: named("{name} のテンプレートから作成"),
+    firstRunFromTemplate: named("{name} から作成"),
     draftKind: 'Botテンプレート · 非公開の下書き',
     whatPeopleGet: '受け取る人に渡るもの',
     getsInstructions: '指示（汎用コピー）',
@@ -391,6 +455,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'テンプレート', templateSectionDescription: named('他の人が自分の{name}を作るもとになります。'), namedTemplate: named('{name}のテンプレート'), giveCopyEllipsis: 'コピーを渡す…',
   },
   ru: {
+    deleteTemplate: 'Удалить шаблон', deleteTemplateEllipsis: 'Удалить шаблон…',
+    deleteTemplateDescription: 'Копии, уже созданные из этого шаблона, продолжат работать.',
+    createTemplate: 'Создать шаблон',
+    templateCheck: "Проверка шаблона",
+    templateCheckDescription: "Убедитесь, что личные данные, ключи и токены не включены.",
+    firstRunFromAuthor: named("Создано из шаблона {name}"),
+    firstRunFromTemplate: named("Создано из {name}"),
     draftKind: 'Шаблон бота · личный черновик',
     whatPeopleGet: 'Что получат другие',
     getsInstructions: 'Его инструкции, в общей копии',
@@ -429,6 +500,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Шаблон', templateSectionDescription: named('Из него другие создают своего {name}.'), namedTemplate: named('Шаблон «{name}»'), giveCopyEllipsis: 'Дать копию…',
   },
   pl: {
+    deleteTemplate: 'Usuń szablon', deleteTemplateEllipsis: 'Usuń szablon…',
+    deleteTemplateDescription: 'Kopie już utworzone z tego szablonu będą nadal działać.',
+    createTemplate: 'Utwórz szablon',
+    templateCheck: "Sprawdzenie szablonu",
+    templateCheckDescription: "Sprawdź, czy nie zawiera danych osobowych, kluczy ani tokenów.",
+    firstRunFromAuthor: named("Utworzono z szablonu użytkownika {name}"),
+    firstRunFromTemplate: named("Utworzono z {name}"),
     draftKind: 'Szablon bota · prywatny szkic',
     whatPeopleGet: 'Co otrzymają inni',
     getsInstructions: 'Jego instrukcje, jako kopia ogólna',
@@ -473,6 +551,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: 'Szablon', templateSectionDescription: named('Z niego inni tworzą własnego {name}.'), namedTemplate: named('Szablon {name}'), giveCopyEllipsis: 'Przekaż kopię…',
   },
   'zh-Hans': {
+    deleteTemplate: '删除模板', deleteTemplateEllipsis: '删除模板…',
+    deleteTemplateDescription: '他人已根据此模板创建的副本仍可正常使用。',
+    createTemplate: '创建模板',
+    templateCheck: "模板检查",
+    templateCheckDescription: "请检查其中不包含个人信息、密钥或令牌。",
+    firstRunFromAuthor: named("根据 {name} 的模板创建"),
+    firstRunFromTemplate: named("根据 {name} 创建"),
     draftKind: 'Bot模板 · 私有草稿',
     whatPeopleGet: '他人会得到',
     getsInstructions: '它的指令（通用副本）',
@@ -507,6 +592,13 @@ export const botTemplatePresentationTranslations = {
     templateSection: '模板', templateSectionDescription: named('他人以此创建自己的{name}。'), namedTemplate: named('{name}模板'), giveCopyEllipsis: '提供副本…',
   },
   'zh-Hant': {
+    deleteTemplate: '刪除範本', deleteTemplateEllipsis: '刪除範本…',
+    deleteTemplateDescription: '他人已根據此範本建立的副本仍可正常使用。',
+    createTemplate: '建立範本',
+    templateCheck: "範本檢查",
+    templateCheckDescription: "請檢查其中不包含個人資訊、金鑰或權杖。",
+    firstRunFromAuthor: named("根據 {name} 的範本建立"),
+    firstRunFromTemplate: named("根據 {name} 建立"),
     draftKind: 'Bot範本 · 私人草稿',
     whatPeopleGet: '他人會得到',
     getsInstructions: '它的指令（通用副本）',

@@ -34,6 +34,15 @@ export function resolveSessionAttentionStandingAction(params: Readonly<{
         : { kind: 'set-standing', visible: true, targetStanding: true };
 }
 
+/**
+ * The target's Action decisions without its row: equal for row writes (a streamed seq, activity or
+ * thinking change) that change no offered Action, so a closed menu can subscribe to this instead.
+ */
+export function describeSessionActionTargetDecisions(target: SessionActionTarget): string {
+    const { session: _session, ...decisions } = target;
+    return JSON.stringify(decisions);
+}
+
 export function createSessionActionTarget(params: Readonly<{
     session: SessionActionSession;
     /** Exact same-Home Session whose owner metadata is not carried by a lightweight row. */

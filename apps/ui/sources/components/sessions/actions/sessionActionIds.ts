@@ -19,6 +19,8 @@ export const SESSION_ACTION_WORK_OPEN_ID = 'ui.session.work.open';
 export const SESSION_ACTION_TALK_ID = 'ui.session.talk';
 export const SESSION_ACTION_EDIT_TAGS_ID = 'ui.session.tags.edit';
 export const SESSION_ACTION_MOVE_TO_FOLDER_ID = 'ui.session.move-to-folder';
+/** Row-menu submenu; offered only where the session's server stores session appearances. */
+export const SESSION_ACTION_SET_APPEARANCE_COLOR_ID = 'ui.session.appearance-color';
 export const SESSION_ACTION_SET_ATTENTION_STANDING_ID = 'ui.session.set-attention-standing';
 export const SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID = 'ui.session.clear-attention-standing';
 /** Puts the Session under a lead, or back at the top ("Put under…", the drag equivalent; ORC §3.8). */

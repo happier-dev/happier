@@ -1,3 +1,7 @@
+import { useOpenBotTemplate } from '@/components/sessions/bots/templates/openBotTemplate';
+import { useDeleteBotTemplate } from '@/components/sessions/bots/templates/useDeleteBotTemplate';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { SessionActionId } from './sessionActionTypes';
 import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
 import { confirmSessionDelete } from './confirmSessionDelete';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -5,6 +9,17 @@ import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePendi
 import { confirmSessionArchive } from '@/components/sessions/actions/confirmSessionArchive';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
+import {
+  buildSessionAppearanceColorMenuItem,
+  resolveSessionAppearanceColorMenuChoice,
+} from '@/components/sessions/organization/sessionAppearanceColorMenu';
+import {
+  useCustomSessionAppearanceColors,
+  useSessionAppearancesSupported,
+  useSessionOwnAppearanceColor,
+} from '@/hooks/session/useSessionAppearance';
+import { requireSessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/requireSessionOrganizationMutationScope';
+import { writeSessionOrganizationAppearance } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Platform, View } from 'react-native';
@@ -12,8 +27,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useWorkspaceOpenActions } from '@/components/appShell/workspace/useWorkspaceOpenActions';
 
-import { storage, useProfile, useSetting, useSettings, useSessionOrganizationProjection } from '@/sync/domains/state/storage';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
+import { storage, useProfile, useSetting, useSessionOrganizationProjection } from '@/sync/domains/state/storage';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
@@ -21,12 +38,16 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { t } from '@/text';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
@@ -61,6 +82,7 @@ import {
 } from '@/components/sessions/actions/sessionActionExecution';
 import {
   createSessionActionTarget,
+  describeSessionActionTargetDecisions,
 } from '@/components/sessions/actions/sessionActionContext';
 import {
   createSessionActionDropdownItem,
@@ -72,6 +94,7 @@ import {
   SESSION_ACTION_ARCHIVE_ID,
   SESSION_ACTION_DELETE_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
   SESSION_ACTION_RESUME_ID,
   resolveManualReadStateFromSessionActionId,
 } from '@/components/sessions/actions/sessionActionIds';
@@ -86,7 +109,6 @@ import {
 } from './pluginHeaderActions';
 import type { StorageState } from '@/sync/store/types';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
 import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
@@ -99,8 +121,10 @@ import { SessionHeaderActionButton } from '@/components/sessions/actions/Session
 import { useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { buildSessionDebugInformationForSession } from '@/components/sessions/debug/sessionDebugInformation';
-import { copySessionDebugInformationToClipboard } from '@/components/sessions/debug/sessionDebugClipboard';
-import { createCopySessionDebugInformationMenuItem, SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID } from '@/components/sessions/debug/sessionDebugMenuItem';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { copySessionDebugInformationToClipboard, isSessionCopyActionId } from '@/components/sessions/debug/sessionDebugClipboard';
+import { createSessionCopyMenuItem } from '@/components/sessions/debug/sessionDebugMenuItem';
+import { resolveBugReportAccountIdForServer } from '@/components/settings/bugReports/bugReportSessionTarget';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { supportsExternalSessionBackgroundFollow } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
@@ -325,6 +349,7 @@ function didSessionHeaderActionMenuPropsChange(
 }
 
 function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
+  const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
   const presentationActive = useLayoutPresentationActive();
   const followControllerRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => {
@@ -339,8 +364,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const findSurfaceRuntime = useFindSurfaceRuntime();
   const router = useRouter();
   const enabledAgentIds = useEnabledAgentIds();
-  const settings = useSettings();
-  const profile = useProfile();
+  const settings = useSettingsValues(['actionsSettingsV1', 'experiments', 'featureToggles', 'backendEnabledByTargetKey']);
+  const profileId = useProfile(profile => profile?.id ?? null);
   const actionDraftAccountScope = props.actionAccountLifetime?.isCurrent() === true
     ? props.actionAccountLifetime.scope
     : null;
@@ -366,9 +391,19 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? session.serverId ?? null),
     [preferredSessionServerId, session.serverId, props.sessionId],
   );
+  const giveBotCopy = useOpenBotTemplate(session, sessionServerId ?? '', true);
+  const deleteBotTemplate = useDeleteBotTemplate(session);
+  const workspaceOpen = useWorkspaceOpenActions(buildScopedSessionRouteHref({
+    sessionId: props.sessionId, serverId: sessionServerId ?? null,
+  }));
   const navigateAfterDelete = useSessionActionNavigation({
     sessionId: props.sessionId, serverId: sessionServerId ?? null,
     onNavigate: React.useCallback(() => safeRouterBack({ router, fallbackHref: '/' }), [router]),
+  });
+  const writeClipboard = useClipboardWrite(sessionServerId ?? null, { enabled: open });
+  const followApproval = useActionApprovalContinuation({
+    scopeKey: JSON.stringify([sessionServerId, props.sessionId, profileId]),
+    serverId: sessionServerId ?? '', onExecuted: () => {},
   });
   const companionAddress = React.useMemo(
     () => normalizeSessionAddress(sessionServerId, props.sessionId),
@@ -447,19 +482,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   // A tight header (a session column beside the editor) takes the chip's icon form too, so the title keeps its room.
   const headerCompact = useDetailsTabHeaderActionsCompact();
   const followChipCompact = !useIsTablet() || headerCompact;
-  const sessionActionSnapshot = storage((state) => readCurrentSessionActionTargetSnapshot(
-    state,
-    props.sessionId,
-    sessionServerId ?? null,
-    session,
-  ));
-  // Loaded-message attention can change without replacing the Session row;
-  // text-only revisions do not change the canonical read action.
-  const readStateActionKind = storage((state) => resolveSessionReadStateAction(
-    readCurrentSessionActionTargetSnapshot(state, props.sessionId, sessionServerId ?? null, session),
-  ).kind);
-  const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
-  const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
+  const currentUserId = typeof profileId === 'string' ? profileId : null;
+  const reachableMachineId = useSessionReachableMachineTarget(props.sessionId, sessionServerId)?.machineId ?? null;
   const ownerMetadata = readSessionOwnerMetadataView(session);
   const declaredAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
   const resumeAgentId = declaredAgentId
@@ -485,30 +509,57 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const attentionStandingEnabled = attentionStanding.actionEnabled && sessionAttentionStandingKey != null;
   const isAttentionStandingSession = sessionAttentionStandingKey != null
     && resolveSessionAttentionStanding(attentionStanding.policy, sessionAttentionStandingKey);
-  const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
-    session: sessionActionSnapshot,
+  // Colour data is detail: read only while this menu is open (closed-popover rule).
+  const sessionAppearancesSupported = useSessionAppearancesSupported(sessionServerId, { enabled: open });
+  const appearanceDataActive = open && sessionAppearancesSupported;
+  const ownAppearanceColor = useSessionOwnAppearanceColor(sessionServerId, props.sessionId, { enabled: appearanceDataActive });
+  const customAppearanceColors = useCustomSessionAppearanceColors(sessionServerId, { enabled: appearanceDataActive });
+  const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
+  const isSessionConnected = getSessionStatus(session).isConnected;
+  const isListPinned = organizationProjection?.pinsBySessionId[props.sessionId]?.listPinned === true;
+  const isRailPinned = organizationProjection?.pinsBySessionId[props.sessionId]?.railPinned === true;
+  const readSessionActionSnapshot = (state: StorageState) => readCurrentSessionActionTargetSnapshot(
+    state, props.sessionId, sessionServerId ?? null, session,
+  );
+  const buildSessionActionTarget = (snapshot: ReturnType<typeof readSessionActionSnapshot>) => createSessionActionTarget({
+    session: snapshot,
     ownerSession: session,
     serverId: sessionServerId ?? null,
     currentUserId,
-    isConnected: getSessionStatus(session).isConnected,
+    isConnected: isSessionConnected,
     attentionStandingEnabled,
     followEnabled: followEditor.enabled,
     attentionStanding: isAttentionStandingSession,
     resumeCapabilityOptions,
-    isPinned: organizationProjection?.pinsBySessionId[props.sessionId]?.listPinned === true,
-    isRailPinned: organizationProjection?.pinsBySessionId[props.sessionId]?.railPinned === true,
-  }), [
-    attentionStandingEnabled,
-    followEditor.enabled,
-    currentUserId,
-    isAttentionStandingSession,
-    resumeCapabilityOptions,
-    organizationProjection,
-    readStateActionKind,
-    session,
-    sessionActionSnapshot,
-    sessionServerId,
-  ]);
+    isPinned: isListPinned,
+    isRailPinned,
+  });
+  // Open, the executable target follows the live row. Closed, the header needs only which Actions the
+  // row offers, so it subscribes to those decisions: a streamed row write (seq, activity, thinking) or
+  // a text-only message revision commits nothing, while a read, access or lifecycle change does.
+  const openSessionActionSnapshot = storage((state) => open ? readSessionActionSnapshot(state) : null);
+  const closedSessionActionDecisions = storage((state) => open
+    ? null
+    : describeSessionActionTargetDecisions(buildSessionActionTarget(readSessionActionSnapshot(state))));
+  const sessionActionTarget = React.useMemo(
+    () => buildSessionActionTarget(openSessionActionSnapshot ?? readSessionActionSnapshot(storage.getState())),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the builders close over exactly these inputs.
+    [
+      attentionStandingEnabled,
+      closedSessionActionDecisions,
+      currentUserId,
+      followEditor.enabled,
+      isAttentionStandingSession,
+      isListPinned,
+      isRailPinned,
+      isSessionConnected,
+      openSessionActionSnapshot,
+      props.sessionId,
+      resumeCapabilityOptions,
+      session,
+      sessionServerId,
+    ],
+  );
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
       resolveServerIdForSessionId: () => sessionServerId,
@@ -557,7 +608,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       projection: daemonMergedProjection.inputs?.pluginProjectionV2,
     });
   }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, externalSessionLink]);
-  const invokePluginHeaderAction = React.useCallback((menuActionId: string) => {
+  const invokePluginHeaderAction = React.useCallback((menuActionId: string, anchor?: PopoverAnchor) => {
     // Both responsive controls re-resolve the selected descriptor against the
     // current projection through this one callback. The descriptor list never
     // gains execution authority merely by being rendered directly.
@@ -565,6 +616,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       const outcome = await dispatchPluginSessionHeaderAction({
         projection: props.pluginUiProjection,
         menuActionId,
+        anchor,
         scopedLaunchFacts: props.pluginUiScopedLaunchFacts,
         scopeIsCurrent: props.pluginUiScopeIsCurrent,
         sessionId: props.sessionId,
@@ -612,6 +664,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     const out: Array<Readonly<{ group: SessionHeaderMenuGroup; item: DropdownMenuItem }>> = [];
     const push = (group: SessionHeaderMenuGroup, item: DropdownMenuItem) => { out.push({ group, item }); };
     push('open', { id: 'header.findChat', title: t('find.surface.chat'), icon: <Icon name="magnifying-glass" size={16} color={iconColor} /> });
+    for (const item of workspaceOpen.presentationItems) push('open', item);
     if (openComputer) {
       push('open', { id: 'header.openComputer', title: t('computerUse.presentation.sourceComputer'),
         disabled: Boolean(openComputer.disabledReason), subtitle: openComputer.disabledReason ?? undefined,
@@ -651,7 +704,23 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       }))) push('open', item);
     }
 
-    for (const actionId of listVisibleSessionActionIds({ target: sessionActionTarget, surface: 'sessionHeader' })) {
+    for (const actionId of listVisibleSessionActionIds({
+      target: sessionActionTarget,
+      surface: 'sessionHeader',
+      sessionAppearancesSupported,
+    })) {
+      if (actionId === SESSION_ACTION_SET_APPEARANCE_COLOR_ID) {
+        push(getSessionActionMetadata(actionId)?.group ?? 'session', buildSessionAppearanceColorMenuItem({
+          menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+          iconColor: theme.colors.chrome.header.foreground,
+          base: createSessionActionDropdownItem({ actionId, iconColor: theme.colors.chrome.header.foreground }),
+          current: ownAppearanceColor,
+          customColors: customAppearanceColors,
+          theme,
+          customPickerLoading: customColorPickerLoading,
+        }));
+        continue;
+      }
       const item = createSessionActionDropdownItem({
         actionId,
         target: sessionActionTarget,
@@ -662,7 +731,20 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       if (item) push(getSessionActionMetadata(actionId)?.group ?? 'session', item);
     }
 
-    push('session', createCopySessionDebugInformationMenuItem({ iconColor }));
+
+    if (props.collaborationHeader) {
+      push('session', { id: 'header.share', title: t('common.share'),
+        icon: <Icon name="share-network" size={16} color={iconColor} /> });
+    }
+    if (giveBotCopy) {
+      push('session', { id: 'header.giveBotCopy', title: t('botTemplates.giveCopyEllipsis'),
+        subtitle: t('botTemplates.giveCopyDescription'),
+        icon: <Icon name="copy" size={16} color={iconColor} /> });
+    }
+    if (deleteBotTemplate) {
+      push('finish', { id: 'header.deleteBotTemplate', title: t('botTemplates.deleteTemplateEllipsis'), destructive: true,
+        icon: <Icon name="trash" size={16} color={theme.colors.state.danger.foreground} /> });
+    }
 
     // After the session's own rows: "This session" opens with its name, the rail choice and Talk (lab
     // `b-promote`); following rows come after them.
@@ -684,6 +766,14 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       });
     }
 
+    push('session', { id: 'header.reportIssue', title: t('bugReports.reportSession'),
+      icon: <Icon name="bug" size={16} color={iconColor} /> });
+
+    if (open) push('session', createSessionCopyMenuItem({
+      iconColor,
+      information: buildSessionDebugInformationForSession(session),
+    }));
+
     if (showTeleportAction) {
       push('open', {
         id: 'voice.teleport',
@@ -702,6 +792,12 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     // Grouped by what each row does; destructive operations close the menu, after everything else.
     return composeSessionHeaderMenu(out);
   }, [
+    open,
+    sessionAppearancesSupported,
+    ownAppearanceColor,
+    customAppearanceColors,
+    customColorPickerLoading,
+    theme,
     archivePending,
     collaborationAttentionLabel,
     props.destinationsInMenu,
@@ -717,6 +813,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     agentSwitchingEnabled,
     currentAgentCapabilities,
     session,
+    giveBotCopy,
+    deleteBotTemplate,
     sessionReplayEnabled,
     settings,
     showTeleportAction,
@@ -728,6 +826,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     sessionServerId,
     sessionActionTarget,
     accountShowToolCalls,
+    workspaceOpen.presentationItems,
     props.pluginHeaderActionPlacement,
     props.pluginHeaderActions,
     theme.colors.chrome.header.foreground,
@@ -750,9 +849,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       {directPluginHeaderActions.map((action) => (
         <SessionHeaderActionButton
           key={action.menuActionId}
-          onPress={() => {
+          onPress={(event) => {
             if (action.enabled) {
-              invokePluginHeaderAction(action.menuActionId);
+              invokePluginHeaderAction(action.menuActionId, resolvePressTriggerAnchor(event));
             }
           }}
           disabled={!action.enabled}
@@ -788,8 +887,41 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       // On a phone the menu is the shared bottom sheet, titled by the session it acts on (lab `b-promote Ap`).
       popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={readSessionDisplayTitleField(session).value || ownerMetadata?.name || t('session.actionMenu.openA11y')}
-      onSelect={(actionId) => {
+      onSelect={(actionId, selection) => {
+        if (workspaceOpen.select(actionId)) { setOpen(false); return; }
+        if (actionId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
+          // Custom color… keeps the menu open while the picker loads; the choice closes it when ready.
+          fireAndForget((async () => {
+            const color = await resolveSessionAppearanceColorMenuChoice({
+              menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+              itemId: actionId,
+              current: ownAppearanceColor,
+              serverId: sessionServerId ?? null,
+              onPickerLoading: setCustomColorPickerLoading,
+              closeMenus: () => setOpen(false),
+            });
+            if (color === undefined) return;
+            setOpen(false);
+            await writeSessionOrganizationAppearance({
+              scope: await requireSessionOrganizationMutationScope(sessionServerId ?? null),
+              sessionId: props.sessionId,
+              color,
+            });
+          })(), {
+            tag: 'SessionHeaderActionMenu.execute.sessionAppearance',
+            onError: () => Modal.alert(t('common.error'), t('errors.unknownError')),
+          });
+          return;
+        }
         setOpen(false);
+        if (actionId === 'header.giveBotCopy') {
+          void giveBotCopy?.();
+          return;
+        }
+        if (actionId === 'header.deleteBotTemplate') {
+          void deleteBotTemplate?.();
+          return;
+        }
         if (actionId === 'header.findChat') {
           findSurfaceRuntime.open(`transcript:${sessionServerId ?? ''}:${props.sessionId}`);
           return;
@@ -803,15 +935,26 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           return;
         }
         if (props.onSelectExtraItem?.(actionId) === true) return;
-        if (actionId === SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID) {
+        if (actionId === 'header.reportIssue') {
+          fireAndForget((async () => {
+            const serverId = sessionServerId ?? '';
+            const accountId = await resolveBugReportAccountIdForServer(serverId);
+            navigateWithBlurOnWeb(() => router.push({
+              pathname: '/settings/report-issue',
+              params: { sessionId: props.sessionId, serverId, accountId: accountId ?? '' },
+            }));
+          })(), { tag: 'SessionHeaderActionMenu.execute.reportIssue' });
+          return;
+        }
+        if (isSessionCopyActionId(actionId)) {
           const currentSession = readCurrentSessionForOpenMenu(props.sessionId, session);
-          fireAndForget(copySessionDebugInformationToClipboard(buildSessionDebugInformationForSession(currentSession)), {
+          fireAndForget(copySessionDebugInformationToClipboard(buildSessionDebugInformationForSession(currentSession), actionId, writeClipboard), {
             tag: 'SessionHeaderActionMenu.execute.copyInformation',
           });
           return;
         }
         if (actionId.startsWith(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX)) {
-          invokePluginHeaderAction(actionId);
+          invokePluginHeaderAction(actionId, selection?.anchor);
           return;
         }
         if (actionId === 'session.externalSession.backgroundFollow') {
@@ -828,6 +971,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               serverId: sessionServerId ?? null,
               link: externalSessionLink,
               policy: nextPolicy,
+              registerApproval: followApproval.requestApproval,
               signal,
             });
             if (outcome.kind === 'stale') return;
@@ -867,11 +1011,11 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           return;
         }
         const manualReadState = resolveManualReadStateFromSessionActionId(actionId);
-        const handledSessionActionIds = new Set(listVisibleSessionActionIds({
+        const handledSessionActionIds: ReadonlySet<string> = new Set(listVisibleSessionActionIds({
           target: sessionActionTarget,
           surface: 'sessionHeader',
         }));
-        if (manualReadState || handledSessionActionIds.has(actionId as any)) {
+        if (manualReadState || handledSessionActionIds.has(actionId)) {
           fireAndForget((async () => {
             try {
               if (actionId === SESSION_ACTION_RENAME_ID) {
@@ -908,7 +1052,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
                 alsoArchiveReports = confirmation.alsoArchiveReports;
               }
               await executeSessionAction({
-                actionId: actionId as any,
+                actionId: actionId as SessionActionId,
                 target: sessionActionTarget,
                 ...(actionId === SESSION_ACTION_ARCHIVE_ID ? { input: { alsoArchiveReports } } : {}),
                 ...(actionId === 'ui.session.follow'
@@ -943,7 +1087,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
             serverId: sessionServerId ?? null,
             machineId: reachableMachineId ?? ownerMetadata?.machineId ?? null,
             forkPoint: { type: 'latest' },
-            settings,
+            settings: storage.getState().settings,
             replayEnabled: sessionReplayEnabled,
             currentAgentCapabilities,
             executionRunsEnabled: executionRunsEnabled === true,
@@ -976,7 +1120,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         });
         if (!defaultBackend) return;
         const input = buildExecutionRunActionDraftInputForUi({
-          actionId: actionId as any,
+          actionId: actionId as ActionId,
           sessionId: props.sessionId,
           defaultBackendTarget: resolveSessionActionDefaultTarget(defaultBackend),
           defaultBackendId: defaultBackend.defaultBackendId,
@@ -989,11 +1133,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           || props.actionAccountLifetime?.isCurrent() !== true
           || !areServerProfileIdentifiersEquivalent(actionDraftAccountScope.serverId, actionDraftServerId)
         ) return;
-        storage.getState().createSessionActionDraft(
-          actionDraftAccountScope,
-          { serverId: actionDraftServerId, sessionId: props.sessionId },
-          { actionId, input },
-        );
+        openExecutionRunDraft({ scope: actionDraftAccountScope, sessionId: props.sessionId, actionId: actionId as ActionId, input });
       }}
       trigger={({ toggle }) => {
         const label = t('session.actionMenu.openA11y');
