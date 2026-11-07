@@ -51,6 +51,12 @@ export type AgentInvocationTurnAdmissionWitness = Readonly<{
     agentStartCaller?: import('@happier-dev/protocol').AgentStartSessionCallerV1;
 }>;
 
+/** Exact host Run controller's Workflow identity and existing terminal failure sink. */
+export type WorkflowAgentActionContext = Readonly<{
+    readRunId(): string | undefined;
+    fail(error: Error): void;
+}>;
+
 /**
  * Secret-free authority retained inside the host while an external PAT
  * invocation crosses an installed contributed Action. Plugin code never sees
@@ -73,6 +79,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
     /** Exact shared-save id/purpose/audience reviewed by the root Action. */
     sharedSaveAdmission?: import('@/plugins/runtime/context/secrets').PluginSharedSaveAdmission;
+    /** Host-private binding to a detached Workflow Agent's live controller. */
+    workflowActionContext?: WorkflowAgentActionContext;
     /** Bound only by the canonical daemon background-service lifecycle. */
     demandBackgroundService?: PluginServices['backgroundServices']['demand'];
     /** Host invocation identity; never projected into the public plugin context. */
@@ -273,6 +281,7 @@ export type CreatePluginInvocationServices = (
 
 export type CreateAgentInvocationServices = (
     params: Readonly<{
+        workflowActionContext?: WorkflowAgentActionContext;
         actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
         processOwner?: ProcessOwnerRef;
         pluginId: string;

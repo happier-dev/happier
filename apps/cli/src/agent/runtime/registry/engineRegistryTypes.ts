@@ -195,6 +195,8 @@ export type BackendExecutionSurfaces = Readonly<{
 export type ExecutionRunProjectLaunchContext = Omit<Parameters<typeof import('@/daemon/agentRuntime/runnerAgentProjectLaunch').createRunnerAgentProjectLaunchInvocation>[0], 'cwd' | 'signal' | 'sessionId'>;
 
 export type CreateCliExecutionRunBackendParams = Readonly<{
+    /** Host-private detached Workflow controller; never part of the Agent SDK. */
+    workflowActionContext?: import('@/plugins/runtime/invocation/services/types').WorkflowAgentActionContext;
     projectLaunchContext?: ExecutionRunProjectLaunchContext;
     /** Original retained Run operation when Project IO belongs to its daemon host. */
     projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;

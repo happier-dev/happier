@@ -62,6 +62,7 @@ export type PluginActionsServiceSeed = Readonly<{
     externalActionContext?: PluginExternalActionContext;
     /** Original admitted source, kept separate from this immediate plugin caller. */
     approvalContext?: ActionExecutorContext;
+    workflowActionContext?: import('./types').WorkflowAgentActionContext;
     /** Host-only finite invocation cause; never a fallback for an active-turn reader. */
     actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
     /** Host-private lookup of this invocation's current plugin materialization. */
@@ -349,6 +350,21 @@ export function createPluginInvocationActionsService(params: Readonly<{
     const selectedActionInputClaimed = { current: false };
     const actionExecutor = params.actionExecutor.bindInvocation?.(params.seed.signal)
         ?? params.actionExecutor;
+    const workflowActionContext = params.seed.workflowActionContext;
+    const readWorkflowRunId = () => workflowActionContext?.readRunId()
+        ?? params.seed.approvalContext?.executionRunWorkflowRunId;
+    const readApprovalContext = (): ActionExecutorContext | undefined => {
+        const executionRunWorkflowRunId = readWorkflowRunId();
+        return executionRunWorkflowRunId
+            ? { ...params.seed.approvalContext, executionRunWorkflowRunId }
+            : params.seed.approvalContext;
+    };
+    const failWorkflowApproval = (error: PluginError): PluginError => {
+        if (error.code === 'approval_requester_unavailable' && !params.seed.session && readWorkflowRunId()) {
+            workflowActionContext?.fail(error);
+        }
+        return error;
+    };
     const invokeContributedActionWithCaller = async (
         target: AdmittedTargetedOperationExecutionBinding | PluginContributionRef,
         input: JsonValue,
@@ -380,6 +396,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             });
         }
         throwIfContributedActionCallerInactive(params.seed, signal, actionCaller);
+        const approvalContext = readApprovalContext();
         const invoke = () => params.invokeContributedAction({
             action,
             input,
@@ -388,7 +405,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(caller.originSurface ? { originSurface: caller.originSurface } : {}),
             caller,
             initiatingActionCaller: actionCaller,
-            ...(params.seed.approvalContext ? { approvalContext: params.seed.approvalContext } : {}),
+            ...(approvalContext ? { approvalContext } : {}),
             ...(captureExecutionOrigin ? { captureExecutionOrigin: true as const } : {}),
             ...(parsedExpectedExecutionOrigin === undefined
                 ? {}
@@ -589,7 +606,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 return null;
             }
         };
-        const source = params.seed.approvalContext;
+        const source = readApprovalContext();
         // Release the bound executor's invocation resources after this report,
         // rather than accumulating them on a long-lived background source.
         const reportRetirement = actionId === 'automation.event.source.status.report' ? new AbortController() : null;
@@ -605,6 +622,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                     && signal.reason === params.seed.signal.reason,
             }) ?? actionExecutor
             : actionExecutor;
+        const executionRunWorkflowRunId = readWorkflowRunId();
         const result = await reportExecutor.execute(actionId, parsedPluginInput.data, {
             ...(executionOriginRequest ? { contributedActionExecutionOrigin: executionOriginRequest } : {}),
             // Preserve original execution/signing custody without inheriting
@@ -622,6 +640,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.causalPermissionAuthority !== undefined ? { causalPermissionAuthority: source.causalPermissionAuthority } : {}),
             ...(source?.workspaceWrites !== undefined ? { workspaceWrites: source.workspaceWrites } : {}),
             ...(source?.sessionInputSource ? { sessionInputSource: source.sessionInputSource } : {}),
+            ...(executionRunWorkflowRunId ? { executionRunWorkflowRunId } : {}),
             ...(params.seed.externalActionContext ?? {}),
             ...(params.seed.sessionListAccess ? { sessionListAccess: params.seed.sessionListAccess } : {}),
             ...(params.seed.session ? { defaultSessionId: params.seed.session.id } : {}),
@@ -684,7 +703,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                     }
                 }
             }
-            throw executorFailure(actionId, result);
+            throw failWorkflowApproval(executorFailure(actionId, result));
         }
 
         const deferredApproval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);

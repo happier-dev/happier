@@ -42,6 +42,8 @@ import { buildRpcMethodRoom } from '@/app/api/socket/rpc/rpcMethodRoom';
 import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { createSignedAccountContentBinding } from './accountEncryption';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { registerPromptLibraryRoutes } from '@/app/account/prompts/registerPromptLibraryRoutes';
 import { registerAccountPublicProfileRoutes } from '@/app/api/routes/account/registerAccountPublicProfileRoutes';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '@/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
@@ -58,8 +60,14 @@ type WorkflowApprovedOperationReceiver = (request: ExternalActionDaemonDispatchR
 
 /** Real HTTP/storage/auth boundary for cross-app Workflow admission tests. */
 export async function startWorkflowApprovedOperationServer(input: Readonly<{
+    /** Cross-owner Session-step tests retain the ordinary HTTP Session owners. */
+    workflowSessions?: boolean;
     /** Full daemon journeys use actual sockets and the ordinary Home owners. */
     installedMachine?: Readonly<{ machineId: string; installation: MachineInstallationIdentityV1; happyHomeDir: string }>;
+    /** The owning client supplies codecs; Home stores only opaque Machine content. */
+    e2ee?: Readonly<{ contentPublicKey: Uint8Array;
+        encodeMachine(key: Uint8Array, value: unknown): string;
+        decodeMachine(key: Uint8Array, value: string): unknown }>;
 }> = {}) {
     // These isolated databases share a process with the real Home identity
     // owner. A later fixture must retain its already initialized identity.
@@ -110,7 +118,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             if (cost) cost.admissions++;
             return authenticate.call(app, request, reply);
         };
-        if (input.installedMachine) {
+        if (input.installedMachine || input.workflowSessions) {
             authRoutes(app);
             accountRoutes(app);
             automationRoutes(app);
@@ -162,21 +170,26 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                     throw error;
                 }
             } }) });
-        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const account = await db.account.create({ data: input.e2ee
+            ? { ...createSignedAccountContentBinding(input.e2ee.contentPublicKey), encryptionMode: 'e2ee' }
+            : { publicKey: null, encryptionMode: 'plain' } });
         const machines = await Promise.all((input.installedMachine ? ['installed'] : ['parent', 'first', 'second']).map(async name => {
             const installed = input.installedMachine;
             const keys = installed ? { publicKey: decodeBase64(installed.installation.publicKey, 'base64url'),
                 secretKey: decodeBase64(installed.installation.privateKey, 'base64url') } : tweetnacl.sign.keyPair();
+            const contentKey = input.e2ee ? tweetnacl.randomBytes(32) : null;
             const metadata = { host: name, platform: 'linux', happyCliVersion: 'test',
                     homeDir: installed?.happyHomeDir ?? '/users/worker', happyHomeDir: installed?.happyHomeDir ?? '/users/worker/.happier',
                     ...(installed ? { agentIsolation: { enabled: false } } : {}) };
             const machine = await db.machine.create({ data: { id: installed?.machineId ?? randomUUID(), accountId: account.id,
-                metadata: encodePlainMachineStoredContent(metadata),
-                dataEncryptionKey: Uint8Array.from(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)), active: true,
+                metadata: contentKey && input.e2ee ? input.e2ee.encodeMachine(contentKey, metadata) : encodePlainMachineStoredContent(metadata),
+                dataEncryptionKey: contentKey && input.e2ee ? Uint8Array.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: contentKey,
+                    recipientPublicKey: input.e2ee.contentPublicKey, randomBytes: tweetnacl.randomBytes }))
+                    : Uint8Array.from(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)), active: true,
                 operationProtocolCapabilitiesRevision: 1,
                 operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
                 installationId: installed?.installation.installationId ?? randomUUID(), installationPublicKey: Uint8Array.from(keys.publicKey) } });
-            return { id: machine.id, installationId: machine.installationId!, keys };
+            return { id: machine.id, installationId: machine.installationId!, keys, contentKey };
         }));
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const installedToken = input.installedMachine
@@ -253,10 +266,12 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                 if (!machine) throw new Error('unknown_fixture_machine');
                 const setup = MachineSetupDesiredV1Schema.parse(desired);
                 const row = await db.machine.findFirstOrThrow({ where: { id: machineId, accountId: account.id }, select: { metadata: true } });
-                const metadata = decodePlainMachineStoredContent(row.metadata);
+                const metadata = machine.contentKey && input.e2ee ? input.e2ee.decodeMachine(machine.contentKey, row.metadata)
+                    : decodePlainMachineStoredContent(row.metadata);
                 if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('fixture_machine_metadata_invalid');
                 await db.machine.update({ where: { id: machineId }, data: {
-                    metadata: encodePlainMachineStoredContent({ ...metadata, setup }), metadataVersion: { increment: 1 },
+                    metadata: machine.contentKey && input.e2ee ? input.e2ee.encodeMachine(machine.contentKey, { ...metadata, setup })
+                        : encodePlainMachineStoredContent({ ...metadata, setup }), metadataVersion: { increment: 1 },
                 } });
             },
             readMachines: async () => (await db.machine.findMany({ where: { id: { in: machines.map(machine => machine.id) } },

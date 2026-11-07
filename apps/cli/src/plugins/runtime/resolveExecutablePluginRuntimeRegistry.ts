@@ -7526,6 +7526,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             occurrenceId: currentOccurrenceId,
             correlationId: agentParams.correlationId,
             surface: 'agent' as const,
+            ...(agentParams.workflowActionContext ? { workflowActionContext: agentParams.workflowActionContext } : {}),
             ...(agentParams.processOwner ? { processOwner: agentParams.processOwner } : {}),
             ...(agentParams.readActiveTurnAdmissionWitness
                 ? { readActiveTurnAdmissionWitness: agentParams.readActiveTurnAdmissionWitness }

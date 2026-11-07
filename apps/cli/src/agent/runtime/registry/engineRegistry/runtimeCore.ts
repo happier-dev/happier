@@ -553,13 +553,15 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 const captured = options.projectLaunchContext;
                                 const projectSetupOperation = options.resolveProjectSetupOperation?.() ?? captured?.operation ?? options.projectSetupOperation;
                                 const operationInput = projectSetupOperation ? { ...input, projectSetupOperation } : input;
-                                if (!captured) return await baseCreateRunInvocationServices(operationInput);
+                                const workflowInput = options.workflowActionContext
+                                    ? { ...operationInput, workflowActionContext: options.workflowActionContext } : operationInput;
+                                if (!captured) return await baseCreateRunInvocationServices(workflowInput);
                                 const invocation = createRunnerAgentProjectLaunchInvocation({ ...captured, cwd: input.cwd, signal: input.signal,
                                     ...(projectSetupOperation ? { operation: projectSetupOperation } : {}),
                                     ...(host ? { sessionId: host.session.sessionId } : {}),
                                     isCurrent: async () => input.isOccurrenceCurrent() && await captured.isCurrent() });
                                 projectInvocations.add(invocation);
-                                try { return await baseCreateRunInvocationServices({ ...operationInput, prepareAgentNativeLaunch: invocation.prepareAgentNativeLaunch }); }
+                                try { return await baseCreateRunInvocationServices({ ...workflowInput, prepareAgentNativeLaunch: invocation.prepareAgentNativeLaunch }); }
                                 catch (error) { projectInvocations.delete(invocation); await invocation.disposeProjectAgentLaunch(); throw error; }
                             }
                             : undefined;

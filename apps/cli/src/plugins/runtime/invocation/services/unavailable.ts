@@ -800,6 +800,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                         ? { externalActionContext: seed.externalActionContext }
                         : {}),
                     ...(seed.approvalContext ? { approvalContext: seed.approvalContext } : {}),
+                    ...(seed.workflowActionContext ? { workflowActionContext: seed.workflowActionContext } : {}),
                     ...(seed.resolveCurrentPluginMaterializationRef
                         ? {
                             resolveCurrentPluginMaterializationRef:

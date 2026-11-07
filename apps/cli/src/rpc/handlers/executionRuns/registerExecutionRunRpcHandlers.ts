@@ -38,8 +38,7 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
-import { EXECUTION_RUN_RPC_SCOPES } from '../actionSpecRpcRegistration';
-import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers';
+import { invalidExecutionRunRpcParams as invalidParams, registerExecutionRunActionRpcHandlers } from './actionRpcRegistration';
 import {
   admitExecutionRunCallerTurn,
   createExecutionRunRpcActionExecutor,
@@ -165,42 +164,6 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   /** Parent Session composition hook; the bridge remains the sole Run registry owner. */
   onManagerCreated?: (manager: ExecutionRunHostBridge) => void;
 }>;
-
-function invalidParams(): Readonly<{ ok: false; error: string; errorCode: string }> {
-  return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
-}
-
-function createExecutionRunRpcRegistrarExecutor(params: Readonly<{
-  executor: RpcActionExecutor;
-  defaultSessionId: string | null;
-  machineId?: string;
-  serverId?: string;
-  runtimeAccountId?: string;
-}>): RpcActionExecutor {
-  return {
-    execute: async (actionId, input, context) => {
-      const defaultSessionId = context?.defaultSessionId ?? params.defaultSessionId;
-      const result = await params.executor.execute(actionId, input, {
-        ...context,
-        ...(defaultSessionId ? { defaultSessionId } : {}),
-        ...(params.machineId ? { defaultSessionMachineId: params.machineId } : {}),
-        ...(params.serverId ? { serverId: params.serverId } : {}),
-        ...(params.runtimeAccountId ? { runtimeAccountId: params.runtimeAccountId } : {}),
-        sessionListAccess: defaultSessionId && params.runtimeAccountId
-          ? 'current_session'
-          : 'unavailable',
-      });
-
-      if (!result.ok && result.errorCode === 'invalid_parameters') {
-        // Retain the canonical refusal for the shared RPC projector, including
-        // its safe field issues and start certainty, while keeping the RPC code.
-        return { ...result, ...invalidParams() };
-      }
-
-      return result;
-    },
-  };
-}
 
 export type ExecutionRunRpcHandlerRegistration = Readonly<{
   /** Release this registration's Action Operations attachment. */
@@ -395,16 +358,12 @@ export function registerExecutionRunRpcHandlers(
     },
   );
 
-  registerActionSpecRpcHandlers({
-    rpcHandlerManager: rpc,
-    actionExecutor: createExecutionRunRpcRegistrarExecutor({
+  registerExecutionRunActionRpcHandlers(rpc, {
       executor: actionExecutor,
       defaultSessionId: ctx.sessionId,
       ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
       ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
       ...(ctx.runtimeAccountId ? { runtimeAccountId: ctx.runtimeAccountId } : {}),
-    }),
-    scopes: EXECUTION_RUN_RPC_SCOPES,
   });
 
   rpc.registerHandler(

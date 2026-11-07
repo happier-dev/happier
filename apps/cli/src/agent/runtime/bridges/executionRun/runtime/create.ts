@@ -148,6 +148,7 @@ type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionR
 }>;
 
 function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
+    workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
     cwd: string;
     runId?: string;
     controllerOccurrenceId?: string;
@@ -512,6 +513,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 workspaceWrites: opts.workspaceWrites,
                 accountSettings: opts.accountSettings ?? null,
                 ...(opts.resolveAccountSettingsSnapshot ? { resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot } : {}),
+                ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
                 start: opts.start ?? null,
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
@@ -620,6 +622,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 }
 
 export function createExecutionRunRuntime(opts: Readonly<{
+    workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
     projectLaunchContext?: CreateCliExecutionRunBackendParams['projectLaunchContext'];
     projectSetupOperation?: CreateCliExecutionRunBackendParams['projectSetupOperation'];
     resolveProjectSetupOperation?: CreateCliExecutionRunBackendParams['resolveProjectSetupOperation'];
@@ -693,6 +696,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
         }
         : resolvedBackendTarget?.canonical;
     const runtimeShellConfig = createEngineExecutionRunRuntimeShellConfig({
+            ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
             ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
             ...(opts.projectSetupOperation ? { projectSetupOperation: opts.projectSetupOperation } : {}),
             ...(opts.resolveProjectSetupOperation ? { resolveProjectSetupOperation: opts.resolveProjectSetupOperation } : {}),
