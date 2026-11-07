@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -21,6 +23,10 @@ import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect
 import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { readRuntimeNotificationCatalog } from './runtimeNotificationCatalog';
 
 const READY_EVENT: ActivityNotificationEvent = {
   topic: 'ready',
@@ -119,6 +125,80 @@ describe('workflow JSON webhook transport', () => {
 });
 
 describe('sendWebhookActivityNotificationAsync', () => {
+  it.each([false, true])('keeps an admitted signed=%s send across unrelated settings and preserves retirement/cancel', async signed => {
+    for (const change of ['unrelated', 'retired', 'cancelled'] as const) {
+      const credentials = { token: 'notification-operation-account', encryption: { type: 'plain' as const } };
+      const channel = { ...webhookChannel('https://hooks.example.test/happier'),
+        signingSecretRef: signed ? 'happier:shared-secret:v1:operation-signing' : null };
+      let source: ActiveAccountSettingsSnapshot | null = {
+        source: 'network', scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+        settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+        notificationChannelCatalog: { status: 'ready', channels: [channel], revision: 1, diagnostics: [] },
+        savedSecretCatalogState: 'ready', savedSecretResources: [{ resourceId: 'operation-signing',
+          ownerAccountId: 'account', displayName: 'Signing', kind: 'other', revision: 1,
+          encryptionMode: 'plain', materialStatus: 'ready', storedContent: sealSavedSecretResourceStoredContentV1({
+            resourceId: 'operation-signing', mode: 'plain',
+            content: { v: 1, name: 'Signing', kind: 'other', value: 'operation-signing-bytes' },
+          }) }],
+      };
+      const operation = createInvocationSavedSecretOperationContextV1({ credentials, snapshot: source,
+        readSourceSnapshot: () => source, serverHttpBaseUrl: 'https://home.example.test', isCurrent: async () => true });
+      const controller = new AbortController();
+      const runtime = await readRuntimeNotificationCatalog({ settings: source.settings, operationContext: operation,
+        signal: controller.signal });
+      const transport = createRecordingTransport({ status: 204 });
+      const send = sendWebhookActivityNotification({ channel, event: READY_EVENT,
+        savedSecretMaterializer: runtime.savedSecretMaterializer, signal: controller.signal,
+        assertCurrent: () => runtime.assertCurrent(controller.signal), network: {
+          resolveAddresses: async () => {
+            if (change === 'unrelated') source = { ...source!, settingsVersion: 2,
+              settings: { ...source!.settings, analyticsOptOut: true } };
+            else if (change === 'retired') source = null;
+            else controller.abort();
+            return ['93.184.216.34'];
+          }, openPinnedStream: transport.openPinnedStream,
+        } });
+      if (change === 'unrelated') {
+        await expect(send).resolves.toBeUndefined();
+        expect(transport.requests).toHaveLength(1);
+        const posted = transport.requests[0]!;
+        expect(posted.headers['x-happier-signature-256']).toBe(signed
+          ? `sha256=${createHmac('sha256', 'operation-signing-bytes').update(Buffer.from(posted.body!)).digest('hex')}` : undefined);
+      } else {
+        await expect(send).rejects.toMatchObject(change === 'retired'
+          ? { code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' } : { name: 'AbortError' });
+        expect(transport.requests).toHaveLength(0);
+      }
+    }
+  });
+  it('delivers signed failure and timeout facts to the documented raw-body consumer and rejects tampering', async () => {
+    const guide = readFileSync(fileURLToPath(new URL('../../../../docs/content/docs/extending/email-agent-recipes.mdx', import.meta.url)), 'utf8');
+    const snippet = [...guide.matchAll(/```js\n([\s\S]*?)\n```/g)].find(match => match[1]!.includes('export function readWorkflowAlert'))?.[1];
+    expect(snippet, 'The guide must supply its runnable signed-alert consumer').toBeDefined();
+    const { readWorkflowAlert } = await import(`data:text/javascript;base64,${Buffer.from(snippet!).toString('base64')}`);
+    const transport = createRecordingTransport({ status: 202 });
+    for (const update of [
+      { updateKind: 'failed', reason: { code: 'workflow_step_timeout' } },
+      { updateKind: 'completed_with_failures', reason: { code: 'agent_failed' } },
+      { updateKind: 'completed' },
+    ] as const) {
+      await sendWebhookActivityNotificationAsync({ channel: webhookChannel('https://hooks.example.test/work'),
+        event: { topic: 'workflow_run_update', runId: 'brief-run', ...update },
+        network: { resolveAddresses: resolvesTo('93.184.216.34'), openPinnedStream: transport.openPinnedStream } });
+      const request = transport.requests.at(-1)!;
+      const raw = Buffer.from(request.body!);
+      const signature = request.headers['x-happier-signature-256'];
+      expect(readWorkflowAlert(raw, signature, 'webhook-secret')).toEqual(update.updateKind === 'completed' ? null : { runId: 'brief-run', ...update });
+      for (const header of [undefined, 'sha256=xyz', `${signature}00`, `sha256=${'0'.repeat(64)}`]) {
+        expect(readWorkflowAlert(raw, header, 'webhook-secret')).toBeNull();
+      }
+      expect(readWorkflowAlert(raw, signature, 'wrong-secret')).toBeNull();
+      expect(readWorkflowAlert(Buffer.concat([raw, Buffer.from(' ')]), signature, 'webhook-secret')).toBeNull();
+      // Authentication precedes JSON parsing, including when the body is malformed.
+      expect(readWorkflowAlert(Buffer.from('invalid json'), signature, 'webhook-secret')).toBeNull();
+    }
+  });
+
   it('carries witnessed Account usage evidence only when the canonical preview policy admits it', async () => {
     const transport = createRecordingTransport({ status: 202 });
     const event: ActivityNotificationEvent = { topic: 'connected_service_usage', kind: 'reset',
@@ -206,8 +286,8 @@ describe('sendWebhookActivityNotificationAsync', () => {
       createdAt: 1_700_000_000_001,
       topic: 'workflow_run_update',
       content: {
-        title: 'Workflow outcome uncertain',
-        body: 'A workflow Run needs attention because its outcome is uncertain.',
+        title: 'A workflow needs attention',
+        body: 'Its outcome could not be confirmed.',
       },
       workflowRun: {
         runId: 'run-42',
@@ -353,7 +433,7 @@ describe('sendWebhookActivityNotificationAsync', () => {
         resolveAddresses: resolvesTo('93.184.216.34'),
         openPinnedStream: transport.openPinnedStream,
       },
-    })).rejects.toThrow('Webhook notification destination returned a redirect');
+    })).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 302 });
 
     // The refusal must be observable as "no second hop", not merely as a thrown error.
     expect(transport.requests).toHaveLength(1);

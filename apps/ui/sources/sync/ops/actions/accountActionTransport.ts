@@ -2,8 +2,8 @@ import { type ActionExecutorContext, type ActionId } from '@happier-dev/protocol
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionRequesterInvocationV1Schema, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
-import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { randomUUID } from '@/platform/randomUUID';
+import type { LazyActionAccountContext } from './actionAccountContext';
 
 export type AccountActionTransport = (input: Readonly<{
     serverId: string;
@@ -41,8 +41,8 @@ export function projectUiAccountRequesterCaller(caller: ActionExecutorContext['a
 
 /** Shared Account-to-daemon relay; reachability does not create a resource target. */
 export function createUiAccountActionTransport(params: Readonly<{
-    account: Readonly<{ serverId: string; accountId: string; assertCurrent: () => void }>;
-    resolveFallbackMachineId: () => string | null;
+    account: Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'assertCurrent' | 'assertResultCurrent'>;
+    resolveFallbackMachineId: (args: Parameters<UiAccountActionExecute>[0]) => string | null | Promise<string | null>;
     transport: AccountActionTransport;
 }>): UiAccountActionExecute {
     return async (args) => {
@@ -59,16 +59,16 @@ export function createUiAccountActionTransport(params: Readonly<{
         const target = args.context.externalActionTarget;
         const machineId = target?.kind === 'machine' && target.machineId.trim()
             ? target.machineId.trim()
-            : params.resolveFallbackMachineId();
+            : await params.resolveFallbackMachineId(args);
         if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
         const relayTarget = target?.kind === 'machine' ? { ...target, machineId } : { kind: 'machine' as const, machineId };
-        // The common executor consumes a native Confirm before this adapter.
-        // Carry its admitted digest, not a fresh review of the caller's input.
-        // An Account carrier is execution placement, selected by this relay.
+        // The common executor records the native Confirm or Artifact decision.
+        // Project its reviewed digest; receiving admission binds it to the
+        // exact Account invocation, including a retained signed origin.
         const review = args.context.presentUserApproval;
         const confirmation = args.context.presentUserConfirmation?.inputDigest !== undefined
             ? args.context.presentUserConfirmation
-            : review?.actionId === args.actionId && isPresentUserHostInvocation(args.context) ? {
+            : review?.actionId === args.actionId ? {
                 actionId: review.actionId, inputDigest: review.inputDigest, requestId: review.requestId,
                 accountId: params.account.accountId, serverId: args.context.serverIdentityId ?? params.account.serverId,
                 target: relayTarget,
@@ -90,7 +90,8 @@ export function createUiAccountActionTransport(params: Readonly<{
         if (args.actionId === 'session.agent.transition' && (target?.kind !== 'machine' || !target.machineId.trim())) {
             return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
         }
-        const method = getActionSpec(args.actionId).bindings?.rpcMethod;
+        const spec = getActionSpec(args.actionId);
+        const method = spec.bindings?.rpcMethod;
         const signal = args.signal ?? args.context.signal;
         const result = await params.transport({
             serverId: params.account.serverId,
@@ -108,7 +109,9 @@ export function createUiAccountActionTransport(params: Readonly<{
             ...(args.actionId === 'workflow.run.start' ? { operationTimeoutMs: null } : {}),
         });
         try {
-            params.account.assertCurrent();
+            // The Account owner distinguishes read disclosure from an issued
+            // effect's receipt; presentation cancellation cannot rewrite it.
+            params.account.assertResultCurrent(spec.sideEffectClass, signal);
         } catch {
             return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
         }

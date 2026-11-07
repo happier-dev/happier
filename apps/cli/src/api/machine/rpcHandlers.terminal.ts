@@ -493,9 +493,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         || runtime.serverId !== custody.serverId) return refused('project_requester_credentials_unavailable');
       if (runtime.terminalSessions !== getSessionManager()) return refused('project_terminal_owner_mismatch');
       const [{ resolveProjectSetupAcceptedWorkspace }, { reviewProjectExecutionEnvironment },
-        { createProjectNativeInvocationCustody, createProjectNativeLaunchAdmission }, { authorizeResolvedProjectExecLaunchForHost }] = await Promise.all([
+        { createProjectNativeInvocationCustody, createProjectNativeLaunchAdmission }, { authorizeResolvedProjectExecLaunchForHost },
+        { readProjectManifest }, { resolveProjectRequesterSecretInputs }] = await Promise.all([
         import('@/workspaces/projectSetup/projectSetupAcceptedWorkspace'), import('@/workspaces/projectSetup/projectSetupPreparation'),
         import('@/workspaces/projectSetup/projectSetupExecution'), import('@/plugins/runtime/invocation/services/exec'),
+        import('@/workspaces/projectSetup/projectManifestFile'), import('@/workspaces/projectSetup/projectSetupRequesterInputs'),
       ]);
       const assertCurrent = async () => {
         context.signal.throwIfAborted();
@@ -506,6 +508,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal,
         address: { serverId: custody.serverId, workspaceId: custody.workspaceRefId, machineId: custody.machineId, rootPath: custody.rootPath } });
       if (association.workspace.projectKey !== custody.projectKey) return refused('project_workspace_changed');
+      const definition = await readProjectManifest({ root: association.workspace.rootPath });
+      const { environmentBindings, secretEnvironment } = await resolveProjectRequesterSecretInputs(runtime, {
+        project: association.project,
+        requirements: definition.document?.status === 'valid' ? definition.document.manifest.environmentVariables ?? [] : [],
+      }, context.signal);
       const nativeCustody = createProjectNativeInvocationCustody({ signal: context.signal });
       let authorized: Awaited<ReturnType<typeof authorizeResolvedProjectExecLaunchForHost>> | undefined;
       release = async () => {
@@ -522,7 +529,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         platform: { os: platform === 'win32' ? 'windows' : platform, arch: runtime.arch ?? process.arch },
         nativeIo: runtime.nativeIo, signal: context.signal, retainNativeInvocation: nativeCustody.retain,
         ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}),
-        ...(runtime.secretEnvironment ? { secretEnvironment: runtime.secretEnvironment } : {}),
+        ...(secretEnvironment ? { secretEnvironment } : {}),
+        ...(environmentBindings ? { environmentBindings } : {}),
         ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
         ...(runtime.plugins ? { plugins: runtime.plugins } : {}),
       };

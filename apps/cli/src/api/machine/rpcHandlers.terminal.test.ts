@@ -80,6 +80,7 @@ import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/inv
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 
 /** Held authenticated Home at this fixture's installed Machine boundary. */
 function registerMachineTerminalRpcHandlers(params: Parameters<typeof registerUnadmittedMachineTerminalRpcHandlers>[0]) {
@@ -1126,6 +1127,35 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(h.provider.spawned).toHaveLength(2);
       missingRegistration.dispose();
     } finally { registration.dispose(); await h.dispose(); }
+  });
+
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('opens a Project shell with its saved requester Secret binding through %s', async method => {
+    const h = await finiteHarness({ setup: true, observeInteractiveStop: true });
+    const key = { kind: 'project-organization', serverId: 'home', projectKey: 'project' };
+    const rows = await axios.post(`https://home.example${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {});
+    h.post.mockImplementation(async (url, body) => projectAccountRowsReadHttpResponse([
+      ...rows.data.rows,
+      { key, revision: 1, content: { t: 'plain', v: { key, value: {
+        environmentBindings: { v: 1, bindings: { TOKEN: { ref: 'project-token' } } },
+      } } } },
+    ], String(url), body));
+    Object.assign(h.runtime, { secretEnvironment: withSavedSecretMaterializer({
+      accountSettings: { secrets: [{ id: 'project-token', name: 'Project token',
+        encryptedValue: { _isSecretValue: true, value: 'requester-shell-secret' } }] },
+      settingsSecretsReadKeys: [],
+    }) });
+    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1,
+      environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }],
+    }));
+    const rpc = createMachineTerminalRpcIngress(h.handlers, h.ingress.verifyMachineAdmissionCurrent!);
+    try {
+      const result = await rpc.invokeLocal(method, { terminalKey: 'saved-binding-shell',
+        workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root },
+      }, { rpcContext: h.ingress });
+      expect(result).toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned[0]?.params.options.env).toMatchObject({ TOKEN: 'requester-shell-secret' });
+      expect(JSON.stringify(result)).not.toContain('requester-shell-secret');
+    } finally { await h.dispose(); }
   });
 
   it('launches a person Project shell with isolation enabled and the complete custodian native environment', async () => {

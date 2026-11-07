@@ -1,12 +1,14 @@
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import type { AccountSettings } from '@happier-dev/protocol';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { readStoredCredentials } from '@/persistence';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
   isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { hydrateNotificationChannelCatalogForOperation } from '@/settings/notifications/hydrateNotificationChannelCatalog';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { hydrateNotificationChannelCatalogForActiveAccount, hydrateNotificationChannelCatalogForOperation } from '@/settings/notifications/hydrateNotificationChannelCatalog';
 import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { acquireSavedSecretMaterializerForOperation, readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 export class NotificationChannelCatalogUnavailableError extends Error {
@@ -58,22 +60,41 @@ export async function readRuntimeNotificationCatalog(params: Readonly<{
       },
       assertCurrent: async (signal?: AbortSignal) => {
         signal?.throwIfAborted();
-        if (!await observeCurrent(signal => operation.isCurrent(signal), signal) || operation.readSnapshot() !== snapshot
+        if (!await observeCurrent(signal => operation.isCurrent(signal), signal)
           || params.isCurrent && !await observeCurrent(params.isCurrent, signal)) {
           throw new NotificationChannelCatalogUnavailableError('scope-retired');
         }
         signal?.throwIfAborted();
-      }, savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot,
-        { isCurrent: () => operation.readSnapshot() === snapshot }) };
+      }, savedSecretMaterializer: await acquireSavedSecretMaterializerForOperation({ snapshot, references: [],
+        operationContext: operation, signal: params.signal }) };
   }
   const active = getActiveAccountSettingsSnapshot();
   let captured = active?.settings === params.settings ? active : null;
   const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
   const incumbent = !params.notificationChannelCatalog && captured?.scopeKey ? { scopeKey: captured.scopeKey, lifetimeToken } : null;
+  if (incumbent && (!captured?.notificationChannelCatalog || captured.notificationChannelCatalog.status === 'loading')) {
+    // Retain the Account lifetime across credential read and catalog publication.
+    const assertIncumbent = async () => {
+      params.signal?.throwIfAborted();
+      if (!isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent) || params.isCurrent && !await observeCurrent(params.isCurrent, params.signal)) {
+        throw new NotificationChannelCatalogUnavailableError('scope-retired');
+      }
+      params.signal?.throwIfAborted();
+    };
+    await assertIncumbent();
+    const credentials = await readStoredCredentials();
+    await assertIncumbent();
+    if (!credentials || resolveAccountSettingsScopeKey(credentials) !== incumbent.scopeKey) {
+      throw new NotificationChannelCatalogUnavailableError('scope-retired');
+    }
+    await hydrateNotificationChannelCatalogForActiveAccount({ credentials, ...incumbent, signal: params.signal });
+    await assertIncumbent();
+    captured = getActiveAccountSettingsSnapshot();
+  }
   const catalog = params.notificationChannelCatalog ?? captured?.notificationChannelCatalog ?? { status: 'loading' as const };
   if (catalog.status !== 'ready') throw new NotificationChannelCatalogUnavailableError(
     catalog.status === 'unavailable' ? catalog.reason : catalog.status === 'partial' ? 'catalog-incomplete' : 'loading');
-  return { settings: params.settings, channels: catalog.channels,
+  return { settings: captured?.settings ?? params.settings, channels: catalog.channels,
     acquireSigningMaterializer: async (references: readonly string[], signal?: AbortSignal) => {
       if (params.savedSecretMaterializer) return params.savedSecretMaterializer;
       if (references.length === 0 || !captured?.scopeKey) return captured ? createSavedSecretMaterializerFromSnapshotV1(captured) : undefined;
@@ -86,6 +107,7 @@ export async function readRuntimeNotificationCatalog(params: Readonly<{
     if (params.isCurrent && !await observeCurrent(params.isCurrent, signal)
       || incumbent && !isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent)) throw new NotificationChannelCatalogUnavailableError('scope-retired');
     signal?.throwIfAborted();
-  }, savedSecretMaterializer: params.savedSecretMaterializer ?? (!params.notificationChannelCatalog && captured
+  }, savedSecretMaterializer: params.savedSecretMaterializer ?? (captured && (!params.notificationChannelCatalog
+    || params.notificationChannelCatalog === captured.notificationChannelCatalog)
     ? createSavedSecretMaterializerFromSnapshotV1(captured) : undefined) };
 }
