@@ -6,6 +6,15 @@ import { HappierLiveStreamInputLayer } from './LiveStreamInputLayer.js';
 import type { HappierLiveStreamInputGesture } from './inputGesture.js';
 
 describe('live stream keyboard focus', () => {
+    it('exposes the named remote input capture as a group', () => {
+        const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted supports={() => true}
+            viewport={{ width: 800, height: 400 }} onGesture={() => {}} accessibilityLabel="Control the page" testID="viewer" />);
+        try {
+            const capture = mounted.container.querySelector('[data-testid="viewer-capture"]')!;
+            expect(capture.getAttribute('role')).toBe('group');
+            expect(capture.getAttribute('aria-label')).toBe('Control the page');
+        } finally { mounted.unmount(); }
+    });
     it.each(['direct', 'trackpad'] as const)('%s emits a wire-valid atomic drag from fractional browser timestamps', async mode => {
         const actions: HappierLiveStreamInputGesture[] = [];
         const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted mode={mode}
@@ -96,6 +105,37 @@ describe('live stream keyboard focus', () => {
             expect(actions.some(action => action.kind === 'pointer' && action.phase === 'cancel')).toBe(false);
             await mounted.render(render(false));
             expect(actions.at(-1)).toMatchObject({kind: 'pointer', phase: 'cancel'});
+        } finally { mounted.unmount(); }
+    });
+    it('retains an off-center hover across Direct to Trackpad and releases the native atomic drag after a host rerender', async () => {
+        const actions: HappierLiveStreamInputGesture[] = [];
+        const render = (mode: 'direct' | 'trackpad' = 'trackpad') => <HappierLiveStreamInputLayer inputAccepted mode={mode}
+            supports={kind => kind !== 'pointer'} viewport={{ width: 800, height: 400 }}
+            onGesture={({ action }) => actions.push(action)} testID="viewer" />;
+        const mounted = mountThroughReactNativeWeb(render('direct'));
+        const capture = mounted.container.querySelector('[data-testid="viewer-capture"]')!;
+        const mouse = (kind: string, at: number, x: number, y: number) => {
+            const event = new MouseEvent(kind, { bubbles: true, button: 0, buttons: kind === 'mouseup' ? 0 : 1, clientX: x, clientY: y });
+            Object.defineProperty(event, 'timeStamp', { value: at });
+            act(() => capture.dispatchEvent(event));
+        };
+        try {
+            const hover = new MouseEvent('pointermove', { bubbles: true, clientX: 320, clientY: 172, buttons: 0 });
+            Object.defineProperty(hover, 'pointerType', { value: 'mouse' });
+            act(() => capture.dispatchEvent(hover));
+            await mounted.render(render());
+            mouse('mousedown', 1, 320, 172);
+            mouse('mousemove', 701, 380, 222);
+            expect(actions.filter(action => action.kind !== 'move')).toEqual([]);
+            await mounted.render(render());
+            mouse('mouseup', 801, 380, 222);
+            const released = actions.filter(action => action.kind !== 'move');
+            expect(released).toMatchObject([{ kind: 'drag', from: { x: 0.4, y: 0.43 },
+                to: { x: expect.any(Number), y: expect.any(Number) } }]);
+            const drag = released[0];
+            if (drag?.kind !== 'drag') throw new Error('Native drag was not released');
+            expect(drag.to.x).toBeGreaterThan(drag.from.x);
+            expect(drag.to.y).toBeGreaterThan(drag.from.y);
         } finally { mounted.unmount(); }
     });
     it('drops pending hover on loss of control and on unmount', async () => {

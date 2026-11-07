@@ -77,28 +77,6 @@ describe('agent-desktop native driver', () => {
       expect(failures).toEqual([]);
     } finally { await stream.session.stop(); await source.close(); }
   });
-  it('reports unsupported Fn before native input instead of silently dropping the modifier', async () => {
-    setup();
-    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
-    try {
-      expect(await driver.input(target, null, { kind: 'press', key: 'Tab', modifiers: ['fn'] }))
-        .toEqual({ status: 'failed', code: 'input_not_supported' });
-      expect(boundary.calls.some(args => args.includes('press'))).toBe(false);
-    } finally { await driver.close(); }
-  });
-  it('maps modifier chords and modified double clicks to the pinned atomic native commands', async () => {
-    setup();
-    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
-    try {
-      expect(await driver.input(target, null, { kind: 'press', key: 'Tab', modifiers: ['control', 'shift'] })).toEqual({ status: 'dispatched' });
-      expect(boundary.calls.find(args => args.includes('press'))).toContain('ctrl+shift+Tab');
-      const capture = await driver.capture(target);
-      expect(await driver.input(target, capture.captureId, { kind: 'click', x: 10, y: 20, button: 'right', clickCount: 2, modifiers: ['meta', 'control'] }))
-        .toEqual({ status: 'dispatched' });
-      expect(boundary.calls.find(args => args.includes('mouse-click')))
-        .toEqual(['--headed', 'mouse-click', '--xy=30,50', '--button', 'right', '--count', '2', '--modifiers', 'meta', '--modifiers', 'ctrl']);
-    } finally { await driver.close(); }
-  });
   it.skipIf(process.platform !== 'linux').each(['preflight', 'dispatch'] as const)('keeps a released drag ahead of later hover during native %s', async phase => {
     let resumeNative!: () => void;
     const nativePending = new Promise<void>(resolve => { resumeNative = resolve; });
@@ -146,6 +124,35 @@ describe('agent-desktop native driver', () => {
       expect(boundary.spawn.mock.results.every(result => result.value.kill.mock.calls.length === 0)).toBe(true);
     } finally { resumeNative(); await stream.session.stop(); await source.close(); }
   });
+  it.skipIf(process.platform !== 'linux')('delivers a viewer release as one grounded native drag on its private display', async () => {
+    setup();
+    const display = { kind: 'display', displayId: ':73' } as const;
+    const source = createComputerCaptureSource({ sourceIdentity: { kind: 'machine-person', personId: 'drag-person' },
+      target: display, provider: 'agent-desktop', executablePath: '/managed/agent-desktop',
+      environment: { DISPLAY: ':owner', WAYLAND_DISPLAY: 'owner-wayland', XAUTHORITY: '/private/drag-cookie',
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/private/drag-bus' } });
+    const failures: string[] = [];
+    const stream = await source.adapter.start({ streamId: 'native-drag', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+      startRequest: { v: 1, streamId: 'native-drag', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+        routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+      startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }),
+      applyControl: () => ({ ok: true }), emitReceipt(receipt) { if (receipt.reasonCode) failures.push(receipt.reasonCode); } });
+    if (!stream.ok) throw new Error(stream.reasonCode);
+    try {
+      await source.interrupt();
+      expect(stream.session.applySidebandControl?.({ v: 1, streamId: 'native-drag', sourceId: source.sourceId,
+        eventId: 'release', kind: 'drag', fromX: 0.5, fromY: 0.4, toX: 0.6, toY: 0.5 })).toEqual({ ok: true });
+      await vi.waitFor(() => expect(boundary.calls.filter(args => args.includes('drag')))
+        .toEqual([['--headed', 'drag', '--from-xy=400,240', '--to-xy=480,300']]));
+      await vi.waitFor(() => expect(source.handBack()).toBe(true));
+      expect(failures).toEqual([]);
+      const drag = boundary.spawn.mock.calls.find(([, args]) => args.includes('drag'));
+      expect(drag?.[2].env).toMatchObject({ DISPLAY: ':73', XAUTHORITY: '/private/drag-cookie',
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/private/drag-bus', AGENT_DESKTOP_HOME: expect.stringContaining('happier-agent-desktop-') });
+      expect(drag?.[2].env.WAYLAND_DISPLAY).toBeUndefined();
+      expect(boundary.calls.some(args => args.includes('mouse-down') || args.includes('mouse-up'))).toBe(false);
+    } finally { await stream.session.stop(); await source.close(); }
+  });
   it('refuses clipboard writes without exposing text in native argv and preserves clipboard reads', async () => {
     let clipboard: string | null = 'remote 日本';
     setup(args => {
@@ -164,6 +171,28 @@ describe('agent-desktop native driver', () => {
       expect(boundary.calls.some(args => args.includes('clipboard-set'))).toBe(false);
       clipboard = null;
       expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
+    } finally { await driver.close(); }
+  });
+  it('reports unsupported Fn before native input instead of silently dropping the modifier', async () => {
+    setup();
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      expect(await driver.input(target, null, { kind: 'press', key: 'Tab', modifiers: ['fn'] }))
+        .toEqual({ status: 'failed', code: 'input_not_supported' });
+      expect(boundary.calls.some(args => args.includes('press'))).toBe(false);
+    } finally { await driver.close(); }
+  });
+  it('maps modifier chords and modified double clicks to the pinned atomic native commands', async () => {
+    setup();
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      expect(await driver.input(target, null, { kind: 'press', key: 'Tab', modifiers: ['control', 'shift'] })).toEqual({ status: 'dispatched' });
+      expect(boundary.calls.find(args => args.includes('press'))).toContain('ctrl+shift+Tab');
+      const capture = await driver.capture(target);
+      expect(await driver.input(target, capture.captureId, { kind: 'click', x: 10, y: 20, button: 'right', clickCount: 2, modifiers: ['meta', 'control'] }))
+        .toEqual({ status: 'dispatched' });
+      expect(boundary.calls.find(args => args.includes('mouse-click')))
+        .toEqual(['--headed', 'mouse-click', '--xy=30,50', '--button', 'right', '--count', '2', '--modifiers', 'meta', '--modifiers', 'ctrl']);
     } finally { await driver.close(); }
   });
   it('maps grounded hover to physical mouse movement without a button press', async () => {
