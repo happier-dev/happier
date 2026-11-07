@@ -79,13 +79,14 @@ const CATALOG_TREE: ResolvedSettingsPageNode[] = [{
 
 const GROUP_TITLES = ['AI and Agents', 'Sessions', 'Files', 'System', 'Review'];
 
-async function renderSections(props: Readonly<{ showCatalogGroups: boolean; stage: number }>) {
+async function renderSections(props: Readonly<{ catalog: boolean; stage: number }>) {
     catalogState.tree = CATALOG_TREE;
     const push = vi.fn();
     const onNavigate = vi.fn();
-    const { SettingsBelowFoldSections } = await import('./SettingsBelowFoldSections');
+    const { SettingsBelowFoldSections, SettingsCatalogGroups } = await import('./SettingsBelowFoldSections');
+    const Sections = props.catalog ? SettingsCatalogGroups : SettingsBelowFoldSections;
     const screen = await renderScreen(
-        <SettingsBelowFoldSections
+        <Sections
             appVersion="1.0.0"
             automationsNeedLocalEnablement={false}
             devModeEnabled={false}
@@ -94,7 +95,6 @@ async function renderSections(props: Readonly<{ showCatalogGroups: boolean; stag
             handleVersionClick={vi.fn()}
             onNavigate={onNavigate}
             router={{ push } as never}
-            showCatalogGroups={props.showCatalogGroups}
             showAutomations={false}
             showChangelog={false}
             showRateUs={false}
@@ -108,7 +108,7 @@ async function renderSections(props: Readonly<{ showCatalogGroups: boolean; stag
 
 describe('SettingsBelowFoldSections catalog order', () => {
     it('keeps catalog groups ordered and delegates every catalog destination to the host navigation owner', async () => {
-        const { screen, push, onNavigate, groupTitles } = await renderSections({ showCatalogGroups: true, stage: 3 });
+        const { screen, push, onNavigate, groupTitles } = await renderSections({ catalog: true, stage: 3 });
 
         expect(groupTitles.filter((title) => GROUP_TITLES.includes(title))).toEqual(GROUP_TITLES);
 
@@ -125,8 +125,8 @@ describe('SettingsBelowFoldSections catalog order', () => {
         expect(push).not.toHaveBeenCalled();
     });
 
-    it('leaves the categories to the rail where it shows, keeping About', async () => {
-        const { groupTitles } = await renderSections({ showCatalogGroups: false, stage: 4 });
+    it('keeps the categories out of the sections below the fold, keeping About', async () => {
+        const { groupTitles } = await renderSections({ catalog: false, stage: 4 });
 
         expect(groupTitles.filter((title) => GROUP_TITLES.includes(title))).toEqual([]);
         expect(groupTitles).toContain('settings.about');

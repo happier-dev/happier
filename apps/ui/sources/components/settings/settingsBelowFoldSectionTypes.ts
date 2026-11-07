@@ -12,8 +12,6 @@ export type SettingsBelowFoldSectionsProps = Readonly<{
     /** Preserves host navigation behavior when the catalog renders a generic root group. */
     onNavigate?: (route: string) => void | Promise<void>;
     router: SettingsBelowFoldSectionsRouter;
-    /** The catalog's category sections; off where the settings rail already shows them. */
-    showCatalogGroups: boolean;
     showAutomations: boolean;
     showChangelog: boolean;
     showRateUs: boolean;

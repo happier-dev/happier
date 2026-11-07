@@ -19,7 +19,7 @@ import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFoldSections';
+import { SettingsBelowFoldSections, SettingsCatalogGroups } from '@/components/settings/SettingsBelowFoldSections';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { HubIdentityHeader } from '@/components/hub/HubIdentityHeader';
@@ -181,6 +181,21 @@ export const SettingsView = React.memo(function SettingsView() {
         onPress: () => { void handleSupportUs(); },
     } : null;
 
+    const belowFoldProps = {
+        appVersion,
+        automationsNeedLocalEnablement,
+        devModeEnabled,
+        handleGitHub,
+        handleReportIssue,
+        handleVersionClick,
+        onNavigate: navigateCatalogRoute,
+        router,
+        showAutomations,
+        showChangelog,
+        showRateUs,
+        stage: belowFoldSettingsStage,
+        supportUs,
+    };
     const overview = (
         <>
             {/* The lighter hub (lab H1): the app home's sections, in one column, without the greeting and
@@ -188,6 +203,8 @@ export const SettingsView = React.memo(function SettingsView() {
                 section drops out when it has nothing to say. */}
             <HubIdentityHeader />
             <SettingsAttentionSection />
+            {/* Without the rail the Settings pages lead, right under what needs you (owner 11-06, as in 0.2). */}
+            {railVisible ? null : <SettingsCatalogGroups {...belowFoldProps} />}
             <HubSetupSection presentation="checklist" />
             {/* Machines and Usage: Home's own widgets at their defaults, so both hubs show one thing. */}
             <OverviewMachinesSection testID="settings-overview-machines-section" />
@@ -195,22 +212,7 @@ export const SettingsView = React.memo(function SettingsView() {
             <HubSecuritySection />
             <HubQuickSettingsSection />
 
-            <SettingsBelowFoldSections
-                appVersion={appVersion}
-                automationsNeedLocalEnablement={automationsNeedLocalEnablement}
-                devModeEnabled={devModeEnabled}
-                handleGitHub={handleGitHub}
-                handleReportIssue={handleReportIssue}
-                handleVersionClick={handleVersionClick}
-                onNavigate={navigateCatalogRoute}
-                router={router}
-                showCatalogGroups={!railVisible}
-                showAutomations={showAutomations}
-                showChangelog={showChangelog}
-                showRateUs={showRateUs}
-                stage={belowFoldSettingsStage}
-                supportUs={supportUs}
-            />
+            <SettingsBelowFoldSections {...belowFoldProps} />
         </>
     );
 

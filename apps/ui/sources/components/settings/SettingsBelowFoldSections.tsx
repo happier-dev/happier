@@ -91,16 +91,27 @@ function SettingsCatalogRootGroup(props: SettingsBelowFoldSectionsProps & Readon
     }
 }
 
-export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSections(props: SettingsBelowFoldSectionsProps) {
+/**
+ * The Settings pages as a list, grouped as the rail groups them and from the same catalog owner. Where the rail
+ * shows it is the index; on a phone this list is the Settings home (owner 11-06, as in 0.2).
+ */
+export const SettingsCatalogGroups = React.memo(function SettingsCatalogGroups(props: SettingsBelowFoldSectionsProps) {
     const catalog = useResolvedSettingsPageCatalog();
     const groups = React.useMemo(() => rootGroups(catalog.tree), [catalog.tree]);
     return (
         <>
-            {props.showCatalogGroups ? groups.map((group, index) => (
+            {groups.map((group, index) => (
                 props.stage >= minimumStageForRootGroup(index) ? (
                     <SettingsCatalogRootGroup key={group.id} {...props} groupId={group.id} />
                 ) : null
-            )) : null}
+            ))}
+        </>
+    );
+});
+
+export const SettingsBelowFoldSections = React.memo(function SettingsBelowFoldSections(props: SettingsBelowFoldSectionsProps) {
+    return (
+        <>
             {props.stage >= 3 ? (
                 <SettingsDeveloperSection devModeEnabled={props.devModeEnabled} router={props.router} />
             ) : null}

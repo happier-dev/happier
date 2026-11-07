@@ -145,11 +145,6 @@ vi.mock('@/utils/system/requestReview', () => ({
     canRequestReview: vi.fn(async () => true),
 }));
 
-// Covered by its own suite against the Agents machine and connected-account boundaries.
-vi.mock('@/components/hub/HubAttentionSection', () => ({
-    HubAttentionSection: () => null,
-}));
-
 afterEach(() => {
     routerPushSpy.mockClear();
 });
@@ -164,6 +159,29 @@ beforeEach(() => {
     storage.setState({ settings: { ...settingsDefaults, useProfiles: false },
         profile: { ...profileDefaults, id: 'prof_1' }, machines: {},
         machineListByServerId: {}, machineListStatusByServerId: {} });
+});
+
+// Owner 11-06: a phone's Settings home is the list of Settings pages, as in 0.2; without the rail it sat
+// below every hub section, about 6000 px down, and read as missing.
+describe('SettingsView phone home', () => {
+    it('leads with the list of Settings pages, ahead of the hub sections', async () => {
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { HubSetupSection } = await import('@/components/hub/HubSetupSection');
+        const { SettingsRailVisibilityContext } = await import('./shell/settingsRailVisibility');
+        // A phone: no Settings rail beside the page, so the page is the index.
+        const tree = (await renderSettingsView(<InjectedAuthProvider credentials={null}>
+            <SettingsRailVisibilityContext.Provider value={false}><SettingsView /></SettingsRailVisibilityContext.Provider>
+        </InjectedAuthProvider>)).tree;
+        const nodes = tree.root.findAll(() => true);
+        // The first of the rail's catalog groups, drawn as the page's list.
+        const firstGroup = nodes.findIndex((node) => typeof node.props?.groupId === 'string');
+        // A memo component's node carries the function it wraps.
+        const setupType = (HubSetupSection as unknown as { type?: unknown }).type ?? HubSetupSection;
+        const setup = nodes.findIndex((node) => node.type === setupType);
+        expect(firstGroup).toBeGreaterThan(-1);
+        expect(setup).toBeGreaterThan(-1);
+        expect(firstGroup).toBeLessThan(setup);
+    });
 });
 
 describe('SettingsView ACP catalog entry', () => {

@@ -152,6 +152,7 @@ export function installSettingsViewCommonModuleMocks(
     // boundaries. The Settings home suites here cover the page's other sections.
     vi.mock('@/components/hub/HubAttentionSection', () => ({
         HubAttentionSection: () => null,
+        SettingsAttentionSection: () => null,
     }));
 
     vi.mock('@/hooks/auth/useScannedAuthUrlProcessor', () => ({
