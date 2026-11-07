@@ -8251,8 +8251,6 @@ const enSettingsAppearance = {
   avatarStyle: 'Avatar style',
   homeBotFaces: "Bot faces on Home",
   homeBotFacesDescription: "On a phone, a row of your Bots' faces at the top of Home. Tap one to open it.",
-  homeBotFaces: "Bot faces on Home",
-  homeBotFacesDescription: "On a phone, a row of your Bots' faces at the top of Home. Tap one to open it.",
   avatarStyleDescription: 'Choose session avatar appearance',
   botFaceStyle: "Bots",
   botFaceStyleDescription: "Choose the default Bot face style",
