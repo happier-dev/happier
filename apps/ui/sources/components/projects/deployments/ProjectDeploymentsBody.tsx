@@ -39,11 +39,15 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';
 import { useProjectsSourcesComposition } from '../useProjectsSourcesComposition';
-import { DeploymentEnvironmentCollection } from './DeploymentEnvironmentCollection';
+import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
 import { DeploymentEnvironmentDetail, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { DeploymentEnvironmentDraft } from './DeploymentEnvironmentDraft';
 import { DeploymentReceiptDetail } from './DeploymentReceiptDetail';
+import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectSourceRoute } from '@/components/projects/sources/ProjectSourcesScreen';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { buildDeploymentEnvironmentHref } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
@@ -255,6 +259,20 @@ const ProjectDeploymentsPage = React.memo(
     const openEnvironmentTriggers = React.useCallback((id: string) => {
       setSelection({ environmentId: id, deploymentId: null });
     }, [setSelection]);
+    // A failed receipt's recovery opens the place its typed destination names: an Environment page in place, or
+    // the Source, Machines, Connected services or Store page. Logs and review live on the Environment's Overview.
+    const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1) => {
+      switch (destination) {
+        case 'history': case 'variables': case 'domains': case 'permissions': case 'settings':
+          openEnvironmentTab({ tab: destination, section: null }); return;
+        case 'logs': case 'review':
+          openEnvironmentTab({ tab: 'overview', section: null }); return;
+        case 'source': router.push(projectSourceRoute(props.sourceId)); return;
+        case 'machines': router.push(SETTINGS_ROUTES.machines); return;
+        case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
+        case 'store': router.push(PLUGINS_APP_ROUTE); return;
+      }
+    }, [openEnvironmentTab, props.sourceId, router]);
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.
@@ -300,10 +318,14 @@ const ProjectDeploymentsPage = React.memo(
     // A platform draft's new Environment opens Add platform target once, then forgets.
     const [platformLinkFor, setPlatformLinkFor] = React.useState<Readonly<{ environmentId: string; targetKey: string }> | null>(null);
     const platformLinkOpened = React.useCallback(() => setPlatformLinkFor(null), []);
+    // A deleted Environment hands the page to its nearest sibling in this Project, or to the empty state; a phone
+    // returns to the list.
     const leaveDeleted = React.useCallback(() => {
-      setSelection(NOTHING_SELECTED);
+      const deletedId = selectionRef.current.environmentId;
+      const next = !phone && deletedId ? environmentAfterDelete(items, deletedId, props.sourceId) : null;
+      setSelection(next ? { environmentId: next, deploymentId: null } : NOTHING_SELECTED);
       void refresh();
-    }, [refresh, setSelection]);
+    }, [items, phone, props.sourceId, refresh, setSelection]);
 
     if (!selection.defaults && !environmentId && !retained && status === 'unavailable') {
       return (
@@ -392,11 +414,13 @@ const ProjectDeploymentsPage = React.memo(
           accountId={props.accountId}
           onBack={back}
           onOpenEnvironmentTab={openEnvironmentTab}
+          onOpenRecoveryDestination={openRecoveryDestination}
           rollback={props.actions?.rollback ?? null}
           cancel={props.actions?.cancel ?? null}
           promote={props.actions?.promote ?? null}
           onOpenPromotionReceipt={(environmentId, deploymentId) => setSelection({ environmentId, deploymentId })}
           deploy={props.actions?.deploy ?? null}
+          teardown={props.actions?.teardown ?? null}
           readLogs={props.actions?.readLogs ?? null}
           serverId={props.serverId}
           phone={phone}
@@ -476,7 +500,7 @@ const ProjectDeploymentsPage = React.memo(
           minDetailWidth={DEPLOYMENTS_DETAIL_MIN_WIDTH_PX * scale}
           listWidthPx={
             railWidth.widthPx ??
-            HAPPIER_COLLECTION_RAIL_WIDTH_PX.compact * scale
+            HAPPIER_COLLECTION_RAIL_WIDTH_PX.detailed * scale
           }
           onListWidthCommit={railWidth.commit}
           onListWidthReset={railWidth.reset}

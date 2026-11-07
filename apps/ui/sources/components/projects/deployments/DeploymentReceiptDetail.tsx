@@ -243,7 +243,7 @@ export const DeploymentReceiptDetail = React.memo(
       if (retryTeardown && teardown && content.teardown) {
         const reason = content.teardown.reason;
         void againPress.press(() => teardown({ environmentId, targetLinkId: deployment.targetLinkId,
-          requestKey: deployment.requestKey, reason }));
+          requestKey: deployment.requestKey, reason }, { confirmed: true }));
         return;
       }
       if (!deploy || !againTarget || !againSha) return;

@@ -391,7 +391,7 @@ describe('Project deployments page', () => {
     const base = environmentDetailForHome();
     const detail = { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
       targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
-    const { controller } = controllerFor({ detail });
+    const { controller } = controllerFor({ detail, history: [] });
     const { ModalProvider } = await import('@/modal');
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const { createDeploymentActions } = await import('./deploymentActions');
@@ -524,6 +524,43 @@ describe('Project deployments page', () => {
       await screen.pressByTestIdAsync('project-deployments.environment.variables.mode:bulk');
       expect(screen.findByTestId('project-deployments.environment.variables.bulk.text')?.props.value).toContain('RENAMED');
     } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it('shows the running Secret revision in Variables and sends its Deploy through the page approval continuation', async () => {
+    const base = environmentDetailForHome();
+    const binding = createDeploymentSecretVariableBindingV1({ name: 'TOKEN', phase: 'runtime', resourceId: 'credential', resourceRevision: 2 });
+    const detail = { ...base, content: { ...base.content, bindings: [binding] },
+      savedSecretRevisions: [{ resourceId: 'credential', revision: 2 }] };
+    const original = createDeploymentReceiptDetailV1();
+    const receipt = createDeploymentReceiptDetailV1({ content: { ...original.content, ownServer: { approvedInputBasis: {
+      v: 1, environmentId: detail.environment.id, environmentRevision: 1,
+      targetLinkId: original.deployment.targetLinkId, targetLinkRevision: 1, sourceIntent: original.content.sourceIntent,
+      manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1',
+      services: ['app'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }], images: [],
+      bindings: [{ ...binding, source: { ...binding.source, resourceRevision: 1 } }],
+    } } } });
+    const { controller } = controllerFor({ detail, receipt });
+    const { HappyError } = await import('@/utils/errors/errors');
+    const deploy = vi.fn(async () => {
+      throw new HappyError('approval_request_created', false, { code: 'approval_request_created',
+        details: { kind: 'approval_request_created', artifactId: 'secret-approval', actionId: 'deployments.deploy' } });
+    });
+    const requested = vi.fn();
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={deploy}
+      review={{ pendingId: 'secret-approval', request: requested, open: () => {} }} onOpenReceipt={() => {}} lifetime={lifetime} />);
+    try {
+      await selectEnvironmentTab(screen, 'variables');
+      const notice = 'project-deployments.environment.variables.rotated';
+      await waitForContent(screen, notice);
+      expect(deploy).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(`${notice}.action`);
+      expect(deploy).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
+      expect(requested).toHaveBeenCalledExactlyOnceWith('secret-approval');
+      expect(screen.findByTestId('project-deployments.outcome.approval')).not.toBeNull();
+      expect(screen.findByTestId(`${notice}.action`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
   });
 
   it.each(['empty', 'pending', 'failed'] as const)('opens an exact Environment even when it is absent from the current collection page (%s)', async rail => {
@@ -1290,6 +1327,8 @@ describe('Deployment receipt header actions', () => {
         serverId={scope.serverId} accountId={scope.accountId} sourceId={scope.projectSourceId}
         actions={createDeploymentActions(lifetime, scope.projectSourceId)} />);
       await waitForContent(screen, 'project-deployments.receipt.deployAgain');
+      const { Modal } = await import('@/modal');
+      vi.mocked(Modal.confirm).mockClear();
       await screen.pressByTestIdAsync('project-deployments.receipt.deployAgain');
       await waitForHomeGovernance(() => {
         const teardowns = homes.requestsFor('/v1/actions/deployments.teardown').length - beforeTeardowns;
@@ -1297,6 +1336,7 @@ describe('Deployment receipt header actions', () => {
         expect(teardowns + deploys, screen.getTextContent()).toBeGreaterThan(0);
         expect({ teardowns, deploys }).toEqual({ teardowns: 1, deploys: 0 });
       });
+      expect(Modal.confirm).not.toHaveBeenCalled();
     } finally { await act(async () => { controller.retire(); }); }
   });
 
@@ -1608,6 +1648,27 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       expect(rowText('srv-c')).toContain('not counted as down');
       expect(screen.getTextContent()).toContain('1 of 3 down');
     } finally { controller.retire(); }
+  });
+
+  it('names a stored definition and says when its revision is not the one serving', async () => {
+    const base = environmentDetailForHome();
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
+    const stored = { kind: 'stored' as const, document: 'services:\n  app:\n    image: app:1\n', composeDigest: `sha256:${'b'.repeat(64)}`, profiles: [], services: ['app'] };
+    const servingBase = createDeploymentReceiptDetailV1();
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }),
+      content: { ...servingBase.content, sourceIntent: { ...stored, contentRevision: 3 } } });
+    for (const [revision, notDeployed] of [[4, true], [3, false]] as const) {
+      const detail = { ...base, content: { ...base.content, definition: { ...stored, contentRevision: revision } } };
+      const { controller } = controllerFor({ detail, receipt: serving, history: [serving] });
+      try {
+        const screen = await render(controller, detail);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.definition')).not.toBeNull());
+        const text = JSON.stringify(screen.findByTestId('project-deployments.environment.definition')
+          ?.findAll(node => typeof node.props.children === 'string').map(node => node.props.children));
+        expect(text).toContain(`revision ${revision}`);
+        expect(text.includes('not deployed yet')).toBe(notDeployed);
+      } finally { controller.retire(); }
+    }
   });
 
   it('keeps a single-server Environment free of a Servers section', async () => {

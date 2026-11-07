@@ -1220,7 +1220,9 @@ admits the captured Account credential reference and native delete operands once
 existing reviewed-child issuer then performs deletion through the declared data
 Action and records success, failure or an unknown outcome in the ordinary
 teardown receipt. Editing the live data link from A to B does not redirect cleanup
-of A or delete B. Replaying a successful teardown request reuses its existing receipt
+of A or delete B. Provider refusals retain the same canonical failure and cause in
+the receipt and public Action result, including whether an effect was attempted;
+an uncertain effect remains an unknown outcome. Replaying a successful teardown request reuses its existing receipt
 and content Artifact without a second provider deletion. A missing or unknown
 creation result cannot authorize cleanup.
 Data-only cleanup has no application source revision; it retains receipt outcome

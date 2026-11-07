@@ -5,7 +5,7 @@ import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { materializeCaddyDomainRouteV1 } from './targets/ownServer/caddyRouteMaterialization';
 import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import axios from 'axios';
@@ -130,6 +130,7 @@ describe('deployment teardown through the canonical Action front door', () => {
             let nativeEffects = 0;
             const createDeploymentActionDeps: NonNullable<Parameters<typeof createS0DeploymentDaemonIngress>[0]['createDeploymentActionDeps']> = requester => createDaemonDeploymentActionDeps({ credentials: requester?.credentials ?? credentials, serverId: home.serverId,
                 resolveRequesterIdentity,
+                readOperation: (operationId, context) => ingress.actionOperations.readRestorePreparation({ operationId, context }),
                 serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? home.baseUrl, machineId: home.machineId,
                 ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
                 ...(boundary ? { teardownBoundary: boundary } : {}),
@@ -139,6 +140,7 @@ describe('deployment teardown through the canonical Action front door', () => {
             onTestFinished(() => ingress.close());
             const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
                 machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
+            let teardownReviews = 0;
             const invoke = (name: string, input: unknown, unselectedCli = false) => {
                 const actionId = ActionIdSchema.parse(name);
                 return runWithServerHttpBaseUrl(home.baseUrl, async () => {
@@ -152,6 +154,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                     if (result.ok && result.result !== null && typeof result.result === 'object'
                         && 'kind' in result.result && result.result.kind === 'approval_request_created'
                         && 'artifactId' in result.result) {
+                        if (actionId === 'deployments.teardown') teardownReviews++;
                         const decided = options?.productionReplay && actionId === 'deployments.teardown'
                             ? await replayNativeApproval(String(result.result.artifactId))
                             : await caller.execute('approval.request.decide', {
@@ -244,7 +247,9 @@ describe('deployment teardown through the canonical Action front door', () => {
                     ...await prepared('deployment-receipt.v1', teardownContent) };
             };
             return { invoke, input, freshInput, environment, link, artifacts, prepared, environmentContent: sample.content.v,
-                nativeEffects: () => nativeEffects,
+                nativeEffects: () => nativeEffects, teardownReviews: () => teardownReviews,
+                retainedOperation: (operationId: string) => ingress.actionOperations.store.get(
+                    { accountId: home.accountId, machineId: home.machineId }, operationId),
                 closeIngress: () => ingress.close(),
                 reload: async () => { await ingress.close(); ingress = await createS0DeploymentDaemonIngress({ home, createDeploymentActionDeps,
                     resolveDeploymentRequesterIdentity: resolveRequesterIdentity }); } };
@@ -336,7 +341,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
             }, 180_000);
 
-        it.skipIf(process.platform === 'win32').each(['manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
+        it.skipIf(process.platform === 'win32').each(['manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-unknown'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
             vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '1');
             const root = await mkdtemp(join(tmpdir(), 'happier-teardown-native-'));
             const previousHome = configuration.happyHomeDir;
@@ -354,7 +359,10 @@ describe('deployment teardown through the canonical Action front door', () => {
                     installationId: home.installationId, createdAt: 1,
                     publicKey: encodeBase64(home.keys.publicKey, 'base64url'),
                     privateKey: encodeBase64(home.keys.secretKey, 'base64url') }), { mode: 0o600 });
-                const retainedDomain = caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails';
+                const retainedRetry = caller === 'retained-retry-failed' || caller === 'retained-retry-unknown';
+                const retainedDomain = retainedRetry || caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails';
+                let refuseDomainRemoval = caller === 'reviewed-ingress-domain-retirement-fails' || caller === 'retained-retry-failed';
+                const domainRemovalReceiptStates: string[] = [];
                 const socketPath = join(socketDirectory, 'admin.sock');
                 const configPath = join(root, 'caddy.json');
                 const nativeServer = { listen: [':9381'], automatic_https: { disable: true },
@@ -365,13 +373,17 @@ describe('deployment teardown through the canonical Action front door', () => {
                 if (retainedDomain) {
                     await writeFile(configPath, JSON.stringify(config));
                     let version = 1;
-                    const caddy = createServer((request, response) => {
+                    const caddy = createServer(async (request, response) => {
                         caddyRequests.push({ method: request.method, path: request.url });
                         response.setHeader('ETag', `"${version}"`);
                         if (request.method === 'GET') {
                             response.end(JSON.stringify(request.url === '/config/' ? config : nativeServer)); return;
                         }
-                        if (caller === 'reviewed-ingress-domain-retirement-fails') {
+                        if (retainedRetry) {
+                            const receipt = await db.deployment.findFirst({ where: { environmentId: fixture.environment.environmentId, operation: 'teardown' } });
+                            domainRemovalReceiptStates.push(receipt?.state ?? 'missing');
+                        }
+                        if (refuseDomainRemoval) {
                             response.writeHead(503).end(); return;
                         }
                         const id = decodeURIComponent(request.url!.slice('/id/'.length));
@@ -409,7 +421,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                     } } satisfies OwnServerDeploymentRuntimeHostInput;
                 const runtime = createOwnServerDeploymentRuntimeForHost(nativeHost);
                 const fixture = await prepare(undefined, [], [], { runtime, definition,
-                    productionReplay: (caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails') });
+                    productionReplay: retainedDomain && !retainedRetry });
                 await updateSettings(settings => ({ ...settings,
                     machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
                         [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
@@ -418,7 +430,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }));
                 const draft = { ...createDeploymentReceiptDetailV1().content, sourceIntent: definition,
                     machines: [home.machineId], buildMachineId: home.machineId, machineResults: [], images: [image], onFailure: 'rollbackAll' as const };
-                if ((caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails')) {
+                if (retainedDomain) {
                     // Construct the already successful deployment at the private
                     // Home persistence boundary; deployment admission is separate
                     // from the reviewed teardown under test.
@@ -437,7 +449,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: home.serverId, environmentId: fixture.environment.environmentId });
-                if ((caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails')) {
+                if (retainedDomain) {
                     // The constructed successful deployment also retains its
                     // native working directory, as an actual deploy would.
                     await mkdir(identity.deploymentRoot, { recursive: true });
@@ -451,9 +463,9 @@ describe('deployment teardown through the canonical Action front door', () => {
                 if (caller !== 'partial') {
                     // Native Docker is the external boundary: retain a labelled workload
                     // after the real failed receipt, including an interrupted candidate.
-                    await docker.seedComposeGeneration(caller === 'manual' || caller === 'healthy' || (caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails') ? identity.projectName
+                    await docker.seedComposeGeneration(caller === 'manual' || caller === 'healthy' || retainedDomain ? identity.projectName
                         : candidateProject,
-                    caller === 'healthy' || (caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails') ? 'healthy' : undefined);
+                    caller === 'healthy' || retainedDomain ? 'healthy' : undefined);
                 }
                 // Partial cleanup has only orphan networks; observing containers
                 // alone must not skip removeTarget. Other callers also detach the
@@ -461,12 +473,18 @@ describe('deployment teardown through the canonical Action front door', () => {
                 const ownedNetworks = ['a'.repeat(64), 'b'.repeat(64)];
                 const retainedNetworks = ['c'.repeat(64), 'd'.repeat(64)];
                 await docker.seedNetwork(ownedNetworks[0]!, identity.projectName,
-                    caller === 'network-in-use' ? ['f'.repeat(64)] : caller === 'partial' ? [] : ['9'.repeat(64)]);
+                    caller === 'network-in-use' || caller === 'retained-retry-unknown' ? ['f'.repeat(64)] : caller === 'partial' ? [] : ['9'.repeat(64)]);
                 await docker.seedNetwork(ownedNetworks[1]!, candidateProject);
                 await docker.seedNetwork(retainedNetworks[0]!, `${identity.projectName}-other`);
                 await docker.seedNetwork(retainedNetworks[1]!); // external, without project ownership
+                const deletedVolume = `${identity.projectName}_delete`;
+                const keptVolume = `${identity.projectName}_keep`;
+                if (retainedRetry) {
+                    await docker.seedVolume(deletedVolume, identity.projectName);
+                    await docker.seedVolume(keptVolume, identity.projectName);
+                }
                 const retainedImageIds = await docker.readPruneImageIds();
-                if ((caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails')) {
+                if (retainedDomain) {
                     // Persist the observed post-ingress/Domain shape at the real
                     // temporary Home database boundary. The failed add was unpublished;
                     // the later pending Domain is independent of workload ownership.
@@ -516,6 +534,18 @@ describe('deployment teardown through the canonical Action front door', () => {
                 const input = { serverId: home.serverId, environmentId: detail.environment.id,
                     targetLinkId: link.id, expectedRevision: detail.environment.revision,
                     expectedTargetLinkRevision: link.revision, requestKey: randomUUID(), reason: 'manual' };
+                let teardownAdmissions = 0;
+                const homeResponses: Array<{ method: string | undefined; path: string; status: number; error?: string }> = [];
+                const nativeRequest = axios.request;
+                const admissionObserver = vi.spyOn(axios, 'request').mockImplementation(async request => {
+                    if (request.method === 'POST' && request.url?.endsWith(`/environments/${detail.environment.id}/teardown`)) teardownAdmissions++;
+                    const response = await nativeRequest(request);
+                    const data: unknown = response.data;
+                    homeResponses.push({ method: request.method, path: new URL(request.url!).pathname, status: response.status,
+                        ...(data && typeof data === 'object' && 'error' in data && typeof data.error === 'string' ? { error: data.error } : {}) });
+                    return response;
+                });
+                onTestFinished(() => admissionObserver.mockRestore());
                 if (caller !== 'workflow') {
                     if (caller === 'healthy') {
                         // The CLI identity is a different Machine from the installed
@@ -527,11 +557,71 @@ describe('deployment teardown through the canonical Action front door', () => {
                     }
                     // UI and an unselected CLI name only the Environment; the
                     // controller prepares revisions, target and native inventory.
-                    const tornDown = await fixture.invoke('deployments.teardown', caller === 'healthy' || (caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails')
+                    const tornDown = await fixture.invoke('deployments.teardown', caller === 'healthy' || retainedDomain
                         ? { serverId: home.serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: input.requestKey,
-                                ...(caller.startsWith('reviewed-ingress-domain') ? { removeEnvironment: true as const } : {}) }
-                        : input, caller === 'healthy' || (caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails'));
-                    if ((caller === 'reviewed-ingress-domains' || caller === 'reviewed-ingress-domain-retirement-fails')) {
+                                ...(retainedDomain ? { removeEnvironment: true as const } : {}),
+                                ...(retainedRetry ? { volumes: [
+                                    { name: deletedVolume, disposition: 'delete', confirmation: deletedVolume },
+                                    { name: keptVolume, disposition: 'keep' },
+                                ] } : {}) }
+                        : input, caller === 'healthy' || retainedDomain);
+                    if (retainedRetry) {
+                        const firstState = caller === 'retained-retry-failed' ? 'failed' : 'outcome_unknown';
+                        expect(tornDown, JSON.stringify(tornDown)).toMatchObject({ ok: false });
+                        const first = await db.deployment.findFirstOrThrow({ where: { environmentId: detail.environment.id, operation: 'teardown' } });
+                        expect(first).toMatchObject({ state: firstState, requestKey: input.requestKey,
+                            acceptedRequestEnvelopeDigest: expect.any(String), teardownProof: { removeEnvironment: true } });
+                        expect(first.actionOperationId).toEqual(expect.any(String));
+                        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: detail.environment.id } })).toMatchObject({ deletedAt: null });
+                        expect(await docker.readVolumeNames()).toEqual([deletedVolume, keptVolume].sort());
+                        if (caller === 'retained-retry-failed') {
+                            expect(await db.deploymentDomain.findFirst({ where: { environmentId: detail.environment.id } }))
+                                .toMatchObject({ state: 'removing', deletedAt: null });
+                            expect((await docker.readInvocations()).filter(call => call.args[0] === 'rm'
+                                || call.args[0] === 'network' && call.args[1] === 'rm')).toHaveLength(0);
+                            refuseDomainRemoval = false;
+                        } else {
+                            expect(await db.deploymentDomain.count({ where: { environmentId: detail.environment.id, deletedAt: null } })).toBe(0);
+                            // The unrelated endpoint leaves through Docker's external
+                            // boundary; Retry must execute the still-unproved removal.
+                            const statePath = join(root, 'docker', 'docker-state.json');
+                            const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{ Id: string; Containers: Record<string, object> }> };
+                            const network = state.networks.find(row => row.Id === ownedNetworks[0]);
+                            if (!network) throw new Error('The unproved network must remain available to Retry');
+                            delete network.Containers['f'.repeat(64)];
+                            await writeFile(statePath, JSON.stringify(state));
+                        }
+                        // Fresh caller context omits the original private choices.
+                        // The one retained host invocation owns those choices and its
+                        // original signed carrier; Retry cannot silently review again.
+                        const retryInput = { serverId: home.serverId, environmentId: detail.environment.id,
+                            targetLinkId: link.id, requestKey: input.requestKey, reason: 'manual' };
+                        const resumed = await fixture.invoke('deployments.teardown', retryInput, true);
+                        expect(resumed, JSON.stringify({ resumed, homeResponses })).toMatchObject({ ok: true,
+                            result: { ok: true, state: 'succeeded', environmentRemoved: true } });
+                        const final = await db.deployment.findUniqueOrThrow({ where: { id: first.id } });
+                        expect(final).toMatchObject({ state: 'succeeded', actionOperationId: first.actionOperationId,
+                            requestKey: first.requestKey, acceptedRequestEnvelopeDigest: first.acceptedRequestEnvelopeDigest,
+                            contentArtifactId: first.contentArtifactId });
+                        expect(await db.deployment.count({ where: { environmentId: detail.environment.id, operation: 'teardown' } })).toBe(1);
+                        expect(teardownAdmissions, 'Retry must consume the admitted receipt without a second Home begin').toBe(1);
+                        expect(fixture.teardownReviews(), 'Retry must reuse the original confirmed review').toBe(1);
+                        expect(domainRemovalReceiptStates.length).toBeGreaterThan(0);
+                        expect(domainRemovalReceiptStates.every(state => state === 'running')).toBe(true);
+                        expect(await db.deploymentDomain.count({ where: { environmentId: detail.environment.id, deletedAt: null } })).toBe(0);
+                        expect(await docker.readRunningImageConfig('app')).toBeNull();
+                        expect(await docker.readVolumeNames()).toEqual([keptVolume]);
+                        for (const id of ownedNetworks) expect(await docker.readNetworkIds()).not.toContain(id);
+                        expect(await docker.readNetworkIds()).toEqual(expect.arrayContaining(retainedNetworks));
+                        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: detail.environment.id } }))
+                            .toMatchObject({ deletedAt: expect.any(Date) });
+                        expect(fixture.retainedOperation(first.actionOperationId!)).toMatchObject({ state: 'succeeded' });
+                        expect(await fixture.invoke('deployments.teardown', retryInput, true)).toEqual(resumed);
+                        expect(teardownAdmissions).toBe(1);
+                        expect(fixture.teardownReviews()).toBe(1);
+                        return;
+                    }
+                    if (retainedDomain) {
                         const outcome = JSON.stringify({ result: tornDown,
                             nativeCommands: (await docker.readInvocations()).map(call => call.args.slice(0, 2)), caddyRequests,
                             receipts: await db.deployment.findMany({ where: { environmentId: detail.environment.id },

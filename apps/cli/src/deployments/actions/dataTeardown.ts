@@ -5,6 +5,9 @@ import { DeploymentDataTeardownContentV1Schema, DEPLOYMENT_TEARDOWN_STEPS_V1,
     type DeploymentDataTeardownContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { projectDeploymentReceiptFailure } from '../deploymentFailure';
 import { createDeploymentTargetRoleAdmissionHost } from '../targets/createDeploymentTargetRoleAdmissionHost';
 import { admitDeploymentTargetRoleForHost } from '../targets/admitDeploymentTargetRoleForHost';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
@@ -59,10 +62,13 @@ export function createDataTeardownForHost(host: Host) {
             try {
                 const { input, context } = request;
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
+                if (!('dataCreation' in input) && !('contentArtifactId' in input)) return failure('unsupported_action');
                 const supplied = 'dataCreation' in input;
+                if (supplied && input.volumes !== undefined) return failure('deployment_invalid');
                 const prior = supplied ? await host.findReceipt(input, context) : null;
                 const existing = prior ? DeploymentDataTeardownContentV1Schema.safeParse(prior.content)
                     : supplied ? null : await readPrepared(input, context);
+                if (existing?.success && input.volumes !== undefined) return failure('deployment_invalid');
                 if (prior && (!existing?.success || prior.deployment.operation !== 'teardown'
                     || !sameStrictJsonValue(existing.data.platform.dataCreation.reference, 'dataCreation' in input ? input.dataCreation : undefined))) return failure('deployment_conflict');
                 if (!supplied && !existing?.success) return { input: DeploymentTeardownInputV1Schema.parse(input), preview: normalizeStrictJsonValue(input) };
@@ -130,6 +136,7 @@ export function createDataTeardownForHost(host: Host) {
         },
         async admit(input: DeploymentTeardownInputV1, context: ActionExecutorContext) {
             const content = await readPrepared(input, context);
+            if (content.success && input.volumes !== undefined) return failure('deployment_invalid');
             return content.success && content.data.platform.targetLinkRevision === input.expectedTargetLinkRevision ? content.data : null;
         },
         async execute(request: DeploymentReceiptDispatchV1, retainedReceipt?: DeploymentReceiptDetailV1): Promise<DeploymentReceiptResultV1 | ActionExecuteFailure> {
@@ -145,7 +152,7 @@ export function createDataTeardownForHost(host: Host) {
             const result = (): DeploymentReceiptResultV1 => ({ ok: true, environmentId: receipt.deployment.environmentId,
                 revision: request.receipt.revision, deploymentId: receipt.deployment.id,
                 deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state });
-            if (receipt.deployment.state !== 'queued'
+            if ((receipt.deployment.state !== 'queued' && receipt.deployment.state !== 'running')
                 || receipt.deployment.actionOperationId !== request.context.operationAcceptance?.operationId) return result();
             const installation = readInstallationIdentityIfExistsSync();
             if (!installation || accepted.controller.installationId !== installation.installationId) return failure('machine_unavailable');
@@ -153,19 +160,42 @@ export function createDataTeardownForHost(host: Host) {
             const port = request.context.hostReviewedChild;
             if (!port) return failure('unsupported_action');
             const content = parsed.data;
+            const projectFailure = (response: ActionExecuteFailure) => {
+                const receiptFailure = projectDeploymentReceiptFailure(response, response.effectAttempted === false ? 'admission' : 'teardown');
+                return { failure: receiptFailure, result: { ...response,
+                    ...(receiptFailure.failureCause ? { failureCause: receiptFailure.failureCause } : {}),
+                    details: { serverId: host.serverId, environmentId: request.input.environmentId,
+                        targetLinkId: request.input.targetLinkId, deploymentId: receipt.deployment.id,
+                        failure: receiptFailure,
+                    } satisfies DeploymentExecutionFailureDetailsV1 } satisfies ActionExecuteFailure };
+            };
+            const response = await (async () => {
+                try {
+                    return await port.invoke({ action: content.platform.dataCreation.deleteAction, role: 'branches.delete',
+                        input: childInput(request.input, content) });
+                } catch (error) {
+                    const normalized = normalizeActionExecutorThrownError(error, 'deployment.teardown.execute');
+                    return { ok: false, ...normalized, effectAttempted: normalized.effectAttempted ?? true } satisfies ActionExecuteFailure;
+                }
+            })();
+            const deleted = response.ok && response.result !== null && typeof response.result === 'object'
+                && !Array.isArray(response.result) && 'status' in response.result && response.result.status === 'deleted';
+            const childFailure = deleted ? null : projectFailure(response.ok
+                ? { ...failure('outcome_unknown'), effectAttempted: true } : response);
+            const unknown = !deleted && (response.ok || isActionOutcomeUnknownErrorCodeV1(response.errorCode) || response.effectAttempted === true);
+            const state = deleted ? 'succeeded' as const : unknown ? 'outcome_unknown' as const : 'failed' as const;
+            const { failure: _previousFailure, ...withoutFailure } = content;
+            const nextContent = childFailure ? { ...content, failure: childFailure.failure } : withoutFailure;
             try {
-                const response = await port.invoke({ action: content.platform.dataCreation.deleteAction, role: 'branches.delete',
-                    input: childInput(request.input, content) });
-                const deleted = response.ok && response.result !== null && typeof response.result === 'object'
-                    && !Array.isArray(response.result) && 'status' in response.result && response.result.status === 'deleted';
-                const unknown = response.ok || isActionOutcomeUnknownErrorCodeV1(response.errorCode) || response.effectAttempted === true;
-                const state = deleted ? 'succeeded' as const : unknown ? 'outcome_unknown' as const : 'failed' as const;
                 const written = await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
-                    receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content, context: request.context,
+                    receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content: nextContent, context: request.context,
                     ...(deleted && accepted ? { teardownProof: { targetLinkRevision: request.input.expectedTargetLinkRevision,
                         machines: [accepted.controller], workloadAbsent: true, retainedProviderResource: content.platform.dataCreation.retainedProviderResource, steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1] } } : {}) });
-                return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true };
-            } catch { return { ...failure('outcome_unknown'), effectAttempted: true }; }
+                return childFailure?.result ?? (written.ok ? written : projectFailure({ ...written, errorCode: 'outcome_unknown', effectAttempted: true }).result);
+            } catch (error) {
+                return childFailure?.result ?? projectFailure({ ok: false,
+                    ...normalizeActionExecutorThrownError(error, 'deployment.teardown.settle'), errorCode: 'outcome_unknown', effectAttempted: true }).result;
+            }
         },
     };
 }

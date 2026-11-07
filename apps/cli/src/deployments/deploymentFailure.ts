@@ -22,7 +22,7 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
     return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
         phase: phase.success ? phase.data : fallbackPhase,
         ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
-        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+        failureCause: result.failureCause ?? normalizeActionExecutorThrownError(result, `deployment.${fallbackPhase}`).failureCause,
         ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) }));
 }
 
