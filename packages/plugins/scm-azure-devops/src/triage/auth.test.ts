@@ -5,6 +5,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { materializeAzureDevOpsListedAuthorization } from './auth.js';
+import { projectAzureSourceFailure } from './failureProjection.js';
 import type { AzureDevOpsListedAccountMaterializer, AzureDevOpsOrigin } from './types.js';
 
 const ORIGIN: AzureDevOpsOrigin = Object.freeze({
@@ -26,6 +27,22 @@ function materializer(
 }
 
 describe('materializeAzureDevOpsListedAuthorization', () => {
+  it('preserves the shared typed host refusal through the public failure projection', async () => {
+    const outcome = await materializeAzureDevOpsListedAuthorization({
+      connectedAccounts: { materializeListedAccount: async () => { throw Object.assign(new Error('private material'), {
+        code: 'connected_service_credential_reconnect_required', details: { requestId: 'host-request-1' },
+      }); } },
+      purpose: 'azure-devops.triage.read', account: ACCOUNT, origin: ORIGIN,
+      signal: new AbortController().signal,
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(projectAzureSourceFailure(outcome.failure)).toEqual({
+      class: 'authentication', code: 'connected_service_credential_reconnect_required',
+      detail: 'Happier Request ID: host-request-1',
+    });
+  });
+
   it('materializes the exact bound account against the configured request origin', async () => {
     const materializeListedAccount = vi.fn(
       async (): Promise<ConnectedAccountMaterialization> => ({

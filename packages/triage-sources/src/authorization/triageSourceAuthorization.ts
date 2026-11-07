@@ -4,6 +4,9 @@ import type {
   ConnectedAccountsService,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
+import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { TriageListInvocationErrorV1Schema, TriageSourceFailureV1Schema, type TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+
 /**
  * The one runtime path any first-party Triage source uses to obtain HTTP authorization
  * for a configured instance.
@@ -24,8 +27,8 @@ import type {
  *    calls: no cache, memo, or module state. The caller keeps headers inside its own
  *    invocation closure.
  *
- * How a refusal is worded remains source-specific: each source maps these neutral
- * reasons into its own published failure vocabulary.
+ * Typed host refusals are projected here, without credential-bearing messages or details.
+ * Sources map only the remaining neutral reasons into their published failure vocabulary.
  */
 
 /** The narrow slice of the host Connected Accounts service this module consumes. */
@@ -58,7 +61,33 @@ export type TriageSourceAuthorizationReadOutcomeV1 =
 
 export type TriageSourceAuthorizationOutcomeV1 =
   | Readonly<{ ok: true } & TriageSourceAuthorizationV1>
-  | Readonly<{ ok: false; reason: TriageSourceAuthorizationFailureReasonV1 }>;
+  | Readonly<{ ok: false; reason: TriageSourceAuthorizationFailureReasonV1; failure?: TriageSourceFailureV1 }>;
+
+/** Carries an already classified refusal through clients whose contract throws errors. */
+export class TriageSourceAuthorizationErrorV1 extends PluginError {
+  readonly failure: TriageSourceFailureV1;
+
+  constructor(failure: TriageSourceFailureV1) {
+    super({ code: failure.code, message: 'Connected Account authorization was refused.' });
+    this.failure = failure;
+  }
+}
+
+function projectHostRefusal(rejection: unknown, invocationId: string | undefined): TriageSourceFailureV1 | undefined {
+  if (typeof rejection !== 'object' || rejection === null) return undefined;
+  const diagnostic = TriageListInvocationErrorV1Schema.safeParse({ code: Reflect.get(rejection, 'code') });
+  if (!diagnostic.success) return undefined;
+  const request = TriageListInvocationErrorV1Schema.safeParse({
+    code: diagnostic.data.code,
+    requestId: readPluginErrorRequestIdV1(rejection) ?? invocationId,
+  });
+  const failure = TriageSourceFailureV1Schema.safeParse({
+    class: 'authentication', code: diagnostic.data.code,
+    ...(request.success && request.data.requestId !== undefined
+      ? { detail: `Happier Request ID: ${request.data.requestId}` } : {}),
+  });
+  return failure.success ? failure.data : { class: 'authentication', code: diagnostic.data.code };
+}
 
 const AUTHORIZATION_HEADER_NAME = 'authorization';
 
@@ -112,6 +141,7 @@ export async function materializeTriageSourceAuthorizationV1(input: Readonly<{
   account: ConnectedAccountRef;
   /** The origin the credential is minted for, and the only one it may be sent to. */
   origin: string;
+  invocationId?: string;
   signal?: AbortSignal;
 }>): Promise<TriageSourceAuthorizationOutcomeV1> {
   if (isAborted(input.signal)) {
@@ -136,9 +166,11 @@ export async function materializeTriageSourceAuthorizationV1(input: Readonly<{
     // The rejection itself is never returned: a materialization error can carry the very
     // material it failed to deliver, and every caller reports failures to a user.
     const cancelled = isAbortLikeError(rejection) || isAborted(input.signal);
+    const failure = cancelled ? undefined : projectHostRefusal(rejection, input.invocationId);
     return Object.freeze({
       ok: false as const,
       reason: cancelled ? ('cancelled' as const) : ('materializationFailed' as const),
+      ...(failure === undefined ? {} : { failure }),
     });
   }
 

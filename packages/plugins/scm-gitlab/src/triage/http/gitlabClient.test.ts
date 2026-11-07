@@ -52,6 +52,23 @@ const ACCOUNT = Object.freeze({
 });
 
 describe('authorizeGitlabInvocation', () => {
+  it('preserves the shared typed host refusal and Happier request identity', async () => {
+    const result = await authorizeGitlabInvocation({
+      connectedAccounts: {
+        listAccounts: async () => ({ status: 'complete' as const, accounts: [] }),
+        materializeListedAccount: async () => { throw Object.assign(new Error('private material'), {
+          code: 'connected_service_credential_reconnect_required', details: { requestId: 'host-request-1' },
+        }); },
+      },
+      purpose: 'gitlab-connected-account', account: ACCOUNT, origin: GITLAB_COM,
+      signal: new AbortController().signal,
+    });
+    expect(result).toEqual({ kind: 'failed', failure: {
+      class: 'authentication', code: 'connected_service_credential_reconnect_required',
+      detail: 'Happier Request ID: host-request-1',
+    } });
+  });
+
   it('materializes the exact listed account once, for the declared purpose and configured origin', async () => {
     const materializeListedAccount = vi.fn(async () => ({
       kind: 'httpHeaders' as const,

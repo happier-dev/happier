@@ -143,7 +143,7 @@ export async function authorizeGitlabInvocation(
   if (!authorization.ok) {
     // The host's rejection is deliberately not echoed: it can carry the very material it
     // failed to deliver.
-    return { kind: 'failed', failure: AUTHORIZATION_FAILURES[authorization.reason] };
+    return { kind: 'failed', failure: authorization.failure ?? AUTHORIZATION_FAILURES[authorization.reason] };
   }
 
   return {

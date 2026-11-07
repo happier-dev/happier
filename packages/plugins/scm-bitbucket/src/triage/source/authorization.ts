@@ -24,6 +24,7 @@ export type BitbucketSourceRuntime = Readonly<{
   connectedAccounts: ConnectedAccountsService;
   http: HttpService;
   now: () => number;
+  invocationId?: string;
   signal?: AbortSignal;
 }>;
 
@@ -90,15 +91,16 @@ export async function createAuthorizedBitbucketClient(
     purpose: request.purpose,
     account: request.account,
     origin: BITBUCKET_CLOUD_API_ORIGIN,
+    invocationId: runtime.invocationId,
     ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
   });
   if (!authorization.ok) {
     // The host's rejection is never echoed: it can carry the very material it failed to deliver.
     return {
       ok: false,
-      failure: authorization.reason === 'cancelled' && runtime.signal?.aborted === true
+      failure: authorization.failure ?? (authorization.reason === 'cancelled' && runtime.signal?.aborted === true
         ? classifyBitbucketAbortSignal(runtime.signal)
-        : AUTHORIZATION_FAILURES[authorization.reason],
+        : AUTHORIZATION_FAILURES[authorization.reason]),
     };
   }
 

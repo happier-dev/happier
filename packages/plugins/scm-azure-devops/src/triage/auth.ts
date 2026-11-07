@@ -39,7 +39,7 @@ export async function materializeAzureDevOpsListedAuthorization(input: Readonly<
   if (!authorization.ok) {
     // The host's rejection is deliberately not echoed: a materialization error can carry the
     // very material it failed to deliver.
-    return { ok: false, failure: AUTHORIZATION_FAILURES[authorization.reason] };
+    return { ok: false, failure: authorization.failure ?? AUTHORIZATION_FAILURES[authorization.reason] };
   }
   return { ok: true, authorization: { headers: authorization.headers } };
 }

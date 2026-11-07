@@ -17,6 +17,7 @@ export {
 export {
   materializeTriageSourceAuthorizationV1,
   readTriageSourceAuthorizationV1,
+  TriageSourceAuthorizationErrorV1,
   type TriageListedAccountMaterializerV1,
   type TriageSourceAuthorizationFailureReasonV1,
   type TriageSourceAuthorizationOutcomeV1,

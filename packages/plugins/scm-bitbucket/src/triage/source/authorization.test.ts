@@ -19,6 +19,26 @@ function runtime(materialization: ConnectedAccountMaterialization, http: HttpSer
 }
 
 describe('createAuthorizedBitbucketClient', () => {
+  it('maps the shared host refusal without replacing its cause or request identity', async () => {
+    const { http, requests } = createHttpStub(() => undefined);
+    const base = runtime({ kind: 'httpHeaders', headers: {} }, http);
+    const outcome = await createAuthorizedBitbucketClient({
+      connectedAccounts: { ...base.connectedAccounts, async materializeListedAccount() {
+        throw Object.assign(new Error('private material'), {
+          code: 'connected_service_credential_reconnect_required', retryable: false,
+          details: { requestId: 'host-request-1', credential: 'private-value' },
+        });
+      } },
+      http, now: () => 1_760_000_000_000,
+    }, { purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE, account: accountRef('account-1') });
+    expect(outcome).toEqual({ ok: false, failure: {
+      class: 'authentication', code: 'connected_service_credential_reconnect_required',
+      detail: 'Happier Request ID: host-request-1',
+    } });
+    expect(requests).toEqual([]);
+    expect(JSON.stringify(outcome)).not.toContain('private');
+  });
+
   it('refuses a materialization that carries no usable authorization, before any request', async () => {
     // Building the client anyway would spend the user's read as an anonymous Bitbucket call
     // and then report the resulting `401`/`404` as though this account had been refused.

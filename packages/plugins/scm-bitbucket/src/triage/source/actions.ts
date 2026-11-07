@@ -35,6 +35,7 @@ function toRuntime(
     connectedAccounts: context.services.connectedAccounts,
     http: context.services.http,
     now: () => Date.now(),
+    invocationId: context.invocationId,
     ...(signal === undefined ? {} : { signal }),
   };
 }

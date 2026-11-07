@@ -7,6 +7,7 @@ import {
   admitForgeRequestUrl,
   materializeTriageSourceAuthorizationV1,
   readTriageSourceAuthorizationV1,
+  TriageSourceAuthorizationErrorV1,
   type TriageSourceAuthorizationFailureReasonV1,
 } from '@happier-dev/triage-sources/runtime';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
@@ -340,8 +341,10 @@ export async function createGithubListedAccountApiClient(
     account: credentialRef,
     origin: GITHUB_API_ORIGIN,
     signal: context.signal,
+    invocationId: context.invocationId,
   });
   if (!authorization.ok) {
+    if (authorization.failure !== undefined) throw new TriageSourceAuthorizationErrorV1(authorization.failure);
     throw new PluginError(LISTED_ACCOUNT_AUTHORIZATION_REFUSALS[authorization.reason]);
   }
   return createGithubApiClientWithAuthorization(context, authorization.authorization);

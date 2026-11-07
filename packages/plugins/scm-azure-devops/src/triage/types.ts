@@ -4,6 +4,8 @@ import type {
   QualifiedConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
+import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+
 import type { AzureDevOpsResource } from './apiVersions.js';
 
 /* -------------------------------------------------------------------------- */
@@ -284,7 +286,7 @@ export type AzureDevOpsListedAccountMaterializer = Readonly<{
 
 export type AzureDevOpsAuthorizationResult =
   | Readonly<{ ok: true; authorization: AzureDevOpsAuthorization }>
-  | Readonly<{ ok: false; failure: AzureDevOpsFailure }>;
+  | Readonly<{ ok: false; failure: AzureDevOpsFailure | TriageSourceFailureV1 }>;
 
 /* -------------------------------------------------------------------------- */
 /* Decoded provider rows                                                       */

@@ -52,6 +52,52 @@ import {
 const REPOSITORY_KEY = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`.toLowerCase();
 
 describe('registered GitHub REST → Triage source contract', () => {
+  it('returns the preserved host refusal from the registered public scan Action', async () => {
+    const stub = createStubGithubTransport({ respond: () => undefined });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: await import('../activate.js'), services: {
+      http: stub.context.services.http,
+      connectedAccounts: { ...stub.context.services.connectedAccounts, materializeListedAccount: async () => {
+        throw Object.assign(new Error('private material'), {
+          code: 'connected_service_credential_reconnect_required', details: { requestId: 'host-request-1' },
+        });
+      } },
+    } });
+    try {
+      const result = TriageScanResultV1Schema.parse(await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.scan,
+        { v: 1, instance: configuredInstance({ scope: 'repository' }), page: { kind: 'initial', limit: 64 } },
+        { surface: 'plugin' }));
+      expect(result).toMatchObject({ kind: 'failed', failure: {
+        class: 'authentication', code: 'connected_service_credential_reconnect_required',
+        detail: 'Happier Request ID: host-request-1',
+      } });
+      expect(stub.requests).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain('private');
+    } finally { await plugin.dispose(); }
+  });
+
+  it('keeps a typed host authorization refusal and Happier Request ID in the public scan result', async () => {
+    const stub = createStubGithubTransport({ respond: () => undefined });
+    const materializeListedAccount = vi.fn(async () => {
+      throw Object.assign(new Error('private credential material'), {
+        code: 'connected_service_credential_reconnect_required', retryable: false,
+      });
+    });
+    const context = { ...stub.context, invocationId: 'happier-request-1', services: {
+      ...stub.context.services,
+      connectedAccounts: { ...stub.context.services.connectedAccounts, materializeListedAccount },
+    } };
+    const result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({
+      v: 1, instance: configuredInstance({ scope: 'repository' }), page: { kind: 'initial', limit: 64 },
+    }, context));
+    expect(result).toMatchObject({ kind: 'failed', failure: {
+      class: 'authentication', code: 'connected_service_credential_reconnect_required',
+      detail: 'Happier Request ID: happier-request-1',
+    } });
+    expect(materializeListedAccount).toHaveBeenCalledTimes(1);
+    expect(stub.requests).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+
   it('reads open work and recently closed task kinds through registered HTTP paging while ordinary scans stay open-only', async () => {
     const sinceMs = Date.parse('2026-10-19T00:00:00Z');
     const transport = createStubGithubTransport({ respond: (request) => {

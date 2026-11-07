@@ -64,7 +64,8 @@ const FAILURE_PROJECTION: Readonly<Record<AzureDevOpsFailureClass, Readonly<{
  * detail must not be able to reject the whole trusted result. Nothing else from the response —
  * status line, headers, rate-limit diagnostics, or body — crosses here.
  */
-export function projectAzureSourceFailure(failure: AzureDevOpsFailure): TriageSourceFailureV1 {
+export function projectAzureSourceFailure(failure: AzureDevOpsFailure | TriageSourceFailureV1): TriageSourceFailureV1 {
+  if ('code' in failure) return failure;
   const projection = FAILURE_PROJECTION[failure.class];
   // `detail` is a single-line V1 string, and a transport `Error.message` or provider body
   // routinely spans lines: normalizing here is what keeps a control-bearing detail from

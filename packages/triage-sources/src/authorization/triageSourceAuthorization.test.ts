@@ -35,6 +35,23 @@ function abortedSignal(): AbortSignal {
 }
 
 describe('materializeTriageSourceAuthorizationV1', () => {
+  it.each([false, true])('preserves typed host refusal and Happier request identity (host ID: %s)', async (hostId) => {
+    const outcome = await materializeTriageSourceAuthorizationV1({
+      connectedAccounts: materializer(async () => {
+        throw Object.assign(new Error('private credential material'), {
+          code: 'connected_service_credential_reconnect_required', retryable: false,
+          details: { ...(hostId ? { requestId: 'host-request-1' } : {}), credential: 'private-value' },
+        });
+      }),
+      purpose: PURPOSE, account: ACCOUNT, origin: ORIGIN, invocationId: 'invocation-request-1',
+    });
+    expect(outcome).toEqual({ ok: false, reason: 'materializationFailed', failure: {
+      class: 'authentication', code: 'connected_service_credential_reconnect_required',
+      detail: `Happier Request ID: ${hostId ? 'host-request-1' : 'invocation-request-1'}`,
+    } });
+    expect(JSON.stringify(outcome)).not.toContain('private');
+  });
+
   it('requests the exact bound account for the declared purpose and request origin', async () => {
     const materializeListedAccount = vi.fn<
       TriageListedAccountMaterializerV1['materializeListedAccount']
