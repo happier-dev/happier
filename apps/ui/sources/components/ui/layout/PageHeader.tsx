@@ -4,7 +4,7 @@ import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPageHeader,
-    HappierSkeletonBlock,
+    HappierPageHeaderPlaceholder,
     HappierPageHeaderMetaId,
     happierPageTextMetrics,
     type HappierPageHeaderMetaIdHost,
@@ -265,12 +265,10 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const largeTitle = useNavigationLeavesLargeTitle();
     const reducedMotion = useReducedMotionPreference();
-    const lineHeight = happierPageTextMetrics(largeTitle ? 'heroTitle' : 'pageTitle').lineHeight;
     return (
-        <HappierPageHeader
-            title={<View style={{ height: lineHeight, justifyContent: 'center' }}>
-                <HappierSkeletonBlock width={96} height={10} radius={5} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
-            </View>}
+        <HappierPageHeaderPlaceholder
+            color={theme.colors.surface.skeleton}
+            reducedMotion={reducedMotion}
             largeTitle={largeTitle}
             showTitle={!chromeShowsTitle}
             columnMaxWidthPx={maxWidth}

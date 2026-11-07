@@ -3,12 +3,8 @@ import { type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEve
 
 export type ScrollEdge = 'top' | 'bottom' | 'left' | 'right';
 
-export type ScrollEdgeVisibility = Readonly<{
-    top: boolean;
-    bottom: boolean;
-    left: boolean;
-    right: boolean;
-}>;
+import type { ScrollEdgeVisibility } from '@happier-dev/plugin-ui/presentation';
+export type { ScrollEdgeVisibility } from '@happier-dev/plugin-ui/presentation';
 
 export type UseScrollEdgeFadesParams = Readonly<{
     enabledEdges: Partial<Record<ScrollEdge, boolean>>;

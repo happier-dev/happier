@@ -361,7 +361,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     },
     storedImageHost: STORED_IMAGE_HOST,
     renderHorizontalScrollEdgeMask(input: import('@happier-dev/plugin-ui/components').HorizontalScrollEdgeMaskProps) {
-        return <HorizontalScrollEdgeMask {...input} style={input.style as React.ComponentProps<typeof HorizontalScrollEdgeMask>['style']} />;
+        return <HorizontalScrollEdgeMask {...input} />;
     },
     useModalCardPhoneSheet() {
         return useSheetDismiss() !== null;
