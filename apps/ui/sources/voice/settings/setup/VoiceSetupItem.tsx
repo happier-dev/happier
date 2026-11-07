@@ -2,7 +2,6 @@ import * as React from 'react';
 import { AppState, Platform, View } from 'react-native';
 import { VoiceConversationActionOutputSchemas, VoiceSetupMicrophonePermissionActionResultSchema } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { StyleSheet } from 'react-native-unistyles';
-import { planetLightForProgress } from '@happier-dev/brand/planet';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -41,7 +40,7 @@ import { recoverVoiceSettingsReadiness } from '@/voice/settings/voiceSettingsRec
 import { useVoiceSetupItem, VOICE_SETUP_STEP_ID } from './useVoiceSetupItem';
 import { VoiceSetupPanel, type VoiceSetupPanelActions, type VoiceSetupPanelModel } from './VoiceSetupPanel';
 import type { VoiceSetupFacts } from './voiceSetupFacts';
-import { isVoiceSetupFailed, readVoiceSetupLight, readVoiceSetupNextStep } from './voiceSetupPresentation';
+import { isVoiceSetupFailed, readVoiceSetupNextStep } from './voiceSetupPresentation';
 
 /**
  * "Set up voice" as a Get set up block (lab `voice-moments` SA–SV): one item, two hosts — Home's Get
@@ -164,7 +163,11 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row' | 'w
     };
 }
 
-/** The tile at rest: the planet at its current light, what is done, and what comes next. */
+/**
+ * The tile at rest: the Voice mark, what is done, and what comes next. At glyph size the readiness
+ * light read as a stray crescent beside its peers' line icons, so the tile draws the mark as every
+ * other small Voice entry does; the open panel's planet carries the light as steps finish.
+ */
 export const VoiceSetupTile = React.memo(function VoiceSetupTile(props: Readonly<{
     layout: 'card' | 'row' | 'wide';
     facts: VoiceSetupFacts;
@@ -173,15 +176,13 @@ export const VoiceSetupTile = React.memo(function VoiceSetupTile(props: Readonly
 }>) {
     const { facts } = props;
     const started = facts.doneCount > 0;
-    const lightProgress = readVoiceSetupLight(facts);
-    const light = React.useMemo(() => planetLightForProgress(lightProgress), [lightProgress]);
     const next = readVoiceSetupNextStep(facts);
     const title = t('voiceMoments.setupTitle');
     return (
         <SetupBlockTile
             testID="hub-setup.voice"
             layout={props.layout}
-            glyph={<VoiceMarkArt pose={isVoiceSetupFailed(facts) ? 'shade' : 'ready'} light={light} still size={24} />}
+            glyph={<VoiceMarkArt pose={isVoiceSetupFailed(facts) ? 'shade' : 'ready'} still size={24} />}
             title={title}
             subtitle={started
                 ? t('voiceMoments.setupTileProgress', {

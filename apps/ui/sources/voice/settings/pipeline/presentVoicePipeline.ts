@@ -46,21 +46,14 @@ function roleLabel(role: VoiceSettingsPipelineStep['roles'][number]): string {
 }
 
 /**
- * How one role's readiness reads. Waiting on something outside the person's hands (a computer
- * offline, a feature its Home owner controls) is `waiting`; a real install is the working cell;
- * anything the person can fix needs them — but only for what they chose: an option they have not
- * chosen (`chosen: false`, a gallery tile or an engine row) that still needs setup reads quietly,
- * `needs_setup`, on every page. Unknown is not ready and not a failure: it has not been checked.
+ * How one role's readiness reads, the same on every Voice page (DESIGN.md "One attention colour").
+ * Voice is an optional capability, so a step that is not set up yet — chosen or not — reads quietly,
+ * `needs_setup`: its word and its action, never the attention amber, which belongs to an attempt the
+ * person made that cannot run (the presence owns that). Waiting on something outside the person's
+ * hands (a chosen computer offline, a feature its Home owner controls) is `waiting`; a real install is
+ * the working cell; a step that cannot work here is `blocked`. Unknown has not been checked.
  */
-export function resolveVoiceReadinessTone(
-    readiness: VoiceRoleReadiness | null,
-    options?: Readonly<{ chosen?: boolean }>,
-): VoiceReadinessTone | null {
-    const tone = resolveReadinessFactTone(readiness);
-    return tone === 'needs_you' && options?.chosen === false ? 'needs_setup' : tone;
-}
-
-function resolveReadinessFactTone(readiness: VoiceRoleReadiness | null): VoiceReadinessTone | null {
+export function resolveVoiceReadinessTone(readiness: VoiceRoleReadiness | null): VoiceReadinessTone | null {
     if (!readiness) return null;
     switch (readiness.status) {
         case 'ready':
@@ -74,12 +67,15 @@ function resolveReadinessFactTone(readiness: VoiceRoleReadiness | null): VoiceRe
             if (readiness.code.endsWith('_unknown')) return 'unknown';
             return readiness.code === 'server_feature_disabled'
                 ? 'waiting'
-                : 'needs_you';
+                : 'needs_setup';
         case 'incompatible':
             return readiness.code.startsWith('execution_machine_') ? 'waiting' : 'blocked';
         case 'needs_setup':
         default:
-            return readiness.code.startsWith('execution_machine_') ? 'waiting' : 'needs_you';
+            // No machine chosen yet is setup; only a chosen one that went away is waiting outside.
+            return readiness.code.startsWith('execution_machine_') && readiness.code !== 'execution_machine_missing'
+                ? 'waiting'
+                : 'needs_setup';
     }
 }
 
@@ -155,20 +151,25 @@ export function presentVoicePipeline(
     // One message per state: a step that already says the service's fact keeps it, the card line is not repeated.
     const card = serviceFact && steps.some((step) => step.readiness?.message === serviceFact.message
         && step.readiness.recoveryAction === serviceFact.recoveryAction) ? null : serviceFact;
-    const needYou = steps.filter((step) => step.readiness?.tone === 'needs_you' || step.readiness?.tone === 'blocked').length;
+    const needYou = steps.filter((step) => step.readiness?.tone === 'blocked').length;
+    const toSetUp = steps.some((step) => step.readiness?.tone === 'needs_setup');
     const overall = resolveVoiceReadinessTone(cardReadiness ?? pipeline.readiness);
-    const tone: VoiceReadinessTone = steps.some(step => step.readiness?.tone === 'blocked') || overall === 'blocked'
-        ? 'blocked' : needYou > 0 ? 'needs_you' : overall ?? 'unknown';
+    const tone: VoiceReadinessTone = needYou > 0 || overall === 'blocked'
+        ? 'blocked' : toSetUp ? 'needs_setup' : overall ?? 'unknown';
     const statusWord = serviceFact
-        ? serviceFact.tone === 'needs_you' || serviceFact.tone === 'blocked'
+        ? serviceFact.tone === 'blocked'
             ? t('settingsVoice.pages.pipeline.needsYou')
-            : serviceFact.tone === 'working'
-                ? t('settingsVoice.pages.pipeline.working')
-                : t('settingsVoice.pages.pipeline.waiting')
+            : serviceFact.tone === 'needs_setup'
+                ? t('voice.readiness.short.needsSetup')
+                : serviceFact.tone === 'working'
+                    ? t('settingsVoice.pages.pipeline.working')
+                    : t('settingsVoice.pages.pipeline.waiting')
         : needYou > 1
         ? t('settingsVoice.pages.pipeline.stepsNeedYou', { count: needYou })
         : needYou === 1
             ? t('settingsVoice.pages.pipeline.oneStepNeedsYou')
+            : toSetUp
+            ? t('voice.readiness.short.needsSetup')
             : overall === 'ready'
                 ? t('settingsVoice.pages.pipeline.ready')
                 : overall === 'working'

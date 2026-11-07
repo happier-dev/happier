@@ -18,14 +18,15 @@ const think = { roles: ['think'] as const, engine: { kind: 'agent' as const, tit
 const speak = { roles: ['speak'] as const, engine: { kind: 'speech' as const, title: 'Kokoro' }, placement: { kind: 'machine' as const, machineName: 'devbox' } };
 
 describe('resolveVoiceReadinessTone', () => {
-    it('needs the person only for the option they chose; an unchosen option that needs setup stays quiet', () => {
-        const fact = readiness('needs_setup', 'settings_missing_required_setting', 'open_provider_settings');
-        expect(resolveVoiceReadinessTone(fact)).toBe('needs_you');
-        expect(resolveVoiceReadinessTone(fact, { chosen: true })).toBe('needs_you');
-        expect(resolveVoiceReadinessTone(fact, { chosen: false })).toBe('needs_setup');
-        // Facts that are not the person's to fix keep their own tone either way.
-        expect(resolveVoiceReadinessTone(readiness('unavailable', 'server_feature_disabled'), { chosen: false })).toBe('waiting');
-        expect(resolveVoiceReadinessTone(readiness('ready', 'ready'), { chosen: false })).toBe('ready');
+    it('reads a capability that is not set up quietly, chosen or not; only a step that cannot work speaks', () => {
+        expect(resolveVoiceReadinessTone(readiness('needs_setup', 'settings_missing_required_setting', 'open_provider_settings'))).toBe('needs_setup');
+        expect(resolveVoiceReadinessTone(readiness('unavailable', 'feature_policy_disabled', 'enable_voice_agent'))).toBe('needs_setup');
+        // No machine chosen yet is setup; a chosen machine that is offline is waiting outside.
+        expect(resolveVoiceReadinessTone(readiness('needs_setup', 'execution_machine_missing', 'select_execution_machine'))).toBe('needs_setup');
+        expect(resolveVoiceReadinessTone(readiness('unavailable', 'execution_machine_unavailable'))).toBe('waiting');
+        expect(resolveVoiceReadinessTone(readiness('unavailable', 'server_feature_disabled'))).toBe('waiting');
+        expect(resolveVoiceReadinessTone(readiness('incompatible', 'model_incompatible', 'install_model'))).toBe('blocked');
+        expect(resolveVoiceReadinessTone(readiness('ready', 'ready'))).toBe('ready');
     });
 });
 
@@ -38,22 +39,22 @@ describe('presentVoicePipeline', () => {
         expect(presented.tone).toBe('blocked');
     });
 
-    it('names the one step that needs the person and the action that fixes it; healthy steps stay quiet', () => {
+    it('names the one step still to set up and the action that does it, quietly; healthy steps say nothing', () => {
         const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
             { ...hear, readiness: readiness('ready', 'ready') },
             { ...think, readiness: readiness('ready', 'ready') },
             { ...speak, readiness: readiness('needs_setup', 'model_missing', 'install_model') },
         ] });
         const presented = presentVoicePipeline(pipeline, translate);
-        expect(presented.tone).toBe('needs_you');
-        expect(presented.statusWord).toBe(t('settingsVoice.pages.pipeline.oneStepNeedsYou'));
-        expect(presented.steps.map((step) => step.readiness?.tone ?? null)).toEqual([null, null, 'needs_you']);
+        expect(presented.tone).toBe('needs_setup');
+        expect(presented.statusWord).toBe(t('voice.readiness.short.needsSetup'));
+        expect(presented.steps.map((step) => step.readiness?.tone ?? null)).toEqual([null, null, 'needs_setup']);
         expect(presented.steps[2]?.readiness).toMatchObject({ recoveryAction: 'install_model', actionLabel: 'voice.readiness.actions.install_model' });
     });
 
     it('reads an offline computer or a server-held feature as waiting outside, not as the person’s problem', () => {
         const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
-            { ...hear, readiness: readiness('needs_setup', 'execution_machine_missing', 'select_execution_machine') },
+            { ...hear, readiness: readiness('unavailable', 'execution_machine_unavailable', 'select_execution_machine') },
             { ...think, readiness: readiness('unavailable', 'server_feature_disabled', 'switch_provider') },
         ] });
         const presented = presentVoicePipeline(pipeline, translate);
@@ -79,7 +80,7 @@ describe('presentVoicePipeline', () => {
         const presented = presentVoicePipeline(pipeline, translate, fact, 'Local voice');
         expect(presented.steps[1]?.readiness).toMatchObject({ recoveryAction: 'switch_provider' });
         expect(presented.card).toBeNull();
-        expect(presented.statusWord).toBe(t('settingsVoice.pages.pipeline.needsYou'));
+        expect(presented.statusWord).toBe(t('voice.readiness.short.needsSetup'));
     });
 
     it('keeps a service-level fact no step carries', () => {

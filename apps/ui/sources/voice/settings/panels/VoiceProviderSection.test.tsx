@@ -2200,7 +2200,7 @@ describe('VoiceProviderSection', () => {
         const { tree } = screen;
         await act(async () => {});
         const gallery = tree.findAllByType(VoiceServiceGallery)[0]!;
-        const needing = (gallery.props.tiles as readonly VoiceServiceTile[]).filter((tile) => tile.status?.tone === 'needs_you' && !tile.disabled);
+        const needing = (gallery.props.tiles as readonly VoiceServiceTile[]).filter((tile) => tile.status?.tone === 'needs_setup' && !tile.disabled);
         expect(needing.length).toBeGreaterThan(0);
         for (const tile of needing) {
             if (tile.selected) expect(tile.status!.text).toBe(tree.findAllByType(VoicePipelineCard)[0]!.props.status.text);

@@ -119,7 +119,7 @@ function project(settings: Settings) {
 
 describe('projectLocalConversationReadinessFacts credential readiness', () => {
   it.each([
-    { arm: 'policy_disabled', code: 'feature_policy_disabled', tone: 'needs_you', recovery: 'enable_voice_agent' },
+    { arm: 'policy_disabled', code: 'feature_policy_disabled', tone: 'needs_setup', recovery: 'enable_voice_agent' },
     { arm: 'server_disabled', code: 'server_feature_disabled', tone: 'waiting', recovery: 'switch_provider' },
     { arm: 'checking', code: 'server_feature_unknown', tone: 'unknown', recovery: 'switch_provider' },
     { arm: 'available', code: 'ready', tone: 'ready', recovery: 'none' },

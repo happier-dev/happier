@@ -1095,7 +1095,7 @@ export function useVoiceConversationsReadinessModel(props: {
         status: shown.selected ? selectedServiceStatus : ready
           ? { tone: 'ready', text: shown.detail ?? t('settingsVoice.pages.conversations.serviceReady') }
           : {
-              tone: resolveVoiceReadinessTone(shown.readiness, { chosen: false }) ?? 'unknown',
+              tone: resolveVoiceReadinessTone(shown.readiness) ?? 'unknown',
               text: shown.short ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
               detail: shown.need ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
             },
