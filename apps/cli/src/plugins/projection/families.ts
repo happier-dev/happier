@@ -1,11 +1,11 @@
-import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
-import type { PluginProjectionBrandAssetV2 } from '@happier-dev/protocol';
 import { assertPluginProjectionFamilyIdsV2, listPluginProjectionFamilyIdsV2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginProjectedFamilyV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import type { PluginContributionCatalogEntryV2, PluginMachineExecutionOriginV1, PluginProjectedFamilyEntryV2, PluginProjectedFamilyV2 } from '@happier-dev/protocol';
+import type { PluginContributionCatalogEntryV2, PluginMachineExecutionOriginV1, PluginProjectedFamilyEntryV2, PluginProjectedFamilyV2, PluginProjectionBrandAssetV2 } from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { isHostOwnedManagedDependency } from '@/plugins/projection/registry/managedDependencyExecutables';
+import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 export type PluginProjectionFamilyContextV2 = Readonly<{
     registry: ResolvedContributionRegistry;
@@ -72,7 +72,7 @@ export function definePluginProjectionFamilyCatalogV2(
 
 function freezeProjectedFamilyV2<Family extends PluginProjectedFamilyV2>(
     projected: Family,
-    occurrenceIdsByPluginId: ResolvedContributionRegistry['occurrenceIdsByPluginId'],
+    registry: ResolvedContributionRegistry,
     onInvalidEntry: PluginProjectionFamilyContextV2['onInvalidEntry'],
 ): Family {
     const familySchema = PluginProjectedFamilyV2Schema._zod.def.options.find((schema) => (
@@ -80,10 +80,20 @@ function freezeProjectedFamilyV2<Family extends PluginProjectedFamilyV2>(
     ));
     if (!familySchema) throw new Error(`Missing canonical schema for projection family '${projected.family}'`);
     const entrySchema = familySchema.shape.entriesById._zod.def.innerType._zod.def.valueType;
+    // Closed cold descriptors omit occurrences; existing union families keep their runtime custody.
+    const carriesOccurrence = !('shape' in entrySchema) || 'occurrenceId' in entrySchema.shape;
+    const hostOwnedInstallableIds = projected.family === 'managedDependencies'
+        ? new Set((registry.managedDependencies ?? []).flatMap((contribution) => (
+            isHostOwnedManagedDependency(contribution) && 'key' in contribution.definition
+                ? [contribution.definition.key]
+                : []
+        )))
+        : undefined;
     const entriesById = Object.fromEntries(Object.entries(projected.entriesById).flatMap(([entryId, entry]) => {
         const pluginId = typeof entry.pluginId === 'string' ? entry.pluginId : null;
-        const occurrenceId = pluginId ? occurrenceIdsByPluginId?.[pluginId] : undefined;
-        if (pluginId && !occurrenceId) return [];
+        const hasRuntimeOwner = pluginId && !hostOwnedInstallableIds?.has(entryId);
+        const occurrenceId = carriesOccurrence && hasRuntimeOwner && pluginId ? registry.occurrenceIdsByPluginId?.[pluginId] : undefined;
+        if (carriesOccurrence && hasRuntimeOwner && !occurrenceId) return [];
         const stampedEntry = occurrenceId ? Object.freeze({ ...entry, occurrenceId }) : entry;
         const parsed = entrySchema.safeParse(stampedEntry);
         if (!parsed.success) {
@@ -114,7 +124,7 @@ export function buildPluginProjectionFamilyV2<Family extends PluginProjectedFami
     if (projected.family !== descriptor.family) {
         throw new Error(`Plugin projection family descriptor '${descriptor.family}' returned '${projected.family}'`);
     }
-    return freezeProjectedFamilyV2(projected, context.registry.occurrenceIdsByPluginId, context.onInvalidEntry);
+    return freezeProjectedFamilyV2(projected, context.registry, context.onInvalidEntry);
 }
 
 export function buildPluginProjectionFamiliesByIdV2(

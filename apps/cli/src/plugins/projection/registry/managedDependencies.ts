@@ -1,3 +1,5 @@
+import { projectInstallableContribution } from '@happier-dev/protocol/installables/projection';
+
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { resolveExecutableManagedDependenciesRegistry } from './managedDependencyExecutables';
 
@@ -5,50 +7,21 @@ export const managedDependenciesProjectionFamily = definePluginProjectionFamilyV
     family: 'managedDependencies',
     project({ registry }) {
         const dependencies = [...(registry.managedDependencies ?? [])];
-        const sourceEntries = dependencies.map((dependency) => ({
-            dependency,
-            projectionId: 'key' in dependency.definition || !dependency.pluginId
-                ? dependency.definition.id
-                : `${dependency.pluginId}/${dependency.definition.id}`,
-        }));
-        const installableEntries = resolveExecutableManagedDependenciesRegistry(dependencies).descriptors.map((entry) => ({
-            dependency: {
-                pluginId: entry.owner.pluginId,
-                definition: entry.descriptor,
-            },
-            projectionId: entry.descriptor.key,
-        }));
+        const sourceEntries = dependencies.flatMap((dependency) => {
+            const definition = dependency.definition;
+            if ('key' in definition) return [];
+            const { title: _legacyTitle, ...projectedDefinition } = definition;
+            const projectionId = dependency.pluginId ? `${dependency.pluginId}/${definition.id}` : definition.id;
+            return [[projectionId, { ...projectedDefinition, pluginId: dependency.pluginId }] as const];
+        });
+        const installableEntries = resolveExecutableManagedDependenciesRegistry(dependencies).descriptors.map((entry) => [
+            entry.descriptor.key,
+            projectInstallableContribution(entry),
+        ] as const);
         return {
             family: 'managedDependencies',
             entriesById: Object.fromEntries(
-                [...sourceEntries, ...installableEntries]
-                    .sort((left, right) => left.projectionId.localeCompare(right.projectionId))
-                    .map((dependency) => {
-                        const definition = dependency.dependency.definition;
-                        if ('key' in definition) {
-                            return [
-                                dependency.projectionId,
-                                {
-                                    id: definition.id,
-                                    pluginId: dependency.dependency.pluginId,
-                                    key: definition.key,
-                                    capabilityId: definition.capabilityId,
-                                    sourceKind: definition.source.kind,
-                                    display: definition.display,
-                                    defaultPolicy: definition.defaultPolicy,
-                                    experimental: definition.stability.experimental,
-                                },
-                            ];
-                        }
-                        const { title: _legacyTitle, ...projectedDefinition } = definition;
-                        return [
-                            dependency.projectionId,
-                            {
-                                ...projectedDefinition,
-                                pluginId: dependency.dependency.pluginId,
-                            },
-                        ];
-                    }),
+                [...sourceEntries, ...installableEntries].sort(([left], [right]) => left.localeCompare(right)),
             ),
         };
     },

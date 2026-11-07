@@ -1,7 +1,7 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { TranslationKey } from '@/text';
 import { t } from '@/text';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     GH_DEP_ID,
     INSTALLABLES_CATALOG,
@@ -142,7 +142,7 @@ function buildGenericInstallableUi(
     return {
         enabledWhen: () => true,
         title: projected.display.name,
-        subtitle: projected.display.subtitle ?? projected.description ?? null,
+        subtitle: null,
         iconName: projected.ui?.iconName ?? 'terminal',
         setupUrl: projected.ui?.setupUrl ?? null,
         groupTitleKey: 'machine.tools.installablesTitle',
@@ -204,6 +204,9 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
+
+/** The only projection section `getInstallablesRegistryEntries` reads. */
+export const INSTALLABLES_PROJECTION_SECTIONS = ['familiesById.managedDependencies'] as const;
 
 function readPluginProjectionInstallables(
     pluginProjection: Pick<PluginProjectionV2, 'familiesById'> | undefined,
@@ -379,6 +382,7 @@ export function getInstallablesRegistryEntries(
             capabilityId: projected.capabilityId as Extract<CapabilityId, `dep.${string}`>,
             defaultPolicy: projected.defaultPolicy as InstallableDefaultPolicy,
             ...ui,
+            subtitle: projected.display.subtitle ?? projected.description ?? null,
         });
     }
 

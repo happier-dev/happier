@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { GH_INSTALLABLE_DESCRIPTOR, PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol';
 
@@ -37,6 +38,27 @@ function readBundledAntigravityAcpServerContribution(): ResolvedInstallableContr
 }
 
 describe('selectExecutableManagedDependencies', () => {
+    it.each(['linux', 'darwin', 'win32'] as const)('projects an external SDK-authored JavaScript server into the ordinary install flow on %s', platform => {
+        const plugin = definePlugin({ id: 'acme.language', version: '1.0.0', displayName: 'External language',
+            runtime: { apiVersion: 1 },
+            managedDependencies: { server: { title: 'Language server', executable: 'language-server', sources: [{
+                kind: 'managedJavaScriptPackage', installId: 'dep.acme.language', packageName: '@acme/language', version: '1.2.3',
+            }] } },
+            languageServers: { language: { title: 'Language', languageIds: { fixture: 'fixture' },
+                executable: { kind: 'managedDependency', id: 'server' }, args: ['--stdio'] } },
+        });
+        const declaration = plugin.manifest.contributes?.managedDependencies?.[0];
+        if (!declaration) throw new Error('SDK must project the managed dependency declaration');
+        const contribution: ResolvedInstallableContribution = { provenance: 'external', source: { kind: 'path' },
+            pluginId: plugin.manifest.id, manifestPath: '/installed/acme.language/plugin.json',
+            definition: PluginManagedDependencyContributionV2Schema.parse(declaration) };
+        const registry = resolveExecutableManagedDependenciesRegistry([contribution], { platform, architecture: 'x64' });
+        expect(registry.descriptorsByKey['dep.acme.language']).toMatchObject({
+            owner: { provenance: 'external_plugin', pluginId: 'acme.language' },
+            descriptor: { source: { kind: 'managed_package', packageManager: 'managed_js_runtime', packageName: '@acme/language', version: '1.2.3' },
+                binary: { commands: ['language-server'], systemFirst: false }, defaultPolicy: { autoInstallWhenNeeded: false, autoUpdateMode: 'off' } },
+        });
+    });
     it('projects declared GitHub release and launch facts through the executable dependency registry', () => {
         const declared = {
             provenance: 'first_party',

@@ -2,6 +2,7 @@ import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol/ins
 import type { InstallableDependencyDescriptor, InstallableRegistryContribution, InstallablesRegistry } from '@happier-dev/protocol/installables';
 import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables/registry';
 import { PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/managedDependencies';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginManagedDependencyContributionV2 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
@@ -54,6 +55,23 @@ type ManagedDependencyProjectionInput<TSource> = Readonly<{
 type ManagedPypiWheelAssetProjectionInput = ManagedDependencyProjectionInput<ManagedPypiWheelAssetSourceV2>;
 type PinnedArchiveProjectionInput = ManagedDependencyProjectionInput<PinnedArchiveSourceV2>;
 
+type ManagedJavaScriptPackageSourceV2 = Extract<PluginManagedDependencyContributionV2['sources'][number], { kind: 'managedJavaScriptPackage' }>;
+
+export function projectManagedJavaScriptPackageInstallableDescriptor(
+    input: ManagedDependencyProjectionInput<ManagedJavaScriptPackageSourceV2>,
+): InstallableDependencyDescriptor | null {
+    const gate = resolveManagedDependencyProjectionGate(input);
+    if (!gate) return null;
+    return InstallableDependencyDescriptorSchema.parse({
+        id: input.source.installId, key: input.source.installId, kind: 'dep', version: '1', capabilityId: input.source.installId,
+        display: { name: gate.title }, description: gate.description,
+        source: { kind: 'managed_package', packageManager: 'managed_js_runtime', packageName: input.source.packageName, version: input.source.version },
+        binary: { commands: [gate.executable], systemFirst: false, managedFallback: true },
+        defaultPolicy: { autoInstallWhenNeeded: false, autoUpdateMode: 'off' },
+        consent: { install: 'not_required', update: 'required' }, stability: { experimental: true, supported: true },
+    });
+}
+
 type GitHubReleaseBinarySourceV2 = Extract<
     PluginManagedDependencyContributionV2['sources'][number],
     { kind: 'githubReleaseBinary' }
@@ -93,8 +111,7 @@ type ManagedDependencyProjectionGate = Readonly<{
 function localizedFallback(
     value: PluginManagedDependencyContributionV2['title'] | PluginManagedDependencyContributionV2['description'],
 ): string | null {
-    if (typeof value === 'string') return value;
-    return value?.fallback ?? null;
+    return value == null ? null : resolvePluginLocalizedStringV2Text(value);
 }
 
 function declaredPlatform(platform: NodeJS.Platform): 'macos' | 'linux' | 'windows' | null {
@@ -271,7 +288,7 @@ export function selectExecutableManagedDependencies(
         const parsed = PluginManagedDependencyContributionV2Schema.safeParse(contribution.definition);
         if (!parsed.success) continue;
         for (const source of parsed.data.sources) {
-            if (source.kind !== 'managedPypiWheelAsset' && source.kind !== 'pinnedArchive' && source.kind !== 'githubReleaseBinary') continue;
+            if (source.kind !== 'managedPypiWheelAsset' && source.kind !== 'pinnedArchive' && source.kind !== 'githubReleaseBinary' && source.kind !== 'managedJavaScriptPackage') continue;
             const common = {
                 definition: parsed.data,
                 ...(contribution.pluginId ? { pluginId: contribution.pluginId } : {}),
@@ -282,7 +299,9 @@ export function selectExecutableManagedDependencies(
                 ? projectManagedPypiWheelAssetInstallableDescriptor({ ...common, source })
                 : source.kind === 'pinnedArchive'
                     ? projectPinnedArchiveInstallableDescriptor({ ...common, source })
-                    : projectGitHubReleaseBinaryInstallableDescriptor({ ...common, source });
+                    : source.kind === 'managedJavaScriptPackage'
+                        ? projectManagedJavaScriptPackageInstallableDescriptor({ ...common, source })
+                        : projectGitHubReleaseBinaryInstallableDescriptor({ ...common, source });
             if (!descriptor) continue;
             executable.push(Object.freeze({
                 ...contribution,
@@ -293,16 +312,19 @@ export function selectExecutableManagedDependencies(
     return Object.freeze(executable);
 }
 
-export function toExecutableManagedDependencyRegistryContribution(
-    candidate: ResolvedExecutableManagedDependency,
-): InstallableRegistryContribution {
-    const isHostBuiltIn = candidate.provenance === 'first_party'
+export function isHostOwnedManagedDependency(candidate: ResolvedInstallableContribution): boolean {
+    return candidate.provenance === 'first_party'
         && !candidate.manifestPath
         && !candidate.daemonEntryPath
         && !candidate.sourceSpec;
+}
+
+export function toExecutableManagedDependencyRegistryContribution(
+    candidate: ResolvedExecutableManagedDependency,
+): InstallableRegistryContribution {
     return Object.freeze({
         owner: Object.freeze({
-            provenance: isHostBuiltIn
+            provenance: isHostOwnedManagedDependency(candidate)
                 ? 'built_in'
                 : candidate.provenance === 'first_party'
                     ? 'bundled_first_party_plugin'

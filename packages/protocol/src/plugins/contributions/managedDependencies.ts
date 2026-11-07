@@ -31,6 +31,12 @@ const PluginManagedDependencySourceV2Schema = lazyZodSchema(() => z.discriminate
   })),
   PluginManagedPypiWheelAssetSourceV2Schema,
   PluginPinnedArchiveSourceV2Schema,
+  z.strictObject({
+    kind: z.literal('managedJavaScriptPackage'),
+    installId: z.string().check(z.regex(/^dep\.[A-Za-z0-9._-]+$/)),
+    packageName: z.string().check(z.regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/)),
+    version: z.string().check(z.regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/)),
+  }),
   z.strictObject({ kind: z.literal('system'), executableNames: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)), versionArguments: z.optional(z.array(z.string())) }),
   z.strictObject({ kind: z.literal('vendorRecipe'), recipeId: z.string().check(z.trim(), z.minLength(1)) }),
   z.strictObject({ kind: z.literal('manual'), instructions: PluginLocalizedStringV2Schema }),
@@ -58,12 +64,16 @@ export const PluginManagedDependencyContributionV2Schema = lazyZodSchema(() => z
       }
     }
   });
-  if (value.sources.some((source) => source.kind === 'managedPypiWheelAsset' || source.kind === 'pinnedArchive' || source.kind === 'githubReleaseBinary') && !value.executable) {
+  if (value.sources.some((source) => source.kind === 'managedPypiWheelAsset' || source.kind === 'pinnedArchive' || source.kind === 'githubReleaseBinary' || source.kind === 'managedJavaScriptPackage') && !value.executable) {
     ctx.addIssue({
       code: "custom",
       path: ['executable'],
       message: 'Managed executable dependencies require an executable',
     });
+  }
+  if (value.sources.some(source => source.kind === 'managedJavaScriptPackage')
+    && value.executable && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.executable)) {
+    ctx.addIssue({ code: 'custom', path: ['executable'], message: 'Managed JavaScript executables name an installed package bin' });
   }
 })));
 export type PluginManagedDependencyContributionV2 = z.infer<typeof PluginManagedDependencyContributionV2Schema>;

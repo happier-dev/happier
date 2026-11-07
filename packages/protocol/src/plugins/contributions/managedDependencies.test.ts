@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { PluginManagedDependencyContributionV2Schema } from './managedDependencies.js';
 
 describe('PluginManagedDependencyContributionV2Schema', () => {
+  it('admits pinned managed JavaScript packages and refuses ranges, paths and undeclared executables', () => {
+    const source = { kind: 'managedJavaScriptPackage', installId: 'dep.acme.json', packageName: '@acme/languages', version: '4.10.0' };
+    const dependency = { id: 'json', title: 'JSON', executable: 'json-server', sources: [source] };
+    expect(PluginManagedDependencyContributionV2Schema.parse(dependency)).toEqual(dependency);
+    for (const patch of [{ version: '^4.10.0' }, { version: 'latest' }, { packageName: '../project' }, { packageName: 'https://example.test/code.tgz' }, { command: 'node' }]) {
+      expect(PluginManagedDependencyContributionV2Schema.safeParse({ ...dependency, sources: [{ ...source, ...patch }] }).success).toBe(false);
+    }
+    expect(PluginManagedDependencyContributionV2Schema.safeParse({ ...dependency, executable: undefined }).success).toBe(false);
+  });
   it('preserves optional pinned archive download size and rejects invalid byte counts', () => {
     const dependency = {
       id: 'acp-server', title: 'ACP server', executable: 'acp',

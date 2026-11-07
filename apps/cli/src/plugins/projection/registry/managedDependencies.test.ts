@@ -13,6 +13,9 @@ import type { ResolvedContributionRegistry } from './types';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { resolveExecutableManagedDependenciesRegistry } from './managedDependencyExecutables';
+import { getInstallablesRegistryEntries } from '../../../../../ui/sources/capabilities/installablesRegistry';
+import { summarizeInstallables } from '../../../../../ui/sources/capabilities/installablesSummary';
 
 const sourceSpec = {
     kind: 'path' as const,
@@ -66,6 +69,66 @@ const acmeManualContribution = {
 };
 
 describe('managed dependency plugin contributions', () => {
+    it('keeps installed core tools beside plugin tools in the Machine Tools summary without a core plugin occurrence', () => {
+        const registry = createResolvedContributionRegistry(resolveBuiltInContributions());
+        const projection = buildPluginProjectionV2({
+            registry: {
+                ...registry,
+                occurrenceIdsByPluginId: Object.fromEntries((registry.managedDependencies ?? [])
+                    .filter((entry) => entry.pluginId && entry.pluginId !== 'happier.core')
+                    .map((entry) => [entry.pluginId!, createPluginRuntimeOccurrenceId(entry.pluginId!)])),
+            },
+            generation: 1,
+        });
+        const entries = getInstallablesRegistryEntries({ pluginProjection: projection });
+        expect(entries.map((entry) => entry.key)).toEqual(expect.arrayContaining([
+            'gh', 'az', 'difftastic', 'local-embeddings', 'local-voice-runtime',
+        ]));
+        expect(entries.some((entry) => entry.experimental)).toBe(true);
+        expect(projection.familiesById?.managedDependencies.entriesById.gh).toMatchObject({
+            pluginId: 'happier.core', key: 'gh',
+        });
+        const withoutPluginRuntimes = buildPluginProjectionV2({ registry: {
+            ...registry, occurrenceIdsByPluginId: {},
+        }, generation: 1 });
+        expect(getInstallablesRegistryEntries({ pluginProjection: withoutPluginRuntimes })
+            .some((entry) => entry.experimental)).toBe(false);
+        const results = Object.fromEntries(entries.map((entry) => [entry.capabilityId, {
+            ok: true as const, checkedAt: 1,
+            data: { installed: entry.key === 'gh' || entry.key === 'local-voice-runtime',
+                installedVersion: '2.163', sourceKind: 'system', lastInstallLogPath: null,
+                lastBackgroundUpdateCheckAtMs: null },
+        }]));
+        expect(summarizeInstallables(entries, { status: 'loaded', snapshot: {
+            response: { protocolVersion: 1, results },
+        } })).toEqual({ status: 'ready', installed: 2, ready: 2, held: false });
+    });
+
+    it('carries a bundled manifest purpose through the daemon projection to the tool row data', () => {
+        const registry = createResolvedContributionRegistry(resolveBuiltInContributions());
+        const executable = resolveExecutableManagedDependenciesRegistry(registry.managedDependencies ?? [])
+            .descriptors.find((entry) => entry.owner.provenance !== 'built_in' && entry.descriptor.description);
+        if (!executable?.owner.pluginId) {
+            throw new Error('Expected a bundled executable dependency with a manifest purpose');
+        }
+        const projection = buildPluginProjectionV2({ registry: { ...registry,
+            occurrenceIdsByPluginId: { [executable.owner.pluginId]: createPluginRuntimeOccurrenceId(executable.owner.pluginId) },
+        }, generation: 1 });
+        expect(getInstallablesRegistryEntries({ pluginProjection: projection })
+            .find((entry) => entry.key === executable.descriptor.key)?.subtitle).toBe(executable.descriptor.description);
+    });
+
+    it('requires a runtime occurrence for plugin-owned tools even when their plugin id is happier.core', () => {
+        const projection = buildPluginProjectionV2({ registry: createEmptyRegistry({
+            managedDependencies: [{
+                provenance: 'external', source: { kind: 'path' }, pluginId: 'happier.core',
+                manifestPath: '/plugins/core/.happier-plugin/plugin.json',
+                definition: acmeManualDescriptor,
+            }],
+        }), generation: 1 });
+        expect(getInstallablesRegistryEntries({ pluginProjection: projection })).toEqual([]);
+    });
+
     it('projects the codex-acp dependency request from the bundled Codex plugin instead of core built-ins', () => {
         const builtIns = resolveBuiltInContributions();
 
@@ -120,13 +183,7 @@ describe('managed dependency plugin contributions', () => {
                         engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
                         entrypoints: { daemon: './daemon.js' },
                         contributes: {
-                            agents: [],
-                            actions: [],
-                            tools: [],
-                            commands: [],
-                            resources: [],
                             managedDependencies: [acmeManualContribution],
-                            hooks: [],
                         },
                     }))!,
                 },
@@ -262,6 +319,7 @@ describe('managed dependency plugin contributions', () => {
             key: 'acme-tool',
             capabilityId: 'dep.acme-tool',
             sourceKind: 'manual_only',
+            description: acmeManualDescriptor.description,
             display: {
                 name: 'Acme Tool',
             },
@@ -386,6 +444,7 @@ describe('managed dependency plugin contributions', () => {
             key: 'dep.acme.pinned-tool',
             capabilityId: 'dep.acme.pinned-tool',
             sourceKind: 'pinned_archive',
+            description: 'Pinned Acme runtime',
             display: {
                 name: 'Acme pinned tool',
             },
