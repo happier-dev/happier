@@ -32,11 +32,6 @@ const COLLECTION_ID = 'codex-lifecycle-hooks';
 const SESSION_START_EVENT_ID = 'codex-session-start';
 const STOP_EVENT_ID = 'codex-stop';
 const QUALIFIED_HOOK_FACT_TTL_MS = 15_000;
-const HOOKS_LIST_MAX_SERIALIZED_BYTES = 1024 * 1024;
-const HOOKS_LIST_MAX_HOOKS = 1024;
-const HOOKS_LIST_MAX_MESSAGES = 64;
-const HOOKS_LIST_MAX_STRING_CODE_UNITS = 16 * 1024;
-const textEncoder = new TextEncoder();
 
 const READINESS_DIAGNOSTIC = Object.freeze({
   code: 'codex_hooks_approval_required',
@@ -215,23 +210,22 @@ function isExactRecord(
     && keys.every((key) => allowed.has(key));
 }
 
-function isBoundedString(value: unknown): value is string;
-function isBoundedString(
+function isListedString(value: unknown): value is string;
+function isListedString(
   value: unknown,
   options: Readonly<{ nullable?: false; allowEmpty?: boolean }>,
 ): value is string;
-function isBoundedString(
+function isListedString(
   value: unknown,
   options: Readonly<{ nullable: true; allowEmpty?: boolean }>,
 ): value is string | null;
-function isBoundedString(
+function isListedString(
   value: unknown,
   options: Readonly<{ nullable?: boolean; allowEmpty?: boolean }> = {},
 ): value is string | null {
   if (options.nullable && value === null) return true;
   return typeof value === 'string'
     && (options.allowEmpty === true || value.length > 0)
-    && value.length <= HOOKS_LIST_MAX_STRING_CODE_UNITS
     && !value.includes('\u0000');
 }
 
@@ -239,10 +233,9 @@ function isNonnegativeSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
-function isBoundedStringArray(value: unknown): value is readonly string[] {
+function isListedStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value)
-    && value.length <= HOOKS_LIST_MAX_MESSAGES
-    && value.every((item) => isBoundedString(item, { allowEmpty: true }));
+    && value.every((item) => isListedString(item, { allowEmpty: true }));
 }
 
 function parseListedHook(value: unknown): CodexListedHook | null {
@@ -271,32 +264,32 @@ function parseListedHook(value: unknown): CodexListedHook | null {
   )) {
     return null;
   }
-  if (!isBoundedString(value.key)
-    || !isBoundedString(value.eventName)
+  if (!isListedString(value.key)
+    || !isListedString(value.eventName)
     || !HOOK_EVENT_NAMES.has(value.eventName)
-    || !isBoundedString(value.handlerType)
+    || !isListedString(value.handlerType)
     || !HOOK_HANDLER_TYPES.has(value.handlerType)
     || typeof value.isManaged !== 'boolean'
-    || !isBoundedString(value.sourcePath)
-    || !isBoundedString(value.source)
+    || !isListedString(value.sourcePath)
+    || !isListedString(value.source)
     || !HOOK_SOURCES.has(value.source)
     || !Number.isSafeInteger(value.displayOrder)
     || typeof value.enabled !== 'boolean'
-    || !isBoundedString(value.currentHash)
-    || !isBoundedString(value.trustStatus)
+    || !isListedString(value.currentHash)
+    || !isListedString(value.trustStatus)
     || !HOOK_TRUST_STATUSES.has(value.trustStatus)
     || !isNonnegativeSafeInteger(value.timeoutSec)
     || (value.matcher !== undefined
-      && !isBoundedString(value.matcher, { nullable: true, allowEmpty: true }))
+      && !isListedString(value.matcher, { nullable: true, allowEmpty: true }))
     || (value.command !== undefined
-      && !isBoundedString(value.command, { nullable: true, allowEmpty: true }))
+      && !isListedString(value.command, { nullable: true, allowEmpty: true }))
     || (value.statusMessage !== undefined
-      && !isBoundedString(
+      && !isListedString(
         value.statusMessage,
         { nullable: true, allowEmpty: true },
       ))
     || (value.pluginId !== undefined
-      && !isBoundedString(value.pluginId, { nullable: true, allowEmpty: true }))
+      && !isListedString(value.pluginId, { nullable: true, allowEmpty: true }))
     || (value.additionalContextLimit !== undefined
       && value.additionalContextLimit !== null
       && !isNonnegativeSafeInteger(value.additionalContextLimit))) {
@@ -315,15 +308,13 @@ function parseListedHook(value: unknown): CodexListedHook | null {
   };
 }
 
+/**
+ * Parses the local Codex app-server's own hooks/list reply by known fields only. Its size is the
+ * user's real hook inventory; readiness is decided by exact custody of Happier's hooks, not by
+ * how many foreign hooks, warnings or long commands sit beside them.
+ */
 function parseHooksListResponse(value: unknown): readonly CodexListedHook[] | null {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    return null;
-  }
-  if (textEncoder.encode(serialized).byteLength > HOOKS_LIST_MAX_SERIALIZED_BYTES
-    || !isExactRecord(value, ['data'])
+  if (!isExactRecord(value, ['data'])
     || !Array.isArray(value.data)
     || value.data.length > 1) {
     return null;
@@ -332,18 +323,16 @@ function parseHooksListResponse(value: unknown): readonly CodexListedHook[] | nu
   const hooks: CodexListedHook[] = [];
   for (const entry of value.data) {
     if (!isExactRecord(entry, ['cwd', 'hooks', 'warnings', 'errors'])
-      || !isBoundedString(entry.cwd, { allowEmpty: true })
+      || !isListedString(entry.cwd, { allowEmpty: true })
       || !Array.isArray(entry.hooks)
-      || entry.hooks.length > HOOKS_LIST_MAX_HOOKS
-      || !isBoundedStringArray(entry.warnings)
-      || !Array.isArray(entry.errors)
-      || entry.errors.length > HOOKS_LIST_MAX_MESSAGES) {
+      || !isListedStringArray(entry.warnings)
+      || !Array.isArray(entry.errors)) {
       return null;
     }
     for (const error of entry.errors) {
       if (!isExactRecord(error, ['message', 'path'])
-        || !isBoundedString(error.message, { allowEmpty: true })
-        || !isBoundedString(error.path, { allowEmpty: true })) {
+        || !isListedString(error.message, { allowEmpty: true })
+        || !isListedString(error.path, { allowEmpty: true })) {
         return null;
       }
     }

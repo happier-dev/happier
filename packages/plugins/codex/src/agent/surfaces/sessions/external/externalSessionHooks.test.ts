@@ -642,15 +642,29 @@ describe('Codex External Session hooks contribution', () => {
     });
   });
 
-  it('fails closed when hooks/list exceeds its bounded message count', async () => {
+  it.each([
+    { ownedTrust: 'trusted', expected: 'ready' },
+    { ownedTrust: 'untrusted', expected: 'needs_attention' },
+  ] as const)('qualifies a large valid hooks/list inventory by exact custody only (owned $ownedTrust)', async ({ ownedTrust, expected }) => {
     const custodyValue = custody();
-    const valid = hooksListResponse(custodyValue);
-    const server = installAppServerResponse({
-      data: [{
-        ...valid.data[0],
-        warnings: Array.from({ length: 65 }, (_, index) => `warning-${index}`),
-      }],
-    });
+    const target = custodyValue.targets[0]!;
+    const response = hooksListResponse(custodyValue, [
+      { trustStatus: ownedTrust },
+      { trustStatus: ownedTrust },
+    ]);
+    const longCommand = `echo ${'x'.repeat(20 * 1024)}`;
+    // A legitimately large user inventory: many foreign hooks, long commands, many warnings and
+    // errors. The response is over 1 MiB; none of it is Happier's hook.
+    for (let index = 0; index < 1_100; index += 1) {
+      response.data[0]!.hooks.push(listedHook(target.entries[index % 2]!, `/tmp/foreign-${index}/hooks.json`, {
+        key: `/tmp/foreign-${index}/hooks.json:stop:0:0`,
+        command: index === 0 ? longCommand : `echo foreign-${index}-${'y'.repeat(1_000)}`,
+      }));
+    }
+    response.data[0]!.warnings = Array.from({ length: 65 }, (_, index) => `warning-${index}`) as never;
+    response.data[0]!.errors = Array.from({ length: 65 }, (_, index) => ({ message: `error-${index}`, path: `/tmp/e-${index}` })) as never;
+    expect(new TextEncoder().encode(JSON.stringify(response)).byteLength).toBeGreaterThan(1024 * 1024);
+    const server = installAppServerResponse(response);
     const contribution = createCodexExternalSessionHooksContribution({
       env: { CODEX_HOME: '/tmp/codex-hooks-list' },
     });
@@ -663,12 +677,7 @@ describe('Codex External Session hooks contribution', () => {
       ),
     ))).resolves.toMatchObject({
       ok: true,
-      value: {
-        readiness: {
-          kind: 'needs_attention',
-          diagnostic: readinessDiagnostic,
-        },
-      },
+      value: { readiness: { kind: expected } },
     });
     expect(server.dispose).toHaveBeenCalledTimes(1);
   });
