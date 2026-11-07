@@ -15,16 +15,22 @@ function formatMemberWorkspacePath(path: string): string | null {
     return relative ? `${name}/${relative.replace(/\/+/g, '/')}` : name;
 }
 
-export function formatPathRelativeToHome(path: string, homeDir?: string | null): string {
+export function formatPathRelativeToHome(
+    path: string,
+    homeDir?: string | null,
+    presentation?: Readonly<{ homeLabel?: string }>,
+): string {
     const memberWorkspacePath = formatMemberWorkspacePath(path);
     if (memberWorkspacePath !== null) return memberWorkspacePath;
-    if (!homeDir) return path;
+    // Named folder summaries can recognize literal home aliases before Machine metadata hydrates.
+    const home = homeDir || (presentation?.homeLabel === undefined ? undefined : '~');
+    if (!home) return path;
 
-    const normalizedHome = homeDir.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+    const normalizedHome = home.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
     const normalizedPath = resolveAbsolutePath(path, normalizedHome).replace(/[\\/]+/g, '/');
 
     if (normalizedPath === normalizedHome || normalizedPath.replace(/[\\/]+$/, '') === normalizedHome) {
-        return '~';
+        return presentation?.homeLabel ?? '~';
     }
 
     if (!normalizedPath.startsWith(normalizedHome)) {

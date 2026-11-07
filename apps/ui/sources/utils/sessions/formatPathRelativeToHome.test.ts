@@ -8,6 +8,18 @@ const MEMBER_WORKSPACE = `/srv/happier/members/${MEMBER_DIGEST}`;
 const MEMBER_HOME = `/var/lib/happier/members/${MEMBER_DIGEST}`;
 
 describe('formatPathRelativeToHome', () => {
+    it('can name the home root without replacing relative folders or the default abbreviation', () => {
+        const presentation = { homeLabel: 'Home folder' };
+        expect(formatPathRelativeToHome('/home/alice/', '/home/alice', presentation)).toBe('Home folder');
+        expect(formatPathRelativeToHome('C:\\Users\\alice\\', 'C:/Users/alice', presentation)).toBe('Home folder');
+        for (const alias of ['~', '~/', '~\\']) {
+            expect(formatPathRelativeToHome(alias, undefined, presentation)).toBe('Home folder');
+        }
+        expect(formatPathRelativeToHome('/home/alice/repo', '/home/alice', presentation)).toBe('~/repo');
+        expect(formatPathRelativeToHome('/home/alice2', '/home/alice', presentation)).toBe('/home/alice2');
+        expect(formatPathRelativeToHome('/home/alice', undefined, presentation)).toBe('/home/alice');
+        expect(formatPathRelativeToHome(MEMBER_WORKSPACE, MEMBER_HOME, presentation)).toBe('Your workspace');
+    });
     it('normalizes home-relative separator aliases through the canonical expansion owner', () => {
         expect(formatPathRelativeToHome('~\\repo/mixed\\path', 'C:\\Users\\alice\\\\')).toBe('~/repo/mixed/path');
         expect(formatPathRelativeToHome('~/', '/home/alice///')).toBe('~');

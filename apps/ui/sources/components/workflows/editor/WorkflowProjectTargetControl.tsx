@@ -126,7 +126,9 @@ export function formatWorkflowWhereSummary(params: Readonly<{
     const { target } = params;
     if (target === null || target === undefined || params.machineName === null) return null;
     if (!isWorkflowProjectTarget(target) || target.directory.trim().length === 0) return params.machineName;
-    return `${params.machineName} · ${formatPathRelativeToHome(target.directory, params.machineHomeDir ?? undefined)}`;
+    return `${params.machineName} · ${formatPathRelativeToHome(target.directory, params.machineHomeDir, {
+        homeLabel: t('workspacePresentation.homeFolder'),
+    })}`;
 }
 
 /** Opens the Where owner's picker from elsewhere (Run now with no Machine chosen). */
@@ -246,7 +248,9 @@ export const WorkflowProjectTargetControl = React.forwardRef<
                         {target === undefined || target === null ? null : <>
                             {' \u00B7 '}
                             <Text testID={`${testIDPrefix}-project-directory-readonly`} style={isWorkflowProjectTarget(target) ? styles.fixedPath : undefined}>
-                                {isWorkflowProjectTarget(target) ? formatPathRelativeToHome(target.directory, machineHomeDir) : t('newSession.folder.noFolder')}
+                                {isWorkflowProjectTarget(target) ? formatPathRelativeToHome(target.directory, machineHomeDir, {
+                                    homeLabel: t('workspacePresentation.homeFolder'),
+                                }) : t('newSession.folder.noFolder')}
                             </Text>
                         </>}
                     </Text>
@@ -474,7 +478,7 @@ function ProjectDirectoryControl(props: Readonly<{
     ], { foregroundOverlay: true, contextKey: scope });
 
     const directoryLabel = target === null ? null : isWorkflowProjectTarget(target)
-        ? formatPathRelativeToHome(target.directory, machineHomeDir ?? undefined)
+        ? formatPathRelativeToHome(target.directory, machineHomeDir, { homeLabel: t('workspacePresentation.homeFolder') })
         : t('newSession.folder.noFolder');
 
     if (browsing) return <View>

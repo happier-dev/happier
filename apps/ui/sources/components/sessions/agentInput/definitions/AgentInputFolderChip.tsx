@@ -23,6 +23,7 @@ import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionT
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { useAgentInputChipRowReach } from './agentInputChipRowReach';
 import { useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
@@ -98,7 +99,9 @@ type ChipControl = Parameters<NonNullable<HappierPressableProps['controlRef']>>[
 function resolveChipAccessibilityLabel(state: AgentInputFolderChipState): string {
     switch (state.kind) {
         case 'folder':
-            return t('newSession.folder.a11y.folder', { path: state.path });
+            return t('newSession.folder.a11y.folder', { path: formatPathRelativeToHome(state.path, undefined, {
+                homeLabel: t('workspacePresentation.homeFolder'),
+            }) });
         case 'none':
             return t('newSession.folder.a11y.none');
         case 'resolving':
@@ -109,7 +112,9 @@ function resolveChipAccessibilityLabel(state: AgentInputFolderChipState): string
             return t('newSession.folder.workspaceOnStart');
         case 'machine_unavailable':
             return state.label.kind === 'folder'
-                ? t('newSession.folder.a11y.folder', { path: state.label.path })
+                ? t('newSession.folder.a11y.folder', { path: formatPathRelativeToHome(state.label.path, undefined, {
+                    homeLabel: t('workspacePresentation.homeFolder'),
+                }) })
                 : t('newSession.folder.a11y.none');
     }
 }
@@ -201,12 +206,14 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
     const foreground = disabled ? theme.colors.text.tertiary : props.tint;
     const glyph = labelState.kind === 'none' || labelState.kind === 'failed' ? 'folder-plus' : 'folder';
     const labelText = labelState.kind === 'folder'
-        ? labelState.path
+        ? formatPathRelativeToHome(labelState.path, undefined, { homeLabel: t('workspacePresentation.homeFolder') })
         : labelState.kind === 'none' || labelState.kind === 'failed'
             ? t('newSession.folder.addFolder')
             : labelState.kind === 'launch_preparable'
                 ? t('newSession.folder.workspaceOnStart')
-                : labelState.lastKnownPath;
+                : labelState.lastKnownPath === null ? null : formatPathRelativeToHome(labelState.lastKnownPath, undefined, {
+                    homeLabel: t('workspacePresentation.homeFolder'),
+                });
 
     return (
         <Animated.View

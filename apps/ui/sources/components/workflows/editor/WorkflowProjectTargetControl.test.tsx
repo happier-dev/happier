@@ -491,5 +491,9 @@ describe('workflow where summary', () => {
             .toBe('Mac Studio · /');
         expect(formatWorkflowWhereSummary({ target: { machineId: 'machine-1', directory: '/Users/me/project' }, machineName: 'Mac Studio', machineHomeDir: '/Users/me' }))
             .toBe('Mac Studio · ~/project');
+        expect(formatWorkflowWhereSummary({ target: { machineId: 'machine-1', directory: '/Users/me/' }, machineName: 'Mac Studio', machineHomeDir: '/Users/me' }))
+            .toBe('Mac Studio · workspacePresentation.homeFolder');
+        expect(formatWorkflowWhereSummary({ target: { machineId: 'machine-1', directory: '~\\' }, machineName: 'Mac Studio' }))
+            .toBe('Mac Studio · workspacePresentation.homeFolder');
     });
 });

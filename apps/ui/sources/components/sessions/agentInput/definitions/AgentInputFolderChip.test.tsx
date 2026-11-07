@@ -63,6 +63,15 @@ function textsOf(node: { findAll: (predicate: (node: { type?: unknown }) => bool
 }
 
 describe('AgentInputFolderChip', () => {
+    it.each([
+        { kind: 'folder', path: '~' },
+        { kind: 'resolving', lastKnownPath: '~' },
+        { kind: 'machine_unavailable', label: { kind: 'folder', path: '~' }, reason: 'offline' },
+    ] as const satisfies readonly ChipProps['state'][])('names the retained home folder while $kind', async state => {
+        const { screen } = await renderChip({ state });
+        expect(screen.getTextContent()).toContain('workspacePresentation.homeFolder');
+        await screen.unmount();
+    });
     afterEach(() => {
         platformBoundary.os = 'web';
         keyboardFocusTarget?.remove();
