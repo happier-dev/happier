@@ -1,5 +1,5 @@
 import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1,
-    type DeploymentBackupConfigurationV1, type DeploymentEnvironmentBackupV1,
+    type DeploymentBackupConfigurationV1, type DeploymentBackupRetentionV1, type DeploymentEnvironmentBackupV1,
     type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 
 type Destination = Readonly<{ ref: DeploymentBackupConfigurationV1['destinationRef']; occurrenceId: string;
@@ -33,6 +33,15 @@ export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environ
         && binding.configKey === 'destination' && binding.role === role));
     return { ok: true, configuration: { ...configuration, occurrenceId: destination.occurrenceId },
         bindingState: missingRoles.length ? 'needsBinding' : 'bound', missingRoles };
+}
+
+/** Retention changes preserve the capture identity used by existing snapshots. */
+export function prepareDeploymentBackupRetentionV1(input: Readonly<{ currentBackup?: DeploymentEnvironmentBackupV1;
+    configRevision: number; retention: DeploymentBackupRetentionV1 }>): Readonly<{ ok: true;
+    configuration: DeploymentBackupConfigurationV1 }> | Readonly<{ ok: false; code: 'backup_required' | 'stale_input' }> {
+    if (!input.currentBackup || 'notNeeded' in input.currentBackup) return { ok: false, code: 'backup_required' };
+    if (input.currentBackup.configRevision !== input.configRevision) return { ok: false, code: 'stale_input' };
+    return { ok: true, configuration: { ...input.currentBackup, retention: input.retention } };
 }
 
 /** The Action host supplies its current configuration and authored-backup Automation lookup, not caller booleans. */

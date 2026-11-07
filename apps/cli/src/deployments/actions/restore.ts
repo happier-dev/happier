@@ -1,12 +1,15 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema,
+    DeploymentRestoreStepV1Schema, DeploymentBackupRunResultV1Schema,
     type DeploymentBackupRestoreInputV1, type DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { OwnServerDeploymentTargetForHost } from '../targets/ownServer/ownServerDeploymentTarget';
 import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/restorePreparation';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
@@ -17,6 +20,8 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
     machineId: string;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
     readPreparation?(operationId: string, context: ActionExecutorContext): Promise<ActionOperationSnapshotV1 | null>;
+    readBackupOperations?(target: Parameters<HostActionOperationRuntime['readDeploymentBackupOperations']>[0]['target'],
+        context: ActionExecutorContext): ReturnType<HostActionOperationRuntime['readDeploymentBackupOperations']>;
     restore: OwnServerDeploymentTargetForHost['restore'];
 }>): (input: DeploymentBackupRestoreInputV1, context: ActionExecutorContext) => Promise<DeploymentBackupRestoreResultV1 | ActionExecuteFailure> {
     return async (input, context) => {
@@ -25,16 +30,31 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             if (input.serverId !== host.serverId || input.machineId !== host.machineId
                 || readInstallationIdentityIfExistsSync()?.installationId !== input.installationId) return failure('target_mismatch');
             const acceptance = context.operationAcceptance;
-            if (!acceptance || acceptance.actionId !== 'deployments.backups.restore') return failure('service_operation_unavailable');
+            if (!acceptance || acceptance.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) return failure('service_operation_unavailable');
             if (input.mode === 'prepare') {
-                const result = await host.restore({ input, context });
+                let backup: Parameters<typeof host.restore>[0]['backup'];
+                if (input.backupOperationId) {
+                    const operations = await host.readBackupOperations?.(input, context);
+                    if (!operations) return failure('service_operation_unavailable');
+                    const selected = operations.find(({ snapshot }) => snapshot.operationId === input.backupOperationId
+                        && snapshot.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 && snapshot.state === 'succeeded');
+                    const result = DeploymentBackupRunResultV1Schema.safeParse(selected?.snapshot.result);
+                    const manifest = result.success && result.data.operationId === input.backupOperationId
+                        ? result.data.manifests.find(item => item.snapshot.snapshotId === input.restoreBackupId) : undefined;
+                    if (!manifest) return failure('backup_required');
+                    const capture = result.success ? result.data.restoreCaptures?.find(item =>
+                        isDeepStrictEqual(item.source, manifest)) : undefined;
+                    backup = { manifest, ...(capture ? { capture } : {}) };
+                }
+                const result = await host.restore({ input, context, ...(backup ? { backup } : {}) });
                 if (result.kind !== 'prepared') return failure('restore_prepare_required');
                 return { kind: 'prepared', operationId: acceptance.operationId,
+                    ...(result.prepared.steps ? { steps: [...result.prepared.steps] } : {}),
                     evidence: normalizeStrictJsonValue({ input, native: { prepared: result.prepared, configuration: result.configuration } }) };
             }
             const operation = await host.readPreparation?.(input.prepareOperationId, context);
             const result = DeploymentBackupRestoreResultV1Schema.safeParse(operation?.result);
-            if (operation?.actionId !== 'deployments.backups.restore' || operation.state !== 'succeeded'
+            if (operation?.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || operation.state !== 'succeeded'
                 || !result.success || result.data.kind !== 'prepared' || result.data.operationId !== input.prepareOperationId) {
                 return failure('restore_prepare_required');
             }
@@ -49,11 +69,18 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             const confirmed = await host.restore({ input, context, prepared: native.data });
             if (confirmed.kind === 'prepared') return failure('restore_prepare_required');
             return DeploymentBackupRestoreResultV1Schema.parse({ kind: confirmed.kind,
+                steps: confirmed.steps,
                 verified: confirmed.verified, nextAction: confirmed.nextAction, evidence: normalizeStrictJsonValue(confirmed) });
         } catch (error) {
             const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
                 ? error.code : 'deployment_unavailable';
-            return failure(context.signal?.aborted ? 'cancelled' : code);
+            const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
+            const steps = isRecord(details) && Array.isArray(details.steps)
+                ? details.steps.flatMap(value => {
+                    const step = DeploymentRestoreStepV1Schema.safeParse(value);
+                    return step.success ? [step.data] : [];
+                }) : [];
+            return { ...failure(context.signal?.aborted ? 'cancelled' : code), ...(steps.length ? { details: { steps } } : {}) };
         }
     };
 }

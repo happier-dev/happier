@@ -92,6 +92,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     const child = input.child;
     if (input.rootActionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && input.rootInput !== undefined) {
         const rootTeardown = DeploymentTeardownActionInputV1Schema.safeParse(input.rootInput);
+        if (rootTeardown.success && 'nothingDeployed' in rootTeardown.data) return false;
         if (rootTeardown.success && 'mode' in rootTeardown.data && rootTeardown.data.mode === 'preview'
             && !(child.kind === 'prepare' && child.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1)) return false;
     }

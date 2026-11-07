@@ -826,7 +826,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
     authentication: DeploymentAuthentication,
     isReadOnlyArtifactPurpose?: (proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>) => boolean,
     isNativeHttpPurpose?: (proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
-        readActionId?: 'deployments.environments.get' | 'deployments.receipts.get' | 'deployments.receipts.list') => boolean,
+        readActionId?: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1) => boolean,
     /** A Setup target that signed the read; it spends only the app operands paired with it. */
     setupReceiverMachineId?: string,
 ): Promise<boolean> {

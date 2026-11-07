@@ -64,7 +64,8 @@ describe('action operation store', () => {
       totalBytesProcessed: 10, totalFilesProcessed: 1,
     }] });
     store.succeed('capture', result);
-    for (const [key, value] of Object.entries(target)) {
+    const { deploymentId: _deploymentId, ...backupScope } = target;
+    for (const [key, value] of Object.entries(backupScope)) {
       create(`another-${key}`, ACCOUNT_SCOPE, { ...input, [key]: `${value}-other` });
     }
     create('another-account', { ...ACCOUNT_SCOPE, accountId: 'account-2' });
@@ -93,6 +94,10 @@ describe('action operation store', () => {
     ]);
     expect(read.session).toEqual([{ snapshot: expect.objectContaining({ operationId: 'session-capture' }), input }]);
     expect(read.missing).toEqual([]);
+    // A new deployment generation must not hide this Environment's retained snapshots.
+    // Authored generation identity stays on each receipt, while callers use the active target.
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, { ...target, deploymentId: 'new-generation' }))
+      .toEqual(read.all);
     store.removeOwnerProjections(DEPLOYMENT_BACKUP_ACTION_IDS_V1, { ...ACCOUNT_SCOPE, sessionId: 'session-1' });
     store.removeOwnerProjections(['deployments.backups.restore'], ACCOUNT_SCOPE);
     expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target).map(item => item.snapshot.operationId)).toEqual(['capture']);

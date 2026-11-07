@@ -514,6 +514,34 @@ it.each([false, true])('recognizes inherited own-server custody but never same-i
 });
 
 
+it.each([false, true])('removes a never-deployed Environment through teardown without a receipt, and refuses other-target work (deployed=%s)', async deployed => {
+    const f = await fixture();
+    if (deployed) {
+        const receipt = await f.receipt('succeeded');
+        const other = await db.deploymentTargetLink.create({ data: { ...f.link,
+            id: crypto.randomUUID(), state: 'deployed', activeDeploymentId: receipt.id,
+            machines: { create: [{ machineId: f.machine.id, installationId: f.machine.installationId!, position: 0, state: 'active' }] } } });
+        await db.deployment.update({ where: { id: receipt.id }, data: { targetLinkId: other.id } });
+    }
+    const payload = { ...f.input, reason: 'manual', removeEnvironment: true, nothingDeployed: true, volumes: [] };
+    await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+        const send = (accountId: string) => app.inject({ method: 'POST',
+            url: `/v1/deployments/environments/${f.environment.id}/teardown`,
+            headers: { 'x-test-user-id': accountId }, payload });
+        expect((await send(f.reader.id)).statusCode).toBe(403);
+        expect((await send(f.foreign.id)).statusCode).toBe(404);
+        const response = await send(f.owner.id);
+        expect(response.statusCode, response.body).toBe(deployed ? 409 : 200);
+        expect(response.json()).toMatchObject(deployed ? { ok: false, error: 'deployment_teardown_required' }
+            : { ok: true, nothingDeployed: true, environmentRemoved: true });
+        if (!deployed) expect((await send(f.owner.id)).json()).toEqual(response.json());
+    });
+    const environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+    if (deployed) expect(environment.deletedAt).toBeNull();
+    else expect(environment.deletedAt).not.toBeNull();
+    expect(await db.deployment.count({ where: { environmentId: f.environment.id } })).toBe(deployed ? 1 : 0);
+});
+
 it('teardown plain detach keeps manager-only removal and retained failed receipt', async () => {
     const f = await fixture();
     const receipt = await f.receipt('failed');

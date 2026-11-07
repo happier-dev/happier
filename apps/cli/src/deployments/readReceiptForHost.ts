@@ -9,7 +9,7 @@ import { DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deplo
  * through the canonical exact current reader, never a second artifact store. */
 export async function* readOwnServerDeploymentReceiptHistoryForHost(input: Readonly<{
     environmentId: string;
-    lineage: ReadonlySet<string>;
+    lineage?: ReadonlySet<string>;
     readPage(cursor?: string): Promise<unknown>;
     readCurrent(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
     open(deployment: DeploymentReceiptHeaderV1): Promise<DeploymentReceiptDetailV1>;
@@ -19,7 +19,7 @@ export async function* readOwnServerDeploymentReceiptHistoryForHost(input: Reado
         const page = DeploymentReceiptListResultV1Schema.parse(await input.readPage(cursor));
         if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error });
         for (const deployment of page.items) {
-            if (deployment.environmentId !== input.environmentId || !input.lineage.has(deployment.targetLinkId)) continue;
+            if (deployment.environmentId !== input.environmentId || input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
             let receipt: DeploymentReceiptDetailV1;
             if (deployment.operation === 'teardown' || !isDeploymentSettledV1(deployment.state)) {
                 receipt = await input.readCurrent(deployment.id);

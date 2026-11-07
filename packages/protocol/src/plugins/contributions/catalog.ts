@@ -41,6 +41,7 @@ import { readDeploymentTargetReferenceRolesV1, type DeploymentTargetContribution
 import type { ProjectNativeAdapterRoleV1 } from './projectNativeAdapters.js';
 import type { PluginDeclarativeButtonV1 } from './declarativeButtonsV1.js';
 import type { MachineSetupPresetContributionV1 } from './machineSetupPresets.js';
+import type { BackupDestinationContributionV1 } from './backupDestinations.js';
 
 export type PluginContributionReferenceRuleV2 = Readonly<{
   field: string;
@@ -350,11 +351,12 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     }];
   }
   if (family === 'backupDestinations') {
-    const actions = value.actions as Readonly<Record<string, unknown>>;
-    return ['test', 'open'].map(role => ({
-      targetFamily: 'actions', reference: actions[role], path: ['actions', role],
-      allowQualifiedSamePlugin: true,
-    }));
+    const actions = value.actions as BackupDestinationContributionV1['actions'];
+    return (['test', 'open'] as const).flatMap(role => {
+      const reference = actions[role];
+      return 'kind' in reference ? [] : [{ targetFamily: 'actions', reference,
+        path: ['actions', role], allowQualifiedSamePlugin: true }];
+    });
   }
   if (family === 'machineProvisioners') {
     return readMachineProvisionerActionRolesV1(value as MachineProvisionerContributionV1).map(binding => ({

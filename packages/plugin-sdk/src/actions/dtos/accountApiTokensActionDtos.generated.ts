@@ -186,6 +186,7 @@ export type AccountApiTokensActionInputById = {
             };
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             whenBusy?: 'refuse' | 'supersede' | undefined;
+            onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
         };
     };
     readonly "account.apiTokens.list": {
@@ -364,6 +365,7 @@ export type AccountApiTokensActionInputById = {
             };
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             whenBusy?: 'refuse' | 'supersede' | undefined;
+            onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
         };
     };
     readonly "account.apiTokens.revoke": {

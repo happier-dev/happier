@@ -8,7 +8,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, machineSecretGrantSubje
     normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
     type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1,
     type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/deployment-protocol';
-import { projectEnvironmentSecretBindingRequiredUsesV1,
+import { prepareDeploymentBackupRetentionV1, projectEnvironmentSecretBindingRequiredUsesV1,
     type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForAccountInTx, validateSavedSecretResourceReferenceCapturesV1,
@@ -327,12 +327,19 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             return deploymentFailure('deployment_conflict');
         }
         if (!previous.content) return deploymentFailure('deployment_conflict');
+        let desiredBackup = previous.content.backup;
+        if (contentWriter === 'environment' && input.patch?.backupRetention) {
+            const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: previous.content.backup,
+                ...input.patch.backupRetention });
+            if (!prepared.ok) return deploymentFailure('deployment_conflict');
+            desiredBackup = prepared.configuration;
+        }
         definitionChanged = contentWriter === 'environment' && !isDeepStrictEqual(previous.content, content.content);
         if (contentWriter === 'environment') {
             if (!isDeepStrictEqual(previous.content.bindings, content.content.bindings)
                 || !isDeepStrictEqual(previous.content.previewProvenance, content.content.previewProvenance)
                 || !isDeepStrictEqual(previous.content.template, content.content.template)
-                || !isDeepStrictEqual(previous.content.backup, content.content.backup)) return deploymentFailure('deployment_conflict');
+                || !isDeepStrictEqual(desiredBackup, content.content.backup)) return deploymentFailure('deployment_conflict');
         } else if (contentWriter === 'backup') {
             if (!isDeepStrictEqual({ ...previous.content, backup: undefined }, { ...content.content, backup: undefined })) {
                 return deploymentFailure('deployment_conflict');

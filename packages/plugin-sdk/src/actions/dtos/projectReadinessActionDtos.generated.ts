@@ -151,6 +151,19 @@ export type ProjectReadinessActionResultById = {
                 effectAttempted?: false | undefined;
             };
             backups?: undefined | {
+                history?: undefined | {
+                    entries: {
+                        operationId: string;
+                        action: 'backup' | 'prune' | 'verify';
+                        startedAt: number;
+                        completedAt: number;
+                        state: 'cancelled' | 'failed' | 'succeeded';
+                        configRevision: number;
+                        snapshotIds: string[];
+                        code?: string | undefined;
+                        step?: string | undefined;
+                    }[];
+                };
                 lastSuccessfulBackup?: undefined | {
                     operationId: string;
                     completedAt: number;

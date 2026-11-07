@@ -1,8 +1,12 @@
 import type { PluginJsonSchema, PluginContributionRef } from './identity.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
 import type { ReadonlyAuthorDeclaration } from './definePlugin.js';
+import type { BackupDestinationContributionV1 as CanonicalBackupDestinationContributionV1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { DeploymentBackupDestinationBindingIdentityV1ProtocolSchema } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUniqueArray, type ProtocolSchemaOutput } from './protocol/protocolFacade.js';
+import {
+  defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion,
+  defineProtocolUniqueArray, type ProtocolSchemaOutput,
+} from './protocol/protocolFacade.js';
 
 /** Binding identities select existing Environment custody; they never contain credential values. */
 export const BackupDestinationCredentialBindingV1ProtocolSchema = DeploymentBackupDestinationBindingIdentityV1ProtocolSchema;
@@ -29,5 +33,5 @@ export type BackupDestinationContributionV1 = Readonly<{
   resticTransport: 's3' | 'sftp' | 'local';
   /** offHost requires proof from admitted configuration; it is not a durability guarantee. */
   locality: 'local' | 'offHost' | 'unknown';
-  actions: Readonly<{ test: PluginContributionRef; open: PluginContributionRef }>;
+  actions: Readonly<{ test: CanonicalBackupDestinationContributionV1['actions']['test']; open: PluginContributionRef }>;
 }>;

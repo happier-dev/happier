@@ -753,6 +753,17 @@ result field or an instruction to undo an existing redaction.
 
 ## Shared secret save and registered reads (0.3 development source)
 
+`secrets.usedBy({ ref })` is an Account-placed metadata read for managed Saved
+Secret references, using the existing `secrets.list` read policy. Both hosts
+reuse their existing selected-secret Used-by callback and the Protocol
+`listAccountSettingsSavedSecretReferences` census over the caller's Settings
+and reference catalogs. It computes the census at most once and returns only
+`{ references }`: owner/path/referrer metadata, an empty array for unused, or
+`null` when coverage is unavailable. No operand selects another Account, and
+recipient visibility never exposes the resource owner's reference inventory.
+Matching Protocol, SDK and Account execution hosts must reload to discover this
+unreleased 0.3 Action; it adds no Home endpoint or persisted format.
+
 `SecretsService.saveShared(id, { label, bytes, audience }, options?)` uses the
 invocation's captured Account custody; declarations and save opt-ins are not
 permission gates for trusted plugins. A same-id daemon binding stays separate.
@@ -5247,6 +5258,10 @@ Read and invoke share the current-context reverse-RPC address and the socket/foc
 selection rule above. A Session caller does not select a different room. The
 answering App's command owner resolves the opaque id and refuses a retired
 command; a separate command registration does not decide client availability.
+`account.home_continuation.invoke` uses the same per-Machine address. An opaque
+command id is never its own reverse-RPC room, so a command-set change or a
+reconnect costs no per-command registration frames; per-command addresses stay
+local to desktop window selection.
 UI picks use those same Actions and freshly admitted candidates. Calls without
 a contextual target read or change the answering device's current Account/Home
 preference, including Agent, MCP and CLI requests. They do not use Account CAS.
@@ -6180,8 +6195,9 @@ admission uses the same destination Registry predicate: the chooser identifies
 the existing viewer family, and the mounted singleton `detailsTab` receives its
 File-host purpose only from an exact current private `openableContent` handoff.
 Persisted destination/input and a viewer declaration do not supply that custody.
-Ordinary pane destinations retain their desktop/tablet admission policy; no
-author phone opt-in, new manifest field or transport shape is introduced.
+Session and Project `detailsTab` destinations also use the existing pushed phone
+detail host. Other pane destinations retain their desktop/tablet admission policy;
+no author phone opt-in, new manifest field or transport shape is introduced.
 
 Public `StoredImage` supports the host's shared Media stage through an optional
 private presentation-host `mediaStage` port. When supplied, pressing a loaded
@@ -9514,6 +9530,14 @@ supplies its view-specific admission and frame adapters. Additive
 `computer.recording.*` Actions use Computer capture consent and Session media
 custody, while shipped `browser.recording.*` contracts remain unchanged. Recording
 start requires a Session-bound Computer source and a media target in that Session.
+The shared media host resolves the workspace and commits the attachment using
+the admitted requester’s Account and Home, including a Machine Use grantee’s own
+Session. Capture retains that private custody until its recording reaches a
+terminal state; credentials never enter recording records or Action input.
+Browser starts may omit the optional media target: the runtime uses the invoking
+Session (or the Browser Session for direct runtime calls) and recording ID as the
+message local ID. An explicit media target keeps its existing meaning. Missing
+target input does not change the canonical recording feature decision.
 An unavailable encoder returns the shared recording unavailable result rather
 than starting another recorder. No recording work runs while idle.
 

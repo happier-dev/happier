@@ -4,6 +4,7 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentHealthReadInputV1Schema } from '../deployments/deploymentReadsV1.js';
 import { DeploymentHealthReadResultV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentBackupInventoryInputV1Schema } from '../deployments/deploymentBackupActionsV1.js';
+import { DeploymentBackupRecordedFactsV1Schema } from '../deployments/deploymentBackupHistoryV1.js';
 
 export const PROJECT_READINESS_FACT_KINDS_V1 = ['ci', 'health', 'backups', 'alerts', 'secrets', 'security'] as const;
 export type ProjectReadinessFactKindV1 = typeof PROJECT_READINESS_FACT_KINDS_V1[number];
@@ -34,17 +35,7 @@ export type ProjectReadinessEnvironmentSelectionV1 = z.infer<typeof ProjectReadi
 /** Recorded operation receipts only: reading readiness never opens a backup repository. */
 export const DeploymentBackupRecordedHealthV1Schema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['ready', 'actionNeeded', 'unavailable']), reason: id,
-  backups: z.strictObject({
-    lastSuccessfulBackup: z.optional(z.strictObject({
-      operationId: id, completedAt: z.number().check(z.int(), z.nonnegative()), configRevision: revision,
-      snapshotIds: z.array(id),
-    })),
-    lastVerification: z.optional(z.strictObject({
-      operationId: id, completedAt: z.number().check(z.int(), z.nonnegative()), configRevision: revision,
-      backupOperationId: id, snapshotId: id, level: z.enum(['manifestReadBack', 'repositoryCheck']),
-      result: z.enum(['verified', 'failed', 'cancelled']), code: z.optional(id), step: z.optional(id),
-    })),
-  }),
+  backups: DeploymentBackupRecordedFactsV1Schema,
 }));
 export type DeploymentBackupRecordedHealthV1 = z.infer<typeof DeploymentBackupRecordedHealthV1Schema>;
 

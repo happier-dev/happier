@@ -52,6 +52,50 @@ const input = (native: ReturnType<typeof boundary>) => ({ environmentId, configu
 const verification = { kind: 'verified' as const, level: 'manifestReadBack' as const, manifest };
 
 describe('selected repository backup operations', () => {
+    it('keeps an existing snapshot verifiable after a retention-only policy change', async () => {
+        const prepared = operation('prepareDeploymentBackupRetentionV1')({ currentBackup: configuration,
+            configRevision: configuration.configRevision, retention: { kind: 'keep', last: 5 } });
+        expect(prepared.ok).toBe(true);
+        const native = boundary();
+        expect(await operation('verifyDeploymentBackupV1')({ ...input(native), configuration: prepared.configuration,
+            configRevision: manifest.configRevision, manifest, level: 'manifestReadBack' }))
+            .toEqual({ kind: 'verified', level: 'manifestReadBack', manifest });
+    });
+
+    it('tests the selected repository with one read and no capture or mutation', async () => {
+        const native = boundary();
+        expect(await operation('testDeploymentBackupDestinationV1')(input(native)))
+            .toEqual({ kind: 'reachable', repositoryId });
+        expect(native.requests.map(request => request.argv)).toEqual([
+            ['--repo', access.repository, '--json', 'cat', 'config'],
+        ]);
+    });
+
+    it.each([
+        [10, 'repository_missing', 'review_destination'], [11, 'repository_locked', 'retry_after_operation'],
+        [12, 'repository_password_incorrect', 'review_credentials'], [1, 'native_failed', 'review_destination'],
+    ] as const)('keeps restic failure %i and its remedy without native output or retries', async (exitCode, reason, remedy) => {
+        let requests = 0;
+        const execute: DeploymentBackupRunInputV1['execute'] = async () => {
+            requests += 1;
+            return { kind: 'completed', exitCode, stdout: 'private native payload', stdoutTruncated: false };
+        };
+        expect(await operation('testDeploymentBackupDestinationV1')({ ...input(boundary()), execute }))
+            .toEqual({ kind: 'failed', reason, step: 'repository', nativeExitCode: exitCode, remedy });
+        expect(requests).toBe(1);
+    });
+
+    it('settles cancelled and malformed repository probes without claiming reachability', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const native = boundary();
+        expect(await operation('testDeploymentBackupDestinationV1')({ ...input(native), signal: controller.signal }))
+            .toEqual({ kind: 'failed', reason: 'cancelled', step: 'repository', remedy: 'retry' });
+        expect(native.requests).toEqual([]);
+        expect(await operation('testDeploymentBackupDestinationV1')(input(boundary({ truncated: 'config' }))))
+            .toEqual({ kind: 'failed', reason: 'outcome_unknown', step: 'repository', remedy: 'retry' });
+    });
+
     it('lists only exact Environment snapshots with native size and exact receipt verification, in one scoped inventory read', async () => {
         const native = boundary({ inventory: [rawSnapshot(), rawSnapshot(otherId)] });
         const result = await operation('inventoryDeploymentBackupsV1')({ ...input(native), verificationEvidence: [manifest] });

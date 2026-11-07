@@ -37,7 +37,8 @@ function safetyBackup(producerExitCode = 0, onPayloadRead?: () => void): Deploym
 function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boolean; unknownActivation?: boolean;
     unknownObservation?: boolean; failSecondRename?: boolean; wrongRepository?: boolean; integrityFails?: boolean;
     abortAfterActivation?: AbortController; abortAfterFirstRename?: AbortController; abortAfterWriterStop?: AbortController; nativeSignal?: AbortSignal;
-    initialNames?: readonly string[]; unknownFirstWriterStart?: boolean }> = {}) {
+    initialNames?: readonly string[]; unknownFirstWriterStart?: boolean; source?: DeploymentBackupManifestV1 }> = {}) {
+    const source = options.source ?? manifest;
     let names = new Set(options.initialNames ?? ['app']);
     let startCount = 0;
     let writersRunning = true;
@@ -54,8 +55,8 @@ function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boole
         effects.push(`${request.kind}:${argv.join(' ')}`);
         if (request.kind === 'restic') {
             if (argv.includes('config')) return complete(JSON.stringify({ id: options.wrongRepository ? 'f'.repeat(64) : repositoryId, version: 2 }));
-            if (argv.includes('snapshots')) return complete(JSON.stringify([{ id: snapshotId, tree: treeId,
-                hostname: manifest.snapshot.hostname, time: manifest.snapshot.time, paths: manifest.snapshot.paths, tags: manifest.snapshot.tags }]));
+            if (argv.includes('snapshots')) return complete(JSON.stringify([{ id: source.snapshot.snapshotId, tree: source.snapshot.treeId,
+                hostname: source.snapshot.hostname, time: source.snapshot.time, paths: source.snapshot.paths, tags: source.snapshot.tags }]));
             if (argv.includes('tree')) return complete(JSON.stringify({ nodes: [{ name: 'db.dump', type: 'file', size: 123 }] }));
             return { ...complete(), stdoutChecksumSha256: checksum, stdoutBytes: 123 };
         }
@@ -106,6 +107,71 @@ async function confirm(native: ReturnType<typeof boundary>, receipt: DeploymentR
 }
 
 describe('exact PostgreSQL restore semantic owner', () => {
+    it('restores an exact retained scheduled manifest through the existing safety and confirmation lifecycle', async () => {
+        const backup = safetyBackup();
+        const captured = await owners.runDeploymentBackupV1({ ...backup,
+            ...{ restoreTarget: { environmentId: 'source', service: 'db', adapter: 'postgres-v1' as const, database: 'app' } } });
+        const captures = captured.restoreCaptures;
+        expect(captures).toEqual([{ source: captured.manifests[0], sourceFormat: 'postgresCustom',
+            target: { service: 'db', adapter: 'postgres-v1', database: 'app' }, configuration: backup.configuration,
+            repository: { repository: access.repository } }]);
+        const capture = captures?.[0];
+        if (!capture) throw new Error('Expected the original scheduled capture');
+        const currentConfiguration = { ...backup.configuration, configRevision: 2 };
+        const original = owners.resolveDeploymentRestoreCaptureV1({ environmentId: 'target',
+            restoreBackupId: capture.source.snapshot.snapshotId, destination, capture });
+        expect(original.kind).toBe('resolved');
+        if (original.kind !== 'resolved') throw new Error('Expected the original scheduled capture to remain restorable');
+        expect(original.capture).toMatchObject({ source: capture.source, configuration: { configRevision: 1 },
+            destination: { service: 'db', database: 'app' }, repository: { repository: access.repository } });
+        expect(currentConfiguration.configRevision).toBe(2);
+        const capturedNative = boundary({ source: capture.source });
+        const capturedReceipt = await prepare(capturedNative, original.capture);
+        expect(await confirm(capturedNative, capturedReceipt, original.capture)).toMatchObject({ kind: 'restored', verified: true,
+            source: { snapshot: { snapshotId: capture.source.snapshot.snapshotId } } });
+        const currentDestination = { ...destination, environmentId: 'source' };
+        const resolved = owners.resolveDeploymentRestoreCaptureV1({ environmentId: 'source', restoreBackupId: manifest.snapshot.snapshotId,
+            destination: currentDestination, ...{ manifest, configuration: { ...currentConfiguration,
+                ownership: { environmentId: 'source', prefix: 'source' } },
+                repository: { repository: access.repository } } });
+        expect(resolved.kind).toBe('resolved');
+        if (resolved.kind !== 'resolved') throw new Error('Expected exact retained scheduled source');
+        const native = boundary();
+        const receipt = await prepare(native, resolved.capture);
+        expect(await confirm(native, receipt, resolved.capture)).toMatchObject({ kind: 'restored', verified: true,
+            source: { snapshot: { snapshotId } } });
+    });
+
+    it('pushes real restore step facts before native work settles and retains them in the final receipt', async () => {
+        const native = boundary();
+        const pushed: { id: string; status: string }[] = [];
+        const onStep = (step: { id: string; status: string }) => { pushed.push(step); };
+        const receipt = await prepare(native, { ...{ onStep } });
+        const result = await confirm(native, receipt, { ...{ onStep }, execute: async request => {
+            if (request.kind === 'restoreStream') expect(pushed.at(-1)).toEqual({ id: 'restore', status: 'running' });
+            if (request.kind === 'writers') expect(pushed.at(-1)).toEqual({ id: request.operation === 'stop' ? 'stop' : 'start', status: 'running' });
+            if (request.kind === 'health') expect(pushed.at(-1)).toEqual({ id: 'health', status: 'running' });
+            return native.execute(request);
+        } });
+        expect(receipt).toMatchObject({ steps: [{ id: 'safety', status: 'skipped' }] });
+        expect(result).toMatchObject({ kind: 'restored', steps: [
+            { id: 'safety', status: 'skipped' }, { id: 'restore', status: 'completed' },
+            { id: 'stop', status: 'completed' }, { id: 'start', status: 'completed' }, { id: 'health', status: 'completed' },
+        ] });
+        expect(pushed.filter(step => step.id === 'health')).toEqual([
+            { id: 'health', status: 'running' }, { id: 'health', status: 'completed' },
+        ]);
+    });
+
+    it('keeps completed safety evidence and the failed restore step without claiming later steps ran', async () => {
+        const native = boundary({ streamFails: true });
+        const target = { ...destination, hasMeaningfulData: true };
+        const receipt = await prepare(native, { destination: target, safetyBackup: safetyBackup() });
+        expect(await confirm(native, receipt, { destination: target })).toMatchObject({ kind: 'recoveryRequired', steps: [
+            { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
+        ] });
+    });
+
     it('verifies the exact repository source, stages and checks before activation, and verifies health before restored', async () => {
         const native = boundary();
         const receipt = await prepare(native);
@@ -124,7 +190,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
     it('requires a real verified safety backup before prepare can replace meaningful data', async () => {
         const native = boundary();
         await expect(prepare(native, { destination: { ...destination, hasMeaningfulData: true } }))
-            .rejects.toMatchObject({ code: 'backup_required' });
+            .rejects.toMatchObject({ code: 'backup_required', details: { steps: [{ id: 'safety', status: 'failed' }] } });
         expect(native.effects).toEqual([]);
     });
 

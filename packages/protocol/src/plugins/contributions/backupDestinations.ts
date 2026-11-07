@@ -5,6 +5,7 @@ import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.j
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
+import { DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 
 /** Storage declarations only. Probe/open execution remains with ordinary qualified Actions. */
 export const BackupDestinationContributionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -25,7 +26,8 @@ export const BackupDestinationContributionV1Schema = lazyZodSchema(() => z.stric
   resticTransport: z.enum(['s3', 'sftp', 'local']),
   locality: z.enum(['local', 'offHost', 'unknown']),
   actions: z.strictObject({
-    test: asProtocolZod(PluginContributionIdentityV1Schema),
+    test: z.union([asProtocolZod(PluginContributionIdentityV1Schema),
+      z.strictObject({ kind: z.literal('hostAction'), actionId: z.literal(DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1) })]),
     open: asProtocolZod(PluginContributionIdentityV1Schema),
   }),
 }).check(z.superRefine((descriptor, context) => {

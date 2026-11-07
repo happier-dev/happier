@@ -53,8 +53,7 @@ export type DeploymentRefusalReason =
   | 'other';
 
 type ReceiptResult =
-  | Readonly<{ ok: true; deploymentId: string }>
-  | Readonly<{ ok: true; kind: 'pending' }>
+  | Readonly<{ ok: true; deploymentId?: string }>
   | Readonly<{ ok: false; error: string; deploymentId?: string; details?: unknown;
       failureCause?: ActionExecuteFailure['failureCause']; effectAttempted?: boolean }>;
 
@@ -77,7 +76,7 @@ export function readDeploymentActionResult(
   result: ReceiptResult,
 ): DeploymentActionOutcome {
   if (result.ok)
-    return 'deploymentId' in result
+    return typeof result.deploymentId === 'string'
       ? { kind: 'receipt', deploymentId: result.deploymentId }
       : { kind: 'started' };
   // A deploy already running for this Environment is that receipt, not a failure to explain.

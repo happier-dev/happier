@@ -1,4 +1,5 @@
-import type { DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentRestoreStepV1, DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployment-protocol';
 
 import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type DeploymentBackupRunInputV1,
     type DeploymentBackupRunResultV1 } from '../actions/backups.js';
@@ -38,6 +39,8 @@ type RestoreCapture = Readonly<{
     /** Captured by the source/tool preflight; a dump manifest alone does not prove format. */
     sourceFormat: 'postgresCustom';
     access: ResticAccessV1; signal: AbortSignal; execute: NativeExecute;
+    /** The existing Action operation pushes these closed native step facts. */
+    onStep?(step: DeploymentRestoreStepV1): void;
 }>;
 export type DeploymentRestorePrepareInputV1 = RestoreCapture & Readonly<{
     operationId: string; safetyBackup?: DeploymentBackupRunInputV1;
@@ -46,6 +49,7 @@ export type DeploymentRestorePrepareInputV1 = RestoreCapture & Readonly<{
 export type DeploymentRestorePrepareReceiptV1 = Readonly<{
     kind: 'prepared'; operationId: string; source: DeploymentBackupManifestV1;
     sourceFormat: 'postgresCustom'; destination: DeploymentRestoreDestinationV1; safetyBackup?: DeploymentBackupRunResultV1;
+    steps?: readonly DeploymentRestoreStepV1[];
 }>;
 export type DeploymentRestoreConfirmInputV1 = RestoreCapture & Readonly<{
     prepare: DeploymentRestorePrepareReceiptV1;
@@ -58,6 +62,7 @@ type RestoreFailureCode = 'backup_required' | 'backup_failed' | 'backup_integrit
 export type DeploymentRestoreResultV1 = Readonly<{
     source: DeploymentBackupManifestV1; destination: DeploymentRestoreDestinationV1;
     safetyBackup?: DeploymentBackupRunResultV1; code?: RestoreFailureCode;
+    steps?: readonly DeploymentRestoreStepV1[];
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
         nextAction: 'none' | 'inspectStagingDatabase' | 'observeDatabaseNames' | 'restoreRecoveryDatabase' | 'checkServiceHealth' }>);
@@ -72,6 +77,25 @@ function codeOf(error: unknown): RestoreFailureCode {
     return 'outcome_unknown';
 }
 function cancelled(signal: AbortSignal) { if (signal.aborted) refuse('cancelled'); }
+
+function restoreSteps(input: Pick<RestoreCapture, 'onStep'>, previous: readonly DeploymentRestoreStepV1[] = []) {
+    let steps = [...previous];
+    const record = (id: DeploymentRestoreStepV1['id'], status: DeploymentRestoreStepV1['status']) => {
+        const step = { id, status };
+        const index = steps.findIndex(item => item.id === id);
+        if (index < 0) steps = [...steps, step];
+        else steps = steps.map((item, at) => at === index ? step : item);
+        input.onStep?.(step);
+    };
+    return { record, snapshot: () => steps,
+        failRunning() { for (const step of steps) if (step.status === 'running') record(step.id, 'failed'); },
+        async run<T>(id: DeploymentRestoreStepV1['id'], effect: () => Promise<T>) {
+            record(id, 'running');
+            try { const value = await effect(); record(id, 'completed'); return value; }
+            catch (error) { record(id, 'failed'); throw error; }
+        },
+    };
+}
 function completed(result: DeploymentRestoreNativeResultV1) {
     if (result.kind !== 'completed') return refuse('outcome_unknown');
     if (result.exitCode !== 0) return refuse('restore_failed');
@@ -124,19 +148,32 @@ async function verifySource(input: RestoreCapture) {
 }
 
 export async function prepareDeploymentRestoreV1(input: DeploymentRestorePrepareInputV1): Promise<DeploymentRestorePrepareReceiptV1> {
-    cancelled(input.signal);
-    // Unsupported formats/engines are explicit; custom PostgreSQL archives alone
-    // have a staged semantic producer here. Upload admission remains transfer-owned.
-    if (input.destination.adapter !== 'postgres-v1' || input.source.kind !== 'dump' || input.sourceFormat !== 'postgresCustom') refuse('unsupported_action');
-    const { destination } = input;
-    if (new Set([destination.database, destination.stagingDatabase, destination.recoveryDatabase]).size !== 3) refuse('stale_input');
-    if (destination.hasMeaningfulData && (!input.safetyBackup || input.safetyBackup.environmentId !== destination.environmentId
-        || !input.safetyBackup.configuration.sources.some(source => source.kind === 'dump' && source.service === destination.service))) refuse('backup_required');
-    await verifySource(input);
-    const safetyBackup = destination.hasMeaningfulData && input.safetyBackup
-        ? await runDeploymentBackupV1({ ...input.safetyBackup, signal: input.signal }) : undefined;
-    return { kind: 'prepared', operationId: input.operationId, source: input.source, sourceFormat: input.sourceFormat, destination,
-        ...(safetyBackup ? { safetyBackup } : {}) };
+    const steps = restoreSteps(input);
+    steps.record('safety', 'running');
+    try {
+        cancelled(input.signal);
+        // Unsupported formats/engines are explicit; custom PostgreSQL archives alone
+        // have a staged semantic producer here. Upload admission remains transfer-owned.
+        if (input.destination.adapter !== 'postgres-v1' || input.source.kind !== 'dump' || input.sourceFormat !== 'postgresCustom') refuse('unsupported_action');
+        const { destination } = input;
+        if (new Set([destination.database, destination.stagingDatabase, destination.recoveryDatabase]).size !== 3) refuse('stale_input');
+        if (destination.hasMeaningfulData && (!input.safetyBackup || input.safetyBackup.environmentId !== destination.environmentId
+            || !input.safetyBackup.configuration.sources.some(source => source.kind === 'dump' && source.service === destination.service))) refuse('backup_required');
+        await verifySource(input);
+        const safetyBackup = destination.hasMeaningfulData && input.safetyBackup
+            ? await runDeploymentBackupV1({ ...input.safetyBackup, signal: input.signal }) : undefined;
+        steps.record('safety', safetyBackup ? 'completed' : 'skipped');
+        return { kind: 'prepared', operationId: input.operationId, source: input.source, sourceFormat: input.sourceFormat, destination,
+            ...(safetyBackup ? { safetyBackup } : {}), steps: steps.snapshot() };
+    } catch (error) {
+        steps.failRunning();
+        // Keep the child backup's exact recovery evidence alongside its failed phase.
+        const details = error && typeof error === 'object' && 'details' in error && error.details
+            && typeof error.details === 'object' ? error.details : {};
+        throw Object.assign(error instanceof Error ? error : new Error(codeOf(error)), {
+            details: { ...details, steps: steps.snapshot() },
+        });
+    }
 }
 
 /** Invoked inside a fresh host admission. Source/target authority, target revision
@@ -144,11 +181,12 @@ export async function prepareDeploymentRestoreV1(input: DeploymentRestorePrepare
  * This exact receipt comparison prevents substitution; it is not a phase authority loop. */
 export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirmInputV1): Promise<DeploymentRestoreResultV1> {
     const { destination, prepare } = input;
+    const steps = restoreSteps(input, prepare.steps);
     if (!sameSource(input.source, prepare.source) || input.sourceFormat !== prepare.sourceFormat
         || !sameDestination(destination, prepare.destination)) refuse('stale_input');
     if (destination.hasMeaningfulData && !prepare.safetyBackup) refuse('backup_required');
     const result = (kind: DeploymentRestoreResultV1['kind'], nextAction: DeploymentRestoreResultV1['nextAction'], code?: RestoreFailureCode): DeploymentRestoreResultV1 => {
-        const evidence = { source: prepare.source, destination,
+        const evidence = { source: prepare.source, destination, steps: steps.snapshot(),
             ...(prepare.safetyBackup ? { safetyBackup: prepare.safetyBackup } : {}), ...(code ? { code } : {}) };
         return kind === 'restored' ? { ...evidence, kind, verified: true, nextAction: 'none' }
             : { ...evidence, kind, verified: false, nextAction };
@@ -172,7 +210,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         if (fullSwap || halfSwap) {
             if (!writersStopped && destination.writerServices.length) {
                 writersStopped = true;
-                completed(await execute({ kind: 'writers', operation: 'stop', services: destination.writerServices }));
+                await steps.run('stop', async () => completed(await execute({ kind: 'writers', operation: 'stop', services: destination.writerServices })));
             }
             if (fullSwap) completed(await execute(rename(destination, destination.database, destination.stagingDatabase)));
             if (names.old) completed(await execute(rename(destination, destination.recoveryDatabase, destination.database)));
@@ -188,18 +226,20 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             : result('recoveryRequired', input.signal.aborted ? 'observeDatabaseNames' : 'restoreRecoveryDatabase', code);
     };
     const restartWriters = async (outcome: DeploymentRestoreResultV1) => {
-        if (!writersStopped || input.signal.aborted) return outcome;
-        try { completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices })); }
+        if (!writersStopped || input.signal.aborted) return { ...outcome, steps: steps.snapshot() };
+        try { await steps.run('start', async () => completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }))); }
         catch (error) { return result('recoveryRequired', 'checkServiceHealth', codeOf(error)); }
-        return outcome;
+        return { ...outcome, steps: steps.snapshot() };
     };
     try {
+        steps.record('restore', 'running');
         // A killed/force-stopped predecessor cannot execute recovery. A fresh
         // admission observes only these operation-owned names before any import.
         const names = await observeNames();
         const stagedBeforeActivation = names.stage && names.canonical === destination.databaseExists && !names.old;
         const activatedEmptyDestination = !destination.databaseExists && names.canonical && !names.stage && !names.old;
         if (names.old || stagedBeforeActivation || activatedEmptyDestination) return await input.runProtectedStage(async () => {
+            steps.record('restore', 'failed');
             let recovered: DeploymentRestoreResultV1;
             // Stop may have landed just before the first rename. The incumbent
             // names are intact; resume only this restore's exact admitted writers.
@@ -208,7 +248,10 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             catch (error) { recovered = recoveryFailure(error); }
             return restartWriters(recovered);
         });
-        if (names.stage || names.canonical !== destination.databaseExists) return result('outcome_unknown', 'observeDatabaseNames');
+        if (names.stage || names.canonical !== destination.databaseExists) {
+            steps.record('restore', 'failed');
+            return result('outcome_unknown', 'observeDatabaseNames');
+        }
         const path = await verifySource(input);
         completed(await execute(service(destination, ['createdb', '--maintenance-db=postgres', '--template=template0', '--', destination.stagingDatabase])));
         const restored = completed(await execute({ kind: 'restoreStream', producer: buildResticRequestV1({ environmentId: input.source.environmentId,
@@ -225,23 +268,31 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                 if (destination.writerServices.length) {
                     // A failed/unknown stop may have stopped some writers. Own their restart.
                     writersStopped = true;
-                    completed(await execute({ kind: 'writers', operation: 'stop', services: destination.writerServices }));
+                    await steps.run('stop', async () => completed(await execute({ kind: 'writers', operation: 'stop', services: destination.writerServices })));
+                } else {
+                    steps.record('stop', 'skipped');
                 }
                 activationAttempted = true;
                 if (destination.databaseExists) completed(await execute(rename(destination, destination.database, destination.recoveryDatabase)));
                 completed(await execute(rename(destination, destination.stagingDatabase, destination.database)));
                 completed(await execute({ kind: 'integrity', service: destination.service, database: destination.database }));
+                steps.record('restore', 'completed');
                 if (writersStopped) {
                     // A lost start acknowledgement may mean writers are already live;
                     // recovery must stop them again before renaming databases.
                     writersStopped = false;
-                    completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }));
+                    await steps.run('start', async () => completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices })));
+                } else {
+                    steps.record('start', 'skipped');
                 }
-                const health = await execute({ kind: 'health', service: destination.service });
-                if (health.kind !== 'health' || health.status === 'unknown') refuse('outcome_unknown');
-                if (health.status !== 'healthy') refuse('restore_failed');
+                await steps.run('health', async () => {
+                    const health = await execute({ kind: 'health', service: destination.service });
+                    if (health.kind !== 'health' || health.status === 'unknown') refuse('outcome_unknown');
+                    if (health.status !== 'healthy') refuse('restore_failed');
+                });
                 outcome = result('restored', 'none');
             } catch (error) {
+                steps.failRunning();
                 const code = codeOf(error);
                 outcome = result('recoveryRequired', 'inspectStagingDatabase', code);
                 if (activationAttempted && !input.signal.aborted) {
@@ -254,6 +305,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             return restartWriters(outcome);
         });
     } catch (error) {
+        steps.failRunning();
         return result('recoveryRequired', 'inspectStagingDatabase', codeOf(error));
     }
 }

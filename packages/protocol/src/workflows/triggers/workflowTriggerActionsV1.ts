@@ -1,5 +1,6 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
 import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
 import { z } from 'zod/mini';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
@@ -72,9 +73,12 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
   return result;
 }
 const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, onComplete: true, deploymentTriggers: true, actionApprovals: true }));
+/** A policy-independent capture identity; Environment edits do not rewrite a saved Workflow's target. */
+export const WorkflowDeploymentBackupTargetV1Schema = lazyZodSchema(() => z.omit(DeploymentBackupRunInputV1Schema, { expectedRevision: true }));
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ workflow: WorkflowDefinitionRefV1StringSchema }),
   z.strictObject({ managedTarget: AutomationManagedTargetV1Schema }),
+  z.strictObject({ deploymentBackup: WorkflowDeploymentBackupTargetV1Schema }),
   z.strictObject({ scope: z.enum(['account_inline', 'account_all']) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
@@ -152,6 +156,9 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Display facts from the already-admitted Account record, not another lookup. */
   name: z.optional(z.string()),
   updatedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  /** Read-time fact from the saved scheduler cursor and the actual latest started Run. */
+  missedSchedules: z.optional(z.array(z.strictObject({ triggerId: AutomationTriggerIdSchema,
+    dueAt: z.number().check(z.int(), z.nonnegative()), lastRunAt: z.nullable(z.number().check(z.int(), z.nonnegative())) }))),
   /** Current saved definition provenance, never an occurrence's accepted source. Display only. */
   sourceSavedBy: z.optional(WorkflowDefinitionSavedByV1Schema),
   sourceSavedAt: z.optional(z.number().check(z.int(), z.nonnegative())),

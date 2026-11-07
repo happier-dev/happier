@@ -9,6 +9,7 @@ import type { createDeploymentActions } from './deploymentActions';
 import { readDeploymentActionError, readDeploymentActionResult, type DeploymentActionOutcome } from './deploymentActionOutcome';
 import { useDeploymentReceipt } from './useDeploymentReads';
 import { deploymentManagedRetention, type DeploymentRetentionChoiceValue } from './DeploymentRetentionChoice';
+import type { DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 /** Only the target-membership Actions: a page passes the subset it holds. */
 type Actions = Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'>;
@@ -127,11 +128,11 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
         }, operation, 'manageTargets');
     }
     /** Stop and remove is one admitted teardown; its owner also removes the Environment. */
-    function stopAndRemove(targetLinkId: string | null, operation?: UiActionOperation) {
+    function stopAndRemove(targetLinkId: string | null, operation?: UiActionOperation, volumes?: DeploymentTeardownVolumesV1) {
         return run(async (actions, value, invoked) => {
             const link = targetLinkId ?? value.environment.runtimeTargetLinkId ?? null;
             const torn = await actions.teardown({ environmentId: value.environment.id, reason: 'manual',
-                ...(link ? { targetLinkId: link } : {}), requestKey: randomUUID(), removeEnvironment: true },
+                ...(link ? { targetLinkId: link } : {}), ...(volumes ? { volumes } : {}), requestKey: randomUUID(), removeEnvironment: true },
             { ...invoked, presentUserConfirmation: { actionId: 'deployments.teardown' } });
             if (torn.ok && 'environmentRemoved' in torn && torn.environmentRemoved === true) {
                 return { kind: 'deleted', detached: false };

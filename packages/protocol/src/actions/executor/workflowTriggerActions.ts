@@ -32,6 +32,7 @@ import {
   type SessionTriggerUpdateRequestV1, type SessionTriggerRemoveRequestV1,
   type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1,
   type WorkflowTriggerSummaryInputV1,
+  WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
@@ -39,11 +40,12 @@ import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmis
 import { AutomationPullRequestTriggerSchema, type AutomationPullRequestTrigger } from '../../automations/pullRequestTrigger.js';
 import { admitAgentStartV1, type AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
-import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import { bindWorkflowLeafInputsV1, materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowDefinitionV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
-import { resolveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
+import { collectWorkflowLeavesV1, resolveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
+import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPreparationV1.js';
 import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import { admitActionAgentStartV1, isActionCallerOwnSessionV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
@@ -62,6 +64,7 @@ import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActi
 import type { WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
 import type { DeploymentDeploySemanticInputV1 } from '../../deployments/deploymentDeployIntentV1.js';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { WORKFLOW_TRIGGER_SET_STORAGE_NAME, workflowTriggerDisplayNameV1 } from '../../workflows/workflowStepLabel.js';
 
 type Caller = WorkflowActionExecuteArgs['context'];
@@ -414,8 +417,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...(deps.nativeAccount ? { nativeAccount: deps.nativeAccount } : {}) });
     input.context.actionApprovals = [...retained, { triggerId: AutomationTriggerIdSchema.parse(input.triggerId), operation }];
   };
-  const projection = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
-    project?: WorkflowProjectTargetV1 }>): Promise<WorkflowTriggerSetV1> => {
+  const projectedDefinition = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
+    project?: WorkflowProjectTargetV1 }>): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
+      children?: ReadonlyMap<string, WorkflowDefinitionV1> }>> => {
     const triggers: WorkflowTriggerSetV1['triggers'] = [];
     for (const trigger of row.triggers) {
       if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
@@ -428,38 +432,49 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     // The storage label every executable set is created with is not a name anyone chose: readers name
     // such a Workflow by what it runs. A 0.2 Automation or a named observation keeps its own name.
     const name = workflowTriggerDisplayNameV1({ name: row.name });
-    const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt,
+    const now = Date.now();
+    const missedSchedules = row.enabled ? triggers.flatMap(trigger => trigger.kind === 'schedule' && trigger.enabled
+      && trigger.nextRunAt !== null && trigger.nextRunAt < now && (row.lastRunAt === null || row.lastRunAt < trigger.nextRunAt)
+      ? [{ triggerId: trigger.id, dueAt: trigger.nextRunAt, lastRunAt: row.lastRunAt }] : []) : [];
+    const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt, missedSchedules,
       revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
-    if (row.observationOnly) return { ...base, observationOnly: row.observationOnly, health: 'available' };
+    if (row.observationOnly) return { set: { ...base, observationOnly: row.observationOnly, health: 'available' } };
     try {
       if (base.legacy && !reviewed && await deps.requiresLegacyReview?.(row)) {
-        return { ...base, health: 'source_unavailable', legacy: { ...base.legacy, lockedReason: 'review_required' } };
+        return { set: { ...base, health: 'source_unavailable', legacy: { ...base.legacy, lockedReason: 'review_required' } } };
       }
       const value = reviewed ?? await opened(row, true);
       const targetProject = reviewed?.project ?? (row.assignments.length !== 1 ? undefined : project(row, value.context));
       // Retained templates are readable even when their settings cannot become a current Workflow.
       const source = await resolveTarget(value.target, !base.legacy);
       const definition = source.definition;
+      const children = new Map<string, WorkflowDefinitionV1>();
       const destinations = await resolveWorkflowDestinationsV1({ definition, inputs: value.context.inputs,
-        originSessionId: row.scopeSessionId ?? undefined }, resolveDefinition);
-      return { ...base, triggers, ...(reviewed && base.legacy ? { legacy: { ...base.legacy, lockedReason: 'review_required' as const } } : {}),
+        originSessionId: row.scopeSessionId ?? undefined }, async ref => {
+          const child = await resolveDefinition(ref);
+          children.set(ref, child);
+          return child;
+        });
+      return { definition, children, set: { ...base, triggers, ...(reviewed && base.legacy ? { legacy: { ...base.legacy, lockedReason: 'review_required' as const } } : {}),
         ...(source.savedBy ? { sourceSavedBy: { kind: source.savedBy.kind, accountId: source.savedBy.accountId } } : {}),
         ...(source.savedAt === undefined ? {} : { sourceSavedAt: source.savedAt }),
         placements: row.assignments.filter((assignment) => assignment.enabled).map(({ machineId }) => ({ machineId, directory: value.context.workspace.directory })),
-        health: 'available', target: value.target, context: value.context, destinations, ...(targetProject ? { project: targetProject } : {}) };
+        health: 'available', target: value.target, context: value.context, destinations, ...(targetProject ? { project: targetProject } : {}) } };
     } catch (error) {
       const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
       const lockedReason = code === 'session_key_required' || code === 'encryption_material_unavailable' ? 'session_key_required' as const
         : code === 'encryption_mode_mismatch' ? 'migration_required' as const
         : code === 'invalid_template' ? 'decryption_failed' as const : undefined;
-      if (base.legacy && lockedReason) return { ...base, health: 'source_unavailable', legacy: { ...base.legacy, lockedReason } };
+      if (base.legacy && lockedReason) return { set: { ...base, health: 'source_unavailable', legacy: { ...base.legacy, lockedReason } } };
       // A retained existing-Session target may have lost its Session. It does not block listing or removal.
       if (code !== 'source_unavailable' && code !== 'invalid_input'
         && !(base.legacy && (code === 'target_unavailable' || code === 'legacy_conversion_unsupported'))) throw error;
-      return { ...base, health: 'source_unavailable' };
+      return { set: { ...base, health: 'source_unavailable' } };
     }
   };
+  const projection = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
+    project?: WorkflowProjectTargetV1 }>) => (await projectedDefinition(row, reviewed)).set;
   const eventDefinition = async (row: AutomationDefinitionDetail, triggerId: string) => {
     const trigger = row.triggers.find(item => item.id === triggerId);
     if (!trigger || trigger.kind !== 'pluginEvent' || !deps.openPluginEventTrigger) refuse('source_unavailable');
@@ -569,7 +584,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         return { sets: [await projection(row, await deps.convertLegacy(row, caller))] };
       }
       const managedTarget = 'managedTarget' in input ? input.managedTarget : null;
-      const all = managedTarget !== null || ('scope' in input && input.scope === 'account_all');
+      const deploymentBackup = 'deploymentBackup' in input ? input.deploymentBackup : null;
+      const all = deploymentBackup !== null || managedTarget !== null || ('scope' in input && input.scope === 'account_all');
       const rows = await automationRows(deps.automations.listDetails, managedTarget
         ? { managedTarget, includeUnindexedManagedTargets: true } : all ? {} : 'workflow' in input
           ? { workflowDefinitionId: input.workflow } : { scope: 'account_inline' });
@@ -580,7 +596,31 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const uniqueRows = [...new Map(selectedRows.map((row) => [row.id, row])).values()];
       const projected = await Promise.allSettled(uniqueRows.map(async (item) => {
         const row = item;
-        if (managedTarget) {
+        if (deploymentBackup) {
+          const { set, definition, children } = await projectedDefinition(row);
+          if (set.health !== 'available') refuse('source_unavailable');
+          if (!definition || !set.context) return null;
+          const pending = [{ definition, inputs: resolveWorkflowRunStartInputsV1(definition, set.context.inputs), refs: new Set<string>() }];
+          while (pending.length) {
+            const frame = pending.pop()!;
+            for (const leaf of collectWorkflowLeavesV1(frame.definition)) {
+              if (leaf.kind !== 'action' && leaf.kind !== 'workflow') continue;
+              for (const bound of bindWorkflowLeafInputsV1(frame.definition, leaf, { inputs: frame.inputs,
+                origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
+                if (leaf.kind === 'action' && leaf.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1) {
+                  const target = WorkflowDeploymentBackupTargetV1Schema.safeParse(Object.fromEntries(
+                    Object.keys(WorkflowDeploymentBackupTargetV1Schema.shape).map(key => [key, bound[key]])));
+                  if (target.success && sameStrictJsonValue(target.data, deploymentBackup)) return set;
+                } else if (leaf.kind === 'workflow' && !frame.refs.has(leaf.workflowRef)) {
+                  const child = children?.get(leaf.workflowRef);
+                  if (child) pending.push({ definition: child, inputs: resolveWorkflowRunStartInputsV1(child, bound),
+                    refs: new Set([...frame.refs, leaf.workflowRef]) });
+                }
+              }
+            }
+          }
+          return null;
+        } else if (managedTarget) {
           const set = await projection(row);
           if (set.health !== 'available') refuse('source_unavailable');
           const managed = set.target && readManagedMachineTriggerAction(set.target);

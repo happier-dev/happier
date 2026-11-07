@@ -20,7 +20,7 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminate
     z.strictObject({ v: z.literal(1), kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
         machineId: id, installationId: id, input: common.input, deploymentId: id, actionOperationId: id,
         step: DeploymentTeardownStepV1Schema, mode: z.enum(['observe', 'execute']) }),
-    z.strictObject({ v: z.literal(1), kind: z.literal('prepare'), actionId: z.literal('deployments.deploy'),
+    z.strictObject({ v: z.literal(1), kind: z.literal('prepare'), actionId: z.enum(['deployments.deploy', 'deployments.teardown']),
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id }),
         expectedRevision: revision, expectedTargetLinkRevision: revision }),
     z.strictObject({ ...common, kind: z.literal('review') }),

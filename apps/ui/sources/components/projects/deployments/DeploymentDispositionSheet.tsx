@@ -21,6 +21,9 @@ import { Modal } from '@/modal';
 import type { DeploymentEnvironmentDeletionOutcome } from './useDeploymentEnvironmentDeletion';
 import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
 import { DeploymentTabState } from './DeploymentTabState';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import type { DeploymentTeardownPreviewV1, DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 type Choice = 'remove' | 'detach';
 const PRESENTED = { mounted: true, visible: true, focused: true } as const;
@@ -43,7 +46,8 @@ export type DeploymentDispositionSheetInput = Readonly<{
   /** The existing Domain read owner names retirement consequences in this confirmation. */
   domains?: Readonly<{ controller: DeploymentReadControllerV1; environmentId: string }>;
   /** Runs the plan-defined disposition through the page's DTEAR hook. */
-  run: (choice: Choice) => Promise<DeploymentEnvironmentDeletionOutcome>;
+  reviewVolumes?: (signal: AbortSignal) => Promise<DeploymentTeardownPreviewV1['volumes']>;
+  run: (choice: Choice, volumes?: DeploymentTeardownVolumesV1) => Promise<DeploymentEnvironmentDeletionOutcome>;
   /** A held approval continues on the page's one approval handle. */
   onApproval: (artifactId: string) => void;
   /** The subject is gone; the page leaves it. */
@@ -63,6 +67,21 @@ function DeploymentDispositionSheet(
     props.running ? 'detach' : 'remove',
   );
   const [busy, setBusy] = React.useState(false);
+  const [volumeReview, setVolumeReview] = React.useState<DeploymentTeardownPreviewV1['volumes'] | null>(null);
+  const [volumeError, setVolumeError] = React.useState(false);
+  const [volumeChoices, setVolumeChoices] = React.useState<Record<string, 'keep' | 'delete'>>({});
+  const [confirmations, setConfirmations] = React.useState<Record<string, string>>({});
+  React.useEffect(() => {
+    if (choice !== 'remove' || !props.reviewVolumes || volumeReview !== null) return;
+    const controller = new AbortController();
+    void props.reviewVolumes(controller.signal).then(volumes => {
+      if (!controller.signal.aborted) setVolumeReview(volumes);
+    }, () => { if (!controller.signal.aborted) setVolumeError(true); });
+    return () => controller.abort();
+  }, [choice, props.reviewVolumes, volumeReview]);
+  const volumesReady = !props.reviewVolumes || volumeReview !== null;
+  const volumesConfirmed = volumeReview?.every(volume => volumeChoices[volume.name] !== 'delete'
+    || confirmations[volume.name] === volume.name) ?? true;
   const [refused, setRefused] = React.useState<Extract<DeploymentEnvironmentDeletionOutcome, { kind: 'refused' }> | null>(null);
   const machine = keepNamesWhole(props.machine ?? t('projects.deployments.aMachine'));
   const target = props.subject.kind === 'target';
@@ -82,10 +101,13 @@ function DeploymentDispositionSheet(
           : t('projects.deployments.deleteConfirm', { name: props.name });
   const { onClose, onApproval, onDone, run } = props;
   const confirm = async () => {
-    if (busy || (choice === 'remove' && (!props.canRemove || !domainsReady))) return;
+    if (busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed))) return;
     setBusy(true);
     setRefused(null);
-    const outcome = await run(choice);
+    const outcome = await run(choice, choice === 'remove' && volumeReview ? volumeReview.map(volume =>
+      volumeChoices[volume.name] === 'delete'
+        ? { name: volume.name, disposition: 'delete', confirmation: confirmations[volume.name] }
+        : { name: volume.name, disposition: 'keep' }) : undefined);
     setBusy(false);
     if (outcome.kind === 'deleted' || outcome.kind === 'unlinked') {
       onClose();
@@ -119,7 +141,7 @@ function DeploymentDispositionSheet(
         display="destructive"
         titleNumberOfLines="complete"
         loading={busy}
-        disabled={busy || (choice === 'remove' && (!props.canRemove || !domainsReady))}
+        disabled={busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed))}
         title={confirmTitle}
         onPress={() => {
           void confirm();
@@ -231,6 +253,25 @@ function DeploymentDispositionSheet(
           ]}
         />
       ) : null}
+      {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}>
+        {volumeReview === null ? <SurfaceStateCard size="line" kind={volumeError ? 'error' : 'loading'}
+          title={volumeError ? t('projects.deployments.volumeReviewError') : t('projects.deployments.loading')} /> : null}
+        {volumeReview?.length === 0 ? <Item testID="project-deployments.disposition.volumes.empty"
+          title={t('projects.deployments.noDataToKeep')} mode="info" /> : null}
+        {volumeReview?.map(volume => <React.Fragment key={volume.name}>
+          <SegmentedChoiceItem title={volume.name} disabled={busy}
+            testIDPrefix={`project-deployments.disposition.volume.${volume.name}`}
+            value={volumeChoices[volume.name] ?? 'keep'}
+            options={[{ id: 'keep', label: t('common.keep') }, { id: 'delete', label: t('common.delete') }]}
+            onChange={next => setVolumeChoices(previous => ({ ...previous, [volume.name]: next }))} />
+          {volumeChoices[volume.name] === 'delete' ? <Item title={t('projects.deployments.volumeConfirmation', { name: volume.name })}
+            accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput
+              testID={`project-deployments.disposition.volume.${volume.name}.confirmation`}
+              accessibilityLabel={t('projects.deployments.volumeConfirmation', { name: volume.name })}
+              value={confirmations[volume.name] ?? ''} editable={!busy} monospace
+              onChangeText={text => setConfirmations(previous => ({ ...previous, [volume.name]: text }))} />} /> : null}
+        </React.Fragment>)}
+      </ItemGroup> : null}
         <ItemGroup
           testID="project-deployments.disposition.facts"
           header="none"

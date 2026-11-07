@@ -28,6 +28,18 @@ function prepare(input: unknown): unknown {
 const input = { environmentId: 'environment-a', configuration, destination, bindings };
 
 describe('backup configuration preparation', () => {
+    it('changes only person-selected retention counts while retaining capture identity and rejects a stale choice', () => {
+        const owner = Reflect.get(owners, 'prepareDeploymentBackupRetentionV1');
+        const change = (value: unknown) => typeof owner === 'function' ? owner(value) : undefined;
+        const selected = { currentBackup: configuration, configRevision: configuration.configRevision,
+            retention: { kind: 'keep', last: 12, daily: 14, weekly: 8, monthly: 6 } };
+        expect(change(selected)).toEqual({ ok: true, configuration: { ...configuration, retention: selected.retention } });
+        expect(change({ ...selected, configRevision: 2 })).toEqual({ ok: false, code: 'stale_input' });
+        expect(change({ ...selected, currentBackup: undefined })).toEqual({ ok: false, code: 'backup_required' });
+        expect(change({ ...selected, currentBackup: { notNeeded: true } })).toEqual({ ok: false, code: 'backup_required' });
+        expect(change({ ...selected, retention: { kind: 'keepEverything' } })).toEqual({ ok: true, configuration });
+    });
+
     it('validates the selected external descriptor and reports binding presence without claiming runtime readiness', () => {
         expect(prepare(input)).toEqual({ ok: true, configuration, bindingState: 'bound', missingRoles: [] });
         expect(prepare({ ...input, bindings: [] })).toEqual({ ok: true, configuration,

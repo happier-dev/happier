@@ -1153,6 +1153,15 @@ export type WorkflowsActionInputById = {
     };
     readonly "workflow.definition.export": {
         definitionId: string;
+    } | {
+        draft: {
+            blocks: unknown[];
+            version?: 1 | undefined;
+            inputs?: undefined | unknown[];
+            defaults?: unknown;
+            roles?: unknown;
+            finalOutput?: unknown;
+        };
     };
     readonly "workflow.definition.capture": {
         discussion: {
@@ -1403,6 +1412,16 @@ export type WorkflowsActionInputById = {
     } | {
         automationId: string;
         triggerId: string;
+    } | {
+        deploymentBackup: {
+            serverId: string;
+            machineId: string;
+            environmentId: string;
+            targetLinkId: string;
+            deploymentId: string;
+            configRevision: number;
+            installationId: string;
+        };
     } | {
         managedTarget: {
             homeId: string;
@@ -12196,6 +12215,13 @@ export type WorkflowsActionResultById = {
             definition: WorkflowsActionDefinition2;
         };
         json: string;
+    } | {
+        document: {
+            kind: 'happier.workflow';
+            version: 1;
+            definition: WorkflowsActionDefinition2;
+        };
+        json: string;
     };
     readonly "workflow.definition.capture": {
         status: 'needs_review' | 'ready';
@@ -13021,6 +13047,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -13704,6 +13735,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -14389,6 +14425,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -15078,6 +15119,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -15925,6 +15971,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -16620,6 +16671,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -17305,6 +17361,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;
@@ -17990,6 +18051,11 @@ export type WorkflowsActionResultById = {
             })[];
             name?: string | undefined;
             updatedAt?: number | undefined;
+            missedSchedules?: undefined | {
+                triggerId: string;
+                dueAt: number;
+                lastRunAt: null | number;
+            }[];
             sourceSavedBy?: undefined | {
                 kind: 'agent';
                 accountId: string;

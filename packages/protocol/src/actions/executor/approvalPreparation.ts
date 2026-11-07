@@ -155,6 +155,8 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
   if (actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown) {
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    if ('mode' in parsed.data && parsed.data.mode === 'preview') return { input: parsed.data,
+      preview: projectNativeJsonValueForTransport(parsed.data) };
     const prepared = await deps.prepareDeploymentTeardown({ input: parsed.data, context,
       readWorkflowInvocation: async reference => deps.workflowAction
         ? deps.workflowAction({ actionId: 'workflow.run.invocations.get', input: reference, context })

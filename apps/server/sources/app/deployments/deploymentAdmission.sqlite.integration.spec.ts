@@ -62,6 +62,53 @@ describe('current Source deployment authority', () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
+    it('persists only the reviewed retention policy through the existing Environment CAS', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            name: 'Backup retention', requestKey: crypto.randomUUID() }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const content = { name: 'Backup retention', retainPreviousDeployments: 1, bindings: [],
+            definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: ['app'] } } };
+        const artifact = async (body: unknown) => {
+            const saved = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: content.name })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(body) })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!saved.ok) throw new Error(saved.error);
+            return { contentArtifactId: saved.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const initial = await artifact(content);
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
+            ...initial, serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id }));
+        if (!created.ok) throw new Error(created.error);
+        const backup = { configRevision: 3, destinationRef: { pluginId: 'example.storage', localId: 'open' },
+            occurrenceId: 'destination', config: { bucket: 'recovery' }, credentialBindings: [],
+            sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
+            ownership: { environmentId: created.environmentId, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
+        const configuredContent = await artifact({ ...content, backup });
+        const configured = await inTx(tx => setDeploymentEnvironmentBackupInTx(tx, owner.id, {
+            ...configuredContent, serverId, environmentId: created.environmentId, expectedRevision: created.revision }));
+        if (!configured.ok) throw new Error(configured.error);
+        const retention = { kind: 'keep', last: 7, monthly: 12 };
+        const selected = await artifact({ ...content, backup: { ...backup, retention } });
+        const input = { ...selected, serverId, environmentId: created.environmentId, expectedRevision: configured.revision,
+            patch: { backupRetention: { configRevision: 3, retention } } };
+        const update = (value: unknown) => inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id,
+            DeploymentEnvironmentUpdateInputV1Schema.parse(value)));
+        expect(await update({ ...input, patch: { backupRetention: { configRevision: 2, retention } } }))
+            .toMatchObject({ ok: false });
+        expect(await update({ ...input, ...await artifact({ ...content, backup: { ...backup, retention,
+            config: { bucket: 'unreviewed' } } }) })).toMatchObject({ ok: false });
+        expect(await update(input)).toMatchObject({ ok: true, revision: configured.revision + 1 });
+        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }))
+            .toMatchObject(selected);
+        expect(await update(input)).toMatchObject({ ok: false, error: 'deployment_conflict' });
+    });
+
     it.each([
         ['plain', 'create'], ['e2ee', 'create'],
         ['plain', 'firstTarget'], ['e2ee', 'firstTarget'],

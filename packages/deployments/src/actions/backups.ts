@@ -13,11 +13,14 @@ export type DeploymentBackupNativeResultV1 = Readonly<{ kind: 'outcome_unknown' 
     producer?: Readonly<{ exitCode: number; checksumSha256: string }>;
     stdoutChecksumSha256?: string; stdoutBytes?: number;
 }>;
-export type DeploymentBackupRunResultV1 = Readonly<{ kind: 'verified'; manifests: readonly BackupManifestV1[] }>;
+export type DeploymentBackupRunResultV1 = Readonly<{ kind: 'verified'; manifests: readonly BackupManifestV1[];
+    restoreCaptures?: readonly DeploymentPreMigrationBackupV1[] }>;
 type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>;
 export type DeploymentBackupRunInputV1 = Readonly<{
     environmentId: string; configuration: DeploymentBackupConfigurationV1; data?: CapturedData;
     access: ResticAccessV1; signal: AbortSignal;
+    /** Exact database resolved by the admitted native producer, never a binding key. */
+    restoreTarget?: DeploymentPreMigrationBackupV1['target'];
     /** The pre-migration caller binds this completion to its existing receipt CAS.
      * A verified backup is not returned until its recovery capture is retained. */
     preMigrationBackup?: Readonly<Pick<DeploymentPreMigrationBackupV1, 'sourceFormat' | 'target'> & {
@@ -37,6 +40,12 @@ function failureCode(error: unknown): string {
         if (typeof code === 'string') return code;
     }
     return 'outcome_unknown';
+}
+
+/** Canonical producer filenames also identify the supported legacy dump format. */
+export function deploymentBackupDumpFilenameV1(adapter: NonNullable<CapturedData['logicalBackup']>['adapter'], service: string): string {
+    if (adapter === 'sqlite-v1') return refuse('unsupported_action');
+    return `${service}.${{ 'postgres-v1': 'dump', 'mysql-v1': 'sql', 'mongo-v1': 'archive.gz' }[adapter]}`;
 }
 
 /** Current config/data have already crossed admission/storage decoding. This owner trusts that capture, not caller revisions/subsets.
@@ -67,8 +76,7 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
             const adapter = data.logicalBackup.adapter;
             // SQLite VACUUM produces an owned file, not stdout. Volume stop-copy also needs its real native producer.
             if (adapter === 'sqlite-v1') return refuse('unsupported_action');
-            const extension = { 'postgres-v1': 'dump', 'mysql-v1': 'sql', 'mongo-v1': 'archive.gz' }[adapter];
-            return { source, filename: `${source.service}.${extension}` };
+            return { source, filename: deploymentBackupDumpFilenameV1(adapter, source.service) };
         });
         const configResult = await execute({ kind: 'config' });
         const { repositoryId } = await backupOperationStepV1('repository', () =>
@@ -96,12 +104,18 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
         throw Object.assign(new Error(code), { code, step, details: { snapshots, manifests } });
     }
     const recording = input.preMigrationBackup;
-    if (recording) {
-        const selected = input.configuration.sources.find(source => source.kind === 'dump' && source.service === recording.target.service)!;
-        const source = manifests.find(manifest => manifest.sourceId === selected.sourceId)!;
-        await recording.writeCapture({ source, sourceFormat: recording.sourceFormat, target: recording.target,
-            configuration: input.configuration, repository: { repository: input.access.repository,
-                ...(input.access.s3 ? { s3: input.access.s3 } : {}) } });
+    const target = recording?.target ?? input.restoreTarget;
+    const restoreCaptures: DeploymentPreMigrationBackupV1[] | undefined = target ? manifests.map(source => {
+        if (input.data?.logicalBackup?.adapter !== 'postgres-v1' || source.kind !== 'dump'
+            || input.data.service !== target.service) return refuse('unsupported_action');
+        return { source, sourceFormat: 'postgresCustom',
+            target: { service: target.service, adapter: target.adapter, database: target.database }, configuration: input.configuration,
+            repository: { repository: input.access.repository, ...(input.access.s3 ? { s3: input.access.s3 } : {}) } };
+    }) : undefined;
+    if (recording && restoreCaptures) {
+        const capture = restoreCaptures.find(item => input.configuration.sources.some(source =>
+            source.sourceId === item.source.sourceId && source.kind === 'dump' && source.service === recording.target.service))!;
+        await recording.writeCapture(capture);
     }
-    return { kind: 'verified', manifests };
+    return { kind: 'verified', manifests, ...(restoreCaptures ? { restoreCaptures } : {}) };
 }

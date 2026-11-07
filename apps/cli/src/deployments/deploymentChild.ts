@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptResultV1Schema,
     type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps, type DeploymentPromoteInputV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readDeploymentReceiptArtifactV1, readDeploymentEnvironmentArtifactV1,
     DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol';
@@ -73,7 +74,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             if (job.input.serverId !== host.serverId || job.machineId !== host.machineId) return failure('target_mismatch');
             await assertCurrent(context);
             if (job.kind === 'domain' || job.kind === 'domainDiscover') return await ports.domainNative(job, context);
-            if (job.kind === 'teardown') {
+            if (job.kind === 'teardown' || job.kind === 'prepare' && job.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
                 if (readInstallationIdentityIfExistsSync()?.installationId !== job.installationId) return failure('target_mismatch');
                 return await ports.teardown(job, context);
             }

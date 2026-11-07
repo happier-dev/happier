@@ -6,6 +6,7 @@ import type { DeploymentChildAdmission } from '@/app/deployments/deploymentChild
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -97,7 +98,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     const input = routing.input;
     // Native teardown children report observations to their captured controller;
     // they never publish aggregate transitions or acquire fresh secret custody.
-    if (routing.kind === 'teardown' && method !== 'GET') return false;
+    if ((routing.kind === 'teardown' || routing.kind === 'prepare' && routing.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) && method !== 'GET') return false;
     const native = proof.nativeIncumbentSource;
     if (native && (routing.kind !== 'review' || native.environmentId !== input.environmentId
         || method !== 'GET' || proof.body !== undefined)) return false;

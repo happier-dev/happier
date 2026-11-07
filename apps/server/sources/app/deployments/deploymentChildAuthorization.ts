@@ -1,5 +1,5 @@
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
-import { isDeploymentDomainRemoveActionIdV1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainRemoveActionIdV1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
     type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -230,12 +230,13 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     if (!link || link.revision !== (routing.kind === 'prepare' ? routing.expectedTargetLinkRevision : routing.input.expectedTargetLinkRevision)) return false;
     const member = link.machines.some(value => value.installationId === routing.installationId);
     const builder = loaded.row.buildMachineId === routing.machineId;
-    if (routing.kind === 'prepare' ? !builder : !member && !builder) return false;
+    const preparesTeardown = routing.kind === 'prepare' && routing.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1;
+    if (routing.kind === 'prepare' ? preparesTeardown ? !member : !builder : !member && !builder) return false;
     if (!loaded.row.controllerMachineId) return false;
     const denied = await admitDeploymentMachinesInTx(tx, owner, [
         { machineId: loaded.row.controllerMachineId, role: 'controller',
             ...(loaded.row.controllerMachineId === binding.machineId ? { installationId: binding.installationId } : {}) },
-        { machineId: routing.machineId, installationId: routing.installationId, role: routing.kind === 'prepare' || !member ? 'build' : 'target' },
+        { machineId: routing.machineId, installationId: routing.installationId, role: routing.kind === 'prepare' && !preparesTeardown || !member ? 'build' : 'target' },
     ]);
     if (denied) return false;
     if (routing.kind === 'prepare') return loaded.row.revision === routing.expectedRevision;

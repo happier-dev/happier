@@ -10,8 +10,6 @@ description: Contribution families that a plugin can declare for projection and 
 | Family | Purpose | Code-defined author field |
 | --- | --- | --- |
 | `actions` | User, CLI, MCP, and session-agent operations | daemon root: `actions.<id>.run`; client leaf: `activate(api)` → `api.actions.register(...)`. See [Actions, tools, and commands](/plugins/api/actions-tools-commands#invocation-surface-and-execution-target). |
-| `tools` | Declarative tool-facing wrappers around actions | manifest action reference |
-| `commands` | Declarative CLI entries around actions | manifest action reference |
 | `hooks` | Host extension points | `hooks.<id>.handler` |
 | activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `setup` |
 | `events` | Plugin-authored event ids and payload schemas | The declaration family and `context.services.events` are available in the current generated matrix. |
@@ -20,14 +18,21 @@ description: Contribution families that a plugin can declare for projection and 
 | `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
 | `backgroundServices` | Daemon-occurrence background work | `backgroundServices[].runner` |
 | `secretSources` | Live external Saved Secret acquisition, metadata listing and vault storage (0.3 development source) | `secretSources.<id>.declaration` and `.runtime.acquire(input, context)`, with optional `.list` and `.store`; see [Secrets service](/plugins/services/secrets#external-secret-sources-03-development). |
+| `projectNativeAdapters` | Native project detection, commands, environments and existing-service lifecycle | `projectNativeAdapters.<id>.runtime`; declare the matching roles. Development `nativeServiceLifecycle` provides inspect, stop and [bounded log reads and watch callbacks](/plugins/guides/background-services#read-bounded-native-logs-in-development), plus optional [discovery, Start/Restart and accounting callbacks](/plugins/guides/background-services#control-an-existing-native-service-in-development). Their Machine consumers are still under integration. |
 | `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
 | `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |
 | `workflows` | Reusable, read-only Workflow definitions shown under From plugins | `workflows.<id>`: `title`, optional `description`, and `definition` |
-| `botTemplates` | Packaged cold Bot template releases (0.3 development source) | `botTemplates.<id>`: `path`; no runtime registration. See [Bot templates](#bot-templates-03-development-source). |
-| `registrySources` | Data-only catalogs shown alongside built-in and personal sources | `registrySources.<id>`: `title`, `format`, `kinds`, `url`, optional `path` and `ref` |
+| `registrySources` | Data-only catalogs shown alongside built-in and personal sources | `registrySources.<id>`: `title`, `format`, `kinds`, and either a remote `url` or app-only `packageContent.path` (0.3 development) |
+| `storeKinds` | Plugin-owned Store items, parsing, presentation and acquisition (0.3 development source) | `storeKinds.<id>`: `title`, `viewId` and `operations` referencing declared same-plugin Actions; see [Store item kinds](#store-item-kinds-03-development-source). |
+| `backupDestinations` | Declarative restic storage access (0.3 development source) | `backupDestinations.<id>`: closed nonsecret configuration, credential roles, transport/locality facts and qualified `test` / `open` Actions |
+| `deploymentTargets` | Runtime and managed-data target declarations (0.3 development metadata only) | `deploymentTargets.<id>`: closed target/link schemas and same-plugin Action/Resource references; executable target integration is not yet available |
+| `healthCheckKinds` | Finite check declarations (unreleased 0.3 development source) | `healthCheckKinds.<id>`: recursively closed configuration and a same-plugin read-only daemon Action returning the canonical health result; see [Health check kinds](/plugins/guides/background-services#health-check-kinds-development-source). |
+| `machineRecipes` | Typed Machine setup effects (unreleased development contract) | `machineRecipes.<id>`: revision, presentation, closed input schema and checked steps; data only |
+| `machineSetupPresets` | Reusable Machine setup content (unreleased development contract) | `machineSetupPresets.<id>`: revision, presentation and the same setup part used by Account/Team Presets; data only |
 | `languageServers` | Machine-side language-server declarations | `languageServers.<id>`: static language mapping, declared executable and initialization/configuration data |
 | `skills` | Packaged, read-only skills in the Skills library | `skills.<id>`: `directory` |
+| `botTemplates` | Packaged cold Bot template releases (0.3 development source) | `botTemplates.<id>`: `path`; no runtime registration. See [Bot templates](#bot-templates-03-development-source). |
 | `openableContentViewers` | Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
 | MCP servers | Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
 | MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
@@ -45,6 +50,28 @@ row is not supported or advertised for ordinary author use; do not rely on it;
 consult its unblock condition.
 Runtime demand is derived from the contribution declarations; Manifest V2 has
 no separate `uses[]` owner.
+
+In 0.3 development source, annotate an exported Action with
+`PluginActionDefinition` from `@happier-dev/plugin-sdk/actions` when it needs a
+portable declaration type. This public authoring type includes the declaration
+and its execution target's runtime handler. For a specific target, use
+`PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>`;
+import `PluginActionDeclaration` from the same entrypoint.
+
+### Shared-save secrets (0.3 development source)
+
+Secret declarations describe custody and Settings presentation; they are not
+permission gates for trusted plugin code. Saving a generated value as a shared
+Saved Secret does not require a declaration or a `saveShared` opt-in. It uses
+the invocation's captured Account custody, separately from any machine-local
+secret binding with the same id.
+
+The parent Action must admit the exact selected id, purpose and reviewed
+audience. The matching controller host and current Account custody remain
+prerequisites; declarations cannot widen that audience or supply another
+invocation's authority. See the [Secrets service](/plugins/services/secrets) for
+the explicit-id save and registered raw-read examples. This is an unreleased
+source contract, not a claim that an installed release supplies the service.
 
 Do not infer availability from this shape catalog. Consult the generated matrix
 for each family's source availability, optional maintained consumer evidence,
@@ -88,6 +115,505 @@ and credentials do not belong in the release.
 
 These are cold descriptors: discovering or previewing a template does not
 activate plugin code, and there is no `botTemplates` runtime registration.
+The Store's Bots flow selects a contribution and reads its packaged release
+through the shared template preview and copy flow. With several contributions,
+the person chooses which template to copy. See
+[authoring and publishing templates](/plugins/packaging/authoring-cli#publish-a-bot-template)
+for the package workflow. This contract describes unreleased 0.3 development
+source; check the [availability matrix](/plugins/manifest/availability) for the
+SDK artifact you use.
+
+## Store item kinds (0.3 development source)
+
+Add a kind to a plugin that declares its parser and lifecycle Actions and an
+app-page view:
+
+```ts
+storeKinds: {
+  themes: {
+    title: 'Themes',
+    viewId: 'theme-store',
+    operations: {
+      list: 'list-themes', read: 'read-theme', installed: 'installed-themes',
+      prepare: 'prepare-theme', acquire: 'acquire-theme', manage: 'manage-theme',
+    },
+  },
+},
+```
+
+The key becomes `your.plugin/themes`. `viewId` names a view declared by the
+same plugin with `container: 'appPage'` and `target: { kind: 'app' }`.
+Every operation names a declared Action callable from plugin surfaces. Keep
+parsing in those Actions and declare their actual schemas and effects. Reads,
+preparation and acquisition use the ordinary Action API and approval policy;
+opening Store never means permission to acquire an item.
+
+The renderer reads `context.launchInput.store` using the SDK's
+`StoreKindLaunchInputV1` type. It receives `mode` (`browse`, `search`, `listing`
+or `installed`), the query or exact item selection when present, current directory
+`filters`, and qualified `operations`. Apply those conditions in the view's
+ordinary list or installed Action input so machine/project/status conditions
+keep their meaning. The common `PluginStoreItemV1` descriptor carries `sourceId`,
+`itemId`, `title`, optional `version`, `description`, `installed`, and opaque
+JSON `value`; your Action schemas own the item's detailed format. Preserve the
+selected version through preparation and acquisition.
+
+Use `createPluginStoreItemHref` from the SDK root to open an item by its stable
+`storeKind` reference. Store retains this reference when the plugin is disabled
+or missing and offers Manage plugin recovery. The existing surface loader
+loads code only when the kind is shown. Views should pause reads when their
+presentation becomes inactive and refresh installed status through their
+existing data owner after an acquisition or management Action.
+
+This extends Store through existing contributions, views and Actions. It does
+not add arbitrary kinds or formats to `registrySources`: those catalogs retain
+their existing kind and parser contracts. The maintained external example is
+`packages/plugin-sdk/examples/public-authoring/storeKinds.ts`. Check the
+generated [availability report](/plugins/manifest/availability) for your SDK and
+host; this section describes unreleased 0.3 source.
+
+## Deployment target declarations (0.3 development source)
+
+Declare runtime target metadata through `definePlugin`. For a plugin that already
+declares the four referenced Actions, add:
+
+```ts
+deploymentTargets: {
+  runtime: {
+    role: 'runtime', targetKind: 'example-runtime',
+    title: 'Example runtime', icon: 'server-outline',
+    targetSchema: { type: 'object', properties: {}, additionalProperties: false },
+    linkSchema: { type: 'object', properties: {}, additionalProperties: false },
+    actions: {
+      inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe',
+    },
+  },
+},
+```
+
+Record keys become manifest ids. References name declared Actions from the same
+plugin. Their input and result schemas must be explicitly and recursively closed;
+read roles use safe effects and mutation roles declare their actual effects.
+Actions may run on the Account or daemon, except `uploadDeploy`, which requires
+daemon placement. Association unlink remains a host operation, not a target role.
+An invalid target is withdrawn individually with a contribution diagnostic.
+The canonical role input/result contracts are checked at admission: lifecycle
+roles must use their exact role schemas; `inspect` and `link` must retain the
+preparation coordinates, without fabricating a deployment receipt.
+
+The unreleased Vercel and Cloudflare implementations expose
+`happier.deploy.vercel/actions/targets-inspect-v1` and
+`happier.deploy.cloudflare/actions/targets-inspect-v1`. Connect and Check again
+use the same read-only inspection Action. Their declared input types resolve
+dependent choices from a global `target-options` Resource using the partial
+draft through [the existing input-options contract](#typed-inputs-in-development);
+the platform-link UI remains under integration.
+
+Import those contracts from the SDK root. The values are the same canonical
+Protocol schemas used by host admission:
+
+```ts
+import {
+  DeploymentTargetRoleInputProtocolSchemasV1,
+  DeploymentTargetRoleResultV1ProtocolSchema,
+  DeploymentTargetPreparationBaseV1ProtocolSchema,
+  hasDeploymentTargetPreparationCoordinatesV1,
+} from '@happier-dev/plugin-sdk';
+
+const deploySchemas = {
+  inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.deploy,
+  resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+};
+
+declare const preparationInput: unknown;
+const preparation = DeploymentTargetPreparationBaseV1ProtocolSchema.parse(preparationInput);
+const hasCoordinates = hasDeploymentTargetPreparationCoordinatesV1(preparation);
+```
+
+The preparation base supports product-specific composition; retain the
+coordinate check after composing it. Public role input, result, preparation,
+credential-principal and provider-identity types use the same SDK root.
+
+In unreleased 0.3 source, deployment outcomes use the Machine-services
+`deployment-failed` and `deployment-succeeded` Events for every target, including
+Cloudflare. Runtime target declarations do not name a separate transition Event
+or define its payload. Implement the target's finite `observe` Action; the host's
+`deployments.receipts.observe` Action dispatches it for pending receipts. The
+generic receipt producer owns outcome selection, and the host platform adapter
+adds provider-specific details to deployment notices from retained receipts.
+
+For a managed-data target, use `role: 'data'` instead of a runtime `actions` arm:
+
+```ts
+deploymentTargets: {
+  database: {
+    role: 'data', targetKind: 'database',
+    title: 'Managed database', icon: 'server-outline',
+    targetSchema: { type: 'object', properties: {}, additionalProperties: false },
+    linkSchema: { type: 'object', properties: {}, additionalProperties: false },
+    dataV1: {
+      projects: { list: 'projects/list', listAction: 'projects/list-action' },
+      query: { readOnly: 'query/read-only' },
+    },
+  },
+},
+```
+
+This example requires a declared dynamic `projects/list` Resource and declared
+safe, explicitly read-only `projects/list-action` and `query/read-only` Actions
+from the same plugin. The Resource forwards its surface launch input through the
+existing `readAction` bridge; its backing Action receives the same qualified
+`projects.list` role as a direct invocation.
+`dataV1` and each group/leaf are optional: missing means unsupported.
+`projects.list`, `projects.provisionOptions`, and `branches.list` reference dynamic
+Resources; `projects.provision`, `branches.create`, `branches.delete`, and
+`connectionSecret.save` reference mutation Actions. `projects.link` references a
+safe read-only Action that inspects exact native identity before the host's link
+Action writes the association. `projects.provisionOptionsAction` and
+`branches.listAction` supply the other Resource-backed reads. `query.readOnly`
+references a safe read-only Action. Data roles have no runtime `actions` arm. These declarations
+grant no secret custody or authority to execute a mutation.
+
+This unreleased source contract admits and projects metadata and validates
+target-role input/result contracts. It does not yet provide installed target
+invocation or platform upload. Native managed-data execution remains a separate integration.
+A projected entry grants no filesystem, secret,
+or deployment authority. Check the generated
+[availability report](/plugins/manifest/availability) for your exact SDK and host.
+
+## Machine setup declarations (unreleased development contract)
+
+These additions target unreleased 0.3 source. Check the generated
+[availability report](/plugins/manifest/availability) for the exact SDK and host
+you target. An author declaration does not establish native platform support or
+completed install/apply support.
+
+Declare both families through `definePlugin`. Local record keys become the
+manifest declaration ids. A Preset references a recipe by its exact plugin id,
+recipe id and declaration revision; an unavailable revision is refused rather
+than replaced with a newer one.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.machine-setup',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  displayName: 'Machine setup author reference',
+  machineRecipes: {
+    fonts: {
+      revision: '1',
+      title: 'Fonts',
+      icon: 'file',
+      software: true,
+      inputSchema: {
+        type: 'object',
+        properties: { identity: {
+          type: 'object', properties: { name: { type: 'string', enum: ['fonts-dejavu-core', 'fonts-noto-core'] } },
+          required: ['name'], additionalProperties: false,
+        } }, required: ['identity'], additionalProperties: false,
+      },
+      inputHints: { fields: [{
+        path: 'identity.name', title: { key: 'fonts.package', fallback: 'Font package' }, widget: 'text', required: true,
+      }] },
+      steps: [{
+        id: 'fonts', kind: 'package', manager: 'apt',
+        packages: [{ kind: 'input', path: 'identity' }],
+      }],
+    },
+  },
+  machineSetupPresets: {
+    'browser-bot': {
+      revision: '1',
+      title: 'Browser bot tools',
+      description: "Fonts for this bot's own browser tools",
+      setup: {
+        items: [{
+          kind: 'softwareRecipe',
+          selection: {
+            ref: {
+              pluginId: 'com.example.machine-setup',
+              recipeId: 'fonts', revision: '1',
+            },
+            inputs: { identity: { name: 'fonts-dejavu-core' } },
+          },
+        }],
+      },
+    },
+    'ordered-scripts': {
+      revision: '1',
+      title: 'Ordered script reference',
+      description: 'Run browser setup checks in declaration order',
+      setup: { scripts: [
+        { body: '\r\necho Browser tools ready\r\n', affects: 'none' },
+        { body: 'echo Browser setup checked\n', affects: 'none',
+          check: { executable: 'test', args: ['-f', '/tmp/browser-setup-ready'], unsatisfiedExitCodes: [1] } },
+      ] },
+    },
+  },
+});
+```
+
+Both families have no activation demand. The generated `activate` export follows
+the ordinary plugin ABI; there is no recipe registration, execution callback or
+privileged plugin module. The host validates declarations and references, checks
+the selected Machine, reviews exact effects, and owns admission and execution.
+Optional `inputHints` describe declared input paths using localized titles and
+static choices. They cannot request host option sources, semantic input types or
+Connected Account inventories. Omitting hints leaves the closed `inputSchema`
+as the input contract.
+Set `software: true` on recipes offered as Software. The existing
+`action.options.resolve` Action reads `machines.setup.software.available` for
+the plan/apply source-item reference field on the explicitly selected Home and
+Machine. Listing declarations does not run native package checks; a missing
+target or unavailable catalog is not an empty list. Toolchains and language
+runtimes retain their existing owner rather than becoming package recipes.
+
+Software choices can include the recipe's optional `icon` token, an admitted
+plugin `brand` resource descriptor, catalog `source`, and declaring plugin
+`version`. These are presentation facts, not trust or execution authority.
+`version` is not the recipe revision or an installed native package version.
+Missing brand/source facts remain absent; listing does not load logo bytes.
+
+For selected recipe configuration, pass exact qualified recipe refs in the
+same Action's `values`. The optional `machineRecipeDetails` result contains
+only those selected software declarations, including their closed
+`inputSchema`, static `inputHints` and declared `removeSteps`. Ordinary browsing
+does not include these details. An unavailable revision is refused, not replaced
+with a newer one. This metadata does not report installed packages or native
+support; absent removal steps do not imply an automatic inverse operation.
+
+Supported declaration fields can bind reviewed public input with
+`{ kind: 'input', path: 'receiver.username' }`. Paths use the shared dot-separated
+Action input-path contract. A referenced value must exist and pass the concrete
+field validator; values are not coerced or recursively interpreted. Keep private
+keys and secret bytes out of inputs and template variables; secret-backed files
+use `secretGrant` references.
+
+Package declarations accept an input reference for the whole `packages` array
+or for an individual identity, as in the example. Binding an identity object
+lets ordinary text fields write object paths without a consumer-side array
+mapper. The host still validates the resulting manager, exact package name,
+optional pin and manager-specific fields with the native package contract.
+Homebrew identities require their declared formula/cask kind; WinGet source and
+scope are optional. Removal uses explicit `removeSteps`, not an inferred inverse.
+
+For the target daemon's actual primary group or username, bind a supported declaration
+field such as `group`, or a template variable, with
+`{ kind: 'targetFact', fact: 'daemon.primaryGroup' }` or `fact: 'daemon.username'`.
+These are the supported target facts in the development contract. The host resolves them from its existing
+daemon-identity observation once per Plan request, rather than accepting an identity in
+the recipe's public inputs. Missing evidence returns
+`machine_recipe_target_fact_unavailable`; no username or group is inferred. The resolved
+value is covered by the reviewed effect-plan digest and is replanned at Apply.
+Credentials continue to use admitted secret-grant references.
+
+File templates retain their `value`/`variables` shape and render once:
+
+```ts
+content: {
+  kind: 'template',
+  value: 'restrict,command="internal-sftp" {senderKey}\n',
+  variables: {
+    senderKey: { kind: 'input', path: 'senderPublicKey' },
+  },
+}
+```
+
+The same input-reference shape binds receiver and administrator user fields in
+`sshd` candidate-validation and effective-probe contexts. Optional `checks`
+contain package or checked-command declarations and never run as mutation steps.
+An effect can use ordered guards:
+
+```ts
+when: [
+  { input: { op: 'truthy', path: 'aptPackages' } },
+  { checkId: 'apt-package', status: ['satisfied', 'drifted'] },
+]
+```
+
+The input arm uses the existing Action predicate grammar. Check guards name a
+declared check and a nonempty unique set drawn from `satisfied`, `drifted`,
+`packageUnavailable` and `packageManagerUnavailable`. Only an explicit native
+package-availability refusal can match `packageUnavailable`; a missing manager
+or denied permission cannot select installer fallback.
+
+For ordered package-manager alternatives, a later branch can require a native
+missing-manager result from an earlier supplied choice. `ifInput` skips that
+check guard when its input predicate is false, so an omitted earlier choice is
+neither bound nor probed:
+
+```ts
+when: [
+  { input: { op: 'truthy', path: 'dnfPackages' } },
+  {
+    checkId: 'apt-package', status: ['packageManagerUnavailable'],
+    ifInput: { op: 'truthy', path: 'aptPackages' },
+  },
+  { checkId: 'dnf-package', status: ['satisfied', 'drifted'] },
+]
+```
+
+Both check ids must be declared in `checks`. `packageManagerUnavailable` matches
+the native package owner's missing-manager fact; package, pin, permission and
+metadata failures cannot impersonate it. Guards run in order and stop at the
+first mismatch. Unreached branches neither bind nor probe. These development
+declarations do not establish native backend availability or source-list Apply.
+
+Native commands require a read-only idempotency check. Input object schemas are
+recursively closed, including nested objects. Optional `removeSteps` declare
+exact removal; omission does not authorize an inferred inverse or data deletion.
+
+In the 0.3 development contract, a Linux systemd user manager can retain old
+supplementary groups after an account membership change. Check its actual
+process credentials rather than only whether its unit is active:
+
+```ts
+{
+  id: 'refresh-daemon-manager',
+  kind: 'command',
+  executable: 'systemctl',
+  args: ['restart', '--', 'user@1000.service'],
+  check: { kind: 'userManagerGroups', username: 'happier' },
+}
+```
+
+Use the reviewed account's actual UID in the unit name. The check compares the
+active manager's UID, primary GID and supplementary groups with the account's
+current native membership. Missing or ambiguous process facts refuse Apply.
+This requires a host supporting this check; older strict recipe readers reject
+it. Restarting the manager can interrupt its sessions, including the requesting
+daemon. A lost result is unknown, not permission to replay effects or proof of
+effective isolation.
+
+For journal access, a group step can require
+`{ kind: 'journalReadGroup', group: { kind: 'input', path: 'journalGroup' } }`
+and bind its `name` to that same reviewed input. Use `existingOnly: true` to
+require an existing group. The host verifies the actual system-journal GID and
+effective ACL route, including directory traversal; a familiar group name or
+its existence is insufficient. The bundled `journal-reader` recipe names only
+`happier`, never the agent, and discloses access to every system log. Declared
+`group` removal with `state: 'absent'` revokes the listed supplementary
+memberships without deleting the group or journal data. Changed membership
+still requires a supervised daemon restart and effective journal-read proof;
+these declarations and prerequisite checks do not establish that live lifecycle.
+
+Bundled setup Presets use the same `MachineSetupV1` setup part as Account/Team
+Presets, with ordered setup/software/app intent. They have no creation or
+controller fields and need no synthetic managed-Machine record. Saving or
+declaring one performs no Machine effects. Arbitrary setup scripts remain a
+separately reviewed ordered `setup.scripts` list; each entry has its exact `body`
+and optional `affects` and `check`. Execution uses the existing platform shell
+under daemon-user admission. Recipes may instead declare a `script` step in
+`steps` or `removeSteps` with `shell: 'sh' | 'bash'`, exact `body`, optional
+`check: { body, unsatisfiedExitCodes }` and optional `affects`. These literal
+bodies and checks appear in the same Plan and digest and run through the existing
+administrator interpreter after ordinary approval. A successful check skips
+the body; a declared unsatisfied exit runs and verifies it. An unchecked body
+runs on every Apply and completes on successful exit. POSIX script steps are
+unsupported on Windows. Script checks do not establish removal ownership: the
+existing native installation footprint must prove initial absence. This is an
+unreleased 0.3 development contract. New `setup.scripts` writes use the
+list. Retained single-script records read as a list of one without changing the
+stored row. Capturing a Machine's setup copies every script verbatim in source
+attachment order, including empty bodies; it does not concatenate scripts.
+Bootstrap enrollment remains host orchestration rather than a serialized recipe
+language.
+
+The maintained public-authoring example exports `machineSetupAuthoring` with
+this declaration. Its installed-author conformance test reads software options
+from the installed projection, prepares the exact bundled Preset through
+`machines.setup.plan`, and passes that expanded plan to the host interpreter.
+It checks a no-op reapply and unavailable-revision refusal. This in-process
+proof does not establish the full attached-Preset Apply flow or live native
+platform support. Descriptor browsing must not launch native package checks.
+
+## Backup destination declarations (0.3 development source)
+
+A destination describes storage access through the existing manifest catalog.
+Declare it with `definePlugin({ backupDestinations: { repository: descriptor } })`;
+the host supplies its local id. There is no destination runtime registration:
+the plugin declares and registers the referenced Actions through the ordinary
+Action ABI.
+
+`BackupDestinationContributionV1` is exported from the SDK root. For example:
+
+```ts
+import type { BackupDestinationContributionV1 } from '@happier-dev/plugin-sdk';
+
+const descriptor = {
+  id: 'repository',
+  title: 'Object storage',
+  configSchema: {
+    type: 'object',
+    properties: { endpoint: { type: 'string' }, bucket: { type: 'string' } },
+    required: ['endpoint', 'bucket'],
+    additionalProperties: false,
+  },
+  credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'],
+  resticTransport: 's3',
+  locality: 'unknown',
+  actions: {
+    test: { pluginId: 'com.example.backups', localId: 'destination/test' },
+    open: { pluginId: 'com.example.backups', localId: 'destination/open' },
+  },
+} as const satisfies BackupDestinationContributionV1;
+```
+
+Configuration is nonsecret data; close nested object schemas too. Declare
+credential roles rather than embedding values in configuration or schema
+defaults. The host's admitted binding/custody owner retains credential access.
+Open uses a qualified contributed Action. Test accepts either a qualified
+contributed Action or `{ kind: 'hostAction', actionId: 'deployments.backups.test' }`
+for the host's read-only repository probe. The descriptor has no cleanup callback,
+backup engine or scheduler.
+
+An authored test Action owns its probe and reports any cleanup failure within
+that invocation. In 0.3 development source, declare open as a
+read-only Action on the `plugin` surface. Its input is `{ config, credentialRoles }`;
+its result uses the SDK root's `BackupDestinationOpenV1ProtocolSchema`:
+`{ repository, credentialBindings, s3?: { region?, addressing? } }`.
+Binding identities have `purpose: 'backupDestination'`, `configKey: 'destination'`
+and a declared role; they contain no credential bytes or executable commands.
+The host opens the configured destination through this Action and retains the
+exact Environment credential custody. The first-party S3 descriptor selects the
+native `deployments.backups.test` Action. Invoke it through the ordinary Action
+executor with the exact saved Environment, target, deployment and configuration
+revision operands. It reads the repository configuration through the existing
+restic 0.19.1 runner and Environment credential bindings. The result reports
+`reachable` or `failed`, with a typed remedy and native exit code when available;
+credential values and native output are never returned. It takes no backup and
+does not establish write access, durability or restore integrity. Other native
+transport and backup configuration lifecycles are not supported yet.
+
+Use the read-only `deployments.backups.history` Action with the same exact target
+operands to read retained operation facts, including failed attempts, pruned
+snapshot ids and the last verification. It does not open the repository. This
+history follows the existing operation retention and is not a permanent audit log.
+
+Local repositories declare `locality: 'local'` and remain same-disk/local recovery,
+not off-site protection. Other destinations can declare `unknown` or `offHost`;
+an off-host claim requires proof from the admitted configuration, never the
+transport name alone. Off-host does not promise durability or a verified restore.
+
+Current source projects these declarations through the existing CLI/UI family
+and occurrence-currentness paths. Check the generated availability matrix for the
+published SDK/host you target; older strict hosts refuse an unsupported family.
+Use the existing engine/toolchain compatibility admission for the new family;
+do not strip it before passing a manifest to an older parser. Package SemVer and
+host protocol compatibility remain separate contracts; see
+[Versioning and compatibility](/plugins/packaging/versioning-compat).
+
+The maintained `backupDestinationAuthoring` companion in
+`packages/plugin-sdk/examples/public-authoring/index.ts` uses public SDK exports
+to declare one external destination and bind its two ordinary Actions. Both
+return an example-owned unavailable result, with no storage access, credential
+bytes or command output. It proves the authoring shape, not a working native
+transport. Its README describes that boundary, and source conformance tests
+exercise the declaration and Action binding. The smaller typed
+descriptor fixture remains in
+`packages/plugin-sdk/fixtures/external-targeted-packages/backup-destination-descriptor.ts`.
 
 ## Language servers in development
 
@@ -108,6 +634,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 export const { manifest, activate } = definePlugin({
   id: 'com.example.typescript-language',
   version: '1.0.0',
+  entrypoints: { daemon: './dist/index.js' },
   languageServers: {
     typescript: {
       title: 'TypeScript',
@@ -195,6 +722,18 @@ support facts. These source contracts are not a published-runtime guarantee.
 
 ## Typed inputs in development
 
+In **0.3 development authoring**, an Action field can request the existing Saved
+Secret picker with `inputType: { hostType: 'savedSecretReference' }` and
+`widget: 'select'`. Its selected JSON value is exactly
+`{ ref: 'happier:shared-secret:v1:<resource-id>', resourceRevision: <positive-integer> }`.
+The picker reads catalog metadata, not secret bodies. Dismissal or a retired
+Account cancels selection; personal ids, plaintext and pending `person_selects`
+values are not selections. Selecting a reference neither grants access nor
+applies a deployment binding: those operations still require their canonical
+Action and approval flow. See the SDK's `examples/public-authoring/inputTypes.ts`
+for a typed field declaration. This source authoring contract does not certify
+the deployment binding journey in a published runtime.
+
 In **0.3 development / Developer Preview authoring**, `inputTypes` declares
 reusable primitive or semantic inputs for Action forms, Workflow inputs and
 widgets. Each plugin-local descriptor has a `title`, `semantic` identity and
@@ -216,6 +755,24 @@ inputs retain their existing exclusion between a type and an explicit source or
 enum, and public plugin Action hints still reject arbitrary `optionsSourceId`.
 Choice discovery
 still requires the admitted consuming descriptor and its existing grants.
+
+In **0.3 development authoring**, a dynamic options Resource receives the
+existing `action.options.resolve` request operands in `options.query`: its
+`draftInput`, `fieldPath`, search `query` and optional `cursor`. Read the partial
+draft to select dependent account, product or project choices; it is input, not
+credential authority. Keep credential acquisition in an ordinary declared
+read-only Action invoked with `options.readAction`. Headless discovery uses a
+`global` Resource, or a `session` Resource when the operation needs a Session;
+it does not fabricate a mounted surface.
+
+The Resource may return JSON containing an options array or
+`{ options, nextCursor? }`. Each option still passes the input type's value
+schema. The host returns `nextCursor` through the same options Action; pass it
+as `cursor` to continue. Query-bearing reads have a finite callback lifetime,
+are cancelled with their request and do not share or publish the Resource's
+ordinary global or Session snapshot. See
+[`examples/public-authoring/inputTypes.ts`](https://github.com/happier-dev/happier/blob/dev/packages/plugin-sdk/examples/public-authoring/inputTypes.ts)
+for a request-aware options producer.
 
 Fields share one input-hints contract. Keep `title` as a short noun, such as
 `Repository`, and optionally declare `prompt: 'Which repository?'` for the
@@ -333,12 +890,37 @@ Settings, UI surfaces, managed dependencies, notification categories, agent runt
 ### Registry sources in development
 
 In **0.3 development / Developer Preview authoring**, `definePlugin` accepts a
-`registrySources` record keyed by plugin-local id. Each declaration supplies a
+`registrySources` record keyed by plugin-local id. Remote declarations supply a
 `title`, credential-free HTTPS `url`, `format`, and nonempty, format-compatible
-`kinds` array.
-Formats are `git`, `claude-marketplace`, `mcp-registry`, `acp-registry`, or
-`happier-catalog`; item kinds are `skill`, `mcpServer`, `agent`, or `plugin`.
-Git declarations may additionally select `path` and `ref`.
+`kinds` array. Git declarations may additionally select `path` and `ref`.
+Existing formats remain `git`, `claude-marketplace`, `mcp-registry`,
+`acp-registry`, and `happier-catalog`, with their supported `skill`,
+`mcpServer`, `agent`, and `plugin` kinds.
+The development `app` kind uses `happier-catalog`, `coolify-templates`, or
+`dokploy-templates`; the two imported template formats support apps only.
+
+An app catalog can instead ship as inert package data:
+
+```ts
+registrySources: {
+  apps: {
+    title: 'Packaged apps',
+    format: 'happier-catalog',
+    kinds: ['app'],
+    packageContent: { path: 'resources/apps.json' },
+  },
+},
+```
+
+The file contains `{schemaVersion: 1, apps: [{itemId, app}]}`; `app` is the
+strict normalized deployment template descriptor. See the maintained
+`appRegistrySourceAuthoring` example in the public SDK conformance companion.
+The path must stay within the package. This arm has no URL, token, Git ref,
+or resolver callback. The host reads through the installed supplier, binds
+the plugin version and current occurrence, and records the selected descriptor's
+content digest. Listing projects summaries; selection validates the descriptor.
+Disabling or removing the supplier withdraws future reads. These are unreleased
+0.3 source contracts, not a claim of support in an installed release.
 
 These are descriptors, not executable adapters: there is no activation callback
 or registry registration API. The host projects admitted declarations through

@@ -34,6 +34,7 @@ import { AutomationSourceSelectorIdV1Schema } from '../../automations/automation
 import { DeploymentEnvironmentHeaderV1Schema } from '../../deployments/deploymentActionsV1.js';
 
 import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
+import { createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -217,6 +218,84 @@ function fixture(savedDefinition = definition) {
 }
 
 describe('trigger source display provenance', () => {
+  it.each(['input', 'literal'] as const)('reads missed schedules for backup targets bound from saved %s loop items', async kind => {
+    const target = { serverId: 'home', environmentId: 'env', machineId: project.machineId,
+      installationId: 'installation', targetLinkId: 'runtime', deploymentId: 'deployment', configRevision: 1 };
+    const targets = [{ ...target, expectedRevision: 4 }, { ...target, deploymentId: 'second', expectedRevision: 4 }];
+    const loop = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {},
+      inputs: [{ name: 'targets', valueType: 'json', required: true }], blocks: [{ kind: 'loop', id: 'eachBackup',
+        repetition: { kind: 'items', items: kind === 'input' ? { kind: 'input', name: 'targets' }
+          : { kind: 'literal', value: targets }, execution: 'sequential', failurePolicy: 'fail_stop' },
+        body: [{ kind: 'action', id: 'backup', actionId: 'deployments.backups.run',
+          input: Object.fromEntries(Object.keys(targets[0]!).map(key => [key, { kind: 'item', field: 'value', path: [key] }])) }] }] });
+    const f = fixture(loop);
+    const saved = await f.actions.add({ workflow, project, inputs: { targets }, trigger });
+    const executor = f.executor(f.actions);
+    for (const deploymentId of ['deployment', 'second']) {
+      expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId } }, ownCaller))
+        .toMatchObject({ ok: true, result: { sets: [{ automationId: saved.set.automationId }] } });
+    }
+  });
+  it('reads missed schedules for saved and inline backups by the actual bound backup Action target', async () => {
+    const nightly = createNightlyBackupsWorkflowV1();
+    const f = fixture(nightly);
+    const target = { serverId: 'home', environmentId: 'env', machineId: project.machineId,
+      installationId: 'installation', targetLinkId: 'runtime', deploymentId: 'deployment', configRevision: 1 };
+    const inputs = { backupTarget: { ...target, expectedRevision: 4 }, retention: { kind: 'keep', last: 7 },
+      verificationLevel: 'manifestReadBack' };
+    const saved = await f.actions.add({ workflow, project, inputs, trigger });
+    const inline = await f.actions.add({ target: { kind: 'inline', definition: nightly }, project,
+      inputs: { ...inputs, backupTarget: { ...inputs.backupTarget, deploymentId: 'other' } }, trigger });
+    await f.actions.add({ target: { kind: 'inline', definition: { ...definition,
+      inputs: nightly.inputs } }, project, inputs, trigger });
+    const executor = f.executor(f.actions);
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackup: target }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: saved.set.automationId }] } });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId: 'other' } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: inline.set.automationId }] } });
+    for (const key of ['environmentId', 'machineId', 'installationId', 'targetLinkId', 'deploymentId', 'configRevision'] as const) {
+      expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target,
+        [key]: key === 'configRevision' ? 2 : 'unrelated' } }, ownCaller))
+        .toMatchObject({ ok: true, result: { sets: [] } });
+    }
+    const nested = await f.actions.add({ target: { kind: 'inline', definition: { version: 1,
+      defaults: {}, inputs: nightly.inputs, blocks: [{ kind: 'workflow', id: 'savedBackup', workflowRef: workflow,
+        input: Object.fromEntries(nightly.inputs.map(field => [field.name, { kind: 'input' as const, name: field.name }])) }] } },
+      project, inputs: { ...inputs, backupTarget: { ...inputs.backupTarget, deploymentId: 'nested' } }, trigger });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId: 'nested' } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: nested.set.automationId }] } });
+  });
+
+  it('reads missed schedules from the saved due cursor and actual last started Run through the Action executor', async () => {
+    const f = fixture();
+    const added = await f.actions.add({ target: { kind: 'inline', definition }, project, trigger });
+    const row = f.rows.get(added.set.automationId)!;
+    const schedule = row.triggers.find(item => item.kind === 'schedule')!;
+    if (schedule.kind !== 'schedule') throw new Error('Expected a saved schedule');
+    const dueAt = Date.now() - 60_000;
+    f.rows.set(row.id, { ...row, lastRunAt: dueAt - 1,
+      triggers: [{ ...schedule, nextRunAt: dueAt }] });
+    const executor = f.executor(f.actions);
+    const read = () => executor.execute('workflow.trigger.list', { scope: 'account_inline' }, ownCaller);
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [{
+      triggerId: schedule.id, dueAt, lastRunAt: dueAt - 1,
+    }] }] } });
+    f.rows.set(row.id, { ...f.rows.get(row.id)!, lastRunAt: dueAt });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    f.rows.set(row.id, { ...f.rows.get(row.id)!, lastRunAt: null,
+      triggers: [{ ...schedule, nextRunAt: dueAt, enabled: false }] });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    f.rows.set(row.id, { ...f.rows.get(row.id)!,
+      triggers: [{ ...schedule, nextRunAt: Date.now() + 86_400_000 }] });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    f.rows.set(row.id, { ...f.rows.get(row.id)!,
+      triggers: [{ ...schedule, nextRunAt: dueAt }] });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [{
+      triggerId: schedule.id, dueAt, lastRunAt: null,
+    }] }] } });
+    f.rows.set(row.id, { ...f.rows.get(row.id)!, enabled: false });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+  });
   it('carries the Account Workflow name and ordering fact from the admitted record', async () => {
     const f = fixture();
     const added = await f.actions.add({ target: { kind: 'inline', definition }, project, trigger });

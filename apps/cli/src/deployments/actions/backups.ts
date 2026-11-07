@@ -1,6 +1,5 @@
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import {
-    DeploymentBackupRunResultV1Schema, DeploymentBackupVerifyResultV1Schema,
     DeploymentBackupRestoreResultV1Schema, DeploymentBackupActionResultSchemasV1,
     type DeploymentBackupActionIdV1, type DeploymentBackupActionInputV1,
     type DeploymentBackupActionResultV1,
@@ -13,6 +12,10 @@ import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/d
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { OwnServerDeploymentTargetForHost } from '../targets/ownServer/ownServerDeploymentTarget';
 import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/restorePreparation';
+import { projectDeploymentBackupHistory } from './backupHistory';
+import { isDeploymentBackupReadActionIdV1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1,
+    DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
+    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const failure = (code: string, step: string): ActionExecuteFailure => ({
     ok: false, errorCode: code, error: code, details: { step, code },
@@ -32,46 +35,8 @@ export function createDeploymentBackupRecordedHealthForHost(host: Readonly<{
         if (input.machineId !== host.machineId) return failure('service_operation_unavailable', 'capture');
         const operations = await host.readBackupOperations?.(input, context);
         if (!operations) return failure('service_operation_unavailable', 'capture');
-        const completed = operations.filter(({ snapshot }) => snapshot.settledAt !== undefined)
-            .sort((a, b) => b.snapshot.settledAt! - a.snapshot.settledAt!);
-        const captures = completed.flatMap(({ snapshot }) => {
-            if (snapshot.actionId !== 'deployments.backups.run' || snapshot.state !== 'succeeded') return [];
-            const result = DeploymentBackupRunResultV1Schema.safeParse(snapshot.result);
-            return result.success && result.data.operationId === snapshot.operationId
-                ? [{ snapshot, manifests: result.data.manifests }] : [];
-        });
+        const { backups, captures, verifications } = projectDeploymentBackupHistory(operations);
         const latestBackup = captures[0];
-        const verifications = completed.flatMap(({ snapshot, input: authoredInput }) => {
-            if (snapshot.actionId !== 'deployments.backups.verify' || !('backupOperationId' in authoredInput)
-                || !('level' in authoredInput)) return [];
-            const result = DeploymentBackupVerifyResultV1Schema.safeParse(snapshot.result);
-            const verified = snapshot.state === 'succeeded' && result.success
-                && result.data.operationId === snapshot.operationId
-                && result.data.backupOperationId === authoredInput.backupOperationId
-                && result.data.snapshotId === authoredInput.snapshotId
-                && result.data.configRevision === authoredInput.configRevision;
-            if (!verified && snapshot.state !== 'failed' && snapshot.state !== 'cancelled') return [];
-            const capture = captures.find(item => item.snapshot.operationId === authoredInput.backupOperationId);
-            const manifest = capture?.manifests.find(item => item.snapshot.snapshotId === authoredInput.snapshotId
-                && item.configRevision === authoredInput.configRevision
-                && (!verified || result.success && item.repositoryId === result.data.repositoryId));
-            const details = snapshot.result;
-            const step = details && typeof details === 'object' && !Array.isArray(details)
-                && 'step' in details && typeof details.step === 'string' ? details.step : undefined;
-            return [{ manifest, evidence: {
-                operationId: snapshot.operationId, completedAt: snapshot.settledAt!,
-                configRevision: authoredInput.configRevision, backupOperationId: authoredInput.backupOperationId,
-                snapshotId: authoredInput.snapshotId, level: authoredInput.level,
-                result: verified ? 'verified' as const : snapshot.state === 'cancelled' ? 'cancelled' as const : 'failed' as const,
-                ...(snapshot.error ? { code: snapshot.error.errorCode } : {}), ...(step ? { step } : {}),
-            } }];
-        });
-        const backups: DeploymentBackupRecordedHealthV1['backups'] = {
-            ...(latestBackup ? { lastSuccessfulBackup: { operationId: latestBackup.snapshot.operationId,
-                completedAt: latestBackup.snapshot.settledAt!, configRevision: latestBackup.manifests[0]!.configRevision,
-                snapshotIds: latestBackup.manifests.map(manifest => manifest.snapshot.snapshotId) } } : {}),
-            ...(verifications[0] ? { lastVerification: verifications[0].evidence } : {}),
-        };
         const allVerified = configuration.sources.every(source => {
             const capture = captures.find(item => item.manifests.some(manifest => manifest.sourceId === source.sourceId
                 && manifest.kind === source.kind && manifest.configRevision === configuration.configRevision));
@@ -102,26 +67,31 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
             await host.assertCurrent(context);
             if (input.serverId !== host.serverId || input.machineId !== host.machineId
                 || readInstallationIdentityIfExistsSync()?.installationId !== input.installationId) return failure('target_mismatch', 'admission');
-            if (actionId !== 'deployments.backups.inventory' && context.operationAcceptance?.actionId !== actionId) {
+            if (!isDeploymentBackupReadActionIdV1(actionId) && context.operationAcceptance?.actionId !== actionId) {
                 return failure('service_operation_unavailable', 'admission');
             }
-            if (actionId === 'deployments.backups.run') {
+            if (actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1) {
                 const result = await host.backup({ actionId: 'deployments.backups.run', input, context });
+                return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
+            }
+            if (actionId === DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1) {
+                const result = await host.backup({ actionId: 'deployments.backups.test', input, context });
                 return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
             }
             const operations = await host.readBackupOperations?.(input, context);
             if (!operations) return failure('service_operation_unavailable', 'capture');
-            const captures = operations.flatMap(({ snapshot }) => {
-                if (snapshot.actionId !== 'deployments.backups.run' || snapshot.state !== 'succeeded') return [];
-                const parsed = DeploymentBackupRunResultV1Schema.safeParse(snapshot.result);
-                return parsed.success && parsed.data.operationId === snapshot.operationId
-                    ? parsed.data.manifests.map(manifest => ({ backupOperationId: snapshot.operationId, manifest })) : [];
-            });
-            if (actionId === 'deployments.backups.inventory') {
+            const recorded = projectDeploymentBackupHistory(operations);
+            if (actionId === DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1) {
+                return DeploymentBackupActionResultSchemasV1[actionId].parse({ kind: 'history',
+                    environmentId: input.environmentId, configRevision: input.configRevision, ...recorded.backups }) as DeploymentBackupActionResultV1<TId>;
+            }
+            const captures = recorded.captures.flatMap(({ snapshot, manifests }) => manifests
+                .map(manifest => ({ backupOperationId: snapshot.operationId, manifest })));
+            if (actionId === DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1) {
                 const result = await host.backup({ actionId: 'deployments.backups.inventory', input, context, verificationEvidence: captures });
                 return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
             }
-            if (actionId === 'deployments.backups.verify') {
+            if (actionId === DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1) {
                 // The canonical schema narrows this generic input at the Action boundary.
                 const selected = 'backupOperationId' in input && 'snapshotId' in input ? captures.find(capture =>
                     capture.backupOperationId === input.backupOperationId
@@ -133,22 +103,14 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                     level: input.level }, context, manifest: selected.manifest });
                 return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
             }
-            const verified = operations.slice().sort((a, b) => (b.snapshot.settledAt ?? 0) - (a.snapshot.settledAt ?? 0))
-                .flatMap(({ snapshot }) => {
-                    if (snapshot.actionId !== 'deployments.backups.verify' || snapshot.state !== 'succeeded') return [];
-                    const proof = DeploymentBackupVerifyResultV1Schema.safeParse(snapshot.result);
-                    if (!proof.success || proof.data.operationId !== snapshot.operationId
-                        || proof.data.configRevision !== input.configRevision) return [];
-                    const capture = captures.find(entry => entry.backupOperationId === proof.data.backupOperationId
-                        && entry.manifest.snapshot.snapshotId === proof.data.snapshotId
-                        && entry.manifest.repositoryId === proof.data.repositoryId
-                        && entry.manifest.configRevision === proof.data.configRevision);
-                    return capture ? [{ kind: 'verified' as const, level: proof.data.level, manifest: capture.manifest }] : [];
-                })[0];
+            const proof = recorded.verifications.find(item => item.evidence.result === 'verified'
+                && item.evidence.configRevision === input.configRevision && item.manifest);
+            const verified = proof?.manifest ? { kind: 'verified' as const,
+                level: proof.evidence.level, manifest: proof.manifest } : undefined;
             if (!verified || !('retention' in input)) return failure('backup_required', 'verification');
             const completedPreparations = new Set<string>();
             for (const { snapshot, input: authoredInput } of operations) {
-                if (snapshot.actionId !== 'deployments.backups.restore' || snapshot.state !== 'succeeded'
+                if (snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || snapshot.state !== 'succeeded'
                     || !('mode' in authoredInput) || authoredInput.mode !== 'confirm') continue;
                 const result = DeploymentBackupRestoreResultV1Schema.safeParse(snapshot.result);
                 if (result.success && result.data.kind === 'restored' && result.data.verified && result.data.nextAction === 'none') {
@@ -157,7 +119,7 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
             }
             const protectedSnapshotIds = new Set<string>();
             for (const { snapshot } of operations) {
-                if (snapshot.actionId !== 'deployments.backups.restore' || snapshot.state !== 'succeeded'
+                if (snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || snapshot.state !== 'succeeded'
                     || completedPreparations.has(snapshot.operationId)) continue;
                 const result = DeploymentBackupRestoreResultV1Schema.safeParse(snapshot.result);
                 if (!result.success || result.data.kind !== 'prepared') continue;
