@@ -7,8 +7,10 @@ import { Platform } from 'react-native';
 import type {
     HappierAudioStreamNativeModule,
 } from '../../../../../../packages/audio-stream-native/src/HappierAudioStreamNative.types';
-import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT, FeaturesResponseSchema,
-    MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol';
+import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT} from '@happier-dev/protocol/daemon/voiceInference';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamChunkRequestSchema,
     DaemonVoiceInferenceSttStreamStartResponseSchema, DaemonVoiceInferenceSttStreamChunkResponseSchema,
@@ -620,7 +622,9 @@ describe('createLocalVoiceCaptureOwner', () => {
         await owner.startCapture({ handsFree: true, provider: 'local_neural', sessionId: 'session-2' });
         await owner.stopCapture({ provider: 'local_neural', sessionId: 'session-2' });
         await owner.startCapture({ handsFree: false, provider: 'recorded_audio', sessionId: 'session-3' });
+        expect(owner.isCaptureActive('session-3')).toBe(true);
         await owner.stopSession();
+        expect(owner.isCaptureActive('session-3')).toBe(false);
         expect(owner.isHandsFreeCaptureSession({ provider: 'device', sessionId: 'session-1' })).toBe(false);
         expect(owner.isHandsFreeCaptureSession({ provider: 'local_neural', sessionId: 'session-2' })).toBe(false);
         expect(recording.recorder.stop).toHaveBeenCalledOnce();

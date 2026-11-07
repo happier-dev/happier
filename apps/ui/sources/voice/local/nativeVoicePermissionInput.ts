@@ -1,11 +1,11 @@
 import { t } from '@/text';
 import { randomUUID } from '@/platform/randomUUID';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { storage } from '@/sync/domains/state/storage';
 import { subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { listPendingSessionRequests, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { summarizeAgentRequestForVoiceHuman } from '@/voice/context/contextFormatters';
@@ -13,20 +13,22 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type NativeVoicePermissionInput = Readonly<{
   canAccept(): boolean;
+  beginTurn(): void;
   captureResponse(): ((text: string) => Promise<void>) | null;
   waitForResponseSettlement(): Promise<'approved' | 'denied' | null>;
   dispose(): void;
 }>;
 
-type NativePermissionPrompt = { request: SessionPendingRequest; ready: boolean };
+type NativePermissionPrompt = { address: SessionAddress; request: SessionPendingRequest; ready: boolean };
 
 /** Input for a read-out native request; the existing permission Action owns settlement. */
 export function createNativeVoicePermissionInput(params: Readonly<{
-  address: SessionAddress;
+  addresses: readonly SessionAddress[];
   signal: AbortSignal;
   readOut: (text: string, listen: boolean, isCurrent: () => boolean, onReady: () => void) => Promise<void>;
   commitTranscript: (text: string, localId: string) => Promise<void>;
   onResponding: () => void;
+  onResponseSettled: (failure: unknown | null) => Promise<void>;
 }>): NativeVoicePermissionInput {
   const execute = createFrontDoorActionExecute();
   let disposed = false;
@@ -49,61 +51,77 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   const observe = (): void => {
     if (disposed || params.signal.aborted) return;
     const state = storage.getState();
-    const session = resolveVoiceContextSessionFromState(params.address, state);
-    const requests = session
-      ? listPendingSessionRequests(session, readStoredSessionMessagesForAddress(state, params.address)).filter(request => request.kind === 'permission')
-      : [];
-    if (prompt && requests.some(request => request.id === prompt?.request.id)) return;
+    const requests = params.addresses.flatMap(address => {
+      const session = resolveVoiceContextSessionFromState(address, state);
+      return session ? listPendingSessionRequests(session, readStoredSessionMessagesForAddress(state, address))
+        .filter(request => request.kind === 'permission').map(request => ({ address, request })) : [];
+    });
+    const currentPrompt = prompt;
+    if (currentPrompt && requests.some(({ address, request }) => request.id === currentPrompt.request.id
+      && areSessionAddressesEqual(address, currentPrompt.address))) return;
     prompt = null;
     if (reading) return;
-    const request = requests[0];
-    if (!request) return;
-    const prefs = getVoiceContextFormatterPrefs({ settings: state.settings, sessionAddress: params.address,
-      sessionId: params.address.sessionId, isCurrentAttemptTarget: true });
+    const entry = requests[0];
+    if (!entry) return;
+    const { address, request } = entry;
+    const prefs = getVoiceContextFormatterPrefs({ settings: state.settings, sessionAddress: address,
+      sessionId: address.sessionId, isCurrentAttemptTarget: true });
     if (!prefs.voiceSharePermissionRequests) return;
-    const selected = prompt = { request, ready: false };
+    const selected = prompt = { address, request, ready: false };
     const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs);
     const listen = prefs.voiceCanApproveRequests;
     fireAndForget(readPrompt(selected, `${summary} ${listen ? question() : t('voice.readiness.permissionTapRequired')}`, listen),
       { tag: 'voice.nativePermission.readOut' });
   };
   const unsubscribe = subscribeRegisteredStorageState(observe, {
-    sessions: [params.address.sessionId], sessionMessages: [params.address.sessionId],
+    sessions: params.addresses.map(address => address.sessionId),
+    sessionMessages: params.addresses.map(address => address.sessionId),
   });
+  const dispose = () => {
+    disposed = true;
+    prompt = null;
+    unsubscribe?.();
+    params.signal.removeEventListener('abort', dispose);
+  };
+  params.signal.addEventListener('abort', dispose, { once: true });
   observe();
   return {
     canAccept: () => !disposed && !params.signal.aborted && prompt?.ready === true,
+    beginTurn: () => { responseSettlement = Promise.resolve(null); },
     captureResponse() {
       const selected = prompt;
       if (disposed || params.signal.aborted || !selected?.ready) return null;
       selected.ready = false;
       return async (text: string): Promise<void> => {
-        if (disposed || params.signal.aborted || prompt !== selected) return;
-        if (text.trim()) await params.commitTranscript(text, randomUUID());
-        if (disposed || params.signal.aborted || prompt !== selected) return;
-        const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[.!?。！？]+$/u, '').trim();
-        const answer = normalize(text);
-        const decision = answer === normalize(t('common.yes')) || answer === 'yes'
-          ? 'approved' : answer === normalize(t('common.no')) || answer === 'no' ? 'denied' : null;
-        if (!decision) {
-          await readPrompt(selected, question(), true);
+        try {
+          if (disposed || params.signal.aborted || prompt !== selected) return;
+          if (text.trim()) await params.commitTranscript(text, randomUUID());
+          if (disposed || params.signal.aborted || prompt !== selected) return;
+          const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[.!?。！？]+$/u, '').trim();
+          const answer = normalize(text);
+          const decision = answer === normalize(t('common.yes')) || answer === 'yes'
+            ? 'approved' : answer === normalize(t('common.no')) || answer === 'no' ? 'denied' : null;
+          if (!decision) {
+            await readPrompt(selected, question(), true);
+            return;
+          }
+          params.onResponding();
+          const responding = execute('session.permission.respond', {
+            sessionId: selected.address.sessionId, requestId: selected.request.id,
+            ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), decision,
+          }, { surface: 'voice', serverId: selected.address.serverId, signal: params.signal });
+          // The native turn can finish before the permission RPC acknowledges.
+          // Report the Action's settled decision to the turn lifecycle owner.
+          responseSettlement = responding.then(result => result.ok ? decision : null, () => null);
+          requireActionSuccess(await responding);
+        } catch (error) {
+          if (!disposed && !params.signal.aborted) await params.onResponseSettled(error);
           return;
         }
-        params.onResponding();
-        const responding = execute('session.permission.respond', {
-          sessionId: params.address.sessionId, requestId: selected.request.id,
-          ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), decision,
-        }, { surface: 'voice', serverId: params.address.serverId, signal: params.signal });
-        // The native turn can finish before the permission RPC acknowledges.
-        // Report the Action's settled decision to the turn lifecycle owner.
-        responseSettlement = responding.then(result => result.ok ? decision : null, () => null);
-        const result = await responding;
-        if (!result.ok && !disposed && !params.signal.aborted) {
-          await readPrompt(selected, t('voice.readiness.permissionTapRequired'), false);
-        }
+        if (!disposed && !params.signal.aborted) await params.onResponseSettled(null);
       };
     },
     waitForResponseSettlement: () => responseSettlement,
-    dispose() { disposed = true; prompt = null; unsubscribe?.(); },
+    dispose,
   };
 }

@@ -18,6 +18,11 @@ describe('native Voice permission input', () => {
   it.each([
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
     { label: 'No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false },
+    { label: 'delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true },
+    { label: 'delegated No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true },
+    { label: 'delegated Yes after the carrier turn settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'delegated No after the carrier turn settles', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'a failed delegated response', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, responseFailure: true },
     { label: 'No followed by native execution rejection', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, turnError: 'claude_error_during_execution', continues: true },
     { label: 'End after No before native execution rejection', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, turnError: 'claude_error_during_execution', endAfterResponse: true },
     { label: 'Yes followed by native execution rejection', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, turnError: 'claude_error_during_execution', continues: false },
@@ -30,7 +35,7 @@ describe('native Voice permission input', () => {
     { label: 'an empty transcript', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native self-permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -74,6 +79,7 @@ describe('native Voice permission input', () => {
         }
       }
       if (request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND) {
+        if (responseFailure) throw Object.assign(new Error('Permission transport unavailable'), { rpcErrorCode: 'target_unavailable' });
         // Publish the daemon's answered-request update as well as its RPC result.
         const carrier = storage.getState().sessions[request.sessionId]!;
         const pending = carrier.agentState!.requests!['native-write'];
@@ -149,15 +155,21 @@ describe('native Voice permission input', () => {
         return;
       }
       const carrierId = binding.conversationSessionAddress.sessionId;
-      const carrier = storage.getState().sessions[carrierId]!;
+      const requestSessionId = delegated ? target.sessionId : carrierId;
+      if (carrierSettled) {
+        waiting.resolve();
+        await submitted;
+      }
+      const precedingSpeechCount = expoSpeechSpeak.mock.calls.length;
+      const carrier = storage.getState().sessions[requestSessionId]!;
       storage.getState().applySessions([{
         ...carrier, active: true, agentStateVersion: (carrier.agentStateVersion ?? 0) + 1,
         updatedAt: Math.max(Date.now(), carrier.updatedAt + 1),
         agentState: { requests: { 'native-write': { tool: 'Write', arguments: { file_path: '/tmp/native-voice-test' }, createdAt: Date.now() } } },
       }]);
       // A tap-only projection leaves the original turn Thinking and never speaks.
-      await waitForLocalVoiceBoundaryEvent('speech');
-      expect(expoSpeechSpeak.mock.calls[0]?.[0]).toContain('permission');
+      await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
+      expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
       if (!enabled) {
         expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
           .toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable' });
@@ -176,6 +188,14 @@ describe('native Voice permission input', () => {
         expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected' });
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         return;
+      }
+      if (carrierSettled) {
+        // The original turn consumed its recording; the OS returns a fresh
+        // artifact for the permission answer captured after that turn.
+        const { File } = await import('expo-file-system');
+        const responseUri = 'file:///tmp/native-voice-permission-answer.m4a';
+        new File(responseUri).write(new Uint8Array([1, 2, 3]));
+        setRecorderUri(responseUri);
       }
       const response = executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} });
       if (replaceRequest) {
@@ -200,6 +220,16 @@ describe('native Voice permission input', () => {
         asrHeld.resolve(answer);
       }
       expect(await response).toMatchObject({ status: 'completed' });
+      if (responseFailure) {
+        await submitted;
+        const { t } = await import('@/text');
+        expect(expoSpeechSpeak.mock.calls.at(-1)?.[0]).toBe(`${t('approvals.decisionError')} ${t('voice.readiness.permissionTapRequired')}`);
+        expect(storage.getState().sessions[requestSessionId]?.agentState?.requests?.['native-write']).toBeDefined();
+        expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL)).toBe(true);
+        waiting.resolve();
+        await expectNextCommitAccepted();
+        return;
+      }
       if (endAfterResponse) {
         expect(await executeVoiceConversationAction('ui.voice_global.end', { expectedAttempt }, { navigate() {} }))
           .toMatchObject({ status: 'completed' });
@@ -219,7 +249,7 @@ describe('native Voice permission input', () => {
       }
       const originalResult = await submitted;
       expect(sessionRpcWithServerScope.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
-        sessionId: carrierId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
+        sessionId: requestSessionId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: expect.objectContaining({ id: 'native-write', approved }),
       }));
       if (continues === false) {

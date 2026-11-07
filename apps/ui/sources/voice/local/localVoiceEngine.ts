@@ -3,7 +3,7 @@ import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -798,6 +798,7 @@ async function startLocalVoiceCapture(args: Readonly<{
     }
   } else {
     beginAutomaticCurrentUiContextUpdates(args.sessionId);
+    startNativePermissionInput(admission, captureAttempt);
   }
 
   if (captureAttempt.provider !== 'recorded_audio' || !startError) {
@@ -870,6 +871,60 @@ async function readNativeTurnMessage(
   });
 }
 
+async function resumeNativeVoiceListening(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+): Promise<void> {
+  const sessionId = captureAttempt.controlSessionId;
+  if (!isCaptureAttemptCurrent(admission, captureAttempt)
+    || getCurrentLocalRuntimeCompatState().status !== 'idle'
+    || voiceConversationRuntimeMachine.getSnapshot().error) return;
+  if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
+    // Keep duplex input which may already contain the next utterance.
+    voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: sessionId });
+  } else if (voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId })?.transcriptMode === 'native_session') {
+    await voiceConversationRuntimeMachine.rearmListening({
+      controlSessionId: sessionId,
+      startListening: signal => startCaptureForAdmission(admission, captureAttempt, signal),
+    });
+  }
+}
+
+function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captureAttempt: LocalVoiceCaptureAttempt): void {
+  const sessionId = captureAttempt.controlSessionId;
+  const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId });
+  activeNativePermissionInput?.dispose();
+  activeNativePermissionInput = null;
+  if (binding?.transcriptMode !== 'native_session') return;
+  activeNativePermissionInput = createNativeVoicePermissionInput({
+    addresses: [binding.conversationSessionAddress,
+      ...(binding.targetSessionAddress && !areSessionAddressesEqual(binding.conversationSessionAddress, binding.targetSessionAddress)
+        ? [binding.targetSessionAddress] : [])],
+    signal: admission.captureAbortController.signal,
+    readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
+    commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),
+    onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
+    onResponseSettled: async failure => {
+      const pendingTurn = activeTurnAbortSessionId === sessionId ? inFlight : null;
+      if (failure && pendingTurn) {
+        activeTurnAbortController?.abort();
+        await pendingTurn.catch(() => {});
+      }
+      if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+      if (failure) {
+        recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', readSafeVoiceRuntimeFailureCode(failure));
+        await readNativeTurnMessage(admission, captureAttempt,
+          `${t('approvals.decisionError')} ${t('voice.readiness.permissionTapRequired')}`, false, () => true, () => {});
+      }
+      if (failure || !pendingTurn) {
+        if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+        transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+        await resumeNativeVoiceListening(admission, captureAttempt);
+      }
+    },
+  });
+}
+
 async function runVoiceTurnWithSendFailureHandling(
   sessionId: string,
   runner: (signal: AbortSignal) => Promise<void>,
@@ -877,7 +932,8 @@ async function runVoiceTurnWithSendFailureHandling(
   const admission = readCaptureAdmission(sessionId);
   const captureAttempt = admission?.captureAttempt;
   let startsPlaybackCapture = false;
-  let permissionInput: NativeVoicePermissionInput | null = null;
+  const permissionInput = activeNativePermissionInput;
+  permissionInput?.beginTurn();
   try {
     const ttsSettings = admission
       ? parseLocalVoiceTtsSettings(resolveLocalVoiceAdapterSettings(admission.captureAttempt.settings).config?.tts)
@@ -891,16 +947,6 @@ async function runVoiceTurnWithSendFailureHandling(
       if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
     }
     const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId });
-    if (admission && captureAttempt && binding?.transcriptMode === 'native_session') {
-      permissionInput = createNativeVoicePermissionInput({
-        address: binding.conversationSessionAddress,
-        signal: admission.captureAbortController.signal,
-        readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
-        commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),
-        onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
-      });
-      activeNativePermissionInput = permissionInput;
-    }
     try {
       await runAbortableVoiceTurn(sessionId, runner);
     } catch (error) {
@@ -918,22 +964,7 @@ async function runVoiceTurnWithSendFailureHandling(
       recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code);
     }
     beginAutomaticCurrentUiContextUpdates(sessionId);
-    if (admission && captureAttempt
-      && isCaptureAttemptCurrent(admission, captureAttempt)
-      && getCurrentLocalRuntimeCompatState().status === 'idle'
-      && !voiceConversationRuntimeMachine.getSnapshot().error) {
-      if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
-        // Keep duplex input which may already contain the next utterance.
-        voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: sessionId });
-      } else if (binding?.transcriptMode === 'native_session') {
-        // A native turn, including its spoken permission response, consumed
-        // capture. The connected conversation must accept its next utterance.
-        await voiceConversationRuntimeMachine.rearmListening({
-          controlSessionId: sessionId,
-          startListening: signal => startCaptureForAdmission(admission, captureAttempt, signal),
-        });
-      }
-    }
+    if (admission && captureAttempt) await resumeNativeVoiceListening(admission, captureAttempt);
   } catch (error) {
     if (isAbortedVoiceTurnError(error)) {
       return;
@@ -957,9 +988,6 @@ async function runVoiceTurnWithSendFailureHandling(
       cause: error,
     });
     throw error;
-  } finally {
-    permissionInput?.dispose();
-    if (activeNativePermissionInput === permissionInput) activeNativePermissionInput = null;
   }
 }
 

@@ -63,7 +63,7 @@ export type StopLocalVoiceCaptureResult =
     | Readonly<{ provider: 'device' | 'local_neural'; text: string; continueHandsFree: boolean }>;
 
 export type LocalVoiceCaptureOwner = Readonly<{
-    /** Whether the session still has its endpoint-driven STT producer. */
+    /** Whether the session still owns active microphone input. */
     isCaptureActive: (sessionId: string) => boolean;
     resolveManualBargeInAction: (args: Readonly<{
         bargeInEnabled: boolean;
@@ -901,6 +901,8 @@ export function createLocalVoiceCaptureOwner(
                     ) {
                         if (recordingMicSession === micSession) recordingMicSession = null;
                         await teardownMicSessionOnce(micSession);
+                    } else {
+                        activeCaptureStarted = true;
                     }
                 }
                 }
