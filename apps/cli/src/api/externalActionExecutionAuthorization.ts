@@ -1341,6 +1341,11 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
       value: requesterAccountProjection, enumerable: false,
     });
   }
+  if (input.authorization.requesterAccountExecutor) {
+    Object.defineProperty(authorization, 'requesterAccountExecutor', {
+      value: input.authorization.requesterAccountExecutor, enumerable: false,
+    });
+  }
   const requesterHttpProjection: ExternalActionRequesterHttpProjectionV1 = {
     accountId: authorization.binding.accountId,
     serverId: input.serverId,
