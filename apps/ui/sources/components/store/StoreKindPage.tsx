@@ -93,24 +93,24 @@ export function StoreKindPage(
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
   return <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
     <KindQuery {...props} demand={demand} curation={curation.curation} curationComplete={complete}
-      curationPending={curation.loading && !curation.hasValue} />
+      curationRead={curation.layout} />
   }</StoreDiscover>;
 }
 
-/** Reads only the admitted pages and their completeness: other curation publications leave the page still. */
+/** Reads admitted editorial pages and their stable layout state; other catalog publications leave the page still. */
 const KindQuery = React.memo(function KindQuery(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean;
-  demand: Readonly<{ presented: boolean }>; curation: RegistryCuration['curation']; curationComplete: boolean; curationPending: boolean }>) {
+  demand: Readonly<{ presented: boolean }>; curation: RegistryCuration['curation']; curationComplete: boolean; curationRead: RegistryCuration['layout'] }>) {
   const fields = useStoreFilterFields(props.curation, props.presented);
   return <StoreQueryDirectory kind={props.kind} demand={props.demand} fields={fields}
     curation={props.curation} curationComplete={props.curationComplete}
     unavailable={<StoreDirectoryUnavailable view="kind" kind={props.kind} />}>
     {state => <KindResults kind={props.kind} presented={props.presented} state={state} curation={props.curation}
-      curationPending={props.curationPending} />}
+      curationRead={props.curationRead} />}
   </StoreQueryDirectory>;
 });
 
 function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean; state: StoreSearchState;
-  curation: RegistryCuration['curation']; curationPending: boolean }>) {
+  curation: RegistryCuration['curation']; curationRead: RegistryCuration['layout'] }>) {
   const { state } = props;
   const { filter } = state;
   const source = filter.filters.source;
@@ -137,10 +137,11 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     </StoreKindFrame>
     </StoreRegistryIdentityProvider>
   );
-  // The same curation supplies every section's order. Hold only its first read; a refresh keeps the admitted layout.
-  if (props.curationPending && props.kind !== 'provider') return frame(
-    <SkeletonRows testID={`store.kind.${props.kind}.loading`} rows={5} accessibilityLabel={t('common.loading')} />,
-  );
+  // Recovery is another arrival: browsing stays held until its editorial positions are known.
+  // A failed cold read gets the same retry state as any unavailable directory; admitted layouts stay readable.
+  if (browsing && !props.curationRead.hasValue && props.kind !== 'provider') return frame(props.curationRead.loading
+    ? <SkeletonRows testID={`store.kind.${props.kind}.loading`} rows={5} accessibilityLabel={t('common.loading')} />
+    : <Directory kind={props.kind} rows={[]} groups={[]} list={{ ...props.curationRead, hasNextPage: false }} query={state.query} sourceTitle={null} />);
   switch (props.kind) {
     case 'browserExtension':
       if (state.lists.browserExtension) return frame(<RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: props.curation,

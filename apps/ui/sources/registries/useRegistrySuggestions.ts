@@ -23,13 +23,19 @@ export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly strin
     // Presentation owns acquisition, not the admitted facts already held by a retained page.
     const admitted = sourceIds.length > 0 && !catalog.stale;
     const pages = React.useMemo(() => admitted ? catalog.pages : [], [admitted, catalog.pages]);
-    const hasValue = sources.hasValue && (sourceIds.length === 0 || admitted && catalog.hasValue);
-    return React.useMemo(() => ({ ...catalog, pages, hasValue, curation: admitted ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
-        error: sources.error ?? catalog.error,
-        status: sources.error ? sources.failureStatus : catalog.status,
-        loading: presented && (sources.loading || sourceIds.length > 0 && catalog.loading),
-        refresh: async () => { await sources.refresh(); await catalog.refresh(); },
-    }), [catalog, pages, hasValue, admitted, presented, sources.sources, sources.loading, sources.error, sources.failureStatus, sources.refresh, sourceIds.length]);
+    // A failed first page knows neither the editorial sections nor their positions. A refresh failure can
+    // still carry the previously admitted discovery, including an explicitly empty editorial layout.
+    const hasValue = sources.hasValue && (sourceIds.length === 0 || admitted && catalog.hasValue
+        && catalog.pages.every(page => page.status.state === 'ok' || page.discovery !== undefined));
+    const error = sources.error ?? catalog.error;
+    const status = sources.error ? sources.failureStatus : catalog.status;
+    const loading = presented && (sources.loading || sourceIds.length > 0 && catalog.loading);
+    const refresh = React.useCallback(async () => { await sources.refresh(); await catalog.refresh(); }, [sources.refresh, catalog.refresh]);
+    const layout = React.useMemo(() => ({ hasValue, loading, error, status, refresh, sourceFailures: catalog.sourceFailures }),
+        [hasValue, loading, error, status, refresh, catalog.sourceFailures]);
+    return React.useMemo(() => ({ ...catalog, pages, ...layout, layout,
+        curation: admitted ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
+    }), [catalog, pages, layout, admitted, sources.sources]);
 }
 export type RegistryCuration = ReturnType<typeof useRegistryCuration>;
 

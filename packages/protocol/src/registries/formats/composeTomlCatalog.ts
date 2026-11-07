@@ -69,8 +69,15 @@ async function selectedFiles(ctx: RegistryFetchContextV1, location: AppCatalogLo
   return { files: responses, compose: responses[0]!.content, template: responses[1]!.content,
     fetchedAt: Math.max(...responses.map(response => response.fetchedAt)) };
 }
+function projectListQuery(page: RegistryListPageV1, input: string): RegistryListPageV1 {
+  const query = input.trim().toLowerCase();
+  if (!query) return page;
+  const items = page.items.filter(item => `${item.itemId} ${item.title} ${item.description ?? ''} ${item.appMetadata?.tags?.join(' ') ?? ''}`.toLowerCase().includes(query));
+  return { ...page, items, ...(page.total === undefined ? {} : { total: items.length }) };
+}
 export const composeTomlCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
   format: 'dokploy-templates', kinds: ['app'], browserFetchable: () => true, supportsQuery: true,
+  projectListQuery,
   async detect(ctx, url) {
     const repo = readGitHubRepositoryV1(url);
     if (!repo && !url.endsWith('/meta.json')) return null;
@@ -91,10 +98,8 @@ export const composeTomlCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
       if (req.kind !== 'app') throw new RegistryFetchErrorV1({ state: 'invalid_source' });
       return await withAppCatalogReadV1(ctx, req.source, indexPath, undefined, async (ctx, location) => {
         const index = await readIndex(ctx, location);
-        const query = req.query?.trim().toLowerCase();
-        const items = [...index.entries].map(([id, metadata]) => summary(req.source, location, id, metadata, location.commit))
-          .filter(item => !query || `${item.itemId} ${item.title} ${item.description ?? ''} ${item.appMetadata?.tags?.join(' ') ?? ''}`.toLowerCase().includes(query));
-        return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: index.fetchedAt }, items, total: items.length, nextCursor: null };
+        const items = [...index.entries].map(([id, metadata]) => summary(req.source, location, id, metadata, location.commit));
+        return projectListQuery({ sourceId: req.source.id, status: { state: 'ok', fetchedAt: index.fetchedAt }, items, total: items.length, nextCursor: null }, req.query ?? '');
       });
     } catch (error) {
       if (!(error instanceof RegistryFetchErrorV1)) throw error;

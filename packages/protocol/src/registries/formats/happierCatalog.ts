@@ -1,5 +1,6 @@
 import { parseMarketplaceIndexSourceSnapshotV1, type HappierPickV1, type MarketplaceIndexEntryV1, type MarketplaceCatalogDiscoveryV1 } from '../../marketplace/marketplaceIndexV1.js';
 import { readMarketplaceSourceListingsV1 } from '../../marketplace/marketplaceSourceListingsV1.js';
+import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../../marketplace/marketplaceSourceRegistryV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
 import { BUILT_IN_REGISTRY_SOURCES_V1, REGISTRY_FORMAT_KINDS_V1, deriveRegistrySourceIdV1, type RegistrySourceV1 } from '../registrySourcesV1.js';
@@ -30,12 +31,18 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     if (!response.ok) return null;
     const apps = HappierAppCatalogV1Schema.safeParse(response.value);
     if (apps.success) return { format: 'happier-catalog', kinds: ['app'], title: new URL(url).hostname, itemCount: apps.data.apps.length };
-    try { const catalog = parseMarketplaceIndexSourceSnapshotV1(response.value);
-      return { format: 'happier-catalog', kinds: [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
+    let catalog;
+    try { catalog = parseMarketplaceIndexSourceSnapshotV1(response.value); }
+    catch { return null; }
+    const sourceUrl = normalizeMarketplaceSourceUrlV1(url);
+    bindRegistryMarketplaceCatalogV1(catalog, {
+      id: deriveMarketplaceSourceId(sourceUrl), url: sourceUrl, title: catalog.source.title, format: 'happier-catalog',
+      kinds: [...REGISTRY_FORMAT_KINDS_V1['happier-catalog']], enabled: true, addedAt: 0,
+    });
+    return { format: 'happier-catalog', kinds: [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
         ...(catalog.entries.some(entry => registryPluginSupportsKindV1(entry, 'agent')) ? ['agent' as const] : []),
         ...(catalog.browserExtensions?.length ? ['browserExtension' as const] : [])])],
-        title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length + (catalog.browserExtensions?.length ?? 0) };
-    } catch { return null; }
+      title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length + (catalog.browserExtensions?.length ?? 0) };
   },
   async list(ctx, req) {
     try {

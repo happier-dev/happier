@@ -184,7 +184,7 @@ describe('catalog registry production composition', () => {
         sourceUrl: 'https://catalog.example/plugins.json' }).success).toBe(false);
     }
   });
-  it.each(['https://catalog.example/plugins.json', 'https://catalog.example/'])('creates and reads %s with its published identity and strict plugin payload', async (url) => {
+  it.each(['https://catalog.example/plugins.json', 'https://catalog.example/', 'https://catalog.example/plugins.json?channel=stable'])('rejects query aliases before storage, then creates and reads %s with its published identity', async (url) => {
     const source: RegistrySourceDescriptorV1 = { id: deriveMarketplaceSourceId(url), url, title: 'Team', format: 'happier-catalog',
       kinds: ['plugin'], enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true };
     const entry = MarketplaceIndexEntryV1Schema.parse({ pluginId: 'acme.plugin', publisher: { id: 'acme', displayName: 'Acme' },
@@ -213,6 +213,11 @@ describe('catalog registry production composition', () => {
         return listRegistrySourcesV1({ record: read.record.value, pluginSources }); },
       mutateSources: mutation => updatePromptLibraryRegistrySourcesV1(port, mutation),
     });
+    const alias = new URL(url);
+    alias.searchParams.set('qa', 'jop84');
+    await expect(host.execute('registries.sources.detect', { url: alias.href })).rejects.toMatchObject({ status: { state: 'invalid_source' } });
+    await expect(host.execute('registries.sources.create', { url: alias.href })).rejects.toMatchObject({ status: { state: 'invalid_source' } });
+    expect(stored.value).toEqual({ v: 2, sources: [], disabledSourceIds: [] });
     expect(await host.execute('registries.sources.detect', { url })).toMatchObject({ detected: { format: 'happier-catalog', kinds: ['plugin'] } });
     expect(await host.execute('registries.sources.create', { url })).toMatchObject({ source: { id: deriveMarketplaceSourceId(url), format: 'happier-catalog' }, existing: false });
     expect(await host.execute('registries.sources.create', { url })).toMatchObject({ source: { id: deriveMarketplaceSourceId(url) }, existing: true });

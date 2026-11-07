@@ -40,6 +40,12 @@ Its typed input refusal passes through the Action failure projection to the Add
 form's existing registry presenter, so these refusals explain how to correct the
 link separately from a source that could not be reached.
 
+Marketplace detection uses the same published source-identity binding as listing
+before Add saves the source. A URL alias, including a different query string,
+must match the catalog's declared URL and derived source id; returning the same
+JSON at the alias does not establish that identity. Binding refusals retain the
+registry's typed status in the Add form.
+
 New token bindings require the canonical private-resource reference. Retained
 bare personal ids remain readable for legacy promotion, but cannot become new
 bindings; a legacy catalog selection must be imported first. Normal token-bearing
@@ -540,6 +546,12 @@ so a failed catalog does not refetch healthy siblings. Rate-limited pages retain
 last-good rows and discovery metadata across navigation, with an “Updated earlier”
 status and manual Retry; no idle timer refetches them. Discovery artwork consumes
 listing summaries rather than fetching an item's installation payload per card.
+Native Compose catalog adapters own the query projection of their complete
+summary page. Local searches reuse that page; remote searches and cursors retain
+their upstream operands. Explicit Retry acquires a new complete page.
+Initial unfiltered Apps browsing holds its layout until editorial sections are
+known, including after a cold failure and recovery. Retained editorial layouts
+remain readable during outages.
 Acknowledged content/native exports survive a later failure as explicit partial
 receipts: callers must repair the unfinished step rather than repeat the write.
 

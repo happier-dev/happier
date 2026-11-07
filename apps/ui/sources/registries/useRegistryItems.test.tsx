@@ -84,32 +84,53 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
-    it('spends one compose listing fetch per Store open, reuses it across views, and spends nothing on idle', async () => {
+    it.each(['', 'wordpress'])('spends one compose listing fetch across views and local queries (initial query: %s), and nothing on idle', async initialQuery => {
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
         onTestFinished(() => vi.useRealTimers());
         const requests: string[] = [];
         const commit = 'a'.repeat(40);
-        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://store-compose-budget.test', {
+        let refreshed = false;
+        let rateLimited = false;
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://store-compose-budget-${initialQuery || 'browse'}.test`, {
             key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
         }, 'updated', { handleExternalRequest: async url => {
             requests.push(url);
             if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return new Response(null, { status: 503 });
             if (url.startsWith('https://api.github.com/repos/coollabsio/coolify/commits/')) return Response.json({ sha: commit });
-            if (url.includes('/templates/service-templates.json')) return Response.json({ redis: { name: 'Redis', slogan: 'A cache', logo: 'https://example.test/redis.svg' } });
+            if (url.includes('/templates/service-templates.json')) return rateLimited ? new Response(null, { status: 429 }) : Response.json({
+                ...(!refreshed ? { redis: { name: 'Redis', slogan: 'A cache', category: 'Databases', logo: 'https://example.test/redis.svg' } } : {}),
+                wordpress: { name: 'WordPress', slogan: 'A website', tags: ['Publishing'] },
+                ...(refreshed ? { ghost: { name: 'Ghost', slogan: 'Another website' } } : {}),
+            });
             return null;
         } });
         onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
-        const open = (sourceIds: string[]) => renderHook(() => useRegistryItems({ kind: 'app', sourceIds }));
-        const first = await open([HAPPIER_PICKS_SOURCE_ID, 'builtin:compose-catalog']);
+        const open = (sourceIds: string[], query = '') => renderHook((text: string) => useRegistryItems({ kind: 'app', sourceIds, query: text }),
+            { initialProps: query });
+        const first = await open([HAPPIER_PICKS_SOURCE_ID, 'builtin:compose-catalog'], initialQuery);
         await waitForHomeGovernance(() => expect(first.getCurrent().loading).toBe(false));
-        expect(first.getCurrent().items.map(item => item.title)).toEqual(['Redis']);
+        expect(first.getCurrent().items.map(item => item.title)).toEqual(initialQuery ? ['WordPress'] : ['Redis', 'WordPress']);
         const listingFetches = () => requests.filter(url => url.includes('/templates/service-templates.json')).length;
-        expect(listingFetches()).toBe(1);
+        const commitLookups = () => requests.filter(url => url.startsWith('https://api.github.com/repos/coollabsio/coolify/commits/')).length;
+        const expectReads = (count: number) => {
+            expect(listingFetches()).toBe(count);
+            expect(commitLookups()).toBe(count);
+        };
+        expectReads(1);
         await first.unmount();
         const second = await open(['builtin:compose-catalog']);
         await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
-        expect(second.getCurrent().items.map(item => item.title)).toEqual(['Redis']);
-        expect(listingFetches()).toBe(1);
+        expect(second.getCurrent().items.map(item => item.title)).toEqual(['Redis', 'WordPress']);
+        expectReads(1);
+        for (const [query, titles] of [
+            ['  WORDPRESS  ', ['WordPress']], ['Databases', ['Redis']], ['Publishing', ['WordPress']], ['missing', []],
+        ] as const) {
+            await second.rerender(query);
+            await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
+            expect(second.getCurrent().items.map(item => item.title)).toEqual(titles);
+            expect(second.getCurrent().pages[0]?.total).toBe(titles.length);
+            expectReads(1);
+        }
         const settled = requests.length;
         await flushHookEffects();
         await second.rerender();
@@ -117,8 +138,52 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
         expect(requests).toHaveLength(settled);
         // An explicit person-initiated refresh remains a real freshness boundary.
+        refreshed = true;
         await act(async () => { await second.getCurrent().refresh(); });
-        expect(listingFetches()).toBe(2);
+        expect(second.getCurrent().items).toEqual([]);
+        expectReads(2);
+        await second.rerender('');
+        await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
+        expect(second.getCurrent().items.map(item => item.title)).toEqual(['WordPress', 'Ghost']);
+        expectReads(2);
+        await second.rerender('Ghost');
+        await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
+        rateLimited = true;
+        await act(async () => { await second.getCurrent().refresh(); });
+        expect(second.getCurrent().items.map(item => item.title)).toEqual(['Ghost']);
+        expect(second.getCurrent().sourceFailures[0]?.status.state).toBe('rate_limited');
+        expectReads(3);
+        await second.rerender('WordPress');
+        await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
+        expect(second.getCurrent().items.map(item => item.title)).toEqual(['WordPress']);
+        expect(second.getCurrent().sourceFailures[0]?.status.state).toBe('rate_limited');
+        expectReads(3);
+    });
+    it('keeps remote search pages and cursors at their upstream query owner', async () => {
+        const searches: Array<{ query: string | null; cursor: string | null }> = [];
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://store-remote-search-budget.test', {
+            key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+        }, 'updated', { handleExternalRequest: async url => {
+            const parsed = new URL(url);
+            if (parsed.pathname !== '/v0.1/servers') return null;
+            const query = parsed.searchParams.get('search');
+            const cursor = parsed.searchParams.get('cursor');
+            searches.push({ query, cursor });
+            return Response.json({ servers: [{ server: { name: query ? `search/${cursor || 'first'}` : 'browse/first',
+                description: 'Remote server', version: '1.0.0' } }],
+                metadata: { count: 1, ...(query && !cursor ? { nextCursor: 'second' } : {}) } });
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook((query: string) => useRegistryItems({ kind: 'mcpServer', sourceIds: ['builtin:mcp-registry'], query }),
+            { initialProps: '' });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['browse/first']);
+        await hook.rerender('WordPress');
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['search/first']);
+        await act(async () => { await hook.getCurrent().nextPage(); });
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['search/first', 'search/second']);
+        expect(searches).toEqual([{ query: null, cursor: null }, { query: 'WordPress', cursor: null }, { query: 'WordPress', cursor: 'second' }]);
     });
     it.each([
         ['mcpServer', false], ['mcpServer', true], ['plugin', false], ['plugin', true],

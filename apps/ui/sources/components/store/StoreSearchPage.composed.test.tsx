@@ -20,7 +20,7 @@ const { resolveCompactAppDestinations, resolveDestinationRefFromHref } = await i
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { storage } = await import('@/sync/domains/state/storage');
 const { StoreSearchPage } = await import('./StoreSearchPage');
-const { StoreKindPage, Directory } = await import('./StoreKindPage');
+const { StoreKindPage, StoreKindFrame, Directory } = await import('./StoreKindPage');
 const { StoreDirectory: StoreQueryDirectory } = await import('./StoreSearch');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
@@ -30,17 +30,18 @@ it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layou
     const serverUrl = `https://store-apps-layout-${outcome}.test`;
     const sourceUrl = `https://store-apps-curation-${outcome}.test/catalog.json`;
     const sourceId = deriveMarketplaceSourceId(sourceUrl);
-    const appSourceId = 'builtin:dokploy-templates';
+    const appSourceId = 'builtin:compose-catalog';
     let releaseCuration!: () => void;
-    const pending = new Promise<void>(resolve => { releaseCuration = resolve; });
+    let pending = new Promise<void>(resolve => { releaseCuration = resolve; });
+    let failCuration = outcome === 'failed';
     let appReads = 0;
     let curationReads = 0;
     const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({
         source: { id: sourceId, title: 'Curated apps', kind: 'user', sourceUrl },
         freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
-        discovery: { items: outcome === 'populated' ? [{ id: 'uptime', title: 'Uptime Kuma', reference: {
+        discovery: { items: outcome !== 'empty' ? [{ id: 'uptime', title: 'Uptime Kuma', reference: {
             type: 'registryItem', kind: 'app', sourceId: appSourceId, itemId: 'uptime-kuma',
-        } }] : [], categories: outcome === 'populated' ? [{ id: 'monitoring', title: 'Monitoring', items: ['uptime'] }] : [], jobs: [] },
+        } }] : [], categories: outcome !== 'empty' ? [{ id: 'monitoring', title: 'Monitoring', items: ['uptime'] }] : [], jobs: [] },
     });
     const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
         key: 'registry-sources', value: { v: 2,
@@ -52,21 +53,31 @@ it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layou
         if (url === sourceUrl) {
             curationReads += 1;
             await pending;
-            return outcome === 'failed' ? new Response(null, { status: 503 }) : Response.json(catalog);
+            return failCuration ? new Response(null, { status: 503 }) : Response.json(catalog);
         }
-        if (url === 'https://templates.dokploy.com/meta.json') {
+        if (url.startsWith('https://api.github.com/repos/coollabsio/coolify/commits/')) return Response.json({ sha: 'a'.repeat(40) });
+        if (url.includes('/templates/service-templates.json')) {
             appReads += 1;
-            return Response.json([{ id: 'uptime-kuma', name: 'Uptime Kuma', tags: ['monitoring'] },
-                { id: 'wordpress', name: 'WordPress', tags: ['blog'] }]);
+            return Response.json({ 'uptime-kuma': { name: 'Uptime Kuma', slogan: 'Monitor your services' },
+                wordpress: { name: 'WordPress', slogan: 'Publish your blog' } });
         }
         return new Response(null, { status: 503 });
     } });
     onTestFinished(async () => { releaseCuration(); await standardCleanup(); await fixture.dispose(); });
-    const screen = await renderScreen(<DestinationInstanceHost tabId="apps-layout"
-        ref={{ kind: 'plugins', params: { view: 'kind', kind: 'app' } }} pathname="/plugins" focused visible
-        navigation={{ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }}>
-        <AppPaneProvider><StoreKindPage kind="app" presented /></AppPaneProvider>
-    </DestinationInstanceHost>);
+    function Page() {
+        const [params, setParams] = React.useState<Record<string, string>>({ view: 'kind', kind: 'app' });
+        const navigation = React.useMemo(() => ({ push: () => {}, replace: () => {}, back: () => {},
+            setParams: (values: Record<string, string | undefined>) => setParams(previous => {
+                const next = { ...previous };
+                for (const [key, value] of Object.entries(values)) {
+                    if (value === undefined) delete next[key]; else next[key] = value;
+                }
+                return next;
+            }) }), []);
+        return <DestinationInstanceHost tabId="apps-layout" ref={{ kind: 'plugins', params }} pathname="/plugins" focused visible
+            navigation={navigation}><AppPaneProvider><StoreKindPage kind="app" presented /></AppPaneProvider></DestinationInstanceHost>;
+    }
+    const screen = await renderScreen(<Page />);
     // Both real reads run concurrently; a fast catalog must not become a temporary first section.
     await waitForHomeGovernance(() => expect(appReads).toBeGreaterThan(0));
     await waitForHomeGovernance(() => expect(curationReads).toBeGreaterThan(0));
@@ -78,14 +89,62 @@ it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layou
     expect(appReads).toBe(1);
     expect(screen.findAllByType(Directory)).toHaveLength(0);
     expect(screen.findAllByTestId('store.kind.app.loading').length).toBeGreaterThan(0);
+    if (outcome === 'populated') {
+        // Explicit search does not render the unknown browsing layout and must remain usable while it loads.
+        const changeQuery = (text: string) => screen.findAllByTestId('store.kind.app.search')
+            .find(node => typeof node.props.onChangeText === 'function')!.props.onChangeText(text);
+        await act(async () => { changeQuery('WordPress'); });
+        expect(screen.root.findByType(StoreKindFrame).props.query).toBe('WordPress');
+        await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)
+            .map((row: { title: string }) => row.title)).toEqual(['WordPress']));
+        await act(async () => { changeQuery(''); });
+        await waitForHomeGovernance(() => expect(screen.findAllByType(Directory)).toHaveLength(0));
+    }
+    const readsBeforeCuration = appReads;
     await act(async () => { releaseCuration(); });
-    await waitForHomeGovernance(() => expect(screen.findAllByType(Directory)).toHaveLength(1));
+    let retryCuration: (() => Promise<void>) | undefined;
+    if (outcome === 'failed') {
+        await waitForHomeGovernance(() => expect(screen.root.findAllByType(SurfaceStateCard)
+            .some(node => node.props.testID === 'store.kind.app.failure')).toBe(true));
+        // A failed first read is not an empty editorial layout. Its later recovery must not move templates.
+        expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toEqual([]);
+        const failure = screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'store.kind.app.failure');
+        expect(failure).toBeDefined();
+        retryCuration = screen.findAllByType(Directory)[0]!.props.list.refresh;
+        failCuration = false;
+        pending = new Promise<void>(resolve => { releaseCuration = resolve; });
+        const beforeRetry = curationReads;
+        await act(async () => { void failure!.props.action.onPress(); });
+        await waitForHomeGovernance(() => expect(curationReads).toBeGreaterThan(beforeRetry));
+        expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toEqual([]);
+        await act(async () => { releaseCuration(); });
+    }
+    await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)).toHaveLength(2));
     const directory = screen.findAllByType(Directory)[0]!;
     expect(directory.props.rows).toHaveLength(2);
-    expect(directory.props.groups.map((group: { key: string }) => group.key)).toEqual(outcome === 'populated'
+    expect(directory.props.groups.map((group: { key: string }) => group.key)).toEqual(outcome !== 'empty'
         ? [`category:${JSON.stringify([sourceId, 'monitoring'])}`, `source:${appSourceId}`]
         : [`source:${appSourceId}`]);
-    expect(appReads).toBe(1);
+    // Curation arrival itself never repeats the Apps read, including after an explicit search.
+    expect(appReads).toBe(readsBeforeCuration);
+    if (retryCuration) {
+        // Once admitted, the exact same curation read may fail again without withdrawing or regrouping healthy rows.
+        const heldGroups = directory.props.groups;
+        const heldRows = directory.props.rows;
+        failCuration = true;
+        pending = new Promise<void>(resolve => { releaseCuration = resolve; });
+        let refresh!: Promise<void>;
+        const beforeRefresh = curationReads;
+        await act(async () => { refresh = retryCuration!(); });
+        await waitForHomeGovernance(() => expect(curationReads).toBeGreaterThan(beforeRefresh));
+        expect(screen.findAllByType(Directory)[0]!.props.rows).toBe(heldRows);
+        expect(screen.findAllByType(Directory)[0]!.props.groups).toBe(heldGroups);
+        await act(async () => { releaseCuration(); await refresh; });
+        expect(screen.findAllByType(Directory)[0]!.props.rows).toBe(heldRows);
+        expect(screen.findAllByType(Directory)[0]!.props.groups).toBe(heldGroups);
+        expect(screen.root.findByType(StoreQueryDirectory).props.curationComplete).toBe(false);
+        expect(appReads).toBe(1);
+    }
 });
 
 it('keeps a cold failed Skills read distinct from empty and retries the existing owner', async () => {

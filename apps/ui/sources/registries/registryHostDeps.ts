@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { createRegistryHostV1, listRegistrySourcesV1, RegistryFetchErrorV1,
-    RegistryFetchResponseV1Schema, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
+    RegistryFetchResponseV1Schema, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, REGISTRY_FORMAT_ADAPTERS_V1,
     type RegistrySourceDescriptorV1, type RegistryFetchRequestV1, type RegistryActionIdV1,
+    type RegistryFormatAdapterV1, type RegistryListPageV1,
 } from '@happier-dev/protocol/registries';
 import { readPromptLibraryCatalogRecordV1, updatePromptLibraryRegistrySourcesV1,
     type PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
@@ -260,7 +261,15 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
             const results = await Promise.all(sources.map(async source => {
                 // Views and shelves consume the same source page. A failed sibling
                 // must not invalidate healthy rows or spend their upstream budget.
-                const input = { ...args, sourceIds: [source.id] };
+                const projectListQuery = !args.cursor
+                    ? (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<typeof source.format, RegistryFormatAdapterV1>>)[source.format]?.projectListQuery
+                    : undefined;
+                const query = args.query;
+                const project = (value: { pages: RegistryListPageV1[] }) => projectListQuery && query
+                    ? { pages: value.pages.map(page => projectListQuery(page, query)) } : value;
+                // Only the adapter can promise that its complete page answers a
+                // query locally. Remote searches and pagination keep their operands.
+                const input = { ...args, ...(projectListQuery ? { query: undefined } : {}), sourceIds: [source.id] };
                 const key = registryReadKey(actionId, input, context.externalActionTarget?.kind === 'machine'
                     ? context.externalActionTarget.machineId : undefined);
                 const revision = registrySourceRevision([source]);
@@ -268,7 +277,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 const cached = held?.revision === revision && 'pages' in held.value ? held.value : null;
                 const reusable = cached?.pages.every(page => page.status.state === 'ok' || page.status.state === 'rate_limited'
                     && (page.status.retryAt === undefined || page.status.retryAt > Date.now()));
-                if (cached && !args.refresh && reusable) return cached;
+                if (cached && !args.refresh && reusable) return project(cached);
                 const next = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await host.execute(actionId, input));
                 const previous = new Map(cached?.pages.map(page => [page.sourceId, page]));
                 const value = { pages: next.pages.map(page => {
@@ -277,8 +286,8 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                         ? { ...page, items: prior.items, ...(prior.discovery ? { discovery: prior.discovery } : {}), nextCursor: null }
                         : page;
                 }) };
-                if (!args.cursor && !args.query) memo.values.set(key, { revision, value });
-                return value;
+                if (!input.cursor && !input.query) memo.values.set(key, { revision, value });
+                return project(value);
             }));
             account.assertCurrent(); context.signal?.throwIfAborted();
             return { pages: results.flatMap(result => result.pages) };

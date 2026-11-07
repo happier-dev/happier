@@ -33,6 +33,8 @@ export type RegistrySkillFormatAdapterV1=Omit<RegistryFormatAdapterV1,'read'> & 
 export type RegistryFormatAdapterV1 = Readonly<{
   format: RegistryFormatV1; kinds: readonly RegistryKindV1[];
   browserFetchable: (source: RegistrySourceV1) => boolean; supportsQuery: boolean;
+  /** Complete-page adapters apply the same query projection to fresh and retained summaries. */
+  projectListQuery?: (page: RegistryListPageV1, query: string) => RegistryListPageV1;
   supportsContributionFamily?: boolean;
   detect?: (ctx: RegistryFetchContextV1, url: string) => Promise<RegistryDetectedSourceV1 | null>;
   list: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; contributionFamily?: RegistryContributionFamilyV1; query?: string; cursor?: string | null }) => Promise<RegistryListPageV1>;

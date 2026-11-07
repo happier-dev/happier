@@ -40,14 +40,15 @@ const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionE
 
 describe('RegistrySourcesView through real registry Actions', () => {
     it.each([
-        ['http://registry.acme.test/catalog.json', 'httpsRequired'],
-        ['https://fixture-user:fixture-password@registry.acme.test/catalog.json', 'credentialsInLink'],
+        ['http://registry.acme.test/catalog.json', 'capabilities.registries.add.httpsRequired'],
+        ['https://fixture-user:fixture-password@registry.acme.test/catalog.json', 'capabilities.registries.add.credentialsInLink'],
+        ['https://registry.acme.test/catalog.json?qa=jop84', 'promptLibrary.registriesStatus.invalidSource'],
     ])('shows the registry URL refusal for %s and recovers with an accepted link', async (refusedUrl, reason) => {
         const url = 'https://registry.acme.test/catalog.json';
         const { home } = await createRegistrySourcesUiHome('detect-url-refusal', {
-            external: async candidate => candidate === url
+            external: async candidate => candidate === url || candidate === `${url}?qa=jop84`
                 ? Response.json(MarketplaceIndexSourceSnapshotV1Schema.parse({
-                    source: { id: 'acme', title: 'Acme plugins', kind: 'curated', sourceUrl: url },
+                    source: { id: deriveMarketplaceSourceId(url), title: 'Acme plugins', kind: 'user', sourceUrl: url },
                     freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
                 })) : null,
         });
@@ -62,7 +63,7 @@ describe('RegistrySourcesView through real registry Actions', () => {
             } finally { vi.useRealTimers(); }
         }
         await detect(refusedUrl);
-        await waitForHomeGovernance(() => expect(fieldError()).toBe(`capabilities.registries.add.${reason}`));
+        await waitForHomeGovernance(() => expect(fieldError()).toBe(reason));
         expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(true);
         await detect(url);
         await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(false));
@@ -78,7 +79,7 @@ describe('RegistrySourcesView through real registry Actions', () => {
             source: { id: deriveMarketplaceSourceId(existingUrl), url: existingUrl, title: 'Existing plugins',
                 format: 'happier-catalog', kinds: ['plugin'], enabled: true, addedAt: 1 },
             external: async candidate => candidate === url
-            ? Response.json(MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { id: 'acme', title: 'Acme plugins', kind: 'curated', sourceUrl: url },
+            ? Response.json(MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { id: deriveMarketplaceSourceId(url), title: 'Acme plugins', kind: 'user', sourceUrl: url },
                 freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [] })) : null });
         const onStale = vi.fn();
         function RoutedSources() {
