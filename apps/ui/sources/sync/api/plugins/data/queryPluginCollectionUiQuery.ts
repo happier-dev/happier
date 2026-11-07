@@ -1,14 +1,13 @@
 import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { PluginCollectionUiQueryErrorV1Schema, PluginCollectionUiQueryRequestV1Schema, PluginCollectionUiQueryResultV1Schema, validatePluginCollectionUiQueryParametersV1, type NormalizedPluginCollectionUiQueryDescriptorV1, type PluginCollectionUiQueryErrorV1, type PluginCollectionUiQueryRequestV1, type PluginCollectionUiQueryResultV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import { PluginCollectionUiQueryTransportResultV1Schema, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
-import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionValue,
 } from '@happier-dev/plugin-sdk/collections';
 import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -26,10 +25,13 @@ import {
     readPluginCollectionHttpResponse,
     type ActivePluginCollectionUnavailableReasonV1,
 } from './activePluginCollectionClient';
+import { prepareCollectionContractSchema } from './collectionContractSchema';
 import {
     publishActivePluginCollectionChanges,
     registerActivePluginCollectionChangeWatch,
     resetActivePluginCollectionChanges,
+    captureActivePluginCollectionChangeReset,
+    captureActivePluginCollectionReadBasis,
     type PluginCollectionChangeWatchV1,
     type WatchActivePluginCollectionChangesInput,
 } from './pluginCollectionChangeWatch';
@@ -114,6 +116,11 @@ type CapturedActivePluginCollectionUiQuery = Readonly<{
     serverSnapshot: ReturnType<typeof getActiveServerSnapshot>;
     signal?: AbortSignal;
 }>;
+
+function queryReadBasis(request: PluginCollectionUiQueryRequestV1, lifetime: ActiveServerAccountScopeLifetime) {
+    const { cursor: _cursor, ...selection } = request;
+    return { owner: lifetime, key: stableJsonStringify(selection) };
+}
 
 function assertLifetimeCurrent(lifetime: ActiveServerAccountScopeLifetime): void {
     if (!lifetime.isCurrent()) {
@@ -228,7 +235,7 @@ async function executePrivatePluginCollectionUiQuery(
             throw new Error('Plugin Collection UI query returned an invalid error response.');
         }
         const transport = PluginCollectionUiQueryTransportResultV1Schema.parse(response.body);
-        const storedReadSchema = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(contract.schema));
+        const { storedReadSchema } = prepareCollectionContractSchema(contract);
         const rows: PluginCollectionUiQueryResultV1['rows'] = [];
         for (const row of transport.rows) {
             if (!row.logicalRow) {
@@ -290,15 +297,23 @@ async function executeCapturedActivePluginCollectionUiQuery(
         signal?: AbortSignal;
     }>,
 ): Promise<PluginCollectionUiQueryOutcomeV1> {
+    const commitReadBasis = options?.cursor === undefined ? captureActivePluginCollectionReadBasis({
+        pluginId: captured.request.pluginId, collectionId: captured.request.collectionId,
+        lifetime: captured.lifetime, readBasis: queryReadBasis(captured.request, captured.lifetime),
+    }) : undefined;
     const request = options?.cursor === undefined
         ? captured.request
         : { ...captured.request, cursor: options.cursor };
     if (requiresPrivateLogicalProjection(captured.input)) {
-        return await executePrivatePluginCollectionUiQuery(
-            captured,
-            request,
-            [captured.signal, options?.signal],
-        );
+        try {
+            const outcome = await executePrivatePluginCollectionUiQuery(
+                captured,
+                request,
+                [captured.signal, options?.signal],
+            );
+            if ('rows' in outcome) commitReadBasis?.(outcome.changeCursor);
+            return outcome;
+        } finally { commitReadBasis?.(); }
     }
     const compatibility = resolveAccountStoredContentCompatibilityHeaders(
         { 'Content-Type': 'application/json' },
@@ -308,6 +323,7 @@ async function executeCapturedActivePluginCollectionUiQuery(
         },
     );
     if (compatibility.status === 'unavailable') {
+        commitReadBasis?.();
         return { status: 'unavailable', reason: compatibility.reason };
     }
 
@@ -352,8 +368,10 @@ async function executeCapturedActivePluginCollectionUiQuery(
         assertServerGenerationCurrent(captured.serverSnapshot);
         const validated = validatePluginCollectionUiQueryResultV1(captured.input.descriptor, result);
         validateResponseIdentity(validated, request);
+        commitReadBasis?.(validated.changeCursor);
         return validated;
     } finally {
+        commitReadBasis?.();
         await authority?.release?.();
         for (const signal of signals) signal?.removeEventListener('abort', abort);
         retirement.dispose();
@@ -378,6 +396,7 @@ export function watchActivePluginCollectionUiQuery(
         pluginId: request.pluginId,
         collectionId: request.collectionId,
         lifetime,
+        readBasis: queryReadBasis(request, lifetime),
         onInvalidated: input.onInvalidated,
     });
 }
@@ -403,6 +422,11 @@ export function publishActivePluginCollectionUiQueryChanges(changes: readonly un
  */
 export function resetActivePluginCollectionUiQueryWatches(): void {
     resetActivePluginCollectionChanges();
+}
+
+/** Bind the repair to queries already observed after its base cursor was acquired. */
+export function captureActivePluginCollectionUiQueryReset(): () => void {
+    return captureActivePluginCollectionChangeReset();
 }
 
 function freezePagerRows(
@@ -583,6 +607,7 @@ export function createActivePluginCollectionUiQueryPager(
         pluginId: captured.request.pluginId,
         collectionId: captured.request.collectionId,
         lifetime: captured.lifetime,
+        readBasis: queryReadBasis(captured.request, captured.lifetime),
         onInvalidated: () => { void refresh(); },
     });
     retirement = captured.lifetime.onRetire(dispose);

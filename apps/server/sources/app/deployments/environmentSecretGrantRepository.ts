@@ -2,21 +2,49 @@ import { createHash } from 'node:crypto';
 import { MachineSecretGrantV1Schema, machineSecretGrantSubjectKey,
     type MachineSecretGrantV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
+import { deploymentInProgressStates, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import type { DeploymentFailure } from './deploymentAdmission';
 
 type GrantRow = NonNullable<Awaited<ReturnType<Tx['machineSecretGrant']['findUnique']>>>;
-
 
 function invalidGrant(): never {
     throw Object.assign(new Error('An exact Environment installation grant is unavailable'), { code: 'secret_missing' });
 }
 
 /** Index encoding only; the public canonical subject remains the grant identity. */
-
 function storageKey(grant: MachineSecretGrantV1 | MachineConnectorSecretGrantSubjectV1): string {
     return createHash('sha256').update(machineSecretGrantSubjectKey(grant)).digest('hex');
 }
 
 /** P21's admitted configure lifecycle is the Machine-scoped writer of the same installation table. */
+export async function setMachineConnectorSecretGrantInTx(tx: Tx, input: Readonly<{
+    subject: MachineConnectorSecretGrantSubjectV1;
+    grant: MachineSecretGrantV1 | null;
+}>): Promise<MachineSecretGrantV1 | null> {
+    const subjectKey = storageKey(input.subject);
+    const previous = await tx.machineSecretGrant.findUnique({ where: { subjectKey } });
+    if (!input.grant) {
+        if (previous) await tx.machineSecretGrant.delete({ where: { subjectKey } });
+        return null;
+    }
+    const parsed = MachineSecretGrantV1Schema.safeParse(input.grant);
+    if (!parsed.success || parsed.data.kind !== 'connectorToken'
+        || machineSecretGrantSubjectKey(parsed.data) !== machineSecretGrantSubjectKey(input.subject)) return invalidGrant();
+    if (!previous) await tx.machineSecretGrant.create({ data: grantRow(parsed.data) });
+    else if (storedGrant(previous).sealedContent !== parsed.data.sealedContent) {
+        await tx.machineSecretGrant.update({ where: { subjectKey }, data: { contentEnvelope: parsed.data.sealedContent } });
+    }
+    return parsed.data;
+}
+
+/** Exact Machine/installation/provider/connector demand only, never an inventory or Environment alias. */
+export async function readMachineConnectorSecretGrantInTx(tx: Tx,
+    subject: MachineConnectorSecretGrantSubjectV1,
+): Promise<MachineSecretGrantV1 | null> {
+    const row = await tx.machineSecretGrant.findUnique({ where: { subjectKey: storageKey(subject) } });
+    return row ? storedGrant(row) : null;
+}
 
 function storedGrant(row: GrantRow): MachineSecretGrantV1 {
     const common = { v: 1, kind: row.kind, machineId: row.machineId,
@@ -32,7 +60,87 @@ function storedGrant(row: GrantRow): MachineSecretGrantV1 {
     return parsed.data;
 }
 
+function grantRow(grant: MachineSecretGrantV1) {
+    return {
+        subjectKey: storageKey(grant), kind: grant.kind, machineId: grant.machineId, installationId: grant.installationId,
+        environmentId: grant.kind === 'connectorToken' ? null : grant.environmentId,
+        resourceId: grant.kind === 'secret' ? grant.resourceId : null,
+        resourceRevision: grant.kind === 'secret' ? grant.resourceRevision : null,
+        phase: grant.kind === 'environmentValues' ? grant.binding.phase : null,
+        name: grant.kind === 'environmentValues' ? grant.binding.name : null,
+        // A null plugin id distinguishes a built-in reference in the existing columns.
+        providerPluginId: grant.kind === 'connectorToken' && !('kind' in grant.provider) ? grant.provider.pluginId : null,
+        providerLocalId: grant.kind === 'connectorToken'
+            ? 'kind' in grant.provider ? grant.provider.id : grant.provider.localId : null,
+        connectorId: grant.kind === 'connectorToken' ? grant.connectorId : null,
+        contentEnvelope: grant.sealedContent,
+    };
+}
 
+/** Called only inside the sole bindings/content CAS after current capture admission. */
+export async function syncEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
+    environmentId: string;
+    grants: readonly MachineSecretGrantV1[];
+    /** The semantic writer has proved unchanged immutable content and captures. */
+    retainAcceptedBuildCustody?: true;
+    /** The public semantic writer admits an actual seal mutation, not equal-seal maintenance. */
+    admitMutation?: () => Promise<DeploymentFailure | null>;
+}>): Promise<boolean | null | DeploymentFailure> {
+    let changed = false;
+    const desired = new Map<string, MachineSecretGrantV1>();
+    for (const grant of input.grants) {
+        const parsed = MachineSecretGrantV1Schema.safeParse(grant);
+        if (!parsed.success || parsed.data.kind === 'connectorToken' || parsed.data.environmentId !== input.environmentId) return invalidGrant();
+        const key = storageKey(parsed.data);
+        if (desired.has(key)) return invalidGrant();
+        desired.set(key, parsed.data);
+    }
+    const existing = new Map((await tx.machineSecretGrant.findMany({ where: { environmentId: input.environmentId } }))
+        .map(row => [row.subjectKey, storedGrant(row)]));
+    const acceptedBuilders = new Set((input.retainAcceptedBuildCustody ? await tx.deployment.findMany({
+        where: { environmentId: input.environmentId, state: { in: deploymentInProgressStates() } },
+        select: { acceptedControllerMachineId: true, acceptedControllerInstallationId: true,
+            acceptedBuildMachineId: true, acceptedBuildInstallationId: true },
+    }) : []).flatMap(row => {
+        const accepted = readDeploymentAcceptedExecution(row);
+        return accepted?.builder ? [JSON.stringify([accepted.builder.machineId, accepted.builder.installationId])] : [];
+    }));
+    const retainedBuild = (grant: MachineSecretGrantV1) => grant.kind !== 'connectorToken'
+        && (grant.kind === 'secret' || grant.binding.phase === 'build')
+        && acceptedBuilders.has(JSON.stringify([grant.machineId, grant.installationId]));
+    // One subject has one live seal. Refuse all conflicts before any write;
+    // accepted custody has no historical ciphertext fallback.
+    if ([...desired].some(([key, grant]) => {
+        const previous = existing.get(key);
+        return previous && retainedBuild(previous) && previous.sealedContent !== grant.sealedContent;
+    })) return null;
+    const willChange = [...desired].some(([key, grant]) => existing.get(key)?.sealedContent !== grant.sealedContent)
+        || [...existing].some(([key, grant]) => !desired.has(key) && !retainedBuild(grant));
+    if (willChange && input.admitMutation) {
+        const denied = await input.admitMutation();
+        if (denied) return denied;
+    }
+    for (const [key, grant] of desired) {
+        const previous = existing.get(key);
+        if (!previous) {
+            await tx.machineSecretGrant.create({ data: grantRow(grant) });
+            changed = true;
+        }
+        else if (previous.sealedContent !== grant.sealedContent) {
+            await tx.machineSecretGrant.update({ where: { subjectKey: key }, data: { contentEnvelope: grant.sealedContent } });
+            changed = true;
+        }
+    }
+    for (const [key, grant] of existing) {
+        if (!desired.has(key) && !retainedBuild(grant)) {
+            await tx.machineSecretGrant.delete({ where: { subjectKey: key } });
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+/** Private target read; authorization is established by the owning deployment admission. */
 export async function readEnvironmentMachineSecretGrantsInTx(tx: Tx, input: Readonly<{
     environmentId: string;
     secret?: Readonly<{ resourceId: string; resourceRevision: number }>;
@@ -43,3 +151,31 @@ export async function readEnvironmentMachineSecretGrantsInTx(tx: Tx, input: Read
 }
 
 /** Resource revision changes retire delivery authority, never incumbent memory sanitizers. */
+export async function deleteObsoleteSavedSecretInstallationGrantsInTx(tx: Tx, input: Readonly<{
+    resourceId: string;
+    revision: number;
+}>): Promise<void> {
+    await tx.machineSecretGrant.deleteMany({ where: { kind: 'secret', resourceId: input.resourceId,
+        resourceRevision: { lt: input.revision } } });
+}
+
+/** Disposition withdraws future delivery custody; shared surviving installations keep their exact grants. */
+export async function withdrawEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
+    environmentId: string;
+    withdrawnInstallations?: readonly Readonly<{ machineId: string; installationId: string }>[];
+    retainedInstallations?: readonly Readonly<{ machineId: string; installationId: string }>[];
+}>): Promise<void> {
+    if (!input.withdrawnInstallations) {
+        await tx.machineSecretGrant.deleteMany({ where: { environmentId: input.environmentId } });
+        return;
+    }
+    const identity = (member: Readonly<{ machineId: string; installationId: string }>) => JSON.stringify([member.machineId, member.installationId]);
+    const removed = new Set(input.withdrawnInstallations.map(identity));
+    const retained = new Set((input.retainedInstallations ?? []).map(identity));
+    const rows = await tx.machineSecretGrant.findMany({ where: { environmentId: input.environmentId },
+        select: { subjectKey: true, machineId: true, installationId: true } });
+    const keys = rows.filter(row => removed.has(identity(row)) && !retained.has(identity(row))).map(row => row.subjectKey);
+    for (const chunk of portableQueryChunks({ values: keys, bindingsPerValue: 1 })) {
+        await tx.machineSecretGrant.deleteMany({ where: { subjectKey: { in: [...chunk] } } });
+    }
+}

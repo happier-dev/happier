@@ -13,7 +13,6 @@ import { agentColumnFacts } from './agentColumnAdapter';
 import {
     buildAgentCollection,
     isCommandAgentDefinition,
-    resolveAgentCollectionLandingId,
     resolveSelectedAgentCollectionId,
 } from './agentCollectionModel';
 
@@ -48,6 +47,7 @@ function agent(agentId: string, state: MachineAgent['state'], overrides: Partial
         ...projectMachineAgent({ agentId, title: agentId, facts: null, checking: false, stale: false, connectedServices: [], job: null }),
         installed: state !== 'notInstalled' && state !== 'unsupported',
         state,
+        ...(state === 'needsSignIn' ? { signInTrouble: true as const } : {}),
         ...overrides,
     };
 }
@@ -136,7 +136,7 @@ describe('buildAgentCollection', () => {
         expect(collection.total).toBe(1);
     });
 
-    it('retains canonical unsupported and job states, and does not flag stale sign-in facts as trouble', () => {
+    it('retains canonical unsupported/job states and last-known sign-in trouble', () => {
         const collection = buildAgentCollection({
             entries: [entry('antigravity'), entry('claude'), entry('codex'), entry('gemini')],
             agents: [agent('antigravity', 'unsupported'), agent('claude', 'installing'), agent('codex', 'failed'), agent('gemini', 'needsSignIn', { stale: true })],
@@ -144,7 +144,7 @@ describe('buildAgentCollection', () => {
         });
         expect(collection.available.map((row) => row.status)).toEqual(['unsupported']);
         expect(collection.onMachine.map((row) => [row.status, row.trouble])).toEqual([
-            ['installing', false], ['failed', false], ['needsSignIn', false],
+            ['installing', false], ['failed', false], ['needsSignIn', true],
         ]);
     });
 });
@@ -201,30 +201,5 @@ describe('resolveSelectedAgentCollectionId', () => {
         expect(resolveSelectedAgentCollectionId(entries, { agentId: null, pluginId: null })).toBeNull();
         expect(resolveSelectedAgentCollectionId(entries, { agentId: 'missing', pluginId: null })).toBeNull();
         expect(resolveSelectedAgentCollectionId(entries, { agentId: 'provider', pluginId: 'other.plugin' })).toBeNull();
-    });
-});
-
-describe('resolveAgentCollectionLandingId', () => {
-    const collection = buildAgentCollection({
-        entries: [entry('cursor'), entry('claude'), entry('codex')],
-        agents: [agent('cursor', 'notInstalled'), agent('claude', 'ready'), agent('codex', 'ready')],
-        query: '',
-    });
-
-    it('returns to the agent visited last while it is still listed', () => {
-        expect(resolveAgentCollectionLandingId(collection, 'codex')).toBe('codex');
-        expect(resolveAgentCollectionLandingId(collection, 'cursor')).toBe('cursor');
-    });
-
-    it('otherwise opens the first agent on the machine, then the first listed', () => {
-        expect(resolveAgentCollectionLandingId(collection, 'gone')).toBe('claude');
-        expect(resolveAgentCollectionLandingId(collection, null)).toBe('claude');
-        const nothingInstalled = buildAgentCollection({
-            entries: [entry('cursor')],
-            agents: [agent('cursor', 'notInstalled')],
-            query: '',
-        });
-        expect(resolveAgentCollectionLandingId(nothingInstalled, null)).toBe('cursor');
-        expect(resolveAgentCollectionLandingId(buildAgentCollection({ entries: [], agents: [], query: '' }), null)).toBeNull();
     });
 });

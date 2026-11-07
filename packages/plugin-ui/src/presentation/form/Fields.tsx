@@ -47,7 +47,7 @@ import { scaleTextStyleMetrics } from '../text/textStyleScale.js';
 import { useHappierTypeRoleStyle } from '../text/typeRole.js';
 import { resolveHappierTextScaleOwnership } from '../text/textScaleOwnership.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
-import { HappierSwitch, HappierSwitchNative } from './Switch.js';
+import { HappierSwitch, HappierSwitchNative, type HappierSwitchProps } from './Switch.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import {
   HAPPIER_FIELD_TEXT_METRICS,
@@ -137,6 +137,12 @@ export function useHappierFormSubmission(busy?: boolean): Readonly<{
 
 export type HappierFormProps = Readonly<{
   children?: ReactNode;
+  /**
+   * The form mixes required and optional fields, so each optional field's label ends with a quiet "optional". A form whose
+   * fields are all required (or all optional) marks none. Requiredness itself stays in each field's semantics.
+   * Typed-hints renderers pass {@link happierFormMarksOptionalFields} of their visible fields.
+   */
+  marksOptionalFields?: boolean;
   accessibilityLabel?: string;
   /** The form lifecycle owner has pending work; this does not create one. */
   busy?: boolean;
@@ -144,9 +150,18 @@ export type HappierFormProps = Readonly<{
   style?: HappierStyleProp;
 }>;
 
+/** Whether a form's fields mix required and optional ones: only then do the optional ones carry a mark. */
+export function happierFormMarksOptionalFields(fields: readonly Readonly<{ required?: boolean }>[]): boolean {
+  return fields.some(field => field.required === true) && fields.some(field => field.required !== true);
+}
+
+/** Set by the enclosing {@link HappierForm}; a field outside a form marks nothing. */
+const HappierFormOptionalMarksContext = createContext(false);
+
 /** The structural owner for a bounded action form, without draft or submit authority. */
-export function HappierForm({ children, accessibilityLabel, busy, testID, style }: HappierFormProps) {
+export function HappierForm({ children, accessibilityLabel, busy, testID, style, marksOptionalFields = false }: HappierFormProps) {
   return (
+    <HappierFormOptionalMarksContext.Provider value={marksOptionalFields}>
     <View
       role="form"
       accessibilityLabel={accessibilityLabel}
@@ -157,6 +172,7 @@ export function HappierForm({ children, accessibilityLabel, busy, testID, style 
     >
       {children}
     </View>
+    </HappierFormOptionalMarksContext.Provider>
   );
 }
 
@@ -305,6 +321,8 @@ const HAPPIER_STACKED_FIELD_LAYOUT: HappierPageRowFieldLayout = Object.freeze({ 
 
 export function HappierField(props: HappierFieldProps) {
   const captionStyle = useHappierTypeRoleStyle('micro', props.theme);
+  const marksOptional = useContext(HappierFormOptionalMarksContext);
+  const localization = useOptionalHappierUiLocalization();
   // A field inside a page row takes that row's placement. A free-standing one (a dialog's form) measures its own
   // room: wide, its select keeps the desktop field width; narrow, it spans the field as its text inputs do.
   const rowLayout = useContext(HappierPageRowFieldLayoutContext);
@@ -337,7 +355,13 @@ export function HappierField(props: HappierFieldProps) {
         style={[{ gap: props.theme.spacing.xsmall, opacity: props.disabled ? HAPPIER_FIELD_DISABLED_OPACITY : 1 }, props.style]}
       >
         <HappierLabel theme={props.theme}>
-          {props.label}{props.required ? ' *' : ''}
+          {props.label}
+          {/* Required fields carry no mark; in a mixed form the optional ones say so, quietly, after their name. */}
+          {marksOptional && !props.required ? (
+            <HappierText style={{ color: props.theme.colors.mutedText }}>
+              {` ${localization?.translate('happier.plugin-ui.form.optional', 'optional') ?? 'optional'}`}
+            </HappierText>
+          ) : null}
         </HappierLabel>
         {description ? (
           <HappierText nativeID={issueSemantics.descriptionId} style={{
@@ -380,7 +404,12 @@ export type HappierTextFieldProps = Readonly<{
    * bordered field box (a row's control) — the same box Happier core's
    * `FieldTextInput` draws — in `fieldColors`, with `error` beneath it.
    */
-  appearance?: 'well' | 'field' | 'search';
+  appearance?: 'well' | 'field' | 'search' | 'document';
+  /**
+   * `document` only: the text's place in a document being written in place (a task draft) — its `title`, or its
+   * `body` (the default). No well, box or edge: the caret is the field's focus, and the text grows with what is typed.
+   */
+  documentRole?: 'title' | 'body';
   fieldColors?: HappierFieldBoxColors & Readonly<{ errorColor: string }>;
   /** `field` only: the field's refusal, shown beneath the box and announced. */
   error?: string;
@@ -393,6 +422,13 @@ export type HappierTextFieldProps = Readonly<{
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   /** Overrides the derived autocorrection, which also silences spellchecking. */
   autoCorrect?: boolean;
+  /** `field` only: an identifier, path or header value set in the host's mono face once typed. */
+  monospace?: boolean;
+  /**
+   * `field` + `multiline` only: the box starts this many lines tall and grows with what is typed (a comment box
+   * that opens as one line). Absent: the field's fixed multiline height.
+   */
+  minLines?: number;
   /**
    * The caret or range this field must show. A controlled field whose value is
    * rewritten between keystrokes otherwise lands the caret at the end of the
@@ -419,25 +455,25 @@ export type HappierTextFieldProps = Readonly<{
   controlRef?: (instance: HappierFocusable | null) => void;
   /**
    * A decorative glyph drawn inside the field's well before the text (the
-   * List's search field uses it). It is hidden from assistive technology; the
-   * field's name stays its `label`.
+   * List's search field uses it), or in a bordered `field` box the mark the
+   * value continues (a shortcut's `/`). It is hidden from assistive
+   * technology; the field's name stays its `label`.
    */
   leading?: ReactNode;
-  /**
-   * Controls inside the well between the leading glyph and the text (a search field's filter tokens). They stay
-   * reachable and named; the field's own name stays its `label`.
-   */
-  inline?: ReactNode;
   /** A decorative mark at the end of the well (the field's keyboard shortcut), hidden from assistive technology. */
   trailing?: ReactNode;
+  /**
+   * A search field's own control at the very end of its well, after `trailing` (the funnel that opens the list's
+   * filters). It stays reachable and named; the field's own name stays its `label`.
+   */
+  action?: ReactNode;
   theme: HappierUiTheme;
   testID?: string;
 }>;
 
-/** Room for a short query (about six characters) beside a search field's inline tokens. */
-const SEARCH_QUERY_MIN_EMS = 6;
-/** Only for a text style that states no size; the field's own text role always does. */
-const SEARCH_QUERY_FALLBACK_FONT_SIZE = 14;
+
+/** The key cap and the field's own control share the well's end, a small step apart. */
+const SEARCH_FIELD_END_STYLE = { flexDirection: 'row', alignItems: 'center', gap: 6 } as const;
 
 export function HappierTextField(props: HappierTextFieldProps) {
   const paintColor = useHappierMaterialColorResolver();
@@ -449,6 +485,11 @@ export function HappierTextField(props: HappierTextFieldProps) {
     ...(accessibility === null ? {} : { environmentTextScale: accessibility.textScale }),
   });
   const bodyStyle = useHappierTypeRoleStyle('meta', props.theme);
+  const documentRole = props.appearance === 'document' ? props.documentRole ?? 'body' : null;
+  const documentTypeStyle = useHappierTypeRoleStyle(props.documentRole === 'title' ? 'title' : 'reading', props.theme);
+  // A document's text, and a field given `minLines`, grows with its content instead of scrolling inside a box.
+  const [documentContentHeight, setDocumentContentHeight] = useState(0);
+  const growingField = props.appearance === 'field' && props.multiline === true && props.minLines !== undefined;
   // A field is a well on the control surface, like the host's own inputs and
   // this package's control-appearance triggers. `border` is the outline of a
   // bounded *surface* and is transparent in the light theme, so a field that
@@ -529,6 +570,13 @@ export function HappierTextField(props: HappierTextFieldProps) {
   }, [authorSelectionChange]);
   const fieldAppearance = props.appearance === 'field' && props.fieldColors !== undefined ? props.fieldColors : null;
   const fieldInvalid = fieldIssue.invalid || (fieldAppearance !== null && Boolean(props.error));
+  const documentTextStyle = documentRole === null ? null : scaleTextStyleMetrics({
+    ...documentTypeStyle,
+    color: props.theme.colors.text,
+  }, scaleOwnership.metricScale);
+  const documentLineHeight = typeof documentTextStyle?.lineHeight === 'number' ? documentTextStyle.lineHeight : 0;
+  // A body leaves room for a few lines before anything is written; a title is one line until it wraps.
+  const documentMinHeight = documentLineHeight * (documentRole === 'body' && props.multiline ? 3 : 1);
   const wellStyle = {
     minHeight: props.multiline ? 96 : undefined,
     borderWidth: 1,
@@ -553,6 +601,13 @@ export function HappierTextField(props: HappierTextFieldProps) {
       selection={props.selection}
       onSelectionChange={authorSelectionChange === undefined ? undefined : onSelectionChange}
       onSubmitEditing={props.onSubmitEditing}
+      // A document title wraps like text but Enter still ends it rather than starting a second line.
+      {...(documentRole === 'title' && props.multiline ? { blurOnSubmit: true } : {})}
+      {...((documentRole !== null && props.multiline) || growingField ? {
+        onContentSizeChange: (event: Readonly<{ nativeEvent: Readonly<{ contentSize: Readonly<{ height: number }> }> }>) => {
+          setDocumentContentHeight(event.nativeEvent.contentSize.height);
+        },
+      } : {})}
       onBlur={props.onBlur}
       onKeyPress={handleKeyPress as never}
       placeholder={props.placeholder}
@@ -574,19 +629,35 @@ export function HappierTextField(props: HappierTextFieldProps) {
         ...HAPPIER_TEXT_INPUT_WEB_MARKER,
       } as Record<string, unknown>)}
       style={[props.appearance === 'search' ? {
-          ...textStyle, flex: 1,
-          // Beside inline tokens the query keeps room to be typed and read; the tokens truncate instead.
-          minWidth: props.inline === undefined ? 0 : (textStyle.fontSize ?? SEARCH_QUERY_FALLBACK_FONT_SIZE) * SEARCH_QUERY_MIN_EMS,
+          ...textStyle, flex: 1, minWidth: 0,
           minHeight: 20, padding: 0, margin: 0, borderWidth: 0, backgroundColor: 'transparent',
+        } : documentTextStyle !== null ? {
+          ...documentTextStyle,
+          padding: 0,
+          margin: 0,
+          borderWidth: 0,
+          backgroundColor: 'transparent',
+          textAlignVertical: 'top',
+          minHeight: documentMinHeight,
+          ...(props.multiline ? { height: Math.max(documentMinHeight, documentContentHeight) } : {}),
         } : fieldAppearance !== null
         ? {
-            ...resolveHappierFieldTextInputMetrics({ multiline: props.multiline }),
+            ...resolveHappierFieldTextInputMetrics({ multiline: props.multiline, ...(props.minLines === undefined ? {} : { minLines: props.minLines }) }),
+            ...(growingField ? { height: Math.max(
+              resolveHappierFieldTextInputMetrics({ multiline: true, minLines: props.minLines }).minHeight, documentContentHeight) } : {}),
             ...(bodyStyle.fontFamily === undefined ? {} : { fontFamily: bodyStyle.fontFamily }),
+            // Mono reads a step larger than the field's face, so it steps half a point down (as core's fields do).
+            ...(props.monospace && props.value !== '' && props.theme.typography.code.fontFamily
+              ? {
+                  fontFamily: props.theme.typography.code.fontFamily,
+                  fontSize: resolveHappierFieldTextInputMetrics({ multiline: props.multiline }).fontSize - 0.5,
+                }
+              : {}),
             color: fieldAppearance.valueColor,
             backgroundColor: 'transparent',
             borderWidth: 0,
           }
-        : props.leading === undefined
+        : props.leading === undefined && props.trailing === undefined
         ? {
             ...wellStyle,
             ...textStyle,
@@ -615,13 +686,17 @@ export function HappierTextField(props: HappierTextFieldProps) {
       }}
       onFocusInput={() => searchInputRef.current?.focus()}
       leading={props.leading}
-      trailing={props.trailing === undefined ? undefined : (
-        <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-          {props.trailing}
+      trailing={props.trailing === undefined && props.action === undefined ? undefined : (
+        <View style={SEARCH_FIELD_END_STYLE}>
+          {props.trailing === undefined ? null : (
+            <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+              {props.trailing}
+            </View>
+          )}
+          {props.action ?? null}
         </View>
       )}
     >
-      {props.inline}
       {input}
     </HappierSearchFieldBox>
   );
@@ -629,6 +704,13 @@ export function HappierTextField(props: HappierTextFieldProps) {
     return (
       <HappierFieldTextBox
         multiline={props.multiline}
+        // The marks are decoration around the value; the field's name stays its `label`.
+        leading={props.leading === undefined ? undefined : (
+          <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>{props.leading}</View>
+        )}
+        trailing={props.trailing === undefined ? undefined : (
+          <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>{props.trailing}</View>
+        )}
         colors={{
           borderColor: props.error ? fieldAppearance.errorColor : fieldAppearance.borderColor,
           backgroundColor: fieldAppearance.backgroundColor,
@@ -653,7 +735,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
       </HappierFieldTextBox>
     );
   }
-  if (props.leading === undefined) return input;
+  if (props.leading === undefined && props.trailing === undefined) return input;
   return (
     <View
       style={{
@@ -664,10 +746,11 @@ export function HappierTextField(props: HappierTextFieldProps) {
         backgroundColor: paintColor(props.theme.colors.control),
       }}
     >
-      <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-        {props.leading}
-      </View>
-      {props.inline}
+      {props.leading === undefined ? null : (
+        <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          {props.leading}
+        </View>
+      )}
       {input}
       {props.trailing === undefined ? null : (
         <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
@@ -691,6 +774,8 @@ export function HappierToggle(props: Readonly<{
   disabled?: boolean;
   /** Additive host floor; the mounted environment's native target always wins. */
   minimumTouchTarget?: number;
+  /** How far the switch's hit area may reach past it on each side (see `HappierSwitchProps.hitReach`). */
+  hitReach?: HappierSwitchProps['hitReach'];
   theme: HappierUiTheme;
   testID?: string;
 }>) {
@@ -723,6 +808,7 @@ export function HappierToggle(props: Readonly<{
       errorMessageId={fieldIssue.issueId}
       reducedMotion={accessibility?.reducedMotion === true}
       minimumTouchTarget={minimumTouchTarget}
+      hitReach={props.hitReach}
       testID={props.testID}
     />
   );

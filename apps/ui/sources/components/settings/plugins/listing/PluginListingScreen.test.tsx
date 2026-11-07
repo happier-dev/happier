@@ -36,8 +36,8 @@ const listing: PluginMarketplaceCatalogEntry = {
 };
 
 /**
- * The page's data and actions come from the plugins screen-state owner (whose query filters and
- * install path have their own tests); this boundary stands in for the daemon behind it.
+ * Legacy view-only coverage. Account/source acquisition and native locator/pin
+ * contracts run through real owners in PluginRegistryDiscovery.composed.test.tsx.
  */
 const state = vi.hoisted(() => ({
     value: null as null | Record<string, unknown>,
@@ -52,11 +52,15 @@ function screenState(overrides: Record<string, unknown> = {}) {
         daemonOperationsAvailable: true,
         canRunDiscoverActions: true,
         loadingDiscover: false,
+        unresolvedListing: false,
         discoverEntries: [listing],
         installedPluginById: new Map(),
         pluginProjectionById: {},
         isPluginActionInFlight: () => false,
-        openDiscoverListing: vi.fn(),
+        // No Install has created an approval yet; the listing presents none.
+        pluginActionApproval: { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null },
+        routineOperationSettlement: null,
+        refreshDiscover: vi.fn(),
         runCatalogAction: vi.fn(),
         ...overrides,
     };
@@ -71,10 +75,9 @@ describe('PluginListingScreen', () => {
     beforeEach(() => { routerPush.mockReset(); });
     afterEach(standardCleanup);
 
-    it('re-reads the exact listing on arrival and installs it on the machine named in the header', async () => {
+    it('shows the selected listing and installs it on the machine named in the header', async () => {
         state.value = screenState();
         const screen = await renderListing();
-        expect(state.value.openDiscoverListing).toHaveBeenCalledWith({ sourceId: 'marketplace:curated', pluginId: 'acme.tools' });
         const text = screen.getTextContent();
         expect(text).toContain('Acme tools');
         expect(text).toContain('Inspect before installing.');
@@ -100,11 +103,10 @@ describe('PluginListingScreen', () => {
         expect(screen.findByTestId('settings.plugins.listing.install')).toBeNull();
     });
 
-    it('acquires its Account listing even when no install machine is chosen', async () => {
+    it('keeps missing Account listings distinct from missing install machines', async () => {
         state.value = screenState({ discoverEntries: [], daemonOperationsAvailable: false, administrationTargetSelection: { state: { kind: 'unselected' }, candidates: [] } });
         const screen = await renderListing();
-        expect(state.value.openDiscoverListing).toHaveBeenCalledWith({ sourceId: 'marketplace:curated', pluginId: 'acme.tools' });
-        expect(screen.findByTestId('settings.plugins.listing.noTarget')).not.toBeNull();
+        expect(screen.findByTestId('settings.plugins.listing.missing')).not.toBeNull();
     });
     it('explains an offline machine with a retry instead of loading forever', async () => {
         const refreshPluginTruth = vi.fn();
@@ -116,7 +118,6 @@ describe('PluginListingScreen', () => {
             refreshPluginTruth,
         });
         const screen = await renderListing();
-        expect(state.value.openDiscoverListing).toHaveBeenCalledWith({ sourceId: 'marketplace:curated', pluginId: 'acme.tools' });
         expect(screen.findByTestId('settings.plugins.listing.loading')).toBeNull();
         expect(screen.findByTestId('settings.plugins.listing.readOnlySnapshot')).not.toBeNull();
     });

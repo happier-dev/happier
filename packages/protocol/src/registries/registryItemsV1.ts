@@ -1,32 +1,34 @@
-import { sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
-import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRemoteContentRefV1Schema, RegistryPackageContentRefV1Schema, RegistryContentDigestRefV1Schema } from './registryContentRefV1.js';
-export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
-  RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
-export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryFormatV1Schema, RegistryKindV1Schema } from './registrySourcesV1.js';
 import { MarketplaceIndexEntryV1Schema, MarketplaceIndexSourceSnapshotV1Schema } from '../marketplace/marketplaceIndexV1.js';
 import { PinnedArchivePlatformSchema } from '../installables/sourceKind.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { registryPluginListingSummaryV1 } from './formats/registryPluginListingV1.js';
+import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRemoteContentRefV1Schema, RegistryPackageContentRefV1Schema, RegistryContentDigestRefV1Schema } from './registryContentRefV1.js';
+import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
+import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
+export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
+  RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
+export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
 
 
-
-
-
-
-
-
-
-export const RegistryProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
+export const RegistryRemoteProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), format: RegistryFormatV1Schema, sourceUrl: z.string().check(z.minLength(1)),
-  itemId: z.string(), ref: RegistryContentRefV1Schema, importedAt: z.number().check(z.int(), z.nonnegative()),
+  itemId: z.string(), ref: RegistryRemoteContentRefV1Schema, importedAt: z.number().check(z.int(), z.nonnegative()),
 }));
+export type RegistryRemoteProvenanceV1 = z.infer<typeof RegistryRemoteProvenanceV1Schema>;
+export const RegistryProvenanceV1Schema = lazyZodSchema(() => z.union([
+  RegistryRemoteProvenanceV1Schema,
+  z.strictObject({ sourceId: z.string().check(z.minLength(1)), format: z.literal('happier-catalog'),
+    sourceUrl: z.optional(z.never()), itemId: z.string(), ref: RegistryPackageContentRefV1Schema,
+    importedAt: z.number().check(z.int(), z.nonnegative()) }),
+]));
 export type RegistryProvenanceV1 = z.infer<typeof RegistryProvenanceV1Schema>;
 
-
-
+export const RegistryAppFieldDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
+  field: z.string().check(z.minLength(1)), reason: z.string().check(z.minLength(1)),
+}));
 export const RegistryItemProblemV1Schema = lazyZodSchema(() => z.discriminatedUnion('code', [
   z.strictObject({ code: z.literal('too_large'), limit: z.enum(['files', 'bytes']) }),
   z.strictObject({ code: z.literal('unsupported_entry'), reason: z.enum(['symlink', 'submodule', 'distribution', 'package_type']) }),
@@ -42,6 +44,20 @@ export const RegistryAgentDistributionV1Schema = lazyZodSchema(() => z.discrimin
     z.enum(['supported', 'archive_type_unsupported'])) }),
 ]));
 export type RegistryAgentDistributionV1 = z.infer<typeof RegistryAgentDistributionV1Schema>;
+/** Published discovery facts only. Installation still requires the selected pinned payload. */
+export const RegistryPluginListingSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  pluginId: MarketplaceIndexEntryV1Schema.shape.pluginId,
+  packageName: MarketplaceIndexEntryV1Schema.shape.distribution.shape.packageName,
+  publisher: MarketplaceIndexEntryV1Schema.shape.publisher,
+  categories: MarketplaceIndexEntryV1Schema.shape.categories,
+  contributions: MarketplaceIndexEntryV1Schema.shape.summary.shape.contributions,
+  executableRealms: MarketplaceIndexEntryV1Schema.shape.summary.shape.executableRealms,
+  platforms: MarketplaceIndexEntryV1Schema.shape.compatibility.shape.platforms,
+  review: MarketplaceIndexEntryV1Schema.shape.review,
+  updatePolicy: MarketplaceIndexEntryV1Schema.shape.updatePolicy,
+  links: MarketplaceIndexEntryV1Schema.shape.links,
+}));
+export type RegistryPluginListingSummaryV1 = z.infer<typeof RegistryPluginListingSummaryV1Schema>;
 export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), kind: RegistryKindV1Schema, itemId: z.string(), title: z.string().check(z.minLength(1)),
   description: z.optional(z.string()), version: z.optional(z.string().check(z.minLength(1))), iconUrl: z.optional(z.string()),
@@ -56,6 +72,7 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
     containerPort: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
     architectures: z.optional(z.array(z.enum(['amd64', 'arm64']))) })),
   agentDistribution: z.optional(RegistryAgentDistributionV1Schema),
+  pluginListing: z.optional(RegistryPluginListingSummaryV1Schema),
 }));
 export type RegistryItemSummaryV1 = z.infer<typeof RegistryItemSummaryV1Schema>;
 export const RegistrySkillSourceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -82,7 +99,7 @@ export type McpRegistryArgumentV1 = z.infer<typeof McpRegistryArgumentV1Schema>;
 export const McpRegistryServerV1Schema = lazyZodSchema(() => z.strictObject({
   name: z.string().check(z.minLength(1)), title: z.optional(z.string()), description: z.string(), version: z.string().check(z.minLength(1)),
   status: z.enum(['active', 'deprecated']), publishedAt: z.optional(z.number()), repository: z.optional(z.string()),
-  websiteUrl: z.optional(z.string()), iconUrl: z.optional(z.string()),
+  websiteUrl: z.optional(z.string()), iconUrl: z.optional(z.string()), iconDarkUrl: z.optional(z.string()),
   remotes: z.array(z.strictObject({ transport: z.enum(['streamable-http', 'sse']), url: z.string(), inputs: z.array(McpRegistryInputV1Schema) })),
   packages: z.array(z.strictObject({ ecosystem: z.enum(['npm', 'pypi', 'oci', 'mcpb', 'nuget', 'cargo']),
     identifier: z.string().check(z.minLength(1)), version: z.string(), transport: z.enum(['stdio', 'streamable-http', 'sse']),
@@ -140,17 +157,10 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
     || item.payload.kind === 'agent' && item.summary.itemId !== item.payload.agent.id
     || item.payload.kind === 'mcpServer' && item.summary.itemId !== item.payload.server.name
     || item.payload.kind === 'plugin' && (item.summary.sourceId !== item.payload.source.id
-      || item.summary.itemId !== (item.payload.source.kind === 'community-npm' ? item.payload.listing.distribution.packageName : item.payload.listing.pluginId))) {
+      || item.summary.itemId !== (item.payload.source.kind === 'community-npm' ? item.payload.listing.distribution.packageName : item.payload.listing.pluginId)
+      || item.summary.pluginListing !== undefined && !sameStrictJsonValue(item.summary.pluginListing, registryPluginListingSummaryV1(item.payload.listing)))) {
     ctx.addIssue({ code: 'custom', path: ['summary'], message: 'Read summary must identify the pinned payload' });
   }
 })));
 export type RegistryItemV1 = z.infer<typeof RegistryItemV1Schema>;
 export type RegistrySkillItemV1 = RegistryItemV1 & Readonly<{ payload: Extract<RegistryItemPayloadV1, { kind: 'skill' }> }>;
-
-
-
-
-
-export const RegistryAppFieldDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
-  field: z.string().check(z.minLength(1)), reason: z.string().check(z.minLength(1)),
-}));

@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Text } from '@/components/ui/text/Text';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
 import { ApprovalPromptRoomContext, shareApprovalPromptRoom, type ApprovalPromptCardHeights, type ApprovalPromptRoom } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
@@ -11,12 +13,13 @@ import { Typography } from '@/constants/Typography';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
-import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
+import type { OpenApprovalAttentionArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
+import { t } from '@/text';
 
 type AttentionRequest =
     | Readonly<{ kind: 'permission'; request: PendingPermissionRequest }>
-    | Readonly<{ kind: 'approval'; request: OpenApprovalArtifactForSession }>;
+    | Readonly<{ kind: 'approval'; request: OpenApprovalAttentionArtifactForSession }>;
 
 function getAttentionRequestKey(request: AttentionRequest): string {
     switch (request.kind) {
@@ -52,6 +55,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.elevated,
         overflow: 'hidden',
     },
+    pager: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        paddingLeft: theme.space.s16,
+        paddingRight: theme.space.s8,
+        paddingVertical: theme.space.s4,
+        borderTopWidth: TRAY_DIVIDER_PX,
+        borderTopColor: theme.colors.border.default,
+    },
+    pagerPosition: {
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.text.secondary,
+        fontVariant: ['tabular-nums'],
+    },
     divider: {
         height: TRAY_DIVIDER_PX,
         backgroundColor: theme.colors.border.default,
@@ -62,13 +81,19 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const AgentInputPermissionRequests = React.memo(function AgentInputPermissionRequests(props: Readonly<{
     sessionId: string;
     permissionRequests: readonly PendingPermissionRequest[];
-    approvalRequests?: readonly OpenApprovalArtifactForSession[];
+    approvalRequests?: readonly OpenApprovalAttentionArtifactForSession[];
     permissionLocationsById: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     approvalLocationsByArtifactId?: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     metadata: Metadata | null;
     canApprovePermissions: boolean;
     disabledReason?: TranscriptPermissionDisabledReason;
     maxHeightPx: number;
+    /**
+     * `shared` (wide layouts): every request shares the tray so each decision is in view at once.
+     * `oneAtATime` (a phone): the tray shows the first request whole, with a pager to the others, so a stack
+     * of requests never takes the screen from the transcript nor slips a card under the input.
+     */
+    presentation?: 'shared' | 'oneAtATime';
     onContentSizeChange: (width: number, height: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -83,6 +108,19 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         ...permissionRequests.map((request) => ({ kind: 'permission' as const, request })),
         ...approvalRequests.map((request) => ({ kind: 'approval' as const, request })),
     ], [approvalRequests, permissionRequests]);
+    // The request on screen when one shows at a time. Deciding it shows the one that takes its place.
+    const [current, setCurrent] = React.useState<Readonly<{ key: string; index: number }> | null>(null);
+    const oneAtATime = props.presentation === 'oneAtATime' && attentionRequests.length > 1;
+    const currentIndex = (() => {
+        if (!oneAtATime || !current) return 0;
+        const held = attentionRequests.findIndex((item) => getAttentionRequestKey(item) === current.key);
+        return held >= 0 ? held : Math.min(current.index, attentionRequests.length - 1);
+    })();
+    const shownRequests = oneAtATime ? attentionRequests.slice(currentIndex, currentIndex + 1) : attentionRequests;
+    const showRequestAt = React.useCallback((index: number) => {
+        const item = attentionRequests[index];
+        if (item) setCurrent({ key: getAttentionRequestKey(item), index });
+    }, [attentionRequests]);
     const scrollStyle = React.useMemo(() => ({ maxHeight: props.maxHeightPx }), [props.maxHeightPx]);
     // The requests share the tray: each card reports the height it wants, and the room is divided so every
     // card's decision is in view at once (the shortest keep their height; the rest split what is left).
@@ -95,14 +133,14 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         return next;
     }), []);
     const room = React.useMemo<ApprovalPromptRoom>(() => {
-        const available = props.maxHeightPx - TRAY_BOTTOM_INSET_PX - (attentionRequests.length - 1) * TRAY_DIVIDER_PX;
+        const available = props.maxHeightPx - TRAY_BOTTOM_INSET_PX - (shownRequests.length - 1) * TRAY_DIVIDER_PX;
         // Until every card has reported, each gets an even part, so no decision starts out of view.
-        const bounds = cardHeights.size === attentionRequests.length ? shareApprovalPromptRoom(available, cardHeights) : new Map<string, number>();
+        const bounds = cardHeights.size === shownRequests.length ? shareApprovalPromptRoom(available, cardHeights) : new Map<string, number>();
         return {
-            boundFor: (cardId) => bounds.get(cardId) ?? Math.floor(available / Math.max(1, attentionRequests.length)),
+            boundFor: (cardId) => bounds.get(cardId) ?? Math.floor(available / Math.max(1, shownRequests.length)),
             report: reportCardHeights,
         };
-    }, [attentionRequests.length, cardHeights, props.maxHeightPx, reportCardHeights]);
+    }, [shownRequests.length, cardHeights, props.maxHeightPx, reportCardHeights]);
 
     if (attentionRequests.length === 0) {
         return null;
@@ -126,7 +164,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                         {/* The requests share the tray: each card's facts scroll and its decision stays in view. */}
                         <ApprovalPromptRoomContext.Provider value={room}>
                         <View style={{ paddingTop: 0 }}>
-                            {attentionRequests.map((item, index) => (
+                            {shownRequests.map((item, index) => (
                                 <React.Fragment key={getAttentionRequestKey(item)}>
                                     {index > 0 ? (
                                         <View
@@ -177,6 +215,34 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                         }}
                     />
                 </View>
+                {/* The pager sits at the tray foot, which stays put while cards of different heights page above it. */}
+                {oneAtATime ? (
+                    <View testID="agentInput.permissionRequests.pager" style={styles.pager}>
+                        <Text variant="meta" emphasis="medium" style={styles.pagerPosition} numberOfLines={1}>
+                            {t('approvals.trayPosition', { index: currentIndex + 1, total: attentionRequests.length })}
+                        </Text>
+                        <IconButton
+                            testID="agentInput.permissionRequests.previous"
+                            accessibilityLabel={t('common.previous')}
+                            iconName="caret-left"
+                            variant="plain"
+                            size={24}
+                            interactiveTargetGapPx={4}
+                            disabled={currentIndex === 0}
+                            onPress={() => showRequestAt(currentIndex - 1)}
+                        />
+                        <IconButton
+                            testID="agentInput.permissionRequests.next"
+                            accessibilityLabel={t('common.next')}
+                            iconName="caret-right"
+                            variant="plain"
+                            size={24}
+                            interactiveTargetGapPx={4}
+                            disabled={currentIndex === attentionRequests.length - 1}
+                            onPress={() => showRequestAt(currentIndex + 1)}
+                        />
+                    </View>
+                ) : null}
             </View>
         </View>
     );

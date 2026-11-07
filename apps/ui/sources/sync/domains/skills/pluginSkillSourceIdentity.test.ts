@@ -7,6 +7,17 @@ import type { PluginUiContributionSupplyV1 } from '@/sync/domains/plugins/ui/pro
 
 afterEach(() => vi.restoreAllMocks());
 
+it('observes only selected plugin declarations while retaining changes to those declarations', () => {
+    const selected = projectPluginSkillDeclarationV1({ pluginId: 'com.acme.skills', pluginVersion: '1.0.0',
+        definition: { id: 'selected', directory: './selected' } });
+    const unrelated = projectPluginSkillDeclarationV1({ pluginId: 'com.acme.skills', pluginVersion: '1.0.0',
+        definition: { id: 'other', directory: './other' } });
+    const owner = createPluginSkillSourceIdentityPublication([selected.id]);
+    const first = owner.publish({ ...EMPTY_PLUGIN_UI_PROJECTION, skillsById: { [selected.id]: selected } });
+    expect(owner.publish({ ...EMPTY_PLUGIN_UI_PROJECTION, skillsById: { [selected.id]: selected, [unrelated.id]: unrelated } })).toBe(first);
+    expect(owner.publish({ ...EMPTY_PLUGIN_UI_PROJECTION, skillsById: { [selected.id]: { ...selected, pluginVersion: '2.0.0' } } })).not.toBe(first);
+});
+
 it('invalidates the former revision fields without treating runtime generation or plugin labels as content', () => {
     const entry = projectPluginSkillDeclarationV1({ pluginId: 'com.acme.skills', pluginVersion: '1.0.0',
         definition: { id: 'check', directory: './resources/check' } });
@@ -70,6 +81,7 @@ it('reads the retained Skills source revision without serializing unchanged decl
     }
     const calls = stringify.mock.calls.length;
     const walks = entries.mock.calls.filter(([value]) => value === projection.skillsById).length;
+    console.info('Skills retained source reads', { reads: 200, serializations: calls, declarationWalks: walks });
     expect(calls).toBe(0);
     expect(walks).toBe(0);
     expect(owner.publish({ ...projection, skillsById: Object.freeze({ [entry.id]: {

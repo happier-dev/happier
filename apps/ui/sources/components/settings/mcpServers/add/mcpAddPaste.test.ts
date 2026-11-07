@@ -23,6 +23,17 @@ const config = JSON.stringify({
 });
 
 describe('paste a config → Add details', () => {
+  it('keeps explicit OAuth intent in the preview without requiring credentials or adding it to public remotes', () => {
+    const model = buildMcpPastePreviewModel(preview(JSON.stringify({ mcpServers: {
+      authenticated: { transport: 'http', url: 'https://tools.example/mcp', auth: { kind: 'oauth' } },
+      public: { transport: 'http', url: 'https://docs.example/mcp' },
+    } })));
+    expect(model.servers[0]).toMatchObject({ auth: { kind: 'oauth' } });
+    expect(model.servers[1]).not.toHaveProperty('auth');
+    expect(countOpenMcpPasteValues(model, EMPTY_MCP_PASTE_ANSWERS)).toBe(0);
+    expect(buildMcpPasteValues(model, EMPTY_MCP_PASTE_ANSWERS)).toEqual({});
+  });
+
   it('moves a pasted key into a Saved Secret named after its server and asks nothing else', () => {
     const model = buildMcpPastePreviewModel(preview(config));
     const brave = model.servers.find((server) => server.name === 'brave-search')!;

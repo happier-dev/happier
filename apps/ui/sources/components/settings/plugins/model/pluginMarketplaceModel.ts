@@ -1,5 +1,6 @@
-import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { z } from 'zod/mini';
+import type { MachineAuthorityPresentationV1 } from '@happier-dev/protocol';
+import { presentPluginInstallationReviewAuthority } from './pluginInstallationReviewFacts';
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
@@ -11,6 +12,7 @@ import type {
     PluginDevelopmentStatusV1,
 } from '@happier-dev/protocol/capabilities';
 import { InstalledPluginCapabilityEntryV1Schema, PluginDevelopmentStatusV1Schema } from '@happier-dev/protocol/capabilities';
+import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import {
@@ -103,6 +105,13 @@ export function projectAccountInstalledPlugins(
     const observed: InstalledPluginEntry[] = [];
     for (const plugin of admission.plugins) {
         if (administeredIds.has(plugin.pluginId) || plugin.installations.length === 0) continue;
+        observed.push(projectAccountInstalledPlugin(plugin));
+    }
+    return observed.length === 0 ? administered : Object.freeze([...administered, ...observed]);
+}
+
+/** The same recorded installation presentation for cross-kind inventory and Plugins management. */
+export function projectAccountInstalledPlugin(plugin: Extract<PluginAccountInstalledPluginsAdmission, { kind: 'available' }>['plugins'][number]): InstalledPluginEntry {
         const first = plugin.installations[0]!;
         const declaration = plugin.installations.find((installation) => installation.declaration)?.declaration;
         const presentation = declaration ?? BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION[plugin.pluginId];
@@ -111,7 +120,7 @@ export function projectAccountInstalledPlugins(
         const trustPolicy = trustStates.size === 1
             ? first.materialization.trustState === 'trusted' ? 'trusted' : 'untrusted'
             : undefined;
-        observed.push(Object.freeze({
+        return Object.freeze({
             pluginId: plugin.pluginId,
             title: resolvePluginLocalizedText({ projection: null, pluginId: plugin.pluginId, value: presentation?.displayName })
                 || plugin.pluginId,
@@ -124,9 +133,7 @@ export function projectAccountInstalledPlugins(
             compatibility: { status: 'unknown', diagnostics: [] },
             diagnostics: [],
             accountInstallations: plugin.installations,
-        }));
-    }
-    return observed.length === 0 ? administered : Object.freeze([...administered, ...observed]);
+        });
 }
 
 export type InstalledPluginLifecycleCapabilities = Readonly<{
@@ -197,28 +204,27 @@ export type PluginMarketplaceActionRequest = Readonly<{
 /**
  * Why the plugin surfaces fell back to cached, read-only truth.
  *
- * `disconnected` is the machine being unreachable. `projectionUnavailable` is a
+ * `noTarget` asks for a Machine without claiming an outage. `disconnected` is the
+ * selected machine being unreachable. `projectionUnavailable` is a
  * reachable machine whose contribution-registry projection failed or is not
  * served — a recoverable condition the user can retry, and one that must never
  * be reported as a disconnect. `accountRecovery` is Account-only truth with no
  * claim about a reachable machine or a retryable machine registry.
  */
-export type PluginReadOnlySnapshotReason = 'disconnected' | 'projectionUnavailable' | 'installationUnavailable' | 'refreshing' | 'accountRecovery';
+export type PluginReadOnlySnapshotReason = 'noTarget' | 'disconnected' | 'projectionUnavailable' | 'installationUnavailable' | 'refreshing' | 'accountRecovery';
 
 export type PluginReadOnlySnapshotNoticeState = Readonly<{
     reason: PluginReadOnlySnapshotReason;
 }>;
 
 export function resolvePluginReadOnlySnapshotNotice(params: Readonly<{
+    hasSelectedTarget: boolean;
     daemonOperationsAvailable: boolean;
     daemonTransportOnline: boolean;
     projectionPhase: DaemonMergedProjectionPhase;
     hasCapabilitySnapshot: boolean;
     installedPluginCount: number;
     developmentPluginCount: number;
-    hasCatalog: boolean;
-    hasMarketplaceSourceRegistry: boolean;
-    hasProjectionInputs: boolean;
     capabilityReadFailed?: boolean;
     /**
      * The selected machine reads online, but its live connection cannot be resolved yet (the
@@ -227,6 +233,7 @@ export function resolvePluginReadOnlySnapshotNotice(params: Readonly<{
      */
     targetResolving?: boolean;
 }>): PluginReadOnlySnapshotNoticeState | null {
+    if (!params.hasSelectedTarget) return { reason: 'noTarget' };
     if (params.targetResolving && !params.daemonTransportOnline) {
         return params.hasCapabilitySnapshot || params.installedPluginCount > 0 || params.developmentPluginCount > 0
             ? { reason: 'refreshing' }
@@ -251,45 +258,6 @@ export function resolvePluginReadOnlySnapshotNotice(params: Readonly<{
     };
 }
 
-export function isPluginMutationVisibleAfterRefresh(params: Readonly<{
-    method: 'install' | 'update' | 'rollback' | 'uninstall' | 'forgetTrust' | 'disable';
-    pluginId: string;
-    before: InstalledPluginEntry | null;
-    after: InstalledPluginEntry | null;
-    targetVersion: string | null;
-}>): boolean {
-    if (params.method === 'uninstall') {
-        return params.after === null;
-    }
-    if (params.method === 'disable') {
-        return params.after?.pluginId === params.pluginId && params.after.enabled === false;
-    }
-    if (params.method === 'forgetTrust') {
-        return params.after?.source.trustPolicy === 'untrusted' && params.after.enabled === false;
-    }
-    if (params.method === 'install') {
-        return params.before === null
-            && params.after?.pluginId === params.pluginId
-            && (params.targetVersion === null || params.after.version === params.targetVersion);
-    }
-    if (!params.before || !params.after || params.after.pluginId !== params.pluginId) {
-        return false;
-    }
-    if (params.method === 'update' && params.targetVersion !== null) {
-        return params.after.version === params.targetVersion
-            && params.after.version !== params.before.version;
-    }
-    // An update the user never reviewed a candidate for has no caller-known
-    // target: the canonical update owner reads the installed record, enforces its
-    // policy and selects the newest compatible version, which is not the version
-    // any catalog listing happens to advertise. The installed record advancing is
-    // therefore the only honest evidence the change landed.
-    return params.after.version !== params.before.version
-        || params.after.admittedIntegrity !== params.before.admittedIntegrity
-        || params.after.desiredGeneration !== params.before.desiredGeneration
-        || params.after.appliedGeneration !== params.before.appliedGeneration;
-}
-
 /**
  * UI-local decision projection over the protocol-owned serialized review.
  *
@@ -300,6 +268,7 @@ export function isPluginMutationVisibleAfterRefresh(params: Readonly<{
  * parsed review is a UI-local carrier.
  */
 export type PendingPluginChangeReview = Readonly<{
+    authority: MachineAuthorityPresentationV1;
     pendingChangeId: string;
     reason: 'firstInstall' | 'authorityExpansion';
     currentVersion: string | null;
@@ -317,7 +286,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
-    return trimmed.length > 0 && trimmed.length <= 32_768 ? trimmed : null;
+    return trimmed.length > 0 ? trimmed : null;
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -367,6 +336,17 @@ export type PendingPluginChangeDecision =
     | Readonly<{ kind: 'projectTrust'; projectTrustReview: PendingPluginDevelopmentProjectTrustReview }>
     | Readonly<{ kind: 'installation'; installationReview: PendingPluginChangeReview }>;
 
+function projectPendingInstallationReview(change: Extract<PluginChangePendingReviewResult, { reviewKind: 'installation' }>): PendingPluginChangeReview {
+    return {
+        pendingChangeId: change.pendingChangeId,
+        reason: change.reason,
+        currentVersion: change.currentVersion,
+        authorityExpansion: change.authorityExpansion,
+        review: change.review,
+        authority: presentPluginInstallationReviewAuthority(change.review),
+    };
+}
+
 export function readPendingPluginChangeDecision(change: unknown): PendingPluginChangeDecision | null {
     if (!isRecord(change)) return null;
     const parsed = PluginChangePendingReviewResultSchema.safeParse(change);
@@ -381,23 +361,9 @@ export function readPendingPluginChangeDecision(change: unknown): PendingPluginC
         }
         : {
             kind: 'installation',
-            installationReview: {
-                pendingChangeId: parsed.data.pendingChangeId,
-                reason: parsed.data.reason,
-                currentVersion: parsed.data.currentVersion,
-                authorityExpansion: parsed.data.authorityExpansion,
-                review: parsed.data.review,
-            },
+            installationReview: projectPendingInstallationReview(parsed.data),
         };
 }
-
-/** The daemon-issued id of whichever decision this change is currently at. */
-export function readPendingPluginChangeDecisionId(decision: PendingPluginChangeDecision): string {
-    return decision.kind === 'projectTrust'
-        ? decision.projectTrustReview.pendingChangeId
-        : decision.installationReview.pendingChangeId;
-}
-
 
 /**
  * One entry of the daemon's outstanding-decision enumeration.
@@ -419,10 +385,6 @@ export function readPendingPluginChangeListing(value: unknown): PendingPluginCha
             : null;
     }
     return readPendingPluginChangeDecision(value);
-}
-
-export function readPendingPluginChangeListingId(entry: PendingPluginChangeListing): string {
-    return entry.kind === 'applying' ? entry.pendingChangeId : readPendingPluginChangeDecisionId(entry);
 }
 
 /**
@@ -478,13 +440,7 @@ export function readPluginInstallationReviewChange(
     const parsed = PluginChangePendingReviewResultSchema.safeParse(change);
     if (!parsed.success || parsed.data.reviewKind !== 'installation') return null;
     if (expectedPluginId !== null && parsed.data.review.pluginId !== expectedPluginId) return null;
-    return {
-        pendingChangeId: parsed.data.pendingChangeId,
-        reason: parsed.data.reason,
-        currentVersion: parsed.data.currentVersion,
-        authorityExpansion: parsed.data.authorityExpansion,
-        review: parsed.data.review,
-    };
+    return projectPendingInstallationReview(parsed.data);
 }
 
 export function readPendingPluginChangeReview(
@@ -707,38 +663,13 @@ export function readPluginEditTargetResult(
         : null;
 }
 
-/**
- * What a listed pending change is asking for, in the user's own terms. The
- * locator and the package identity are the whole security payload of the two
- * decisions, so both are shown verbatim rather than summarised away.
- */
-export function formatPendingPluginChangeTitle(entry: PendingPluginChangeListing): string {
-    if (entry.kind === 'applying') return t('settingsPlugins.pendingChangeApplying');
-    return entry.kind === 'projectTrust'
-        ? t('settingsPlugins.developmentTrustProjectSourceTitle')
-        : t('settingsPlugins.marketplaceInstallReviewTitle', {
-            name: entry.installationReview.review.displayName,
-            version: entry.installationReview.review.version,
-        });
-}
-
-export function formatPendingPluginChangeSubtitle(entry: PendingPluginChangeDecision): string {
-    return entry.kind === 'projectTrust'
-        ? t('settingsPlugins.pendingChangeSourceRootSubtitle', {
-            path: entry.projectTrustReview.review.source.locator,
-        })
-        : t('settingsPlugins.pendingChangeInstallSubtitle', {
-            pluginId: entry.installationReview.review.pluginId,
-            source: entry.installationReview.review.source.locator,
-        });
-}
-
 export function formatCatalogEntryVersion(version: string | null): string | undefined {
     return version ?? undefined;
 }
 
 /** One listing's review state, as a reader names it. */
 export function catalogReviewStatusLabel(entry: PluginMarketplaceCatalogEntry): string {
+    if (entry.reviewStatus === null) return t('common.unknown');
     if (entry.warning === 'withdrawn') return t('settingsPlugins.discover.reviewStatus.withdrawn');
     if (entry.sourceKind === 'curated' && entry.reviewStatus === 'approved') return t('settingsPlugins.discover.reviewStatus.curated');
     return t('settingsPlugins.discover.reviewStatus.unreviewed');
@@ -860,8 +791,8 @@ function resolveInstalledRowStatusId(entry: InstalledPluginEntry): PluginRowStat
 }
 
 /** A concise origin label. The exact locator stays on the plugin detail route. */
-function resolveInstalledSourceLabel(entry: InstalledPluginEntry): string {
-    switch (entry.source.kind) {
+export function pluginSourceKindLabel(kind: string): string {
+    switch (kind) {
         case 'bundled':
             return t('settingsPlugins.rowSource.bundled');
         case 'npm':
@@ -899,7 +830,7 @@ export function projectInstalledPluginPresentation(
                 : null;
     return Object.freeze({
         status: createPluginRowStatus(statusId),
-        sourceLabel: resolveInstalledSourceLabel(entry),
+        sourceLabel: pluginSourceKindLabel(entry.source.kind),
         attentionLabel,
     });
 }
@@ -939,6 +870,12 @@ export function partitionInstalledPlugins(entries: readonly InstalledPluginEntry
 
 export type InstalledPluginStatusFilter = 'all' | 'enabled' | 'disabled' | 'attention';
 
+/** The existing Installed status condition, shared by toolbar and scoped filter facts. */
+export function installedPluginFilterStatus(entry: InstalledPluginEntry): Exclude<InstalledPluginStatusFilter, 'all'> {
+    const statusId = resolveInstalledRowStatusId(entry);
+    return statusId === 'enabled' || statusId === 'disabled' ? statusId : 'attention';
+}
+
 /**
  * The Installed view's search and status filter over the machine's installed plugins. Status
  * follows the one the row shows (`projectInstalledPluginPresentation`): "attention" is every row
@@ -952,11 +889,7 @@ export function filterInstalledPlugins(
     if (!query && params.status === 'all') return entries;
     return entries.filter((entry) => {
         if (params.status !== 'all') {
-            const statusId = resolveInstalledRowStatusId(entry);
-            const matchesStatus = params.status === 'attention'
-                ? statusId !== 'enabled' && statusId !== 'disabled'
-                : statusId === params.status;
-            if (!matchesStatus) return false;
+            if (installedPluginFilterStatus(entry) !== params.status) return false;
         }
         if (!query) return true;
         return [entry.title, entry.description ?? '', entry.pluginId]

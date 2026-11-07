@@ -113,6 +113,8 @@ export type HappierMenuRadioGroupDescriptor = Readonly<{
 
 export type HappierMenuKeyAction =
   | Readonly<{ kind: 'move'; direction: -1 | 1 }>
+  /** Sideways: within a row of items (a swatch row), or into/out of a submenu by the adapter. */
+  | Readonly<{ kind: 'cross'; direction: -1 | 1 }>
   | Readonly<{ kind: 'edge'; edge: 'start' | 'end' }>
   | Readonly<{ kind: 'activate' }>
   | Readonly<{ kind: 'close' }>
@@ -123,6 +125,8 @@ export function resolveHappierMenuKeyAction(key: string): HappierMenuKeyAction {
   if (key === 'Escape') return { kind: 'close' };
   if (key === 'ArrowDown') return { kind: 'move', direction: 1 };
   if (key === 'ArrowUp') return { kind: 'move', direction: -1 };
+  if (key === 'ArrowRight') return { kind: 'cross', direction: 1 };
+  if (key === 'ArrowLeft') return { kind: 'cross', direction: -1 };
   if (key === 'Home') return { kind: 'edge', edge: 'start' };
   if (key === 'End') return { kind: 'edge', edge: 'end' };
   if (key === 'Enter' || key === ' ') return { kind: 'activate' };
@@ -135,9 +139,29 @@ export function resolveHappierMenuTypeahead(input: Readonly<{
   items: readonly HappierMenuItemDescriptor[];
   selectedIndex: number;
   query: string;
+  /** Already-admitted labels in lexical order; built once with the item inventory. */
+  prefixIndex?: readonly Readonly<{ label: string; itemIndex: number }>[];
 }>): number {
   const query = input.query.trim().toLocaleLowerCase();
   if (!query) return input.selectedIndex;
+  if (input.prefixIndex) {
+    const entries = input.prefixIndex;
+    let low = 0;
+    let high = entries.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (entries[middle]!.label < query) low = middle + 1;
+      else high = middle;
+    }
+    let first = Number.POSITIVE_INFINITY;
+    let next = Number.POSITIVE_INFINITY;
+    for (let index = low; index < entries.length && entries[index]!.label.startsWith(query); index += 1) {
+      const position = entries[index]!.itemIndex;
+      first = Math.min(first, position);
+      if (position > input.selectedIndex) next = Math.min(next, position);
+    }
+    return Number.isFinite(next) ? next : Number.isFinite(first) ? first : input.selectedIndex;
+  }
   for (let offset = 1; offset <= input.items.length; offset += 1) {
     const index = (Math.max(input.selectedIndex, -1) + offset) % input.items.length;
     const item = input.items[index];
@@ -194,6 +218,8 @@ type HappierMenuInteractionItem = Readonly<{
 
 export type HappierMenuInteractionInput<Item extends HappierMenuInteractionItem> = Readonly<{
   items: readonly Item[];
+  /** The data owner indexes a large inventory once; keyboard movement never re-scans ids. */
+  itemIndexById?: ReadonlyMap<string, number>;
   /** A closed controlled menu forgets its transient prefix query. */
   open?: boolean;
   initialSelectedId?: string | null;
@@ -207,17 +233,22 @@ export type HappierMenuInteractionInput<Item extends HappierMenuInteractionItem>
   getItemLabel(item: Item): string | undefined;
   /** Rendering adapters own the physical focus target, not selection policy. */
   onKeyboardSelectionChange?(index: number): void;
+  /** Consecutive items sharing a row (a swatch row) move sideways together and count as one vertical stop. */
+  getItemRowGroup?(item: Item): string | null | undefined;
 }>;
 
 function resolveHappierMenuInitialSelection<Item extends HappierMenuInteractionItem>(input: Readonly<{
   items: readonly Item[];
+  itemIndexById?: ReadonlyMap<string, number>;
   initialSelectedId?: string | null;
   allowEmptySelection: boolean;
 }>): number {
   const preferredId = input.initialSelectedId ?? null;
   if (preferredId !== null) {
-    const preferredIndex = input.items.findIndex((item) => item.id === preferredId && !item.disabled);
-    if (preferredIndex >= 0) return preferredIndex;
+    const preferredIndex = input.itemIndexById
+      ? input.itemIndexById.get(preferredId) ?? -1
+      : input.items.findIndex((item) => item.id === preferredId && !item.disabled);
+    if (preferredIndex >= 0 && !input.items[preferredIndex]?.disabled) return preferredIndex;
   }
   if (input.allowEmptySelection) return -1;
   return resolveHappierMenuSelection({
@@ -258,23 +289,30 @@ export function useHappierMenuInteraction<Item extends HappierMenuInteractionIte
   const allowEmptySelection = input.allowEmptySelection === true;
   const initialSelectedIndex = useMemo(() => resolveHappierMenuInitialSelection({
     items: input.items,
+    itemIndexById: input.itemIndexById,
     initialSelectedId: input.initialSelectedId,
     allowEmptySelection,
-  }), [allowEmptySelection, input.initialSelectedId, input.items]);
+  }), [allowEmptySelection, input.initialSelectedId, input.itemIndexById, input.items]);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(input.items[initialSelectedIndex]?.id ?? null);
   const selectedIndex = useMemo(() => {
     if (selectedItemId === null && allowEmptySelection) return -1;
-    const index = input.items.findIndex((item) => item.id === selectedItemId && !item.disabled);
-    return index >= 0 ? index : initialSelectedIndex;
-  }, [allowEmptySelection, initialSelectedIndex, input.items, selectedItemId]);
+    const index = input.itemIndexById && selectedItemId !== null
+      ? input.itemIndexById.get(selectedItemId) ?? -1
+      : input.items.findIndex((item) => item.id === selectedItemId && !item.disabled);
+    return index >= 0 && !input.items[index]?.disabled ? index : initialSelectedIndex;
+  }, [allowEmptySelection, initialSelectedIndex, input.itemIndexById, input.items, selectedItemId]);
   const itemsRef = useRef(input.items);
   itemsRef.current = input.items;
+  const itemIndexByIdRef = useRef(input.itemIndexById);
+  itemIndexByIdRef.current = input.itemIndexById;
   const typeaheadRef = useRef<{ value: string; timer: ReturnType<typeof setTimeout> | null }>({ value: '', timer: null });
-  const typeaheadItems = useMemo(() => input.items.map((item) => ({
-    id: item.id,
-    disabled: item.disabled,
-    label: input.getItemLabel(item),
-  })), [input.getItemLabel, input.items]);
+  const typeahead = useMemo(() => {
+    const items = input.items.map((item) => ({ id: item.id, disabled: item.disabled, label: input.getItemLabel(item) }));
+    const prefixIndex = input.itemIndexById ? items.flatMap((item, itemIndex) => !item.disabled && item.label
+      ? [{ label: item.label.toLocaleLowerCase(), itemIndex }] : [])
+      .sort((a, b) => a.label < b.label ? -1 : a.label > b.label ? 1 : a.itemIndex - b.itemIndex) : undefined;
+    return { items, prefixIndex };
+  }, [input.getItemLabel, input.itemIndexById, input.items]);
 
   const clearTypeahead = useCallback(() => {
     if (typeaheadRef.current.timer) clearTimeout(typeaheadRef.current.timer);
@@ -293,6 +331,7 @@ export function useHappierMenuInteraction<Item extends HappierMenuInteractionIte
     }
     commitSelection(resolveHappierMenuInitialSelection({
       items: itemsRef.current,
+      itemIndexById: itemIndexByIdRef.current,
       initialSelectedId: input.initialSelectedId,
       allowEmptySelection,
     }));
@@ -331,14 +370,27 @@ export function useHappierMenuInteraction<Item extends HappierMenuInteractionIte
       case 'close':
         input.onRequestClose();
         return true;
-      case 'move':
-        selectFromKeyboard(resolveHappierMenuSelection({
+      case 'move': {
+        const rowIndex = input.getItemRowGroup
+          ? resolveHappierMenuRowNavigation({ items: input.items, selectedIndex: activeIndex, action, getRowGroup: input.getItemRowGroup })
+          : null;
+        selectFromKeyboard(rowIndex ?? resolveHappierMenuSelection({
           items: input.items,
           selectedIndex: activeIndex,
           direction: action.direction,
           wrap: false,
         }));
         return true;
+      }
+      case 'cross': {
+        // Outside a row the key is the adapter's (open or leave a submenu).
+        const rowIndex = input.getItemRowGroup
+          ? resolveHappierMenuRowNavigation({ items: input.items, selectedIndex: activeIndex, action, getRowGroup: input.getItemRowGroup })
+          : null;
+        if (rowIndex === null) return false;
+        selectFromKeyboard(rowIndex);
+        return true;
+      }
       case 'edge':
         selectFromKeyboard(resolveHappierMenuSelection({
           items: input.items,
@@ -357,7 +409,8 @@ export function useHappierMenuInteraction<Item extends HappierMenuInteractionIte
         if (typeaheadRef.current.timer) clearTimeout(typeaheadRef.current.timer);
         typeaheadRef.current.value += action.value.toLocaleLowerCase();
         selectFromKeyboard(resolveHappierMenuTypeahead({
-          items: typeaheadItems,
+          items: typeahead.items,
+          prefixIndex: typeahead.prefixIndex,
           selectedIndex: activeIndex,
           query: typeaheadRef.current.value,
         }));
@@ -370,7 +423,7 @@ export function useHappierMenuInteraction<Item extends HappierMenuInteractionIte
       case 'none':
         return false;
     }
-  }, [input, selectFromKeyboard, selectedIndex, typeaheadItems]);
+  }, [input, selectFromKeyboard, selectedIndex, typeahead]);
 
   return {
     selectedIndex,
@@ -391,6 +444,48 @@ export function matchesHappierMenuQuery(input: Readonly<{
 }
 
 /** Shared enabled-item movement for core Dropdown, ContextMenu and public Menu. */
+/**
+ * Movement in a menu whose consecutive items may share a row (a row of colour swatches).
+ * Sideways keys move within a row and return null outside one or at its edge (the adapter may open
+ * or leave a submenu); vertical keys treat a row as one stop and enter the next row at its start.
+ */
+export function resolveHappierMenuRowNavigation<Item extends HappierMenuItemDescriptor>(input: Readonly<{
+  items: readonly Item[];
+  selectedIndex: number;
+  action: Readonly<{ kind: 'move' | 'cross'; direction: -1 | 1 }>;
+  getRowGroup(item: Item): string | null | undefined;
+}>): number | null {
+  const { items, selectedIndex, action } = input;
+  const rowOf = (index: number): string | null => {
+    const item = items[index];
+    return item ? input.getRowGroup(item) ?? null : null;
+  };
+  const enabledIn = (from: number, step: -1 | 1, stop: (index: number) => boolean): number | null => {
+    for (let index = from; index >= 0 && index < items.length && !stop(index); index += step) {
+      if (!items[index]!.disabled) return index;
+    }
+    return null;
+  };
+  const row = selectedIndex >= 0 ? rowOf(selectedIndex) : null;
+  if (action.kind === 'cross') {
+    if (row === null) return null;
+    // At a row's edge the key passes to the adapter too (Left from a submenu's first swatch leaves it).
+    return enabledIn(selectedIndex + action.direction, action.direction, (index) => rowOf(index) !== row);
+  }
+  let edge = selectedIndex;
+  if (row !== null) {
+    while (rowOf(edge + action.direction) === row) edge += action.direction;
+  }
+  const next = enabledIn(edge + action.direction, action.direction, () => false);
+  if (next === null) return selectedIndex;
+  const nextRow = rowOf(next);
+  if (nextRow === null) return next;
+  // Enter a row at its start, whichever direction it was reached from.
+  let start = next;
+  while (rowOf(start - 1) === nextRow) start -= 1;
+  return enabledIn(start, 1, (index) => rowOf(index) !== nextRow) ?? next;
+}
+
 export function resolveHappierMenuSelection(input: Readonly<{
   items: readonly HappierMenuItemDescriptor[];
   selectedIndex: number;

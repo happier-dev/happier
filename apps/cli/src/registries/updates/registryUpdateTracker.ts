@@ -1,6 +1,5 @@
-import type { RegistryHostDepsV1 } from '@happier-dev/protocol/registries';
-import { checkRegistryUpstreamV1, registryUpstreamEqualV1, RegistryFetchErrorV1,
-  type RegistryFetchContextV1, type RegistryKindV1, type RegistryProvenanceV1,
+import { checkRegistryAppUpdatesV1, checkRegistryUpstreamV1, registryUpstreamEqualV1, RegistryFetchErrorV1, resolveLegacyRegistrySourceRefV1,
+  type RegistryAppUpdateEnvironmentV1, type RegistryHostDepsV1, type RegistryUpdateCheckInputV1, type RegistryFetchContextV1, type RegistryProvenanceV1,
   type RegistrySourceDescriptorV1, type RegistryUpstreamV1, type RegistryUpstreamCheckV1, type RegistryUpdateCheckResultV1 } from '@happier-dev/protocol/registries';
 
 type RegistryTrackedItemV1 = Readonly<{
@@ -13,7 +12,8 @@ type RegistryTrackedItemV1 = Readonly<{
 
 export type RegistryUpdateTrackerV1 = Readonly<{
   kind: 'skill' | 'mcpServer' | 'agent' | 'browserExtension';
-  list: () => Promise<readonly RegistryTrackedItemV1[]>;
+  /** Select at the installed-data owner; undefined alone requests its full inventory. */
+  list: (keys?: readonly string[]) => Promise<readonly RegistryTrackedItemV1[]>;
   /** Source-native versions use the same check/record lifecycle without invented catalog provenance. */
   check?: (items: readonly RegistryTrackedItemV1[]) => Promise<ReadonlyMap<string, RegistryUpstreamCheckV1>>;
   record: (changes: readonly Readonly<{
@@ -26,21 +26,27 @@ export type RegistryUpdateTrackerV1 = Readonly<{
   applyAutomaticUpdates?: (observations: Parameters<RegistryUpdateTrackerV1['record']>[0]) => Promise<void>;
 }>;
 
-export type RegistryUpdateCheckFilterV1 = Readonly<{ kind?: RegistryKindV1; keys?: readonly string[] }>;
+export type RegistryUpdateCheckFilterV1 = RegistryUpdateCheckInputV1;
 
 export function createRegistryUpdateCheck(params: Readonly<{
-  admitSource?: RegistryHostDepsV1['admitSource'];
   trackers: readonly RegistryUpdateTrackerV1[];
   ctx: RegistryFetchContextV1;
   readSources: () => Promise<readonly RegistrySourceDescriptorV1[]>;
+  admitSource?: RegistryHostDepsV1['admitSource'];
+  readEnvironment?: (environmentId: string) => Promise<RegistryAppUpdateEnvironmentV1>;
 }>): Readonly<{
   checkNow: (filter?: RegistryUpdateCheckFilterV1) => Promise<RegistryUpdateCheckResultV1>;
   runBackgroundAutoUpdateCheck: () => Promise<void>;
 }> {
   const checkNow = async (filter: RegistryUpdateCheckFilterV1 = {}): Promise<RegistryUpdateCheckResultV1> => {
     params.ctx.signal?.throwIfAborted();
+    if (filter.kind === 'app') {
+      if (!params.readEnvironment) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
+      return checkRegistryAppUpdatesV1(params.ctx, { environments: filter.environments,
+        readEnvironment: params.readEnvironment, readSources: params.readSources, admitSource: params.admitSource });
+    }
     const groups = await Promise.all(params.trackers.filter(tracker => !filter.kind || tracker.kind === filter.kind).map(async tracker => ({
-      tracker, items: (await tracker.list()).filter(item => !filter.keys || filter.keys.includes(item.key)),
+      tracker, items: await tracker.list(filter.keys),
     })));
     params.ctx.signal?.throwIfAborted();
     const listed = groups.flatMap(group => group.items.map(item => ({ tracker: group.tracker, item })));
@@ -86,7 +92,10 @@ export function createRegistryUpdateCheck(params: Readonly<{
     for (const [index, { tracker, item }] of listed.entries()) {
       const upstream = observations.get(String(index));
       if (!upstream) throw new Error('registry_update_observation_missing');
-      results.push({ kind: tracker.kind, key: item.key, upstream });
+      const sourceId = item.provenance ? resolveLegacyRegistrySourceRefV1(item.provenance.sourceId) : undefined;
+      const source = projected.find(source => source.id === sourceId) ?? item.source;
+      results.push({ kind: tracker.kind, key: item.key, upstream,
+        ...(upstream.state === 'unchecked' && sourceId ? { sourceId, ...(source?.title ? { sourceTitle: source.title } : {}) } : {}) });
       if (upstream.state === 'unchecked') continue;
       const observation = { key: item.key, upstream,
         ...(item.provenance ? { provenance: item.provenance } : {}),

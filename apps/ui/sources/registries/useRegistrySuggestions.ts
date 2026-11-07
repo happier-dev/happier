@@ -5,31 +5,75 @@ import {
 } from '@happier-dev/protocol/registries';
 import { useRegistryItems } from './useRegistryItems';
 import { useRegistrySources } from './useRegistrySources';
+import type { RegistryCatalogItemSummary } from './registryBrandMark';
 import * as React from 'react';
 
 const EMPTY_ITEMS: ReturnType<typeof useRegistryItems>['items'] = [];
+const EMPTY_CURATION: ReturnType<typeof useRegistryItems>['curation'] = [];
+const EMPTY_FAILURES: ReturnType<typeof useRegistryItems>['sourceFailures'] = [];
+
+/** One presented surface acquires its admitted catalog; shelves only project held choices. */
+export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly string[] }> = {}, presented = true) {
+    const sources = useRegistrySources(undefined, presented);
+    const requested = input.sourceIds;
+    const sourceIds = React.useMemo(() => sources.sources.filter(source => source.enabled
+        && source.format === 'happier-catalog' && (requested === undefined || requested.includes(source.id))).map(source => source.id),
+    [sources.sources, JSON.stringify(requested)]);
+    const catalog = useRegistryItems({ kind: 'plugin', sourceIds }, presented && sources.hasValue && sourceIds.length > 0);
+    // Presentation owns acquisition, not the admitted facts already held by a retained page.
+    const admitted = sourceIds.length > 0 && !catalog.stale;
+    const pages = React.useMemo(() => admitted ? catalog.pages : [], [admitted, catalog.pages]);
+    return React.useMemo(() => ({ ...catalog, pages, curation: admitted ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
+        error: sources.error ?? catalog.error,
+        status: sources.error ? sources.failureStatus : catalog.status,
+        loading: presented && (sources.loading || sourceIds.length > 0 && catalog.loading),
+        refresh: async () => { await sources.refresh(); await catalog.refresh(); },
+    }), [catalog, pages, admitted, presented, sources.sources, sources.loading, sources.error, sources.failureStatus, sources.refresh, sourceIds.length]);
+}
+export type RegistryCuration = ReturnType<typeof useRegistryCuration>;
 
 /** Homepage recommendations share registry Actions and their Account-scoped memo.
  * Only a direct built-in first page may replace an empty curated shelf. */
-export function useRegistrySuggestions(kind: RegistryKindV1) {
-    const sources = useRegistrySources(kind);
-    const picksSource = sources.sources.find(source => source.id === HAPPIER_PICKS_SOURCE_ID && source.enabled);
-    const picks = useRegistryItems({ kind, sourceIds: [HAPPIER_PICKS_SOURCE_ID] }, picksSource !== undefined);
-    const fallbackSource = sources.sources.find(source => {
-        if (!source.enabled || source.id === HAPPIER_PICKS_SOURCE_ID || source.origin.kind !== 'built_in') return false;
+export function useRegistrySuggestions(kind: RegistryKindV1, options?: Readonly<{ curation?: RegistryCuration; enabled?: boolean }>) {
+    const enabled = options?.enabled !== false;
+    const owned = useRegistryCuration({}, enabled && options?.curation === undefined);
+    const curation = options?.curation ?? owned;
+    const picks = React.useMemo(() => {
+        const seen = new Set<string>();
+        return curation.curation.flatMap(page => page.discovery.items.flatMap(item => {
+            const ref = item.reference;
+            if (ref.type !== 'registryItem' || ref.kind !== kind) return [];
+            const key = JSON.stringify(ref);
+            if (seen.has(key)) return [];
+            seen.add(key);
+            const summary: RegistryCatalogItemSummary = { sourceId: ref.sourceId, itemId: ref.itemId, kind: ref.kind,
+                title: item.title, ...(item.description === undefined ? {} : { description: item.description }),
+                ...(ref.version === undefined ? {} : { version: ref.version }), flags: { pick: true } };
+            return [summary];
+        }));
+    }, [curation.curation, kind]);
+    const fallbackSource = curation.sources.find(source => {
+        if (!source.enabled || !source.kinds.some(sourceKind => sourceKind === kind) || source.id === HAPPIER_PICKS_SOURCE_ID || source.origin.kind !== 'built_in') return false;
         const adapter = (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<typeof source.format, RegistryFormatAdapterV1>>)[source.format];
         return adapter && resolveRegistryFetchPlanV1({ host: Platform.OS === 'web' ? 'web' : 'native', source, adapter, op: 'list' })
             .every(placement => placement === 'direct');
     });
-    const hasPicks = picksSource !== undefined && picks.items.length > 0;
+    const hasPicks = picks.length > 0;
     const fallback = useRegistryItems({ kind, sourceIds: fallbackSource ? [fallbackSource.id] : [] },
-        sources.hasValue && !sources.loading && (!picksSource || !picks.loading && !hasPicks) && fallbackSource !== undefined);
-    const refresh = React.useCallback(async () => { await Promise.all([sources.refresh(), picks.refresh(), fallback.refresh()]); },
-        [sources.refresh, picks.refresh, fallback.refresh]);
+        enabled && !curation.loading && !hasPicks && fallbackSource !== undefined);
+    const refresh = React.useCallback(async () => { await curation.refresh(); await fallback.refresh(); },
+        [curation.refresh, fallback.refresh]);
+    // Explain the acquisition supplying this shelf. A working direct fallback
+    // replaces failed curation; absent web fallback must retain its failure.
+    const acquisition = hasPicks || !fallbackSource ? curation : fallback;
     return {
-        items: hasPicks ? picks.items : fallbackSource ? fallback.items : EMPTY_ITEMS,
-        loading: sources.loading || picksSource !== undefined && picks.loading || fallbackSource !== undefined && fallback.loading,
-        sourceId: hasPicks ? HAPPIER_PICKS_SOURCE_ID : fallbackSource?.id ?? null,
+        items: !enabled ? EMPTY_ITEMS : hasPicks ? picks : fallbackSource ? fallback.items : EMPTY_ITEMS,
+        loading: enabled && (curation.loading || !hasPicks && fallbackSource !== undefined && fallback.loading),
+        sourceId: hasPicks ? curation.pages.find(page => page.discovery?.items.some(item =>
+            item.reference.type === 'registryItem' && item.reference.kind === kind))?.sourceId ?? null : fallbackSource?.id ?? null,
+        error: enabled ? acquisition.error : null,
+        status: enabled ? acquisition.status : null,
+        sourceFailures: enabled ? acquisition.sourceFailures : EMPTY_FAILURES,
         refresh,
     };
 }

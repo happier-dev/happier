@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
-import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { isOpenApprovalInboxArtifact } from '@/sync/domains/artifacts/approvalArtifacts';
@@ -9,9 +10,12 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { decryptArtifactListItem, decryptArtifactWithBody, decryptSocketNewArtifactUpdate } from '@/sync/engine/artifacts/syncArtifacts';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { doesArtifactInventorySelectionCover, isArtifactInventoryLoaded, isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
+import { selectArtifactInventoryRows } from './artifactInventoryIndex';
+import { createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
+import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 
 function createHarness() {
     return createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
@@ -25,6 +29,189 @@ function artifact(id: number): Extract<DecryptedArtifact, { isDecrypted: true }>
 }
 
 describe('createArtifactsDomain', () => {
+    it('indexes C1 health by Environment at admission and withdraws removed or unreadable facts', () => {
+        const store = createHarness();
+        const health = createServiceHealthNoticeArtifactFixture('home', { id: 'health', sourceServerId: 'home' });
+        const key = serverAccountScopedResourceKey({ serverId: 'home', accountId: 'account-a' }, 'environment');
+        store.getState().applyArtifacts([health]);
+        expect(store.getState().artifactHealthNoticesByEnvironmentId?.[key]?.health?.notice?.header.healthPhase).toBe('open');
+        const selected = store.getState().artifactHealthNoticesByEnvironmentId[key];
+        store.getState().applyArtifacts([artifact(5)]);
+        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]).toBe(selected);
+        store.getState().updateArtifact({ ...health, headerVersion: 4, bodyVersion: 4, body: undefined });
+        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]?.health?.complete).toBe(false);
+        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]?.health?.notice).toBeNull();
+        store.getState().updateArtifact({ ...health, headerVersion: 5, bodyVersion: 5, access: 'view' });
+        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]).toBeUndefined();
+        store.getState().updateArtifact({ ...health, headerVersion: 6, bodyVersion: 6 });
+        store.getState().deleteArtifact(health.id);
+        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]).toBeUndefined();
+    });
+    it('publishes a same-Session approval page and retires it without enumerating membership after each row', () => {
+        const store = createHarness();
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'rejected', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'same-session' }, requestedSurface: 'agent',
+            actionId: 'session.list', actionArgs: {}, summary: 'Historical request',
+            decision: { kind: 'reject', decidedAtMs: 1 } });
+        const header = buildApprovalRequestArtifactHeaderV1(request);
+        const receipts = Array.from({ length: 512 }, (_, index) => ({ ...artifact(index),
+            id: `same-session-receipt-${index}`, header }));
+        const keys = Object.keys;
+        let membershipKeyVisits = 0;
+        // Transparent observation of the runtime enumeration boundary; the real
+        // store, admission and relationship projection execute unchanged.
+        const enumeration = vi.spyOn(Object, 'keys').mockImplementation(value => {
+            const result = keys(value);
+            if (result.length > 0 && result.every(key => key.startsWith('same-session-receipt-'))) {
+                membershipKeyVisits += result.length;
+            }
+            return result;
+        });
+        try {
+            store.getState().applyArtifacts(receipts);
+            const insertionVisits = membershipKeyVisits;
+            console.info('Same-Session approval insertion cost', { receipts: receipts.length, membershipKeyVisits: insertionVisits });
+            const bucket = store.getState().artifactApprovalArtifactsBySessionId['same-session'];
+            expect(bucket && keys(bucket)).toHaveLength(receipts.length);
+            expect(bucket?.[receipts.at(-1)!.id]).toBe(receipts.at(-1));
+            store.getState().deleteArtifact(receipts[0]!.id);
+            const remaining = store.getState().artifactApprovalArtifactsBySessionId['same-session'];
+            expect(remaining?.[receipts[0]!.id]).toBeUndefined();
+            expect(remaining?.[receipts.at(-1)!.id]).toBe(receipts.at(-1));
+            // Empty-bucket retirement is still required on deletion.
+            membershipKeyVisits = 0;
+            store.getState().applyArtifacts([], store.getState().artifacts);
+            const retirementVisits = membershipKeyVisits;
+            console.info('Same-Session approval retirement cost', { receipts: receipts.length - 1, membershipKeyVisits: retirementVisits });
+            expect(store.getState().artifactApprovalArtifactsBySessionId['same-session']).toBeUndefined();
+            expect(insertionVisits).toBe(0);
+            expect(retirementVisits).toBe(0);
+        } finally { enumeration.mockRestore(); }
+    });
+    it('keeps query membership current through state, kind, relationship, locked and deletion transitions', () => {
+        const store = createHarness();
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'first-session' }, requestedSurface: 'agent',
+            actionId: 'session.list', actionArgs: {}, summary: 'Query membership' });
+        const approval = { ...artifact(1), header: buildApprovalRequestArtifactHeaderV1(request) };
+        const document = { ...artifact(2), header: { kind: 'markdown', title: 'Document' } };
+        store.getState().applyArtifacts([approval, document]);
+        const selected = (selection: Parameters<typeof selectArtifactInventoryRows>[1]) =>
+            Object.keys(selectArtifactInventoryRows(store.getState(), selection));
+        expect(selected('inboxOpen')).toEqual([approval.id]);
+        expect(selected('browserListed')).toEqual([document.id]);
+        expect(selected(['approval_request.v1'])).toEqual([approval.id]);
+        expect(selected({ approvalSessionIds: ['first-session'] })).toEqual([approval.id]);
+        const before = store.getState().artifactInventoryIndex;
+        store.getState().updateArtifact({ ...document, body: 'Changed body' });
+        expect(store.getState().artifactInventoryIndex).toBe(before);
+        const moved = { ...approval, headerVersion: 2, header: buildApprovalRequestArtifactHeaderV1({ ...request,
+            createdBy: { surface: 'agent', sessionId: 'next-session' }, status: 'rejected', updatedAtMs: 2,
+            decision: { kind: 'reject', decidedAtMs: 2 } }) };
+        store.getState().updateArtifact(moved);
+        expect(selected('inboxOpen')).toEqual([]);
+        expect(selected({ approvalSessionIds: ['first-session'] })).toEqual([]);
+        expect(selected({ approvalSessionIds: ['next-session'] })).toEqual([approval.id]);
+        expect(selected({ kinds: ['approval_request.v1'], approvalStates: ['rejected'] })).toEqual([approval.id]);
+        store.getState().updateArtifact({ ...moved, headerVersion: 3, header: { kind: 'memory_doc.v1', title: 'Changed kind' } });
+        expect(selected(['approval_request.v1'])).toEqual([]);
+        expect(selected({ approvalSessionIds: ['next-session'] })).toEqual([]);
+        expect(selected(['memory_doc.v1'])).toEqual([approval.id]);
+        const locked: DecryptedArtifact = { id: approval.id, title: null, header: null, rawHeader: null,
+            headerVersion: 4, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: false, storageMode: 'e2ee',
+            kindHint: 'memory_doc.v1', availability: { kind: 'locked', reason: 'encryption_material_unavailable' } };
+        store.getState().updateArtifact(locked);
+        expect(selected(['memory_doc.v1'])).toEqual([]); // Opaque kind hint is not private-header membership.
+        expect(selected('browserListed').sort()).toEqual([approval.id, document.id].sort());
+        store.getState().deleteArtifact(approval.id);
+        store.getState().applyArtifacts([], store.getState().artifacts);
+        expect(store.getState().artifactInventoryIndex.size).toBe(0);
+        expect(selectArtifactInventoryRows(store.getState())).toBe(store.getState().artifacts);
+    });
+
+    it('publishes approval relationships from changed ids and retires moved, draft, locked and deleted rows', () => {
+        const store = createHarness();
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'selected' }, requestedSurface: 'agent',
+            actionId: 'session.list', actionArgs: {}, summary: 'List sessions' });
+        const selected = { ...artifact(0), header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+        const retained = Array.from({ length: 512 }, (_, index) => ({ ...artifact(index + 1),
+            header: { ...selected.header, sessionId: `closed-${index}`, sessions: [`closed-${index}`] } }));
+        store.getState().applyArtifacts([selected, ...retained]);
+        const before = store.getState();
+        const selectedBucket = before.artifactApprovalArtifactsBySessionId.selected;
+        expect(Object.keys(before.artifactOpenApprovalEntries)).toEqual([selected.id]);
+        const closedBucket = before.artifactApprovalArtifactsBySessionId['closed-0'];
+        store.getState().addArtifact({ ...artifact(600), header: { kind: 'note', title: 'Note' } });
+        expect(store.getState().artifactOpenApprovalEntries).toBe(before.artifactOpenApprovalEntries);
+        expect(store.getState().artifactDiscussionAttentionEntries).toBe(before.artifactDiscussionAttentionEntries);
+        expect(store.getState().artifactIncompleteInboxArtifacts).toBe(before.artifactIncompleteInboxArtifacts);
+        expect(store.getState().artifactApprovalArtifactsBySessionId).toBe(before.artifactApprovalArtifactsBySessionId);
+        const unrelatedRequest = ApprovalRequestV1Schema.parse({ ...request, createdBy: { surface: 'agent', sessionId: 'unrelated' } });
+        const unrelatedOpen = { ...selected, id: 'unrelated-open-request', header: buildApprovalRequestArtifactHeaderV1(unrelatedRequest),
+            body: JSON.stringify(unrelatedRequest) };
+        store.getState().addArtifact(unrelatedOpen);
+        expect(store.getState().artifactOpenApprovalEntries[unrelatedOpen.id]?.parsed.request.status).toBe('open');
+        expect(store.getState().artifactDiscussionAttentionEntries).toBe(before.artifactDiscussionAttentionEntries);
+        expect(store.getState().artifactIncompleteInboxArtifacts).toBe(before.artifactIncompleteInboxArtifacts);
+        store.getState().deleteArtifact(unrelatedOpen.id);
+        expect(store.getState().artifactDiscussionAttentionEntries).toBe(before.artifactDiscussionAttentionEntries);
+        expect(store.getState().artifactIncompleteInboxArtifacts).toBe(before.artifactIncompleteInboxArtifacts);
+        const moved = { ...retained[0]!, headerVersion: 2,
+            header: { ...retained[0]!.header, sessionId: 'moved', sessions: ['moved'] } };
+        store.getState().updateArtifact(moved);
+        expect(store.getState().artifactApprovalArtifactsBySessionId.selected).toBe(selectedBucket);
+        expect(store.getState().artifactApprovalArtifactsBySessionId['closed-0']).toBeUndefined();
+        expect(closedBucket?.[moved.id]).toBe(retained[0]);
+        expect(store.getState().artifactApprovalArtifactsBySessionId.moved?.[moved.id]).toBe(moved);
+        store.getState().updateArtifact({ ...moved, draft: true });
+        expect(store.getState().artifactApprovalArtifactsBySessionId.moved).toBeUndefined();
+        store.getState().updateArtifact(moved);
+        const locked: DecryptedArtifact = { id: moved.id, seq: moved.seq, createdAt: moved.createdAt, updatedAt: moved.updatedAt,
+            headerVersion: 3, header: null, title: null, isDecrypted: false, storageMode: 'e2ee',
+            availability: { kind: 'locked', reason: 'encryption_material_unavailable' } };
+        store.getState().updateArtifact(locked);
+        expect(store.getState().artifactApprovalArtifactsBySessionId.moved).toBeUndefined();
+        store.getState().deleteArtifact(selected.id);
+        expect(store.getState().artifactOpenApprovalEntries).toEqual({});
+        expect(store.getState().artifactApprovalArtifactsBySessionId.selected).toBeUndefined();
+        store.getState().applyArtifacts([], store.getState().artifacts);
+        expect(store.getState().artifactApprovalArtifactsBySessionId).toEqual({});
+        expect(store.getState().artifactApprovalArtifactsByDiscussionId).toEqual({});
+    });
+
+    it('publishes narrow inventory inputs only for selected row changes and retires them with membership', () => {
+        const store = createHarness();
+        const prompt = { ...artifact(1), header: { kind: 'prompt_doc.v2', title: 'Prompt' }, rawHeader: { kind: 'prompt_doc.v2' } };
+        const ordinary = { ...artifact(2), header: { kind: 'future.document.v9', title: 'Ordinary' }, rawHeader: { kind: 'future.document.v9' } };
+        const privateRows = Array.from({ length: 3500 }, (_, id) => ({ ...artifact(id + 10),
+            header: { kind: 'approval_request.v1', title: 'Receipt', approvalStatus: 'canceled' }, rawHeader: { kind: 'approval_request.v1' } }));
+        store.getState().applyArtifacts([prompt, ordinary, ...privateRows]);
+        const before = store.getState();
+        expect(Object.keys(before.artifactPromptLibraryArtifacts)).toEqual([prompt.id]);
+        expect(Object.keys(before.artifactBrowserArtifacts)).toEqual([prompt.id, ordinary.id]);
+        expect(before.artifactInboxEntries).toEqual({});
+        for (const row of privateRows.slice(0, 10)) store.getState().updateArtifact({ ...row, bodyVersion: 2 });
+        expect(store.getState().artifactBrowserArtifacts).toBe(before.artifactBrowserArtifacts);
+        expect(store.getState().artifactPromptLibraryArtifacts).toBe(before.artifactPromptLibraryArtifacts);
+        expect(store.getState().artifactInboxEntries).toBe(before.artifactInboxEntries);
+        store.getState().updateArtifact({ ...ordinary, bodyVersion: 2 });
+        expect(store.getState().artifactBrowserArtifacts[ordinary.id]).not.toBe(ordinary);
+        expect(store.getState().artifactBrowserArtifacts[prompt.id]).toBe(prompt);
+        expect(store.getState().artifactPromptLibraryArtifacts).toBe(before.artifactPromptLibraryArtifacts);
+        store.getState().deleteArtifact(prompt.id);
+        expect(store.getState().artifactPromptLibraryArtifacts).toEqual({});
+        expect(store.getState().artifactBrowserArtifacts[prompt.id]).toBeUndefined();
+        const opaque: DecryptedArtifact = { id: 'opaque', headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+            isDecrypted: false, title: null, header: null,
+            storageMode: 'e2ee', availability: { kind: 'locked', reason: 'encryption_material_unavailable' } };
+        store.getState().addArtifact(opaque);
+        expect(store.getState().artifactBrowserArtifacts[opaque.id]).toBe(opaque);
+        expect(store.getState().artifactPromptLibraryArtifacts[opaque.id]).toBe(opaque);
+        expect(store.getState().artifactInboxEntries[opaque.id]?.complete).toBe(false);
+        store.getState().applyArtifacts([], store.getState().artifacts);
+        expect(store.getState()).toMatchObject({ artifactBrowserArtifacts: {}, artifactPromptLibraryArtifacts: {}, artifactInboxEntries: {} });
+    });
     it('keeps settled receipts during open-only reconciliation and never certifies full approval membership', () => {
         const store = createHarness();
         const approval = (id: number, status: string) => ({ ...artifact(id),

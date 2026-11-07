@@ -28,36 +28,18 @@ export type RegistryUpstreamCheckV1 = RegistryUpstreamV1 | Readonly<{
 export const RegistryUpdateCheckResultV1Schema = lazyZodSchema(() => z.strictObject({
   checkedAt: z.number().check(z.int(), z.nonnegative()),
   results: z.array(z.strictObject({ kind: RegistryKindV1Schema, key: z.string().check(z.minLength(1)), upstream: RegistryUpstreamCheckV1Schema,
-    machineId: z.optional(z.string().check(z.minLength(1))) })),
+    machineId: z.optional(z.string().check(z.minLength(1))),
+    sourceId: z.optional(z.string().check(z.minLength(1))), sourceTitle: z.optional(z.string().check(z.minLength(1))) })),
 }));
 export type RegistryUpdateCheckResultV1 = Readonly<{
   checkedAt: number;
+  /** Source labels are display facts for failed checks, never read/install operands. */
   results: readonly Readonly<{ kind: RegistryKindV1; key: string; upstream: RegistryUpstreamCheckV1;
     /** Native profile observations are qualified by their actual transport Machine. */
-    machineId?: string }>[];
+    machineId?: string; sourceId?: string; sourceTitle?: string }>[];
 }>;
 
-/** Stored observations compare the full latest pointer, including commit custody. */
-export function registryUpstreamEqualV1(left: RegistryUpstreamV1 | undefined, right: RegistryUpstreamV1 | undefined): boolean {
-  if (!left || !right) return left === right;
-  if (left.state !== right.state) return false;
-  const a = left.latest, b = right.latest;
-  if (!a || !b) return a === b;
-  return a.kind === 'version' && b.kind === 'version' ? a.version === b.version
-    : a.kind === 'wellKnown' && b.kind === 'wellKnown' ? a.indexUrl === b.indexUrl && a.name === b.name && a.digest === b.digest && a.publishedDigest === b.publishedDigest
-    : a.kind === 'gitTree' && b.kind === 'gitTree' && a.repo === b.repo && a.path === b.path
-      && a.commit === b.commit && a.treeSha === b.treeSha;
-}
-
-export function compareRegistryContentRefV1(current: RegistryContentRefV1, latest: RegistryContentRefV1 | 'removed'): RegistryUpstreamV1['state'] {
-  if (latest === 'removed') return 'removed_from_source';
-  const equal = current.kind === 'version' && latest.kind === 'version' ? current.version === latest.version
-    : current.kind === 'wellKnown' && latest.kind === 'wellKnown' ? current.indexUrl === latest.indexUrl && current.name === latest.name && current.digest === latest.digest && current.publishedDigest === latest.publishedDigest
-    : current.kind === 'gitTree' && latest.kind === 'gitTree'
-      && current.repo === latest.repo && current.path === latest.path && current.treeSha === latest.treeSha;
-  return equal ? 'current' : 'update_available';
-}
-
+/** Exact reviewed input identity; a supplying runtime occurrence is provenance. */
 export function registryContentRefEqualV1(a: RegistryContentRefV1, b: RegistryContentRefV1): boolean {
   return a.kind === 'version' && b.kind === 'version' ? a.version === b.version
     : a.kind === 'content' && b.kind === 'content' ? a.digest === b.digest
@@ -66,4 +48,23 @@ export function registryContentRefEqualV1(a: RegistryContentRefV1, b: RegistryCo
     : a.kind === 'wellKnown' && b.kind === 'wellKnown' ? a.indexUrl === b.indexUrl && a.name === b.name && a.digest === b.digest && a.publishedDigest === b.publishedDigest
     : a.kind === 'gitTree' && b.kind === 'gitTree' && a.repo === b.repo && a.path === b.path
       && a.commit === b.commit && a.treeSha === b.treeSha;
+}
+
+/** Stored observations retain exact pins, including Git commit custody. */
+export function registryUpstreamEqualV1(left: RegistryUpstreamV1 | undefined, right: RegistryUpstreamV1 | undefined): boolean {
+  if (!left || !right) return left === right;
+  if (left.state !== right.state) return false;
+  const a = left.latest, b = right.latest;
+  return a && b ? registryContentRefEqualV1(a, b) : a === b;
+}
+
+export function compareRegistryContentRefV1(current: RegistryContentRefV1, latest: RegistryContentRefV1 | 'removed'): RegistryUpstreamV1['state'] {
+  if (latest === 'removed') return 'removed_from_source';
+  const equal = current.kind === 'version' && latest.kind === 'version' ? current.version === latest.version
+    : current.kind === 'content' && latest.kind === 'content' ? current.digest === latest.digest
+    : current.kind === 'packageContent' && latest.kind === 'packageContent' ? registryContentRefEqualV1(current, latest)
+    : current.kind === 'wellKnown' && latest.kind === 'wellKnown' ? current.indexUrl === latest.indexUrl && current.name === latest.name && current.digest === latest.digest && current.publishedDigest === latest.publishedDigest
+    : current.kind === 'gitTree' && latest.kind === 'gitTree'
+      && current.repo === latest.repo && current.path === latest.path && current.treeSha === latest.treeSha;
+  return equal ? 'current' : 'update_available';
 }

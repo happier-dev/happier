@@ -1,5 +1,3 @@
-import { resolveSkillReachV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
-import { useSkillFeatureEnabled } from './useSkillFeatureEnabled';
 import * as React from 'react';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import {
@@ -27,6 +25,11 @@ import {
 import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { createPluginSkillSourceIdentityPublication, EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY, type PluginSkillSourceIdentity } from './pluginSkillSourceIdentity';
+import { isArtifactInventoryLoaded } from '@/sync/domains/artifacts/artifactInventory';
+import { resolveSkillReachV1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
+import { useSkillFeatureEnabled } from './useSkillFeatureEnabled';
+
+const SKILL_ARTIFACT_KINDS: readonly string[] = Object.freeze(['prompt_bundle.v2']);
 
 export type SkillsLibraryStatus = 'loading' | 'ready' | 'unavailable';
 export type SkillsLibrary = Readonly<{
@@ -58,13 +61,17 @@ const lastKnown = new Map<string, Snapshot>();
 // inventory publication. No response or extra cache survives settlement here.
 const readsInFlight = new Map<string, Readonly<{ pending: Promise<ActionExecuteResult>; sourceKey: string | null;
   sourceRevisions: readonly string[] | null;
+  sourceUnreadyCount: number;
   pluginRevision: PluginSkillSourceIdentity | null; pluginSourcesCurrent: () => boolean }>>();
 function readSkills(scope: NonNullable<SkillsLibrary['scope']>, sourceRevisions: readonly string[] | null = null,
-  pluginRevision: PluginSkillSourceIdentity | null = null) {
-  const key = `${scope.serverId}:${scope.accountId}`;
+  pluginRevision: PluginSkillSourceIdentity | null = null, skillIds?: readonly string[]) {
+  const key = `${scope.serverId}:${scope.accountId}${skillIds ? `:skills:${contentKey(skillIds)}` : ''}`;
   const existing = readsInFlight.get(key);
   if (existing) return existing;
-  const pluginIdentity = createPluginSkillSourceIdentityPublication();
+  const inventory = getStorage().getState();
+  const sourceUnreadyCount = areServerAccountScopesEqual(scope, inventory.settingsScope)
+    ? skillIds ? skillIds.filter(id => inventory.artifacts[id]?.isDecrypted === false).length : inventory.artifactInventoryUnreadyCount : 0;
+  const pluginIdentity = createPluginSkillSourceIdentityPublication(skillIds);
   const pluginSources = () => pluginIdentity.publish(readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true }));
   const initialPluginSources = pluginSources();
   // The front door captures the exact Account lifetime, independent of either mounted observer.
@@ -73,7 +80,7 @@ function readSkills(scope: NonNullable<SkillsLibrary['scope']>, sourceRevisions:
     .then(() =>
       execute(
         'skills.list',
-        {},
+        skillIds ? { skillIds: [...skillIds] } : {},
         {
           surface: 'ui',
           authority: 'present_user',
@@ -86,7 +93,7 @@ function readSkills(scope: NonNullable<SkillsLibrary['scope']>, sourceRevisions:
     .finally(() => {
       if (readsInFlight.get(key)?.pending === pending) readsInFlight.delete(key);
     });
-  const read = { pending, sourceKey: sourceRevisions === null ? null : contentKey(sourceRevisions), sourceRevisions,
+  const read = { pending, sourceKey: sourceRevisions === null ? null : contentKey(sourceRevisions), sourceRevisions, sourceUnreadyCount,
     pluginRevision, pluginSourcesCurrent: () => pluginSources() === initialPluginSources };
   readsInFlight.set(key, read);
   return read;
@@ -134,7 +141,7 @@ const emptyUnavailableItems: readonly SkillUnavailableItemV1[] = Object.freeze(
 const readRules = (snapshot: PromptLibraryCatalogValueSnapshot<'skill-rules'>) => snapshot.value;
 const readRulesError = (snapshot: PromptLibraryCatalogValueSnapshot<'skill-rules'>) =>
   snapshot.status === 'unavailable' ? snapshot.reason ?? 'library_unavailable' : null;
-const readUsage = (snapshot: PromptLibraryCatalogValueSnapshot<'skill-usage'>) => snapshot.status === 'ready' ? snapshot.value : null;
+const readUsage = (snapshot: PromptLibraryCatalogValueSnapshot<'skill-usage'>) => snapshot.status === 'unavailable' ? null : snapshot.value;
 const readFolders = (snapshot: PromptLibraryCatalogValueSnapshot<'folders'>) => snapshot.value;
 
 function contentKey(skills: readonly string[]): string {
@@ -166,27 +173,40 @@ function reconcile<T extends Readonly<{ skillId: string }>>(
  */
 export function useSkillsLibrary(
   requestedScope?: ServerAccountScope | null,
+  demand?: Readonly<{ enabled?: boolean; skillIds?: readonly string[] }>,
 ): SkillsLibrary {
+  const enabled = demand?.enabled !== false;
   const activeScope = useAccountSettingsScope();
   const scope = requestedScope === undefined ? activeScope : requestedScope;
   const isFeatureEnabled = useSkillFeatureEnabled(scope?.serverId);
-  const scopeKey = scope ? `${scope.serverId}:${scope.accountId}` : null;
+  const selectedIdsKey = demand?.skillIds === undefined ? null : contentKey([...new Set(demand.skillIds)]);
+  const selectedIds = React.useMemo<readonly string[] | undefined>(() => selectedIdsKey === null ? undefined : JSON.parse(selectedIdsKey), [selectedIdsKey]);
+  const scopeKey = scope ? `${scope.serverId}:${scope.accountId}${selectedIdsKey === null ? '' : `:skills:${selectedIdsKey}`}` : null;
   const { binding, ready } = useMountedActionExecution(scope);
-  const skillRevisions = getStorage()(state => state.artifactSkillRevisions);
-  const inventoryReady = getStorage()(state => state.isDataReady && state.artifactsLoaded && state.artifactInventoryUnreadyCount === 0);
-  const inventoryComplete = inventoryReady && areServerAccountScopesEqual(scope, activeScope);
-  const rules = usePromptLibraryCatalogSelection('skill-rules', readRules, scope);
-  const rulesError = usePromptLibraryCatalogSelection('skill-rules', readRulesError, scope);
-  const usage = usePromptLibraryCatalogSelection('skill-usage', readUsage, scope);
-  const folders = usePromptLibraryCatalogSelection('folders', readFolders, scope);
-  const declarations = useAppShellPluginUiDeclarationSources();
   const readsActiveScope = areServerAccountScopesEqual(scope, activeScope);
-  const pluginRevision = readsActiveScope ? declarations.skillSourceIdentity : EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY;
+  // The selected destination observes K ids, so an unrelated Artifact publication
+  // neither renders it nor invalidates its admitted list read.
+  const sourceKey = getStorage()(state => contentKey(!readsActiveScope ? [] : selectedIds
+    ? selectedIds.flatMap(id => state.artifactSkillRevisions[id] ? [state.artifactSkillRevisions[id]] : [])
+    : Object.values(state.artifactSkillRevisions)));
+  const sourceRevisions = React.useMemo<readonly string[]>(() => JSON.parse(sourceKey), [sourceKey]);
+  const inventoryUnreadyCount = getStorage()(state => selectedIds
+    ? selectedIds.filter(id => state.artifacts[id]?.isDecrypted === false).length : state.artifactInventoryUnreadyCount);
+  const inventoryReady = getStorage()(state => selectedIds === undefined && state.isDataReady && isArtifactInventoryLoaded(state, SKILL_ARTIFACT_KINDS)
+    && state.artifactInventoryUnreadyCount === 0);
+  const inventoryComplete = inventoryReady && areServerAccountScopesEqual(scope, activeScope);
+  const rules = usePromptLibraryCatalogSelection('skill-rules', readRules, scope, demand);
+  const rulesError = usePromptLibraryCatalogSelection('skill-rules', readRulesError, scope, demand);
+  const usage = usePromptLibraryCatalogSelection('skill-usage', readUsage, scope, demand);
+  const folders = usePromptLibraryCatalogSelection('folders', readFolders, scope, demand);
+  const declarations = useAppShellPluginUiDeclarationSources();
+  const unreadableSourceCount = readsActiveScope ? inventoryUnreadyCount : 0;
+  const selectedPluginIdentity = React.useMemo(() => createPluginSkillSourceIdentityPublication(selectedIds), [selectedIds]);
+  const pluginRevision = !readsActiveScope ? EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY : selectedIds === undefined
+    ? declarations.skillSourceIdentity : selectedPluginIdentity.publish(declarations.projection);
   const pluginSourcesReady = !readsActiveScope || declarations.ready;
   // Reach and usage already have scoped publications below. Content reads depend on
   // membership and revisions; unknown membership is distinct from an empty inventory.
-  const sourceRevisions = React.useMemo(() => readsActiveScope ? Object.values(skillRevisions) : [], [readsActiveScope, skillRevisions]);
-  const sourceKey = React.useMemo(() => contentKey(sourceRevisions), [sourceRevisions]);
   const completedRead = React.useRef<Readonly<{ observationKey: string; sourceRevisions: readonly string[];
     pluginRevision: PluginSkillSourceIdentity }> | null>(null);
   const [state, setState] = React.useState<{
@@ -196,28 +216,32 @@ export function useSkillsLibrary(
     errorCode: string | null;
   }>(() => ({
     scopeKey,
-    snapshot: scopeKey ? (lastKnown.get(scopeKey) ?? null) : null,
+    snapshot: scopeKey && selectedIds === undefined ? (lastKnown.get(scopeKey) ?? null) : null,
     status: 'loading',
     errorCode: null,
   }));
   const [attempt, setAttempt] = React.useState(0);
+  const retryDemand = React.useRef({ enabled, scopeKey });
+  retryDemand.current = { enabled, scopeKey };
   const retry = React.useCallback(() => {
-    if (scope)
-      fireAndForget(refreshPromptLibraryCatalog(scope), {
-        tag: 'skillsLibrary.retry',
-      });
+    if (!retryDemand.current.enabled || retryDemand.current.scopeKey !== scopeKey || !scope || !binding?.isCurrent()) return;
+    fireAndForget(refreshPromptLibraryCatalog(scope), {
+      tag: 'skillsLibrary.retry',
+    });
     setAttempt((value) => value + 1);
-  }, [scope]);
+  }, [scope, scopeKey, binding]);
   // skills.list refreshes unavailable rules through this same catalog owner.
   // Starting it on failure would reopen loading and cancel its own invocation.
-  const canRead = Boolean(scopeKey) && ready && pluginSourcesReady && rulesError === null;
+  const canRead = enabled && Boolean(scopeKey) && ready && pluginSourcesReady && rulesError === null;
   const readKey = JSON.stringify([
     scopeKey,
     binding?.revision,
     sourceKey,
     attempt,
   ]);
-  const observationKey = JSON.stringify([scopeKey, binding?.revision, attempt]);
+  // A newly opaque possible bundle needs one current Action observation. A
+  // stable unreadable count never retries a settled failure by itself.
+  const observationKey = JSON.stringify([scopeKey, binding?.revision, attempt, unreadableSourceCount]);
 
   React.useEffect(() => {
     if (!scopeKey || !scope || !canRead) return;
@@ -245,7 +269,7 @@ export function useSkillsLibrary(
     );
     void (async () => {
       try {
-        const read = readSkills(scope, sourceRevisions, pluginRevision);
+        const read = readSkills(scope, sourceRevisions, pluginRevision, selectedIds);
         const result = await read.pending;
         if (controller.signal.aborted) return;
         if (!result.ok) {
@@ -273,7 +297,8 @@ export function useSkillsLibrary(
         const sourceChanged = read.sourceKey !== sourceKey && (inventoryComplete ? resultKey !== sourceKey
           : sourceRevisions.some(revision => !knownRevisions.has(revision))
             || (read.sourceRevisions ?? []).some(revision => !published.has(revision)));
-        if (!read.pluginSourcesCurrent() || read.pluginRevision !== null && read.pluginRevision !== pluginRevision || sourceChanged) {
+        if (!read.pluginSourcesCurrent() || read.pluginRevision !== null && read.pluginRevision !== pluginRevision
+          || read.sourceUnreadyCount !== unreadableSourceCount || sourceChanged) {
           setAttempt(value => value + 1);
           return;
         }
@@ -295,7 +320,7 @@ export function useSkillsLibrary(
             pluginRevision,
             usageObservedSince: parsed.usageObservedSince ?? null,
           };
-          lastKnown.set(scopeKey, snapshot);
+          if (selectedIds === undefined) lastKnown.set(scopeKey, snapshot);
           return { scopeKey, snapshot, status: 'ready', errorCode: null };
         });
       } catch (error) {
@@ -321,14 +346,39 @@ export function useSkillsLibrary(
   const snapshot =
     state.scopeKey === scopeKey
       ? state.snapshot
-      : scopeKey
+      : scopeKey && selectedIds === undefined
         ? (lastKnown.get(scopeKey) ?? null)
         : null;
-  const displayedItems = React.useMemo(() => {
+  const placedItems = React.useMemo(() => {
     if (!snapshot) return emptyItems;
+    if (!folders) return snapshot.items;
     return reconcile(
       snapshot.items,
       snapshot.items.map((item) => {
+        // The Action already resolved placement for the current Account. Reuse
+        // that safe fallback while applying current private overrides/deletions.
+        const folderId = isReadOnlySkillProvenanceV1(item.provenance) ? null
+          : resolveArtifactOrganizationHeaderV1({ artifactId: item.skillId,
+            organization: folders, header: { folderId: item.folderId }, owned: true }).folderId ?? null;
+        return item.folderId === folderId ? item : { ...item, folderId };
+      }),
+    );
+  }, [snapshot, folders]);
+  React.useEffect(() => {
+    if (!scopeKey || !snapshot || placedItems === snapshot.items) return;
+    setState(previous => {
+      if (previous.scopeKey !== scopeKey || previous.snapshot !== snapshot) return previous;
+      // Keep the admitted placement in the existing library projection, not
+      // private folder names. Withdrawal must not resurrect its content-read id.
+      const next = { ...snapshot, items: placedItems };
+      if (selectedIds === undefined) lastKnown.set(scopeKey, next);
+      return { ...previous, snapshot: next };
+    });
+  }, [scopeKey, snapshot, placedItems]);
+  const displayedItems = React.useMemo(() => {
+    return reconcile(
+      placedItems,
+      placedItems.map((item) => {
         const current = rules?.rules.filter(
           (rule) => rule.skillId === item.skillId,
         ) ?? item.rules;
@@ -336,18 +386,12 @@ export function useSkillsLibrary(
         const lastUsedAt = usage && Object.hasOwn(usage.lastUsedAt, item.skillId)
           ? usage.lastUsedAt[item.skillId] : undefined;
         const migratedFromContext = current.some(rule => isMigratedReachRuleIdV1(rule.id));
-        // The Action already resolved the safe owned-legacy fallback. Live personal
-        // placement (including explicit null) overrides it through the same owner.
-        const personalFolderId = resolveArtifactOrganizationHeaderV1({ artifactId: item.skillId,
-          artifactHeadersById: folders?.artifactHeadersById, header: {}, owned: false }).folderId;
-        const folderId = isReadOnlySkillProvenanceV1(item.provenance) ? null
-          : personalFolderId === undefined ? item.folderId : personalFolderId;
         return JSON.stringify(item.rules) === JSON.stringify(current) && previousUse === lastUsedAt
-          && item.migratedFromContext === migratedFromContext && item.folderId === folderId ? item
-          : { ...withoutUse, rules: current, migratedFromContext, folderId, ...(lastUsedAt === undefined ? {} : { lastUsedAt }) };
+          && item.migratedFromContext === migratedFromContext ? item
+          : { ...withoutUse, rules: current, migratedFromContext, ...(lastUsedAt === undefined ? {} : { lastUsedAt }) };
       }),
     );
-  }, [snapshot, rules, usage, folders]);
+  }, [placedItems, rules, usage]);
   const availableItems = React.useMemo(() => displayedItems.filter(item => resolveSkillReachV1(item.skillId, [], {
     machineId: '', machinePlatform: null, directory: null, projectKey: null, agentId: null }, isFeatureEnabled).available),
   [displayedItems, isFeatureEnabled]);
@@ -369,7 +413,7 @@ export function useSkillsLibrary(
       items: availableItems,
       unavailableItems: snapshot?.unavailableItems ?? emptyUnavailableItems,
       stale:
-        snapshot !== null && (status !== 'ready' || inventoryComplete
+        snapshot !== null && (status !== 'ready' || completedRead.current?.observationKey !== observationKey || inventoryComplete
           && (snapshot.key !== sourceKey || snapshot.pluginRevision !== pluginRevision)),
       errorCode: status === 'unavailable' ? errorCode : null,
       usageObservedSince: skillUsageObservedSinceV1(usage),
@@ -383,6 +427,7 @@ export function useSkillsLibrary(
       sourceKey,
       pluginRevision,
       inventoryComplete,
+      observationKey,
       errorCode,
       retry,
       usage,

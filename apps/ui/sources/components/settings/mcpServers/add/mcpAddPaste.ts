@@ -4,6 +4,9 @@ import type {
   McpImportValuesV1,
 } from '@happier-dev/protocol/mcp/servers/import/mcpServerImportV1';
 import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
+import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
+import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
+import { createStore } from 'zustand/vanilla';
 
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const HEADER_NAME = /^[A-Za-z0-9-]+$/;
@@ -20,6 +23,7 @@ export type McpPasteServerModel = Readonly<{
   name: string;
   title: string;
   transport: 'stdio' | 'http' | 'sse';
+  auth?: McpImportPreviewV1['servers'][number]['auth'];
   /** Values asked over the shared rows editor, by where they go. */
   env: readonly McpPasteAsk[];
   headers: readonly McpPasteAsk[];
@@ -99,6 +103,7 @@ export function buildMcpPastePreviewModel(
       name: server.name,
       title,
       transport: server.transport,
+      ...(server.auth ? { auth: server.auth } : {}),
       env,
       headers,
       literalSecrets: named,
@@ -135,6 +140,35 @@ export const EMPTY_MCP_PASTE_ANSWERS: McpPasteAnswers = {
   fields: {},
 };
 
+/** Live-only import draft. The modal retains it while the active Paste leaf owns its readers. */
+export type McpPasteDraftState = Readonly<{
+  text: string;
+  preview: McpImportPreviewV1 | null;
+  previewText: string | null;
+  answers: McpPasteAnswers;
+  retained: McpImportValuesV1;
+  rules: ReachRulesV1;
+  where: ReachRulesChangeV1 | undefined;
+  busy: boolean;
+  error: string | null;
+  added: boolean;
+}>;
+
+export type McpPasteDraftStore = Readonly<{
+  getSnapshot: () => McpPasteDraftState;
+  subscribe: (listener: () => void) => () => void;
+  update: (change: (current: McpPasteDraftState) => McpPasteDraftState) => void;
+}>;
+
+export function createMcpPasteDraftStore(initial: McpPasteDraftState): McpPasteDraftStore {
+  const store = createStore<McpPasteDraftState>(() => initial);
+  return {
+    getSnapshot: store.getState,
+    subscribe: store.subscribe,
+    update: (change: (current: McpPasteDraftState) => McpPasteDraftState) => store.setState(change, true),
+  };
+}
+
 /** A row starts where the person needs to act: a key waits for a Saved Secret, anything else for its text. */
 export function seedMcpPasteRow(ask: McpPasteAsk): ValueRefV1 {
   return ask.secret
@@ -160,17 +194,15 @@ function allAsks(model: McpPastePreviewModel): readonly McpPasteAsk[] {
 }
 
 /** How many asked values still have no answer: while any remain, Add N says so and stays off. */
+export function countOpenMcpPasteServerValues(server: McpPasteServerModel, answers: McpPasteAnswers): number {
+  return [...server.env, ...server.headers].filter(ask => !isFilled(rowValue(answers, ask))).length;
+}
+
 export function countOpenMcpPasteValues(
   model: McpPastePreviewModel,
   answers: McpPasteAnswers,
 ): number {
-  const rowAsks = model.servers.flatMap((server) => [
-    ...server.env,
-    ...server.headers,
-  ]);
-  const openRows = rowAsks.filter(
-    (ask) => !isFilled(rowValue(answers, ask)),
-  ).length;
+  const openRows = model.servers.reduce((count, server) => count + countOpenMcpPasteServerValues(server, answers), 0);
   const openFields = model.fields.filter(
     (ask) => (answers.fields[ask.inputId] ?? '').trim().length === 0,
   ).length;

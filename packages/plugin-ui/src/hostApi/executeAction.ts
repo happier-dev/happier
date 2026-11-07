@@ -54,6 +54,12 @@ export type PluginActionExecution<Result = unknown> =
 const OUTCOME_UNKNOWN_ERROR_CODES: ReadonlySet<string> = new Set(['timeout', 'aborted']);
 
 const UNKNOWN_ERROR_CODE = 'plugin_action_failed';
+const CONFIRMATION_DECLINED_CODE = 'plugin_action_current_intent_rejected';
+
+/** A settled host decision, consumed without decoding transport diagnostics again. */
+export function isPluginActionConfirmationDeclined(execution: PluginActionExecution<unknown>): boolean {
+  return execution.status === 'error' && execution.code === CONFIRMATION_DECLINED_CODE;
+}
 
 type PluginUiActionExecutionWithOptionalInput = (
   action: PluginUiActionReference,
@@ -109,10 +115,11 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   const diagnostics = (error as { diagnostics?: unknown } | null)?.diagnostics;
   // The host binds this diagnostic to a declined confirmation. A generic
   // permission denial remains an error rather than being treated as consent.
-  if (code === 'denied' && Array.isArray(diagnostics)
-    && diagnostics.includes('plugin_action_current_intent_rejected')) {
-    return { status: 'idle' };
-  }
+  const confirmationDeclined = code === 'denied' && Array.isArray(diagnostics)
+    && diagnostics.some(diagnostic => typeof diagnostic === 'string'
+      ? diagnostic === CONFIRMATION_DECLINED_CODE
+      : diagnostic !== null && typeof diagnostic === 'object'
+        && Reflect.get(diagnostic, 'code') === CONFIRMATION_DECLINED_CODE);
   const message = readErrorMessage(error, code, translate);
   const details = (error as { details?: unknown } | null)?.details;
   const requestId = readPluginErrorRequestIdV1(error);
@@ -124,7 +131,7 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   }
   return {
     status: 'error',
-    code,
+    code: confirmationDeclined ? CONFIRMATION_DECLINED_CODE : code,
     message,
     retryable: (error as { retryable?: unknown } | null)?.retryable === true,
     ...(requestId === undefined ? {} : { requestId }),

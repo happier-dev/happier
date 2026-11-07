@@ -5,6 +5,7 @@ import { withArtifactExcerptV1 } from '../../artifacts/artifactExcerptV1.js';
 import { botTemplateArtifactSharingAdapterV1 } from './botTemplateArtifactSharingV1.js';
 import { getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '../../artifacts/artifactSharingV1.js';
 import { artifactActionListSelectionV1 } from '../../artifacts/artifactListSelectionV1.js';
+import { PluginPublicationBotTemplateSchema } from '../../actions/specs/pluginPublication.js';
 
 const content = () => BotTemplateContentV1Schema.parse({ v: 1,
   identity: { name: 'Garden', description: 'Reusable gardening advice', madeFromName: 'Garden Bot' },
@@ -26,9 +27,13 @@ describe('Bot template release boundary', () => {
     const shape = { v: 1 as const, fill: ['M20 0 L100 0 L100 80 L20 80 Z'], mouth: [60, 46, 0.8] as [number, number, number] };
     source.content.identity.face = { shape };
     expect(BotTemplateArtifactV1Schema.parse(source)).toEqual(source);
+    const publication = () => ({ draftArtifactId: source.releaseArtifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      release: { v: 1, ...metadata, content: source.content } });
+    expect(PluginPublicationBotTemplateSchema.parse(publication()).release.content.identity.face?.shape?.mouth).toEqual([45, 46, 0.8]);
     expect(projectBotTemplateReleaseV1(source, metadata).content.identity.face?.shape?.mouth).toEqual([45, 46, 0.8]);
     source.content.identity.face.shape = { ...shape, fill: ['M0 0 H90 V90 Z'] };
     expect(BotTemplateArtifactV1Schema.parse(source)).toEqual(source);
+    expect(PluginPublicationBotTemplateSchema.safeParse(publication()).success).toBe(false);
     expect(() => projectBotTemplateReleaseV1(source, metadata)).toThrow();
   });
 

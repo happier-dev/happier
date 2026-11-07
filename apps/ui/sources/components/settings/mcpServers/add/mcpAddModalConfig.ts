@@ -6,6 +6,46 @@ import type {
   McpRegistryServerV1,
 } from '@happier-dev/protocol/registries';
 import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
+import { MCP_SERVER_CATALOG_SUGGESTIONS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
+import type { PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
+
+export type McpAddSuggestionRow = Readonly<{
+  suggestionId: (typeof MCP_SERVER_CATALOG_SUGGESTIONS_V1)[number]['id'];
+  title: string;
+  description?: string;
+  // Suggestions have no registry source, pin, publisher or update lifecycle.
+  sourceId?: never;
+  itemId?: never;
+  version?: never;
+  publisher?: never;
+  flags?: never;
+  brandMark?: never;
+}>;
+export type McpAddCatalogRow = RegistryCatalogItemSummary | McpAddSuggestionRow;
+
+export function isMcpAddSuggestion(row: McpAddCatalogRow): row is McpAddSuggestionRow {
+  return 'suggestionId' in row;
+}
+
+export function mcpAddRowKey(row: McpAddCatalogRow): string {
+  return isMcpAddSuggestion(row) ? `suggestion:${row.suggestionId}` : `${row.sourceId}|${row.itemId}`;
+}
+
+/** Discovery is admitted by the Action's options; URL and auth details stay at the catalog owner. */
+export function mcpAddSuggestionRows(options: PublicActionResultById['action.options.resolve']['options']): readonly McpAddSuggestionRow[] {
+  return options.flatMap(option => {
+    const suggestion = MCP_SERVER_CATALOG_SUGGESTIONS_V1.find(candidate => candidate.id === option.value);
+    return suggestion && !option.disabled ? [{ suggestionId: suggestion.id, title: option.label,
+      ...(option.description ? { description: option.description } : {}) }] : [];
+  });
+}
+
+export function buildMcpSuggestionDetailModel(row: McpAddSuggestionRow): McpAddDetailModel {
+  const suggestion = MCP_SERVER_CATALOG_SUGGESTIONS_V1.find(candidate => candidate.id === row.suggestionId)!;
+  return { supported: true, transport: 'remote', runs: suggestion.oauth ? 'remoteSignIn' : 'remote',
+    remoteHost: hostOf(suggestion.url), fields: [], signIn: suggestion.oauth };
+}
 
 /** How one declared input is edited: an env name or header name over the shared rows editor, else a plain field. */
 export type McpAddFieldPresentation = 'env' | 'header' | 'text';
@@ -194,8 +234,9 @@ export function mcpAddCreateInputs(
 /** The catalog entry an earlier add from this registry item created, so the details offer Open instead of Add. */
 export function findAddedMcpServer(
   servers: readonly McpServerCatalogEntryV1[],
-  pointer: Readonly<{ sourceId: string; itemId: string }>,
+  pointer: Readonly<{ sourceId: string; itemId: string }> | McpAddSuggestionRow,
 ): McpServerCatalogEntryV1 | null {
+  if ('suggestionId' in pointer) return null;
   return (
     servers.find(
       (server) =>

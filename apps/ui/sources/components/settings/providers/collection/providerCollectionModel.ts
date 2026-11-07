@@ -12,7 +12,6 @@ import {
     providerConnectionNeedsAttention,
     type ProviderConnectionPresentationStatus,
 } from '@/providers/connection/presentation';
-import { createHappierCollectionVisitMemory, resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';
 import { readProviderGatewayContributionPurposes } from '@/providers/connection/gatewayConfiguration';
 import { readProviderContributionIcon } from '@/providers/catalog/accountProviderDeclarations';
 
@@ -38,6 +37,8 @@ export type ProviderCollectionConnectionRow = Readonly<{
     off: boolean;
     /** A gateway is configured from Connected services; this collection lists it and opens the same detail. */
     gateway: boolean;
+    /** A gateway with no account behind its purposes yet (the typed `managed_purpose_bindings_missing` cause). */
+    needsAccount: boolean;
 }>;
 
 /** A local model server on the managed machine that is not a connection yet. */
@@ -113,6 +114,8 @@ function presentConnectionRow(connection: Connection, catalogCount: AccountProvi
         trouble: providerConnectionNeedsAttention(presentation.status),
         off: presentation.status === 'disabled',
         gateway,
+        needsAccount: gateway && connection.authorizationError?.code === 'provider_connection_invalid'
+            && connection.authorizationError.reason === 'managed_purpose_bindings_missing',
     };
 }
 
@@ -130,10 +133,6 @@ export function buildProviderCollection(input: Readonly<{
 }>): ProviderCollection {
     const { data } = input;
     if (!data) return EMPTY_COLLECTION;
-    const query = input.query.trim().toLocaleLowerCase();
-    const matches = (...texts: readonly string[]) => !query
-        || texts.join(' ').toLocaleLowerCase().includes(query);
-
     const connectionIds = new Set(data.connections.map((connection) => connection.connectionId));
     const allConnections = data.connections.map(connection => presentConnectionRow(connection,
         input.catalogCounts?.[connection.connectionId] ?? null, input.declarationContext));
@@ -167,32 +166,41 @@ export function buildProviderCollection(input: Readonly<{
         }
     }
 
-    return {
-        connections: allConnections.filter((row) => matches(row.title, row.provenance)),
-        found: allFound.filter((row) => matches(row.title)),
+    return filterProviderCollection({
+        connections: allConnections,
+        found: allFound,
         total: allConnections.length + allFound.length,
+    }, input.query);
+}
+
+/** Search narrows the held collection without rebuilding its rows or changing the condition corpus. */
+export function filterProviderCollection(collection: ProviderCollection, searchQuery: string): ProviderCollection {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (!query) return collection;
+    const matches = (...texts: readonly string[]) => texts.join(' ').toLocaleLowerCase().includes(query);
+    return {
+        ...collection,
+        connections: collection.connections.filter(row => matches(row.title, row.provenance)),
+        found: collection.found.filter(row => matches(row.title)),
     };
 }
-
-/**
- * The connection a wide collection opens when its route names none: the last one visited in this
- * app session if it still exists, else the first. `null` when there is nothing to open.
- */
-export function resolveProviderCollectionLandingId(
-    connections: readonly Pick<ProviderCollectionConnectionRow, 'connectionId'>[],
-    lastVisited: string | null,
-): string | null {
-    return resolveHappierCollectionInitialKey({ keys: connections.map((row) => row.connectionId), lastVisited });
-}
-
-const providerVisits = createHappierCollectionVisitMemory<string>();
-
-export const recordProviderCollectionVisit = providerVisits.record;
-export const readLastVisitedProviderConnectionId = providerVisits.read;
 
 /** Both Settings collections open the one Provider connection detail. */
 export function providerConnectionDetailRoute(connectionId: string): string {
     return `/(app)/settings/providers/${encodeURIComponent(connectionId)}`;
+}
+
+/** One authoring destination for catalog, Custom and discovered Provider picks. */
+export function newProviderRoute(contributionKey: string | null, seed?: Readonly<{
+    candidateId?: string;
+    displayName?: string | null;
+}>): string {
+    const params: Array<readonly [string, string]> = [];
+    if (contributionKey) params.push(['contributionKey', contributionKey]);
+    if (seed?.candidateId) params.push(['candidateId', seed.candidateId]);
+    if (seed?.displayName) params.push(['displayName', seed.displayName]);
+    const query = params.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&');
+    return `/(app)/settings/providers/new${query ? `?${query}` : ''}`;
 }
 
 export type ProviderGatewayCollectionRow = Readonly<{

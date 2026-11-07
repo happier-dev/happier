@@ -9,10 +9,14 @@ import { CapabilityAddModalBody } from '@/components/capabilities/add/Capability
 import { SkillUploadInput } from './SkillUploadInput';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const device = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
+const documentPicker = vi.hoisted(() => ({ getDocumentAsync: vi.fn(async () => ({ canceled: true, assets: null })) }));
+vi.mock('expo-document-picker', () => documentPicker);
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-  return createReactNativeWebMock();
+  const native = await createReactNativeWebMock();
+  return { ...native, Platform: { ...native.Platform, get OS() { return device.os; } } };
 });
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -38,6 +42,8 @@ afterEach(() => {
   standardCleanup();
   drop.onFilesDropped = null;
   drop.names = ['grill-me'];
+  device.os = 'web';
+  documentPicker.getDocumentAsync.mockClear();
 });
 
 const PREVIEW = {
@@ -60,7 +66,7 @@ const execute: MountedAuthoringActionExecute = async (_actionId, input) => {
 };
 
 /** The Upload mode inside the real Add dialog body, as the Skills page opens it. */
-async function renderUpload(answer: MountedAuthoringActionExecute, onSelectAdded: (id: string) => void = () => {}, onAdded: (id: string) => void = () => {}) {
+async function renderUpload(answer: MountedAuthoringActionExecute, onSelectAdded: (id: string) => void = () => {}, onAdded: (id: string) => void = () => {}, dropOnMount = true) {
   const onClose = vi.fn();
   const config = {
     title: 'Add a skill',
@@ -74,7 +80,7 @@ async function renderUpload(answer: MountedAuthoringActionExecute, onSelectAdded
         kind: 'input' as const,
         ownsTools: true,
         renderBody: (ctx: never) => (
-          <SkillUploadInput ctx={ctx} execute={answer} onAdded={onAdded} onSelectAdded={onSelectAdded} onDone={() => {}} testID="upload" />
+          <SkillUploadInput ctx={ctx} execute={answer} onAdded={onAdded} onSelectAdded={id => { onSelectAdded(id); onClose(); }} onDone={() => {}} testID="upload" />
         ),
       },
     ],
@@ -83,7 +89,7 @@ async function renderUpload(answer: MountedAuthoringActionExecute, onSelectAdded
     detailFooter: () => ({ primary: { label: '', onPress: async () => null } }),
   };
   const screen = await renderScreen(<CapabilityAddModalBody config={config as never} onClose={onClose} />);
-  await act(async () => {
+  if (dropOnMount) await act(async () => {
     await drop.onFilesDropped?.({ dataTransfer: {} });
   });
   const pressPrimary = async () => {
@@ -97,6 +103,19 @@ async function renderUpload(answer: MountedAuthoringActionExecute, onSelectAdded
 }
 
 describe('SkillUploadInput', () => {
+  it.each(['ios', 'android'] as const)('offers ZIP but not folder picking on %s, and cancellation starts no preview or install', async os => {
+    device.os = os;
+    const answer = vi.fn<MountedAuthoringActionExecute>();
+    const { screen } = await renderUpload(answer, undefined, undefined, false);
+    expect(screen.findByTestId('upload.zip')).not.toBeNull();
+    expect(screen.findByTestId('upload.folder')).toBeNull();
+    await screen.pressByTestIdAsync('upload.zip');
+    await vi.waitFor(() => expect(documentPicker.getDocumentAsync).toHaveBeenCalledOnce());
+    expect(documentPicker.getDocumentAsync).toHaveBeenCalledWith({ multiple: false, type: ['application/zip'] });
+    expect(answer).not.toHaveBeenCalled();
+    expect(screen.findByTestId('upload.error')).toBeNull();
+  });
+
   for (const missingRules of [false, true]) it(`retains a real batch content failure while repairing rules (missing rules: ${missingRules})`, async () => {
     const { createSkillInstallActionHarness } = await import('@/dev/testkit/harness/skillInstallActionHarness');
     const harness = createSkillInstallActionHarness();
@@ -140,6 +159,9 @@ describe('SkillUploadInput', () => {
     const selected: string[] = [];
     const { screen, pressPrimary, onClose } = await renderUpload(answer, (id) => selected.push(id));
     expect(screen.findByTestId('upload.detail.title')).not.toBeNull();
+    // One found skill shows one Add: its details' primary, not a second one in the footer.
+    expect(screen.findByTestId('upload.add')).toBeNull();
+    expect(screen.find(node => node.props.testID === 'skills.add:primary' && typeof node.props.display === 'string').props.display).toBe('primary');
     const { WhereItsOnControl } = await import('@/components/capabilities/where/WhereItsOnControl');
     const narrowed = { kind: 'write', write: { place: { t: 'machine', machineId: 'machine-1' }, state: 'on' } } as const;
     await act(async () => {
@@ -151,6 +173,20 @@ describe('SkillUploadInput', () => {
     expect(installs[0]).not.toHaveProperty('selectPaths');
     expect(onClose).toHaveBeenCalled();
     expect(selected).toEqual(['uploaded']);
+  });
+
+  it('says an uploaded skill named like a library skill is added as a separate copy', async () => {
+    const answer: MountedAuthoringActionExecute = async () => ({ ok: true, result: { items: [{ ...PREVIEW, sameNameInLibrary: true }] } });
+    const { screen } = await renderUpload(answer);
+    expect(screen.findByTestId('upload.detail.sameName')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('You already have a skill named grill-me. This adds a separate copy.');
+  });
+
+  it('shows no same-name note for a new uploaded skill', async () => {
+    const answer: MountedAuthoringActionExecute = async () => ({ ok: true, result: { items: [PREVIEW] } });
+    const { screen } = await renderUpload(answer);
+    expect(screen.findByTestId('upload.detail.title')).not.toBeNull();
+    expect(screen.findByTestId('upload.detail.sameName')).toBeNull();
   });
 
   it('keeps an acknowledged upload open and retries its rules without another install', async () => {

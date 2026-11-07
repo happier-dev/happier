@@ -106,6 +106,26 @@ describe('installSkills (Add to library)', () => {
 });
 
 describe('previewSkillInstall (From a link)', () => {
+    it('carries the real upload owner’s separate same-name item notice through the strict preview reader', async () => {
+        const { createSkillInstallActionHarness } = await import('@/dev/testkit/harness/skillInstallActionHarness');
+        const { skillFileFromBytesV1 } = await import('@happier-dev/protocol/prompts/library/skills/skillZipV1');
+        const harness = createSkillInstallActionHarness();
+        const source = (instructions: string) => ({ kind: 'upload' as const, files: [skillFileFromBytesV1(
+            'SKILL.md', new TextEncoder().encode(`---\nname: meeting-notes\n---\n${instructions}`), 0o644,
+        )] });
+        await installSkills(harness.execute, { source: source('Original instructions') });
+        const same = await previewSkillInstall(harness.execute, source('Original instructions'));
+        expect(same).toMatchObject({ ok: true, items: [{ inLibrary: 'skill-1' }] });
+        expect(same).not.toHaveProperty('items.0.sameNameInLibrary');
+        const changed = await previewSkillInstall(harness.execute, source('Different instructions'));
+        expect(changed).toMatchObject({ ok: true, items: [{ name: 'meeting-notes', sameNameInLibrary: true }] });
+        expect(changed).not.toHaveProperty('items.0.inLibrary');
+        expect(harness.artifacts.size).toBe(1);
+        expect(await installSkills(harness.execute, { source: source('Different instructions') }))
+            .toMatchObject({ ok: true, skillIds: ['skill-2'] });
+        expect(harness.artifacts.size).toBe(2);
+    });
+
     it('retains digest pins for index previews through the existing install source carrier', async () => {
         const { SKILL_ACTION_INPUT_SCHEMAS_V1 } = await import('@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1');
         const source = { kind: 'link' as const, url: 'https://skills.example.test/.well-known/skills/index.json' };

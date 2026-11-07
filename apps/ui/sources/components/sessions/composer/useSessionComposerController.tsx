@@ -1,6 +1,6 @@
-import { alertComposerActionResultFailure, alertComposerRunnerRestartFailure, alertComposerRuntimeStatusUnavailable } from "./alertComposerFailure";
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import type { PromptPickerOpenRequest } from '@/components/sessions/agentInput/commandMenu/promptPickerActionPort';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { CliAuthStatusData } from "@/sync/api/capabilities/capabilitiesProtocol";
 import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
@@ -15,6 +15,7 @@ import { getPromptLibraryCatalogValue } from "@/sync/store/settings/promptLibrar
 import { refreshPromptLibraryCatalog } from "@/sync/engine/settings/promptLibraryCatalogEngine";
 import { areServerAccountScopesEqual } from "@/sync/domains/scope/serverAccountScope";
 import { mergeOptionPickerProbes } from "@/components/sessions/pickers/mergeOptionPickerProbes";
+import { buildSessionModelDiscoveryContext } from "@/sync/ops/sessionModelDiscovery";
 import type { SessionModelOptionsContext } from "@/sync/domains/models/modelOptions";
 import { PendingNavigationPill } from "@/components/sessions/pendingNavigation/PendingNavigationPill";
 import { PendingNavigationSettledNotice } from "@/components/sessions/pendingNavigation/PendingNavigationSettledNotice";
@@ -22,7 +23,7 @@ import { normalizeSessionAddress, type SessionAddress } from "@/sync/domains/ses
 import { resolveWorkspaceTargetForSession } from "@/sync/domains/session/resolveWorkspaceTargetForSession";
 import type { AgentInputSendOptions } from "@/components/sessions/agentInput";
 import { resolveSessionComposerSendActions } from '@/sync/domains/session/control/submitMode';
-import { canUseDirectPendingDeliveryActions } from '@/components/sessions/pending/pendingMessageVisualState';
+import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput } from '@/components/sessions/pending/pendingMessageVisualState';
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
 import { SessionComposerAgentInput } from "@/components/sessions/composer/SessionComposerAgentInput";
@@ -32,6 +33,7 @@ import { useComposerAvailablePanelHeight, useComposerKeyboardLayoutContext } fro
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from "@/components/sessions/agentInput/agentInputContracts";
 import { projectAgentInputAttachmentRowItems } from "@/components/sessions/agentInput/agentInputContracts";
 import { AttachmentFilePicker } from "@/components/sessions/attachments/AttachmentFilePicker";
+import { readSessionImageInputAvailability } from '@/sync/domains/session/media/sessionImageInputAvailability';
 import type { AttachmentDraft } from "@/components/sessions/attachments/attachmentDraftModel";
 import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from "@/components/sessions/attachments/attachmentFilePickerActions";
 import { useSessionAgentInputExtraActionChips } from "@/components/sessions/agentInput/sessionActions/useSessionAgentInputExtraActionChips";
@@ -47,9 +49,14 @@ import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/
 import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/sessionSpawnFailurePresentation";
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
 import { resolvePortableServerIdentityForRoutingId } from "@/sync/domains/server/resolvePortableServerIdentityForRoutingId";
-import { alertActionFailure } from "@/utils/errors/alertActionFailure";
+import { alertActionFailure, showActionFailureDetails } from "@/utils/errors/alertActionFailure";
+import {
+    alertComposerActionResultFailure,
+    alertComposerError,
+    alertComposerRunnerRestartFailure,
+    alertComposerRuntimeStatusUnavailable,
+} from "./alertComposerFailure";
 import { readRpcErrorCode } from "@happier-dev/protocol/rpcErrors";
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deriveSessionIntentionalRestartSignals, resolveSessionIntentionalRestartRecoveryEvidenceAtMs, type SessionIntentionalRestartSignal } from "@/components/sessions/agentInput/hooks/sessionIntentionalRestartSignal";
 import { useSessionIntentionalRestartSourceEvents } from "@/components/sessions/transcript/source/appSessionTranscriptSource";
 import { SESSION_COMPOSER_SUGGESTION_KINDS, type ComposerReferenceSearchHost } from "@/components/autocomplete/composerSuggestionKinds";
@@ -60,6 +67,7 @@ import { useComposerScopePluginPresentation } from "@/components/sessions/presen
 import { mergeAbortSignals } from "@/utils/runtime/abortSignals";
 import { useComposerPresentationInputEffects } from "@/components/sessions/presentation/useComposerPresentationInputEffects";
 import { presentSessionTeamCredentialDenial } from "@/components/sessions/presentation/sessionTeamCredentialDenialPresentation";
+import { SESSION_MODEL_PICKER_CHIP_KEY } from "@/components/sessions/presentation/useSessionModelPickerEntry";
 import { applyComposerPresentationTransaction, flushPendingRegisteredSessionComposerActionChip, flushPendingRegisteredSessionComposerFocus, notifyComposerPresentationTargetChanged, notifySessionComposerPresentationTargetChanged, readComposerPresentationSnapshot, readReleasedComposerStagedMediaHandles, readSessionComposerPresentationTargetAtAddress, registerComposerPresentationTarget, registerSessionComposerPresentationTarget, releaseComposerStagedMedia, useStableComposerPresentationTarget, type ComposerPresentationDocumentMutation } from "@/components/sessions/presentation/sessionComposerPresentationTargets";
 import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1, composerRefV1Key } from "@happier-dev/protocol/plugins/ui/composerRef";
 import { PluginContextualResourceStoreProvider } from "@/components/plugins/surfaces/PluginContextualResourceStoreProvider";
@@ -67,6 +75,7 @@ import { projectComposerAttachmentRowItems } from "@/components/sessions/compose
 import { createExistingSessionComposerDocumentOwner } from "@/components/sessions/composer/existingSessionComposerDocumentOwner";
 import { insertComposerAttachmentReferences, removeMountedComposerAttachmentReferences } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { createPendingMessageComposerDocumentOwner, withdrawPendingMessageToComposerWithActionApproval } from "@/components/sessions/composer/pendingMessageComposerDocumentOwner";
+import { executePendingMessageEditWithActionApproval } from "@/components/sessions/composer/pendingMessageEditAction";
 import { useActionApprovalContinuation } from "@/components/approvals/useActionApprovalContinuation";
 import type { ComposerDraftFieldCurrentness, MutableComposerDocumentOwner } from "@/components/sessions/composer/composerDocumentOwner";
 import { createEphemeralComposerDocumentOwner, sameComposerAttachmentViews } from "@/components/sessions/composer/composerDocumentOwner";
@@ -76,9 +85,10 @@ import { prepareComposerSubmissionSnapshot, submitComposerSnapshot, type Compose
 import type { PendingMessageEditRequest } from "@/components/sessions/pending/PendingMessagesTranscriptBlock";
 import { useDraft } from "@/hooks/session/useDraft";
 import { SessionDraftConflictResolution, useSessionDraftConflictComposerBanner } from "@/components/sessions/drafts/SessionDraftConflictResolution";
-import { buildSessionDraftSyncStatusBadge } from "@/components/sessions/drafts/sessionDraftStatusPresentation";
+import { buildSessionDraftSyncStatusBadge, selectSessionDraftSyncBadgeStatus } from "@/components/sessions/drafts/sessionDraftStatusPresentation";
 import { captureComposerTransientInputStateForOutboundHandoff, clearComposerAfterOutboundHandoff, restoreComposerAfterFailedOutboundHandoff } from "@/hooks/session/sessionComposerSendCoordinator";
 import { useSessionAgentInputComposerPersistence } from "@/hooks/session/useSessionAgentInputComposerPersistence";
+import { useSessionGuardDraftActivity } from "@/hooks/session/useSessionGuardDraftActivity";
 import { useFeatureEnabled } from "@/hooks/server/useFeatureEnabled";
 import { useHomeTeamCredentialModelCatalog } from "@/hooks/teams/useHomeTeamCredentialModelCatalog";
 import { teamCredentialDetailPath } from "@/components/settings/teams/teamsRoutes";
@@ -95,11 +105,11 @@ import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/se
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
 import { storage, useIsMachineListSettled, useLocalSetting, useProfile, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
 import { useSettingsValues } from "@/sync/store/settingsReadHooks";
-import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from "@/sync/domains/scope/serverAccountScope";
+import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from "@/sync/domains/scope/serverAccountScope";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
 import { isRecoveredHistoryTranscriptObservation } from "@happier-dev/session-core/messages";
 import { useWorkspaceScopeForSession } from "@/sync/domains/session/resolveWorkspaceScopeForSession";
-import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions } from "@/agents/runtime/resumeCapabilities";
+import { resolveSessionResumeEligibility } from "@/agents/runtime/resumeCapabilities";
 import { resolveConnectedServiceProfileActionRoute } from "@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute";
 import { getConnectedServiceRegistrySnapshot } from "@/sync/domains/connectedServices/connectedServiceRegistry";
 import { getAgentCore, isBundledAgentId, resolveAgentIdFromFlavor } from "@/agents/catalog/catalog";
@@ -110,6 +120,7 @@ import { readBackendTargetKeyV2, resolveBackendTargetKeyV2 } from "@/agents/back
 import { buildRolesRailPickerOption } from "@/components/roles/rail/buildRolesRailPickerOption";
 import { useSessionRolesRailParams } from "@/components/roles/session/sessionRole";
 import { useDaemonMergedProjectionInputs } from "@/agents/backendCatalog/useDaemonMergedProjectionInputs";
+import { COMPOSER_HOST_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { readCurrentProjectedAgentCapabilities, supportsAgentLifecycleCapability } from "@/agents/backendCatalog/currentAgentCapabilities";
 import { evaluateAgentSessionCompactionCapability, parsePermissionIntentAlias, readExternalSessionOperationState, resolveAgentIdFromSessionMetadata } from "@happier-dev/agents";
 import { useInSessionAgentPickerControls } from "@/components/sessions/agentPicker/useInSessionAgentPickerControls";
@@ -119,14 +130,16 @@ import { useResumeCapabilityOptions } from "@/agents/hooks/useResumeCapabilityOp
 import { Session } from "@/sync/domains/state/storageTypes";
 import { type Metadata } from "@happier-dev/session-core/state";
 import { readSessionOwnerMetadataView } from "@/sync/domains/session/readSessionOwnerMetadataView";
+import { registerSessionPendingMessageEdit } from "@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime";
+import { usePendingMessageEditDrainHold } from "./usePendingMessageEditDrainHold";
 import { getSessionStorageKind } from "@/sync/domains/session/sessionStorageKind";
 import { readSessionPresentationAgentId } from "@/sync/domains/session/presentation/readSessionPresentationAgentId";
 import { sync } from "@/sync/sync";
-import { acceptPendingMessageComposerAdmission, abandonPendingMessageComposerAdmission, preparePendingMessageComposerAdmission } from "@/sync/ops/pendingMessageComposerAdmission";
 import { filterReviewCommentDraftsIncludedInPrompt } from "@/sync/domains/input/reviewComments/reviewCommentPrompt";
 import { buildReviewCommentsOutboundMessage } from "@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage";
 import { buildReviewCommentsV1MetaPayload } from "@happier-dev/protocol/messages/structured/reviewCommentsInput";
 import { parseReviewCommentsV1 } from "@/sync/domains/input/reviewComments/reviewCommentMeta";
+import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { resolveSessionComposerSend } from "@/sync/domains/input/slashCommands/resolveSessionComposerSend";
 import { expandPromptTemplateInvocation } from "@/sync/domains/input/slashCommands/expandPromptTemplateInvocation";
 import { resolvePromptInvocationComposerSendAction } from "@/sync/domains/input/slashCommands/promptInvocationBehavior";
@@ -136,13 +149,12 @@ import { readExecutionRunRequestedAction } from "@/sync/domains/input/participan
 import { captureSessionDraftCurrentness, getOrCreateSessionMessagingDraftMutationAttempt, clearSessionMessagingDraftMutationAttempt, flushSessionDraftLocally, clearSessionDraftCurrentnessLocal, flushSessionDraft, getSessionDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft, readSessionNextPromptPermissionModeFromDraft, subscribeSessionDraft, writeExistingSessionDraft, type SessionDraftCurrentness } from "@/sync/ops/sessionDrafts/sessionDraftRepository";
 import { applyPermissionModeSelection } from "@/sync/domains/permissions/permissionModeApply";
 import { t, tLoose } from "@/text";
-import { isSessionAccessOwner } from "@/sync/engine/sessions/normalizeSessionAccessProjection";
+import { isSessionMachineAccessRemoved } from "@/components/sessions/access/sessionMachineAccessRemoved";
 import { trackMessageSent } from "@/track";
 import { randomUUID } from "@/platform/randomUUID";
 import { shouldShowAbortButtonForSessionState, useSessionStatus } from "@/utils/sessions/sessionUtils";
 import { useSessionTranscriptSource } from "@/components/sessions/transcript/source/SessionTranscriptSourceContext";
 import { fireAndForget } from "@/utils/system/fireAndForget";
-import { nativeReadClipboardImageAttachment } from "@/utils/files/nativeClipboardImageAttachment";
 import type { ModelMode, PermissionMode } from "@/sync/domains/permissions/permissionTypes";
 import { getPermissionModeOverrideForSpawn } from "@/sync/domains/permissions/permissionModeOverride";
 import { useSessionRecipientState } from "@/components/sessions/agentInput/routing/useSessionRecipientState";
@@ -172,13 +184,13 @@ import { SESSION_PROVIDER_LIMITS_SETTINGS } from "@/components/settings/session/
 import { useMountedActionExecution } from "@/components/approvals/useMountedActionExecution";
 import { isSessionLocallyAttached } from "@/sync/domains/session/control/sessionLocalControl";
 import { resolveSessionNativeGoalOwner } from "@/sync/domains/session/control/sessionGoalExecutionCapabilities";
-import { buildSessionModelDiscoveryContext } from "@/sync/ops/sessionModelDiscovery";
 import { resolveSessionConfigOptionOverridesFromMetadata } from "@/sync/domains/sessionControl/configOptionsControl";
-import { computeSessionModelConfigOptionControls, findModelOptionForEffectiveModelId, getModelOptionsForSession, isModelSelectableForSession, resolveCanonicalNativeModelSelectionRef, resolveSessionModelLabel } from "@/sync/domains/models/modelOptions";
+import { computeSessionModelConfigOptionControls, getModelOptionsForSession, isModelSelectableForSession, resolveCanonicalNativeModelSelectionRef, resolveSessionModelLabel } from "@/sync/domains/models/modelOptions";
 import { isArmedModelOnlySessionChange } from "@/providers/session/resolveSessionRoutePresentation";
 import { readArmedRouteContinuationLabel } from "@/components/sessions/agentInput/components/agentContinuationSubmitPresentation";
 import { resolveSessionModelSelectionDisposition } from "@/sync/domains/models/resolveSessionModelSelectionDisposition";
 import { useDestinationRouter } from "@/components/appShell/workspace/DestinationInstanceHost";
+import { admitInternalRouteHref } from "@/utils/path/routeUtils";
 import * as React from "react";
 import { useSessionFilePaneNavigation } from "@/components/sessions/panes/useSessionFileDetailsOpener";
 import { Platform, View, useWindowDimensions } from "react-native";
@@ -209,19 +221,21 @@ import { isSessionGoalEditingAvailable } from "@/components/sessions/workState/s
 import { createGoalActionChip } from "@/components/sessions/agentInput/definitions/createGoalActionChip";
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget, resolveSessionActionDefaultTargetKey } from "@/sync/domains/session/resolveSessionActionDefaultBackend";
 import { resolveSessionActionDefaultBackendTitle } from "@/sync/domains/session/resolveSessionActionDefaultBackendTitle";
-import type { OpenApprovalArtifactForSession } from "@/sync/domains/artifacts/approvalArtifacts";
+import type { OpenApprovalAttentionArtifactForSession } from "@/sync/domains/artifacts/approvalArtifacts";
 import { resolveServerIdForSessionIdFromLocalCache } from "@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache";
 import { narrowSessionModelPickerToAllowedModels, readEffectiveAllowedModelRef, narrowEmbeddedComposerInputLock, resolveEmbeddedComposerControls, type SessionViewEmbeddedPresentation } from "@/components/sessions/shell/embedded/embeddedSessionPresentation";
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from "@/sync/domains/server/serverProfiles";
 import { useAttachmentsUploadConfig } from "@/components/sessions/attachments/useAttachmentsUploadConfig";
 import { useAttachmentDraftManager } from "@/components/sessions/attachments/useAttachmentDraftManager";
 import { sendableAttachmentDrafts } from "@/components/sessions/attachments/attachmentDraftModel";
-import { clearSessionAttachmentDrafts, readSessionAttachmentDrafts, type SessionAttachmentDraftScope, writeSessionAttachmentDrafts } from "@/components/sessions/attachments/sessionAttachmentDraftStore";
-import { buildAttachmentMessageMeta, uploadAttachmentDraftsToSession } from "@/components/sessions/attachments/uploadAttachmentDraftsToSession";
+import { clearSessionAttachmentDrafts, readSessionAttachmentDrafts, resolveSessionAttachmentDraftScope, sessionAttachmentDraftKey, type SessionAttachmentDraftScope, writeSessionAttachmentDrafts } from "@/components/sessions/attachments/sessionAttachmentDraftStore";
+import { AttachmentUploadCancelled, buildSessionAttachmentIngressMeta, uploadAttachmentDraftsToSession } from "@/components/sessions/attachments/uploadAttachmentDraftsToSession";
 import { describeUploadFailure } from '@/components/transfers/describeUploadFailure';
 import { classifyTransferFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
-import { captureSessionMessageAttachmentDrafts, isAttachmentTargetUploadCheckpointFor, recordAttachmentTargetUploadCheckpoint } from "@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts";
+import { captureSessionMessageAttachmentDrafts } from "@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts";
+import { createSessionDraftMessageExecute, submitSessionDraft } from './submitSessionDraft';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describeAttachmentUploadSource } from "@/components/sessions/attachments/uploadAttachmentDraftsToSession";
 import { formatAttachmentSelectionSummary } from "@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1";
 import { buildScopedSessionRouteHref } from "@/hooks/session/sessionRouteServerScope";
@@ -253,18 +267,16 @@ import { ConnectedServiceIdSchema, type ConnectedAccountServiceKey } from "@happ
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from "@happier-dev/protocol/plugins/contribution-identity";
 import { RawIngressStructuredInputV1Schema, hasRawStructuredInputSemanticContentV1 } from "@happier-dev/protocol/runtime/input/structuredInputV1";
 import { SessionUpdatePostOutputV1Schema } from "@happier-dev/protocol/sessions/relations/workerUpdateV1";
-import { captureSessionComposerMessageAttachments, readSessionComposerMessageIntent, readSessionComposerMessagingOutcome } from "@/components/sessions/composer/sessionComposerMessaging";
+import { captureSessionComposerMessageAttachments, readSessionComposerMessageIntent, readSessionComposerMessagingOutcome, submitSessionComposerMessagingAction } from "@/components/sessions/composer/sessionComposerMessaging";
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from "@happier-dev/protocol/runtime/input/structuredInputV1";
 import { sanitizeSessionUserMessageSendMeta } from "@happier-dev/protocol/sessions/userMessageRpc";
 import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1 } from "@happier-dev/protocol/runtime/input/composerAttachmentV1";
-import type { SessionPendingMessageComposerAdmissionAbandonedRequestV1 } from "@happier-dev/protocol/sessions/userMessageRpc";
 import type { ComposerRefV1 } from "@happier-dev/protocol/plugins/ui/composerRef";
 import type { ComposerSnapshotV1, ComposerTransactionResultV1 } from "@happier-dev/protocol/plugins/ui/composer";
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from "@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1";
 import type { ConnectedServiceQuotaSnapshotV1 } from "@happier-dev/protocol/connect/connected-service-schemas";
 import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { readSessionProviderBindingMetadataV1 } from "@happier-dev/protocol/providers/sessions/bindingMetadataV1";
-import { removeSessionPendingQueueHoldV1FromMetadata, writeSessionPendingQueueHoldV1ToMetadata } from "@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1";
 import { SessionModelTransitionResultV1Schema } from "@happier-dev/protocol/sessions/control/modelTransitionV1";
 import { sameStrictJsonValue, StrictJsonValueSchema } from "@happier-dev/protocol/json/strictJsonValue";
 import type { ProviderBoundModelRef } from "@happier-dev/protocol/providers/model-selection";
@@ -276,7 +288,7 @@ import { useConfirmExperimentalProviderModel } from "@/providers/hooks/useConfir
 import { SessionModelPicker } from "@/components/sessions/modelPicker/SessionModelPicker";
 import { SessionModelNativeSourceLabelContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
 import { hiddenModelVisibilityKeys, type SessionModelProjectionGroup } from "@/components/sessions/modelPicker/buildSessionModelPickerSections";
-import { isTeamCredentialProviderModelPickerValue, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
+import { isTeamCredentialProviderModelPickerValue, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
 import { hapticsLight } from "@/components/ui/theme/haptics";
 import { useSessionViewBootstrap } from "@/components/sessions/shell/view/useSessionViewBootstrap";
 import { type SessionPresentationIntentApplier } from "@/components/sessions/companion/presentation/SessionCompanionPresentationBridge";
@@ -286,7 +298,7 @@ import { WarningActionBanner } from "@/components/sessions/shell/view/WarningAct
 import { useComposerBannerCollapse } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
 import { buildComposerBannerBadgeAccessibility } from "@/components/sessions/composerBanners/composerBannerCollapse";
 import { readExternalSessionLink } from "@/sync/domains/session/external/readExternalSessionLink";
-import { createExternalSessionTranscriptLiveSourceKeyFromLink, resolveExternalSessionTranscriptAuthorityState } from "@/sync/runtime/external/externalSessionTranscriptAuthority";
+import { createExternalSessionTranscriptLiveSourceKeyFromLink, readExternalSessionTranscriptStorageState, resolveExternalSessionTranscriptAuthorityState } from "@/sync/runtime/external/externalSessionTranscriptAuthority";
 import { formatShortRelativeTimeAt } from "@/utils/time/formatShortRelativeTime";
 import { combineSessionViewExtraActionChips } from "@/components/sessions/shell/view/combineSessionViewExtraActionChips";
 import { resolveSessionViewModeOptionIds } from "@/components/sessions/shell/view/resolveSessionViewModeOptionIds";
@@ -332,8 +344,6 @@ import type { SessionComposerModel } from "./sessionComposerModel";
 
 
 const MAX_USAGE_LIMIT_RECOVERY_READY_TIMER_MS = 2_147_483_647;
-const PENDING_MESSAGE_EDIT_DRAIN_HOLD_TTL_MS = 2 * 60 * 1000;
-const PENDING_MESSAGE_EDIT_DRAIN_HOLD_REFRESH_MS = 30 * 1000;
 const EMPTY_SESSION_MODEL_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
 const EMPTY_TEAM_CREDENTIAL_RESOURCES: readonly never[] = [];
 const EMPTY_SESSION_ROUTE_HIDDEN_SOURCES: readonly never[] = [];
@@ -557,7 +567,7 @@ export type SessionComposerControllerOptions = Readonly<{
     isEncryptedSessionLocked: boolean;
     executionRunsEnabled: boolean;
     participantTargets: readonly SessionParticipantTarget[];
-    approvalRequests: ReadonlyArray<OpenApprovalArtifactForSession>;
+    approvalRequests: ReadonlyArray<OpenApprovalAttentionArtifactForSession>;
     initialAttachmentDrafts: readonly AttachmentDraft[] | null;
     attachmentsUploadsEnabled: boolean;
     attachmentsUploadsAvailable: boolean;
@@ -619,13 +629,14 @@ export function useSessionComposerController({
         ? accountBinding
         : null;
     const sessionAccountScope = sessionAccountLifetime?.scope ?? null;
+    const acceptedSessionAccountLifetime = sessionAccountLifetime ? readServerAccountScopeOwnerLifetime(sessionAccountLifetime) : null;
     const presentSessionActionOutcome = React.useCallback((error: unknown, lifetime: typeof sessionAccountLifetime) => {
         if (!lifetime?.isCurrent() || !composerPresentationMountedRef.current) return;
         const pendingApproval = error instanceof HappyError
             && error.code === 'approval_request_created'
             && ActionApprovalRequestCreatedResultSchema.safeParse(error.details).success;
-        Modal.alert(pendingApproval ? t('approvals.title') : t('common.error'),
-            getErrorMessage(error) || t('errors.failedToSendMessage'));
+        if (pendingApproval) Modal.alert(t('approvals.title'), getErrorMessage(error) || t('errors.failedToSendMessage'));
+        else alertComposerError(error);
     }, []);
     const sessionAccountScopeKey = sessionAccountScope
         ? serverAccountScopeKeySuffix(sessionAccountScope)
@@ -647,7 +658,7 @@ export function useSessionComposerController({
     const composerInputFocusedRef = React.useRef(false);
     const composerActionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
-    const promptPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
+    const promptPickerOpenRequestRef = React.useRef<PromptPickerOpenRequest | null>(null);
     const composerPresentationAccountLifetime = sessionAccountLifetime;
     const boardPresentationUndoCurrentRef = React.useRef(false);
     boardPresentationUndoCurrentRef.current = composerPresentationMountedRef.current
@@ -678,7 +689,9 @@ export function useSessionComposerController({
     React.useEffect(() => {
         notifyComposerPresentationTargetChanged(activeComposerRef);
     }, [activeComposerRef, embedded?.composerInputLocked]);
-    React.useLayoutEffect(() => {
+    // The phone cockpit freezes retained Chat without unmounting its Composer.
+    // Mount custody follows passive lifetime, not Suspense's layout disconnection.
+    React.useEffect(() => {
         composerPresentationMountedRef.current = true;
         return () => {
             composerPresentationMountedRef.current = false;
@@ -690,6 +703,7 @@ export function useSessionComposerController({
         });
         return () => retirement?.dispose();
     }, [composerInputEffects.retire, composerPresentationAccountLifetime]);
+    const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
     const onComposerFocusChange = React.useCallback((focused: boolean) => {
         if (!composerPresentationMountedRef.current) return;
         if (composerInputFocusedRef.current === focused) return;
@@ -729,8 +743,7 @@ export function useSessionComposerController({
             liveSourceKey: link
                 ? createExternalSessionTranscriptLiveSourceKeyFromLink(link)
                 : null,
-            currentStorageState: session.currentStorageState
-                ?? (link ? 'legacy_external_unknown' : 'hosted'),
+            currentStorageState: readExternalSessionTranscriptStorageState(session.currentStorageState, link !== null),
             acceptedThroughServerSeq: session.acceptedThroughServerSeq ?? null,
             publishedThroughServerSeq: session.publishedThroughServerSeq ?? null,
             materializedThroughSourceAt: session.materializedThroughSourceAt ?? null,
@@ -826,20 +839,31 @@ export function useSessionComposerController({
     const pendingRequestLists = transcriptSource.usePendingRequests();
     const pendingPermissionRequests = pendingRequestLists.permissionRequests;
     const intentionalRestartSourceEvents = useSessionIntentionalRestartSourceEvents();
-    const reachableMachineTarget = useSessionReachableMachineTarget(sessionId);
-    const controlMachineTarget = useSessionMachineControlTarget(sessionId);
+    // One derivation of this Session's Home, used for routing and for every
+    // capability/feature scope below. `routeServerId` is already the outer view's
+    // resolved `currentSessionRouteServerId` (explicit route > local cache >
+    // active Home); the fallbacks here only cover a caller that renders this
+    // component without one. A second, shorter derivation beside this one could
+    // only disagree about which Home a Session belongs to.
+    const sessionRouteServerId = (routeServerId ?? '').trim()
+        || resolveServerIdForSessionIdFromLocalCache(sessionId)
+        || getActiveServerSnapshot().serverId;
+    const reachableMachineTarget = useSessionReachableMachineTarget(sessionId, sessionRouteServerId);
+    const controlMachineTarget = useSessionMachineControlTarget(sessionId, sessionRouteServerId);
     const machineId = reachableMachineTarget?.machineId ?? ownerMetadata?.machineId;
     const sessionAgentId = readSessionPresentationAgentId(session);
-    const liveAuthoringContext = buildLiveSessionAuthoringContext({
+    // Session metadata is read once per Session record, not on every composer render.
+    const liveAuthoringContext = React.useMemo(() => buildLiveSessionAuthoringContext({
         session,
-    });
-    const liveComposerState = resolveSessionComposerStateFromAuthoringContext(liveAuthoringContext, {
+    }), [session]);
+    const liveComposerState = React.useMemo(() => resolveSessionComposerStateFromAuthoringContext(liveAuthoringContext, {
         fallbackAgentId: sessionAgentId,
-    });
+    }), [liveAuthoringContext, sessionAgentId]);
     const agentId = liveComposerState.agentId ?? sessionAgentId;
     // A dynamic Agent's lifecycle identity is persisted with its runtime, not
     // inferred from the presentation/catalog projection used for labels.
-    const lifecycleAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata)
+    const metadataLifecycleAgentId = React.useMemo(() => resolveAgentIdFromSessionMetadata(ownerMetadata), [ownerMetadata]);
+    const lifecycleAgentId = metadataLifecycleAgentId
         ?? (agentId && isBundledAgentId(agentId) ? agentId : null);
     const agentCore = agentId ? getAgentCore(agentId) : null;
     const sessionModeOptionIds = agentId
@@ -873,15 +897,6 @@ export function useSessionComposerController({
         subscribeToSession: false,
         subscribeToTranscript: false,
     });
-    // One derivation of this Session's Home, used for routing and for every
-    // capability/feature scope below. `routeServerId` is already the outer view's
-    // resolved `currentSessionRouteServerId` (explicit route > local cache >
-    // active Home); the fallbacks here only cover a caller that renders this
-    // component without one. A second, shorter derivation beside this one could
-    // only disagree about which Home a Session belongs to.
-    const sessionRouteServerId = (routeServerId ?? '').trim()
-        || resolveServerIdForSessionIdFromLocalCache(sessionId)
-        || getActiveServerSnapshot().serverId;
     const sessionComposerAddress = React.useMemo(() => ({
         serverId: sessionRouteServerId,
         sessionId,
@@ -890,7 +905,7 @@ export function useSessionComposerController({
         composerFocusRequestRef.current = request;
         if (request) flushPendingRegisteredSessionComposerFocus(sessionComposerAddress);
     }, [sessionComposerAddress]);
-    const onPromptPickerOpenRequestChange = React.useCallback((request: (() => boolean) | null) => {
+    const onPromptPickerOpenRequestChange = React.useCallback((request: PromptPickerOpenRequest | null) => {
         promptPickerOpenRequestRef.current = request;
     }, []);
     const providersFeatureEnabled = useFeatureEnabled('providers', { scopeKind: 'spawn', serverId: sessionRouteServerId });
@@ -907,10 +922,12 @@ export function useSessionComposerController({
             ? readBackendTargetKeyV2({ kind: 'backend', backendId: agentId })
             : null);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // Visible Composer chips/regions need Actions and Composer selections;
+        // Settings, Voice, Automation and unrelated catalogues load at their consumers.
+        sections: COMPOSER_HOST_PROJECTION_SECTIONS,
         machineId,
         serverId: sessionRouteServerId,
         enabled: Boolean(machineId),
-        staleMs: 60_000,
     });
     const declarationProjection = daemonMergedProjection.phase === 'ready'
         ? daemonMergedProjection.inputs?.pluginProjectionV2 ?? null : null;
@@ -944,6 +961,7 @@ export function useSessionComposerController({
         selection: providerModelSelection,
         selectionIntentPresent: providerModelSelectionIntent !== null,
         launchBinding: providerLaunchBinding,
+        declarationContext,
         completedTurnObservedAt: session.latestTurnStatus === 'completed' ? session.latestTurnStatusObservedAt : null,
         bindingRefusalObservedAt: session.lastRuntimeIssue?.code === 'provider_binding_changed' ? session.lastRuntimeIssue.occurredAt : null,
     });
@@ -1015,6 +1033,9 @@ export function useSessionComposerController({
             });
     }, [providerLaunchBinding]);
     const [sessionModelPickerRequestKey, setSessionModelPickerRequestKey] = React.useState<string | null>(null);
+    const openSessionModelPicker = React.useCallback(() => {
+        setSessionModelPickerRequestKey((current) => String((Number.parseInt(current ?? '0', 10) || 0) + 1));
+    }, []);
     // Another surface asking this composer to open one of its action chips (the Work tab opening the
     // Goal control through the presentation-target registry). The keys are this render's chips.
     const [composerActionChipOpenRequest, setComposerActionChipOpenRequest] = React.useState<Readonly<{ chipKey: string; key: string }> | null>(null);
@@ -1033,6 +1054,31 @@ export function useSessionComposerController({
         requestedSelection: NonNullable<SessionModelPickerOptionValue>;
         intentBaselineUpdatedAt: number;
     }> | null>(null);
+    const [modelTransitionFailure, setModelTransitionFailure] = React.useState<Readonly<{
+        sessionId: string;
+        scopeKey: string;
+        status: 'owner_unavailable';
+        details: unknown;
+    }> | null>(null);
+    const presentUnavailableModelTransition = React.useCallback((result: Readonly<{
+        errorCode?: unknown;
+        details?: unknown;
+    }>): boolean => {
+        if (result.errorCode !== 'owner_unavailable') return false;
+        if (sessionAccountLifetime?.isCurrent() && composerPresentationMountedRef.current) {
+            // Keep the typed refusal and its diagnostic reason. Presentation never
+            // turns an unavailable runtime owner into a metadata write or a send.
+            setModelTransitionFailure({ sessionId, scopeKey: sessionAccountScopeKey,
+                status: result.errorCode, details: result.details });
+        }
+        return true;
+    }, [sessionAccountLifetime, sessionAccountScopeKey, sessionId]);
+    const activeModelTransitionFailure = modelTransitionFailure?.sessionId === sessionId
+        && modelTransitionFailure.scopeKey === sessionAccountScopeKey
+        ? modelTransitionFailure : null;
+    React.useEffect(() => {
+        setModelTransitionFailure(null);
+    }, [sessionAccountScopeKey, sessionId]);
     const currentSessionRunnerRuntimeStatus = React.useMemo(() => {
         const targetMachineId = typeof sessionRunnerRuntimeStatusMachineId === 'string'
             ? sessionRunnerRuntimeStatusMachineId.trim()
@@ -1067,19 +1113,11 @@ export function useSessionComposerController({
         providerAgentTargetKey,
         session.active,
     ]);
-    const selectedTeamCredentialModel = React.useMemo<TeamCredentialProviderModelSelectionV1 | null>(() => {
-        const selection = modelSelectionDisposition?.proposedSelectionV2;
-        if (selection?.ref.source !== 'team_resource') return null;
-        return {
-            kind: 'team_credential_provider_model',
-            resourceId: selection.ref.resourceId,
-            teamId: selection.ref.teamId,
-            expectedResourceRevision: selection.ref.expectedResourceRevision,
-            deliveryMode: selection.ref.deliveryMode,
-            agentTargetKey: selection.ref.agentTargetKey,
-            modelId: selection.ref.modelId,
-        };
-    }, [modelSelectionDisposition?.proposedSelectionV2]);
+    const selectedTeamCredentialModel = modelSelectionDisposition?.selectedTeamCredentialModel ?? null;
+    const durableModelSelectionIntentUpdatedAt = Math.max(
+        modelSelectionDisposition?.proposedIntent?.updatedAt ?? 0,
+        modelSelectionDisposition?.proposedSelectionV2?.updatedAt ?? 0,
+    );
     const persistedModelTransitionActionRequired = React.useMemo(() => {
         const requestedSelection = selectedTeamCredentialModel
             ?? providerModelSelectionIntent?.selection
@@ -1124,36 +1162,16 @@ export function useSessionComposerController({
     }, [sessionId]);
     React.useEffect(() => {
         if (!modelTransitionActionRequired) return;
-        const durableIntent = providerModelSelectionIntent;
         if (
-            !durableIntent
-            || durableIntent.updatedAt
+            durableModelSelectionIntentUpdatedAt
                 <= modelTransitionActionRequired.intentBaselineUpdatedAt
-            || !durableIntent.selection
-            || sessionModelSelectionKey(durableIntent.selection)
-                === sessionModelSelectionKey(
-                    modelTransitionActionRequired.requestedSelection,
-                )
         ) {
             return;
         }
+        // Once the durable echo arrives, the disposition owns whether the
+        // requested personal or Team route still needs a transition.
         setModelTransitionActionRequired(null);
-    }, [modelTransitionActionRequired, providerModelSelectionIntent]);
-    React.useEffect(() => {
-        const requested = modelTransitionActionRequired?.requestedSelection;
-        if (!requested) return;
-        const activeSelection = modelSelectionDisposition?.activeSelection ?? null;
-        if (
-            activeSelection
-            && sessionModelSelectionKey(activeSelection)
-                === sessionModelSelectionKey(requested)
-        ) {
-            setModelTransitionActionRequired(null);
-        }
-    }, [
-        modelSelectionDisposition,
-        modelTransitionActionRequired?.requestedSelection,
-    ]);
+    }, [durableModelSelectionIntentUpdatedAt, modelTransitionActionRequired]);
     const scmSessionAutoRefreshIntervalMsSetting = useSetting('scmSessionAutoRefreshIntervalMs' as any);
     const scmSessionAutoRefreshIntervalMs =
         typeof scmSessionAutoRefreshIntervalMsSetting === 'number' && Number.isFinite(scmSessionAutoRefreshIntervalMsSetting) && scmSessionAutoRefreshIntervalMsSetting >= 5_000
@@ -1190,6 +1208,7 @@ export function useSessionComposerController({
     const existingSessionComposerOwner = React.useMemo(() => sessionAccountScope && sessionAccountLifetime
         ? createExistingSessionComposerDocumentOwner({
             scope: sessionAccountScope,
+            scopeLifetime: sessionAccountLifetime,
             ref: sessionComposerRef,
             isCurrent: sessionAccountLifetime.isCurrent,
         })
@@ -1341,6 +1360,7 @@ export function useSessionComposerController({
         )), { tag: 'SessionView.openComposerControlAction' });
     }, [runWithSessionComposerAdmissionReservation]);
     const openSessionComposerContributedAction = React.useCallback(async (input: Readonly<{
+        anchor?: import('@/components/ui/popover').PopoverAnchor;
         controller: PluginContributedActionController;
         action: PluginContributedActionDescriptor;
         signal: AbortSignal;
@@ -1350,6 +1370,7 @@ export function useSessionComposerController({
                 controller: input.controller,
                 action: input.action,
                 signal: input.signal,
+                anchor: input.anchor,
             })
         ));
         return outcome ?? { kind: 'unavailable', reason: 'submission_in_flight' };
@@ -1484,8 +1505,8 @@ export function useSessionComposerController({
     const canSelectModel = hasWriteAccess || (embedded?.modelSelectionGranted === true && embedded.modelPicker === true);
     const sessionMachineRecord = useServerScopedMachine(sessionRouteServerId, typeof machineId === 'string' ? machineId : '');
     const sessionMachineInventorySettled = useIsMachineListSettled(sessionRouteServerId);
-    const sessionMachineAccessRemoved = Boolean(isSessionAccessOwner(session.access, session.accessLevel)
-        && machineId && sessionMachineInventorySettled && !sessionMachineRecord);
+    const sessionMachineAccessRemoved = isSessionMachineAccessRemoved({ session, machineId,
+        inventorySettled: sessionMachineInventorySettled, machinePresent: Boolean(sessionMachineRecord) });
     // Reconnect and the existing exact Home AccountChange edge reread native
     // observations; this does not submit Start or introduce a consumer timer.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;
@@ -1505,6 +1526,7 @@ export function useSessionComposerController({
     const managedWakeProjection = React.useMemo(() => managedWakeAuthorization
         ? deriveManagedWakeProjection({
             managed: managedPendingMachine, activation: managedWakeAuthorization,
+            machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
             pending: pendingMessages.find((message) => message.localId === managedWakeAuthorization.requestId) ?? null,
             runtimeResuming: sessionRuntimeStatusSource.resumingAt != null,
             pendingLoaded: pendingMessagesLoaded,
@@ -1512,7 +1534,7 @@ export function useSessionComposerController({
             managedReadState: managedPendingObservation.kind,
             machineInventoryState: managedWakeInventoryStatus === 'loading' ? 'loading' : 'read',
         })
-        : null, [managedPendingMachine, managedPendingObservation.kind, managedWakeInventoryStatus, managedWakeAuthorization, pendingMessages, pendingMessagesLoaded, pendingReadState, sessionRuntimeStatusSource.resumingAt]);
+        : null, [isMachineReachable, machineReachability, managedPendingMachine, managedPendingObservation.kind, managedWakeInventoryStatus, managedWakeAuthorization, pendingMessages, pendingMessagesLoaded, pendingReadState, sessionRuntimeStatusSource.resumingAt]);
     const autoResumeAdmission = resolveSessionAutoResumeAdmissionV1({ metadata: ownerMetadata,
         archivedAt: session.archivedAt, machineAvailable: isMachineReachable, authorityAvailable: ownerMetadata !== null });
     const pendingActivationPresentation = React.useMemo(() => {
@@ -1525,6 +1547,7 @@ export function useSessionComposerController({
         if (isComposerSending) return null;
         return resolvePendingActivationBanner({
             authorization: session.pendingActivationAuthorization,
+            failureDetails: session.pendingActivationFailureDetails,
             activeAt: session.activeAt,
             active: session.active,
             machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
@@ -1534,7 +1557,7 @@ export function useSessionComposerController({
             managedWakeProjection,
             autoResumeAdmission,
         });
-    }, [autoResumeAdmission, hasWriteAccess, isComposerSending, isMachineReachable, machineReachability, managedWakeProjection, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization, sessionRuntimeStatusSource.resumingAt]);
+    }, [autoResumeAdmission, hasWriteAccess, isComposerSending, isMachineReachable, machineReachability, managedWakeProjection, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionRuntimeStatusSource.resumingAt]);
     const [pendingActivationActionBusy, setPendingActivationActionBusy] = React.useState(false);
     const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
     const goalControlMachineRecord = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
@@ -1977,7 +2000,11 @@ export function useSessionComposerController({
         session.active !== true
         || pendingMessages.length > 0
     ), [pendingMessages.length, session.active]);
-    const accountProfile = useProfile();
+    // Only the connected-service facts this composer reads; a timestamp-only Account update leaves it still.
+    const accountProfile = useProfile(profile => ({
+        connectedServicesV2: profile?.connectedServicesV2,
+        connectedAccountGroupsV4: profile?.connectedAccountGroupsV4,
+    }));
     const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
     const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
     const sessionProviderUsageGaugeWindowModes = useSetting('sessionProviderUsageGaugeWindowModes');
@@ -2363,15 +2390,16 @@ export function useSessionComposerController({
         staleSessionRunnerPresentation,
         usageLimitRecoveryPresentation,
     ]);
-    const presentMachineAgentRefusal = useEventCallback((code: unknown, targetMachineId: string | null): boolean => presentMachineAgentStartRefusal({
+    const presentMachineAgentRefusal = useEventCallback((code: unknown, targetMachineId: string | null,
+        agentTitle = currentAgentLabel): boolean => presentMachineAgentStartRefusal({
         code,
-        agentTitle: currentAgentLabel,
+        agentTitle,
         machineName: getMachineSentenceName(sessionMachineRecord),
         // A Machine this person cannot open, or a frame without app routes, has nowhere to lead.
         setupTarget: targetMachineId && sessionMachineRecord && embedded?.navigation !== 'none'
             ? { machineId: targetMachineId, serverId: sessionRouteServerId }
             : null,
-        openSetup: (href) => router.push(href),
+        openSetup: (href) => router.push(admitInternalRouteHref(href)),
     }));
     const handleStaleSessionRunnerRestart = React.useCallback(async () => {
         if (sessionViewCaller.signal.aborted) return;
@@ -2546,17 +2574,17 @@ export function useSessionComposerController({
                         void handleUsageLimitRecoveryAction(kind);
                     },
                     openConnectedAccounts: () => {
-                        router.push('/settings/connected-services');
+                        router.push(admitInternalRouteHref('/settings/connected-services'));
                     },
                     reconnectProfile: () => {
                         if (profileActionRoute) {
-                            router.push(profileActionRoute);
+                            router.push(admitInternalRouteHref(profileActionRoute));
                             return;
                         }
-                        router.push('/settings/connected-services');
+                        router.push(admitInternalRouteHref('/settings/connected-services'));
                     },
                     enableStateSharing: () => {
-                        router.push('/settings/connected-services/provider-state-sharing');
+                        router.push(admitInternalRouteHref('/settings/connected-services/provider-state-sharing'));
                     },
                     dismiss: () => {},
                 },
@@ -2851,12 +2879,11 @@ export function useSessionComposerController({
         : null;
     const mainAttachmentDraftScope = React.useMemo<SessionAttachmentDraftScope | null>(() => (
         mainAttachmentDraftAccountId
-            ? {
+            ? resolveSessionAttachmentDraftScope({
                 serverId: sessionRouteServerId,
                 accountId: mainAttachmentDraftAccountId,
                 sessionId,
-                occurrenceId: composerRefV1Key({ kind: 'session', sessionId }),
-            }
+            })
             : null
     ), [mainAttachmentDraftAccountId, sessionId, sessionRouteServerId]);
     const readMainAttachmentDrafts = React.useCallback(() => (
@@ -2882,14 +2909,19 @@ export function useSessionComposerController({
     }, [initialAttachmentDrafts, readMainAttachmentDrafts]);
 
     const attachmentDraftManager = useAttachmentDraftManager({
+        pictureEditAddress: () => sessionAccountLifetime?.isCurrent()
+            ? { scope: sessionAccountLifetime.scope, ref: activeComposerRefRef.current } : null,
         enabled: attachmentsUploadsAvailable,
         maxFileBytes: attachmentsUploadConfig.maxFileBytes,
         initialDrafts: initialSessionAttachmentDrafts,
-        eagerUpload: { sessionId, config: attachmentsUploadConfig },
+        memoryKey: mainAttachmentDraftScope && sessionAccountLifetime?.isCurrent() ? sessionAttachmentDraftKey(mainAttachmentDraftScope) : null,
+        isCurrent: () => sessionAccountLifetime?.isCurrent() === true,
+        eagerUpload: sessionAccountLifetime ? { sessionId, config: attachmentsUploadConfig,
+            sessionTarget: { ...sessionAccountLifetime.scope, sessionId } } : undefined,
         onPickedDrafts: (drafts) => {
             if (!sessionAccountLifetime?.isCurrent()) return;
             insertComposerAttachmentReferences({ ref: activeComposerRefRef.current,
-                scope: sessionAccountLifetime.scope, items: (drafts).map(draft => ({ draft })) });
+                scope: sessionAccountLifetime.scope, items: drafts.map(draft => ({ draft })) });
         },
         onRemoveDraft: (attachmentId) => {
             if (!sessionAccountLifetime?.isCurrent()) return;
@@ -2907,43 +2939,8 @@ export function useSessionComposerController({
     // Stable callback: feeds the transcript onEditPendingMessage chain, whose identity
     // gates ChatList/view-holder re-renders.
     const replaceAttachmentManagerDrafts = attachmentDraftManager.replaceDrafts;
-    const activeAttachmentDraftScopeRef = React.useRef(mainAttachmentDraftScope);
-
-    React.useEffect(() => {
-        // A SessionView can be retained while its qualified route changes. Do
-        // not project the previous Home's still-rendered drafts into the new
-        // scope during that transition; the following effect hydrates the
-        // manager from the new owner first.
-        if (activeAttachmentDraftScopeRef.current !== mainAttachmentDraftScope) return;
-        writeMainAttachmentDrafts(attachmentDrafts);
-    }, [attachmentDrafts, mainAttachmentDraftScope, writeMainAttachmentDrafts]);
-    React.useEffect(() => {
-        if (activeAttachmentDraftScopeRef.current === mainAttachmentDraftScope) return;
-        activeAttachmentDraftScopeRef.current = mainAttachmentDraftScope;
-        replaceAttachmentManagerDrafts(readMainAttachmentDrafts());
-    }, [mainAttachmentDraftScope, readMainAttachmentDrafts, replaceAttachmentManagerDrafts]);
-    const applyAttachmentDraftPatch = React.useCallback((
-        draftId: string,
-        patch: Partial<Omit<AttachmentDraft, 'id' | 'source'>>,
-        expectedSource?: AttachmentDraft['source'],
-    ) => {
-        patchAttachmentDraft(draftId, patch, expectedSource);
-        writeMainAttachmentDrafts(getAttachmentDraftsSnapshot());
-    }, [getAttachmentDraftsSnapshot, patchAttachmentDraft, writeMainAttachmentDrafts]);
-    const pasteAttachmentImage = React.useCallback(() => {
-        fireAndForget((async () => {
-            const picked = await nativeReadClipboardImageAttachment();
-            if (picked.length === 0) {
-                Modal.alert(t('attachments.alerts.noClipboardImageTitle'), t('attachments.alerts.noClipboardImageBody'));
-                return;
-            }
-            addPickedAttachments(picked);
-        })(), {
-            onError: () => {
-                Modal.alert(t('attachments.alerts.noClipboardImageTitle'), t('attachments.alerts.noClipboardImageBody'));
-            },
-        });
-    }, [addPickedAttachments]);
+    const applyAttachmentDraftPatch = patchAttachmentDraft;
+    const pasteAttachmentImage = attachmentDraftManager.pasteClipboardImage;
     const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false);
     const recipientState = useSessionRecipientState({
         targets: participantTargets,
@@ -3141,13 +3138,17 @@ export function useSessionComposerController({
         enabled: !isSessionActive || supportsLocalControl,
     });
 
-    // A pre-start death (no vendor resume id ever persisted) stays continuable by fresh
-    // spawn instead of dead-ending in a "can't restore context" notice (QA A-F5).
-    const isResumable = React.useMemo(
-        () => canResumeSessionWithOptions(ownerMetadata, resumeCapabilityOptions)
-            || canContinueSessionWithFreshSpawn(ownerMetadata, resumeCapabilityOptions),
+    const resumeEligibility = React.useMemo(
+        () => resolveSessionResumeEligibility(ownerMetadata, resumeCapabilityOptions),
         [ownerMetadata, resumeCapabilityOptions],
     );
+    // A scoped recipient cannot read native identity. Send keeps its composer;
+    // the canonical resume Action still admits or refuses the actual resume.
+    const isResumable = resumeEligibility === 'eligible' || (resumeEligibility === 'unknown'
+        && hasWriteAccess
+        && sync.canExecuteEmbedSessionAction(sessionId, 'session.message.send'));
+    // Send keeps its composer, but an explicit Resume spends Open authority.
+    const canOpenSession = !isEmbedWindowContext() || sync.canExecuteEmbedSessionAction(sessionId, 'session.open');
     const isResuming = sessionStatus.state === 'resuming';
     const sessionSubmitPort = React.useMemo(() => createSyncBackedSubmitPort(sync), []);
     const readLatestSessionForSubmit = React.useCallback(() => {
@@ -3199,7 +3200,7 @@ export function useSessionComposerController({
         [getCurrentSessionDraftSnapshot],
     );
     const readCurrentSessionDraftStatus = React.useCallback(
-        () => getCurrentSessionDraftSnapshot()?.status ?? 'clean',
+        () => selectSessionDraftSyncBadgeStatus(getCurrentSessionDraftSnapshot()?.status ?? 'clean'),
         [getCurrentSessionDraftSnapshot],
     );
     const currentSessionDraftConflict = React.useSyncExternalStore(
@@ -3303,46 +3304,8 @@ export function useSessionComposerController({
             notifyComposerPresentationTargetChanged({ kind: 'session', sessionId });
         });
     }, [existingSessionComposerOwner, sessionId]);
-    const pendingMessageEditHoldPatchRef = React.useRef<Promise<unknown>>(Promise.resolve());
-    const patchPendingMessageEditHoldMetadata = React.useCallback((
-        updater: (metadata: Metadata) => Metadata,
-        tag: string,
-        accountLifetime: ServerAccountScopeLifetime | null,
-    ) => {
-        if (accountLifetime && !accountLifetime.isCurrent()) return;
-        const run = pendingMessageEditHoldPatchRef.current
-            .catch(() => undefined)
-            .then(() => {
-                if (accountLifetime && !accountLifetime.isCurrent()) return;
-                return sync.patchSessionMetadataWithRetry(sessionId, updater, {
-                    serverId: routeServerId,
-                    ...(accountLifetime ? { accountLifetime } : {}),
-                });
-            });
-        pendingMessageEditHoldPatchRef.current = run;
-        fireAndForget(run, { tag });
-    }, [routeServerId, sessionId]);
-    const publishPendingMessageEditDrainHold = React.useCallback((edit: PendingMessageComposerEditState) => {
-        const nowMs = Date.now();
-        patchPendingMessageEditHoldMetadata(
-            (metadata) => writeSessionPendingQueueHoldV1ToMetadata(metadata, {
-                holdId: edit.holdId,
-                localId: edit.pendingId,
-                updatedAtMs: nowMs,
-                expiresAtMs: nowMs + PENDING_MESSAGE_EDIT_DRAIN_HOLD_TTL_MS,
-            }) as Metadata,
-            'SessionView.pendingMessageEdit.hold.publish',
-            edit.accountLifetime,
-        );
-    }, [patchPendingMessageEditHoldMetadata]);
-    const clearPendingMessageEditDrainHold = React.useCallback((edit: PendingMessageComposerEditState) => {
-        if (edit.holdId.trim().length === 0) return;
-        patchPendingMessageEditHoldMetadata(
-            (metadata) => removeSessionPendingQueueHoldV1FromMetadata(metadata, edit.holdId) as Metadata,
-            'SessionView.pendingMessageEdit.hold.clear',
-            edit.accountLifetime,
-        );
-    }, [patchPendingMessageEditHoldMetadata]);
+    const { publish: publishPendingMessageEditDrainHold, clear: clearPendingMessageEditDrainHold }
+        = usePendingMessageEditDrainHold(sessionId, routeServerId);
     const captureComposerSemanticDraftSnapshot = React.useCallback((): ComposerSemanticDraftSnapshot => {
         const snapshot = {} as {
             [FieldId in SessionDraftValueFieldId]: ComposerSemanticDraftSnapshot[FieldId];
@@ -3392,7 +3355,7 @@ export function useSessionComposerController({
         options?: Readonly<{ repositoryFieldIds: readonly string[] }>,
     ): ComposerSemanticDraftClearResult => {
         const composerClear = existingSessionComposerOwner.clearAccepted(snapshot.composerCurrentness);
-        const changed = sessionAccountScope && sessionAccountLifetime?.isCurrent()
+        const changed = sessionAccountScope && acceptedSessionAccountLifetime?.isCurrent()
             ? clearSessionDraftCurrentnessLocal({
                 scope: sessionAccountScope,
                 address: { kind: 'session', sessionId },
@@ -3406,11 +3369,11 @@ export function useSessionComposerController({
                 ],
             })
             : false;
-        if (changed && sessionAccountScope && sessionAccountLifetime?.isCurrent()) {
-            void flushSessionDraft({
+        if (changed && sessionAccountScope && acceptedSessionAccountLifetime?.isCurrent()) {
+            fireAndForget(flushSessionDraft({
                 scope: sessionAccountScope,
                 address: { kind: 'session', sessionId },
-            });
+            }), { tag: 'composer.clearAcceptedSemanticDraft' });
         }
         const afterValues = captureComposerSemanticDraftSnapshot();
         const cleared: SessionDraftValueFieldId[] = [];
@@ -3431,11 +3394,11 @@ export function useSessionComposerController({
                 }
             }
         }
-        if (cleared.includes('structuredInput.composerAttachments')) {
+        if (composerPresentationMountedRef.current && cleared.includes('structuredInput.composerAttachments')) {
             setComposerDocumentRenderEpoch((current) => current + 1);
         }
         return { clearedFieldIds: cleared, textCleared: composerClear.changes.text };
-    }, [captureComposerSemanticDraftSnapshot, existingSessionComposerOwner, sessionAccountLifetime, sessionAccountScope, sessionId]);
+    }, [acceptedSessionAccountLifetime, captureComposerSemanticDraftSnapshot, existingSessionComposerOwner, sessionAccountScope, sessionId]);
     const restoreSemanticDraftValuesFromSnapshot = React.useCallback((input: Readonly<{
         snapshot: ComposerSemanticDraftCurrentnessSnapshot;
         clearedSnapshot: ComposerSemanticDraftCurrentnessSnapshot;
@@ -3621,7 +3584,7 @@ export function useSessionComposerController({
             })
             : false;
         if (didClearNextPromptPermissionMode && sessionAccountScope) {
-            void flushSessionDraft({ scope: sessionAccountScope, address: { kind: 'session', sessionId } });
+            fireAndForget(flushSessionDraft({ scope: sessionAccountScope, address: { kind: 'session', sessionId } }), { tag: 'composer.clearAcceptedPermissionDraft' });
         }
 
         let didClearAttachmentDrafts = false;
@@ -3898,7 +3861,7 @@ export function useSessionComposerController({
                     composerAttachments: attachmentHydration.attachments,
                 },
                 isCurrent: isActiveComposerPresentationCurrent,
-                actionExecutor,
+                actionExecutor: request.withdrawalConfirmed ? { execute: actionExecutor.executeConfirmed } : actionExecutor,
                 scope: accountLifetime.scope,
                 signal: cancellation.signal,
                 registerApproval: pendingRecoveryApproval.requestApproval,
@@ -3911,7 +3874,6 @@ export function useSessionComposerController({
                 context: {
                         surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
                         ...(sessionAccountScope ? { expectedAccountId: sessionAccountScope.accountId } : {}),
-                        ...(request.withdrawalConfirmed ? { presentUserConfirmation: { actionId: 'session.pending.withdraw' as const } } : {}),
                 },
             }); } finally {
                 retirement.dispose();
@@ -3927,6 +3889,20 @@ export function useSessionComposerController({
             return recovery;
         }
         const previousEdit = pendingMessageEditRef.current;
+        if (!accountLifetime || !accountLifetime.isCurrent()) return;
+        const holdId = previousEdit?.pendingId === request.id ? previousEdit.holdId : randomUUID();
+        let releasePresence: () => void;
+        try {
+            releasePresence = previousEdit?.pendingId === request.id ? previousEdit.releasePresence
+                : await registerSessionPendingMessageEdit({ serverId: accountLifetime.scope.serverId, sessionId }, holdId, accountLifetime);
+        } catch {
+            Modal.alert(t('common.error'), t('session.pendingMessages.errors.updateFailed'));
+            return;
+        }
+        if (!accountLifetime.isCurrent() || pendingMessageEditRef.current !== previousEdit) {
+            releasePresence();
+            return;
+        }
         if (previousEdit && previousEdit.pendingId !== request.id) {
             clearPendingMessageEditDrainHold(previousEdit);
         }
@@ -3958,7 +3934,8 @@ export function useSessionComposerController({
         const nextEdit: PendingMessageComposerEditState = {
             pendingId: request.id,
             localId,
-            holdId: previousEdit?.pendingId === request.id ? previousEdit.holdId : randomUUID(),
+            holdId,
+            releasePresence,
             accountScope: accountLifetime?.scope ?? null,
             accountLifetime,
             document,
@@ -4003,11 +3980,6 @@ export function useSessionComposerController({
     React.useEffect(() => {
         if (!pendingMessageEdit) return;
         publishPendingMessageEditDrainHold(pendingMessageEdit);
-        const timer = setInterval(() => {
-            const edit = pendingMessageEditRef.current;
-            if (edit) publishPendingMessageEditDrainHold(edit);
-        }, PENDING_MESSAGE_EDIT_DRAIN_HOLD_REFRESH_MS);
-        return () => clearInterval(timer);
     }, [pendingMessageEdit?.holdId, pendingMessageEdit?.pendingId, publishPendingMessageEditDrainHold]);
     React.useEffect(() => () => {
         const edit = pendingMessageEditRef.current;
@@ -4103,16 +4075,18 @@ export function useSessionComposerController({
         }).then(requireActionSuccess).catch((error: unknown) => presentSessionActionOutcome(error, sessionAccountLifetime)), { tag: 'SessionView.updateAcpConfigOptionOverride' });
     }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionId, sessionRouteServerId]);
 
-    const publishModelSelection = React.useCallback(async (ref: ProviderBoundModelRef | null, modelOptionsContext?: SessionModelOptionsContext) => {
-        if (!agentId || !canSelectModel) return;
+    // Resolves whether the Session took the model (applied, armed for the next message, or awaiting
+    // its restart), so a card's option value is written only for a model the Session holds.
+    const publishModelSelection = React.useCallback(async (ref: ProviderBoundModelRef | null, modelOptionsContext?: SessionModelOptionsContext): Promise<boolean> => {
+        if (!agentId || !canSelectModel) return false;
+        setModelTransitionFailure(null);
         const failureFallback = t(ref?.providerConnectionId
             ? 'settingsProviders.models.connectionUnavailable'
             : 'common.requestFailed');
         const mode = ref?.modelId ?? 'default';
-        const intentBaselineUpdatedAt =
-            providerModelSelectionIntent?.updatedAt ?? 0;
+        const intentBaselineUpdatedAt = durableModelSelectionIntentUpdatedAt;
         if (ref?.providerConnectionId === null
-            && !isModelSelectableForSession(agentId, composerOptionsInput, mode, modelOptionsContext)) return;
+            && !isModelSelectableForSession(agentId, composerOptionsInput, mode, modelOptionsContext)) return false;
         try {
             const result = await actionExecutor.execute('session.model.set', {
                 sessionId,
@@ -4134,10 +4108,10 @@ export function useSessionComposerController({
                     : null);
                 if (transition.success && transition.data.status === 'armed') {
                     setModelTransitionActionRequired({ status: 'armed', requestedSelection: transition.data.requestedSelection, intentBaselineUpdatedAt });
-                    return;
+                    return true;
                 }
                 setModelTransitionActionRequired(null);
-                return;
+                return true;
             }
             const transition = SessionModelTransitionResultV1Schema.safeParse({
                 ok: false,
@@ -4157,19 +4131,23 @@ export function useSessionComposerController({
                     requestedSelection: transition.data.requestedSelection,
                     intentBaselineUpdatedAt,
                 });
-                return;
+                return true;
             }
             setModelTransitionActionRequired(null);
+            if (presentUnavailableModelTransition(result)) return false;
             Modal.alert(t('common.error'), resolveActionExecutionFailureMessage(result, failureFallback) ?? failureFallback);
+            return false;
         } catch (error) {
             setModelTransitionActionRequired(null);
             Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, failureFallback));
+            return false;
         }
     }, [
         actionExecutor,
         agentId,
+        presentUnavailableModelTransition,
         hasWriteAccess,
-        providerModelSelectionIntent?.updatedAt,
+        durableModelSelectionIntentUpdatedAt,
         sessionId,
         session.active,
         ownerMetadata,
@@ -4178,7 +4156,9 @@ export function useSessionComposerController({
     ]);
     const publishTeamCredentialModelSelection = React.useCallback(async (
         teamCredentialModel: TeamCredentialProviderModelSelectionV1,
-    ) => {
+    ): Promise<boolean> => {
+        setModelTransitionFailure(null);
+        const intentBaselineUpdatedAt = durableModelSelectionIntentUpdatedAt;
         const resourceKey = `${teamCredentialModel.teamId}:${teamCredentialModel.resourceId}`;
         const selectedResource = teamCredentialCatalog.resources.find((resource) => (
             resource.id === teamCredentialModel.resourceId
@@ -4186,17 +4166,17 @@ export function useSessionComposerController({
             && resource.resourceRevision === teamCredentialModel.expectedResourceRevision
         ));
         if (teamCredentialResourcesEnabled && (!selectedResource
-            || !teamCredentialCatalog.currentResourceKeys.has(resourceKey)
+            || !(teamCredentialCatalog.resourceStatusByKey.get(resourceKey)?.kind === 'current')
             || !resourceHasAvailableTeamCredentialProviderModel(selectedResource, teamCredentialModel))) {
             Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
-            return;
+            return false;
         }
         const selectionOutcome = selectedResource
             ? await coordinateTeamCredentialSelection({
                 resource: selectedResource,
                 deliveryMode: teamCredentialModel.deliveryMode,
                 selection: teamCredentialModel,
-                isCurrent: () => !teamCredentialResourcesEnabled || (teamCredentialSelectionCatalogRef.current.currentResourceKeys.has(resourceKey)
+                isCurrent: () => !teamCredentialResourcesEnabled || ((teamCredentialSelectionCatalogRef.current.resourceStatusByKey.get(resourceKey)?.kind === 'current')
                     && teamCredentialSelectionCatalogRef.current.resources.some((resource) => (
                         resource.id === teamCredentialModel.resourceId
                         && resource.teamId === teamCredentialModel.teamId
@@ -4204,22 +4184,22 @@ export function useSessionComposerController({
                     ))),
             })
             : { kind: 'continue' as const, selection: teamCredentialModel };
-        if (selectionOutcome.kind !== 'continue') return;
+        if (selectionOutcome.kind !== 'continue') return false;
         if (selectedResource?.sessionUsePolicy === 'team_visibility_required') {
             const confirmed = await Modal.confirm(
                 t('teams.credentials.usePolicy.label'),
                 t('teams.credentials.usePolicy.visibilityNote'),
                 { confirmText: t('common.continue'), cancelText: t('common.cancel') },
             );
-            if (!confirmed) return;
+            if (!confirmed) return false;
         }
-        const stillCurrent = !teamCredentialResourcesEnabled || (teamCredentialSelectionCatalogRef.current.currentResourceKeys.has(resourceKey)
+        const stillCurrent = !teamCredentialResourcesEnabled || ((teamCredentialSelectionCatalogRef.current.resourceStatusByKey.get(resourceKey)?.kind === 'current')
             && teamCredentialSelectionCatalogRef.current.resources.some((resource) => (
                 resource.id === teamCredentialModel.resourceId
                 && resource.teamId === teamCredentialModel.teamId
                 && resourceHasAvailableTeamCredentialProviderModel(resource, teamCredentialModel)
             )));
-        if (!stillCurrent) return;
+        if (!stillCurrent) return false;
         try {
             const result = await actionExecutor.execute('session.model.set', {
                 sessionId,
@@ -4234,7 +4214,7 @@ export function useSessionComposerController({
             });
             if (result.ok) {
                 setModelTransitionActionRequired(null);
-                return;
+                return true;
             }
             const details = result.details && typeof result.details === 'object'
                 ? result.details as Record<string, unknown>
@@ -4248,9 +4228,9 @@ export function useSessionComposerController({
                 setModelTransitionActionRequired({
                     status: 'restart_required',
                     requestedSelection: selectionOutcome.selection,
-                    intentBaselineUpdatedAt: providerModelSelectionIntent?.updatedAt ?? 0,
+                    intentBaselineUpdatedAt,
                 });
-                return;
+                return true;
             }
             setModelTransitionActionRequired(null);
             if (details?.status === 'team_resource_active_transition_unsupported') {
@@ -4258,14 +4238,15 @@ export function useSessionComposerController({
                 // read and the write. Saying the connection is unavailable would
                 // describe a different, unrecoverable problem.
                 Modal.alert(t('common.error'), t('teams.credentials.selection.activeTransitionUnsupported'));
-                return;
+                return false;
             }
             Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
         } catch {
             setModelTransitionActionRequired(null);
             Modal.alert(t('common.error'), t('settingsProviders.models.connectionUnavailable'));
         }
-    }, [actionExecutor, canSelectModel, coordinateTeamCredentialSelection, providerModelSelectionIntent?.updatedAt, sessionId, sessionRouteServerId, teamCredentialCatalog, teamCredentialResourcesEnabled]);
+        return false;
+    }, [actionExecutor, canSelectModel, coordinateTeamCredentialSelection, durableModelSelectionIntentUpdatedAt, sessionId, sessionRouteServerId, teamCredentialCatalog, teamCredentialResourcesEnabled]);
 
     // Function to update a native model mode (only for agents that expose model selection in the UI).
     const updateModelMode = React.useCallback((mode: ModelMode) => {
@@ -4287,7 +4268,7 @@ export function useSessionComposerController({
         const reportedSelection = modelSelectionDisposition?.reportedSelection ?? null;
         const reportedStatus = modelSelectionDisposition?.reportedSelectionStatus ?? null;
         if (!reportedSelection || !reportedStatus) return null;
-        const canonicalReportedSelection = resolveCanonicalNativeModelSelectionRef(
+        const canonicalReportedSelection = modelSelectionDisposition?.reportedTeamCredentialModel ?? resolveCanonicalNativeModelSelectionRef(
             existingSessionNativeModels,
             reportedSelection,
         );
@@ -4354,9 +4335,11 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
     }), [machineId, sessionRouteServerId]);
     const existingSessionModelPicker = React.useMemo(() => {
-        if (!agentId || !modelPickerAgentTargetKey) return undefined;
+        if (!agentId || !modelPickerAgentTargetKey) return embedded?.allowedModels ? null : undefined;
         return <SessionModelDiscoveryDetail
             agentId={agentId}
+            machineId={controlMachineTarget?.machineId ?? machineId ?? null}
+            accountScope={sessionAccountScope}
             composerOptionsInput={composerOptionsInput}
             discovery={resolveSessionModelDiscoveryContext}
             selectedModelId={existingSessionSelectedModelRef?.providerConnectionId ? undefined : existingSessionSelectedModelRef?.modelId ?? 'default'}
@@ -4388,13 +4371,6 @@ export function useSessionComposerController({
                     existingSessionNativeModels,
                     existingSessionSelectedModelRef,
                 );
-                const selectedProviderRow = selectedRef?.providerConnectionId
-                    ? providerGroups.flatMap((group) => group.rows)
-                        .find((row) => sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(selectedRef))
-                    : null;
-                const selectedModelId = selectedRef?.modelId ?? 'default';
-                const nativeLabel = findModelOptionForEffectiveModelId(existingSessionNativeModels, selectedModelId)?.label
-                    ?? selectedModelId;
                 return (
                     <SessionModelPicker
                         fillAvailableSpace
@@ -4406,11 +4382,12 @@ export function useSessionComposerController({
                         teamCredentialResources={embeddedModelNarrowing ? EMPTY_TEAM_CREDENTIAL_RESOURCES : teamCredentialCatalog.resources}
                         teamNameById={teamCredentialCatalog.teamNameById}
                         homeNameByTeamId={teamCredentialCatalog.homeNameByTeamId}
-                        currentTeamCredentialResourceKeys={teamCredentialCatalog.currentResourceKeys}
+                        teamCredentialResourceStatusByKey={teamCredentialCatalog.resourceStatusByKey}
                         providerProjectionAuthoritative={providerModelProjection.status === 'success'}
                         projectionError={providersFeatureEnabled ? providerModelProjection.error : null}
                         projectionFailures={providersFeatureEnabled ? providerModelProjection.refreshFailures : []}
                         retryProjection={providersFeatureEnabled ? providerModelProjection.refresh : null}
+                        projectionApproval={providersFeatureEnabled ? providerModelProjection.pendingApproval : null}
                         currentSelectionRecovery={providersFeatureEnabled
                             ? providerModelProjection.data?.currentSelectionRecovery ?? null
                             : null}
@@ -4429,9 +4406,7 @@ export function useSessionComposerController({
                         selected={embeddedModelNarrowing && embedded?.allowedModels
                             // The model the next message runs on: the Session's own when allowed, else the
                             // first allowed one (the outgoing record applies the same protocol rule).
-                            ? modelPickerAgentTargetKey
-                                ? readEffectiveAllowedModelRef(embedded.allowedModels, selectedRef, modelPickerAgentTargetKey)
-                                : null
+                            ? readEffectiveAllowedModelRef(embedded.allowedModels, selectedRef, modelPickerAgentTargetKey)
                             : selectedRef ?? null}
                         selectedTeamCredentialModel={selectedTeamCredentialModel}
                         reportedModel={existingSessionReportedModel}
@@ -4458,10 +4433,10 @@ export function useSessionComposerController({
                             void publishTeamCredentialModelSelection(selection);
                         }}
                         onRecoverTeamCredentialResource={(resource) => {
-                            router.push(teamCredentialDetailPath({
+                            router.push(admitInternalRouteHref(teamCredentialDetailPath({
                                 serverId: sessionRouteServerId,
                                 teamId: resource.teamId,
-                            }, resource.id));
+                            }, resource.id)));
                         }}
                     />
                 );
@@ -4480,6 +4455,7 @@ export function useSessionComposerController({
         selectedTeamCredentialModel,
         modelMode,
         modelPickerAgentTargetKey,
+        providerAgentTargetKey,
         providerModelProjection.data,
         providerModelProjection.error,
         providerModelProjection.loading,
@@ -4491,7 +4467,7 @@ export function useSessionComposerController({
         sessionRouteServerId,
         publishTeamCredentialModelSelection,
         publishModelSelection,
-        teamCredentialCatalog.currentResourceKeys,
+        teamCredentialCatalog.resourceStatusByKey,
         teamCredentialCatalog.homeNameByTeamId,
         teamCredentialCatalog.resources,
         teamCredentialCatalog.teamNameById,
@@ -4503,7 +4479,12 @@ export function useSessionComposerController({
         existingSessionModelOptionOverrides,
     ]);
 
-    const [directoryRecovery, setDirectoryRecovery] = React.useState<Readonly<{ scopeKey: string; busy: boolean }> | null>(null);
+    const [directoryRecovery, setDirectoryRecovery] = React.useState<Readonly<{
+        scopeKey: string;
+        busy: boolean;
+        failure: Extract<ReturnType<typeof resolveResumeFailurePresentation>, { kind: 'directory_missing' }>;
+        targetHome: ReturnType<typeof resolvePortableServerIdentityForRoutingId>;
+    }> | null>(null);
     const currentDirectoryRecovery = directoryRecovery?.scopeKey === sessionAccountScopeKey ? directoryRecovery : null;
 
     // Both explicit Resume and the queue control consume the banner owner's
@@ -4542,6 +4523,28 @@ export function useSessionComposerController({
         }
     }, [actionExecutor, pendingActivationActionBusy, pendingActivationPresentation, pendingRecoveryApproval.requestApproval, sessionAccountLifetime, sessionId]);
 
+    // Explicit Resume and accepted input wake failures share the same recovery projection.
+    const presentResumeFailureRecovery = React.useCallback((presentation: ReturnType<typeof resolveResumeFailurePresentation>,
+        silent = false, targetHome = resolvePortableServerIdentityForRoutingId(sessionRouteServerId),
+        agentTitle = currentAgentLabel): boolean => {
+        if (presentation.kind === 'directory_missing') {
+            setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false, failure: presentation, targetHome });
+            return true;
+        }
+        if (presentation.kind === 'agent_setup') {
+            if (!silent) presentMachineAgentRefusal(presentation.errorCode,
+                reachableMachineTarget?.machineId ?? ownerMetadata?.machineId ?? null, agentTitle);
+            return true;
+        }
+        if (presentation.kind !== 'alert' || presentation.recovery !== 'connected_accounts') return false;
+        if (!silent) alertActionFailure({ reason: presentation.message, code: presentation.errorCode ?? null,
+            context: { phase: 'session.open', targetHome, reasonCode: presentation.reasonCode ?? null },
+            recovery: { label: t('connectedServices.title'), onPress: () => router.push('/(app)/settings/connected-services') },
+        });
+        return true;
+    }, [currentAgentLabel, ownerMetadata?.machineId, presentMachineAgentRefusal, reachableMachineTarget?.machineId,
+        router, sessionAccountScopeKey, sessionRouteServerId]);
+
     // Handle resuming an inactive session
     const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean; approvedNewDirectoryCreation?: boolean }): Promise<boolean> => {
         const silent = opts?.silent === true;
@@ -4557,12 +4560,7 @@ export function useSessionComposerController({
 
         if (sessionMachineAccessRemoved) return false;
 
-        if (!resumeMachineId || !resumeDirectory || !agentId) {
-            maybeAlert(t('session.resumeFailed'));
-            return false;
-        }
-
-        if (!agentId) {
+        if (resumeEligibility !== 'unknown' && (!resumeMachineId || !resumeDirectory || !agentId)) {
             maybeAlert(t('session.resumeFailed'));
             return false;
         }
@@ -4571,7 +4569,7 @@ export function useSessionComposerController({
             if (silent) return false;
 
             const replayCfg = resolveHappierReplayConfig(storage.getState().settings);
-            if (replayCfg.enabled) {
+            if (replayCfg.enabled && resumeMachineId) {
                 if (!isMachineReachable) {
                     maybeAlert(t(machineReachability === 'unknown' ? 'newSession.machineUnavailableStatus' : 'session.machineOfflineCannotResume'));
                     return false;
@@ -4610,7 +4608,7 @@ export function useSessionComposerController({
             return false;
         }
 
-        if (!isMachineReachable) {
+        if (resumeEligibility !== 'unknown' && !isMachineReachable) {
             if (pendingActivationPresentation?.primaryAction === 'process_when_online') {
                 return await handlePendingActivationRequest('process_when_online');
             }
@@ -4637,9 +4635,8 @@ export function useSessionComposerController({
             if (!result.ok) {
                 const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error, details: result.details },
                     t('session.resumeFailed'), resolveSessionActionDefaultTarget(sessionActionDefaultBackend));
-                if (presentation.kind === 'directory_missing') {
-                    setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false });
-                } else if (presentation.kind === 'plugin_disabled' && presentation.pluginId) {
+                if (presentResumeFailureRecovery(presentation, silent, targetHome)) return false;
+                if (presentation.kind === 'plugin_disabled' && presentation.pluginId) {
                     const pluginId = presentation.pluginId;
                     if (!silent) alertActionFailure({ reason: presentation.message, code: presentation.errorCode,
                         context: { phase: 'session.open', targetHome },
@@ -4651,7 +4648,7 @@ export function useSessionComposerController({
                                 ) } });
                             } },
                     });
-                } else {
+                } else if (presentation.kind !== 'directory_missing') {
                     if (!silent && !presentSessionCredentialReconnectFailure(presentation,
                         () => router.push('/(app)/settings/connected-services'), Modal.alert)) {
                         maybeAlert(presentation.message, presentation.errorCode ?? null);
@@ -4668,7 +4665,7 @@ export function useSessionComposerController({
             maybeAlert(t('session.resumeFailed'), readRpcErrorCode(error));
             return false;
         }
-    }, [actionExecutor, agentId, handlePendingActivationRequest, pendingActivationPresentation, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
+    }, [actionExecutor, agentId, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
     handleUsageLimitRecoveryResumeNowRef.current = handleResumeSession;
 
     const handleManagedWakeRecovery = React.useCallback(async (action: 'inspect' | 'retry' | 'resume' | 'withdraw') => {
@@ -4682,7 +4679,7 @@ export function useSessionComposerController({
         setPendingActivationActionBusy(true);
         try {
             if (action === 'retry') {
-                if ((presentation.primaryAction === 'retry' || presentation.primaryAction === 'process_when_online') && presentation.row) await handleResumeSession();
+                if (presentation.primaryAction === 'retry' && presentation.row) await handleResumeSession();
             } else if (action === 'resume') {
                 if (projection.canResumeRuntime && presentation.row) await handleResumeSession();
             } else if (action === 'withdraw') {
@@ -4723,7 +4720,7 @@ export function useSessionComposerController({
         pendingActivationActionBusy, pendingActivationPresentation, pendingRecoveryApproval.requestApproval, sessionAccountLifetime]);
 
     const handleContinueInFreshFolder = React.useCallback(async () => {
-        setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: true });
+        setDirectoryRecovery(current => current?.scopeKey === sessionAccountScopeKey ? { ...current, busy: true } : current);
         try {
             await handleResumeSession({ approvedNewDirectoryCreation: true });
         } finally {
@@ -4759,15 +4756,16 @@ export function useSessionComposerController({
                 : formatAgentLikeIdForDisplay(agentId),
         })
         ?? t('status.unknown');
-    const machineName = ownerMetadata?.host ?? t('status.unknown');
+    const machineName = getMachineSentenceName(sessionMachineRecord);
 
     const runtimeDisplayState = resolveSessionViewRuntimeDisplayState({
         session,
         isSessionActive,
-        isResumable,
+        isResumable: resumeEligibility === 'unknown' ? null : isResumable,
         isMachineReachable,
         machineReachability,
-        allowInputWhileInactive: persistedVoiceComposerRouting?.kind === 'adapter_text',
+        allowInputWhileInactive: persistedVoiceComposerRouting?.kind === 'adapter_text'
+            || (resumeEligibility === 'unknown' && isResumable),
         providerName,
         machineName,
     });
@@ -4807,8 +4805,15 @@ export function useSessionComposerController({
     );
     // Opens a chip only on the composer the person is looking at; otherwise the registry keeps the
     // request until this surface is focused and presented again.
+    const hasComposerActionChip = (chipKey: string): boolean => chipKey === SESSION_MODEL_PICKER_CHIP_KEY
+        ? canSelectModel : composerActionChipKeysRef.current.has(chipKey);
     const requestComposerActionChipOpen = (chipKey: string): boolean => {
-        if (!surfaceFocused || !surfacePresented || !composerActionChipKeysRef.current.has(chipKey)) return false;
+        if (!surfaceFocused || !surfacePresented || !hasComposerActionChip(chipKey)) return false;
+        // The model picker is the status line's own picker; its entry is the one the banner's "Choose another" takes.
+        if (chipKey === SESSION_MODEL_PICKER_CHIP_KEY) {
+            openSessionModelPicker();
+            return true;
+        }
         setComposerActionChipOpenRequest((current) => ({
             chipKey,
             key: String((Number.parseInt(current?.key ?? '0', 10) || 0) + 1),
@@ -4876,12 +4881,13 @@ export function useSessionComposerController({
         },
         openActionChip: requestComposerActionChipOpen,
         openPromptPicker: () => promptPickerOpenRequestRef.current?.() ?? false,
+        readPromptPicker: () => promptPickerOpenRequestRef.current?.read() ?? null,
         openAttachmentPicker: () => {
             if (!attachmentsUploadsAvailable || isUploadingAttachments || activeComposerRefRef.current.kind !== 'session' || !filePickerRef.current) return false;
             openAttachmentFilePickerFiles(filePickerRef.current);
             return true;
         },
-        hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
+        hasActionChip: hasComposerActionChip,
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
         submitDraft: options => activeComposerRefRef.current.kind === 'session' ? agentInputSendRef.current(options)
@@ -4935,7 +4941,9 @@ export function useSessionComposerController({
             && composerPresentationAccountLifetime !== null
             && composerPresentationAccountLifetime.isCurrent()
         ),
-        isPresented: () => shouldShowInput && surfacePresented,
+        // The ordinary draft remains writable by its background owner, but it
+        // is not the presented input while a queued message is being edited.
+        isPresented: () => shouldShowInput && surfacePresented && activeComposerRefRef.current.kind === 'session',
         focusComposer: () => {
             if (!surfaceFocused || activeComposerRefRef.current.kind !== 'session') return false;
             const focus = composerFocusRequestRef.current;
@@ -4946,12 +4954,14 @@ export function useSessionComposerController({
         openActionChip: requestComposerActionChipOpen,
         openPromptPicker: () => activeComposerRefRef.current.kind === 'session'
             && (promptPickerOpenRequestRef.current?.() ?? false),
+        readPromptPicker: () => activeComposerRefRef.current.kind === 'session'
+            ? promptPickerOpenRequestRef.current?.read() ?? null : null,
         openAttachmentPicker: () => {
             if (!attachmentsUploadsAvailable || isUploadingAttachments || activeComposerRefRef.current.kind !== 'session' || !filePickerRef.current) return false;
             openAttachmentFilePickerFiles(filePickerRef.current);
             return true;
         },
-        hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
+        hasActionChip: hasComposerActionChip,
     });
     React.useEffect(() => !shouldShowInput ? undefined : activeComposerRef.kind === 'session'
         ? registerSessionComposerPresentationTarget(sessionComposerAddress, activeComposerPresentationTarget)
@@ -5037,6 +5047,7 @@ export function useSessionComposerController({
     const requestMountedTranscriptFollow = React.useCallback(() => {
         // The sync send boundary already established durable own-send tail intent before
         // optimistic projection. This key is only the mounted physical takeover command.
+        if (!composerPresentationMountedRef.current) return;
         setFollowBottomIntentSeq((current) => current + 1);
     }, []);
 
@@ -5066,7 +5077,6 @@ export function useSessionComposerController({
         const sessionWorkflowRunChip = useSessionWorkflowRunChip({
             sessionId,
             serverId: sessionRouteServerId || null,
-            readDraft: readVisibleComposerText,
             disabled: isReadOnly,
         });
         const sessionWorkflowRunChips = React.useMemo(() => [sessionWorkflowRunChip], [sessionWorkflowRunChip]);
@@ -5083,6 +5093,7 @@ export function useSessionComposerController({
                 return `${base}${spacer}@${path} `;
             });
         }, [setVisibleComposerDraftValue]);
+        const imageInputAvailability = readSessionImageInputAvailability(armedContinuationTarget ? null : session);
         const sessionExtraActionPresentation = useSessionAgentInputExtraActionChips({
             sessionId,
             sessionAddress: companionAddress,
@@ -5092,10 +5103,13 @@ export function useSessionComposerController({
             sessionAccess: embedded ? null : sessionAccessChip,
             attachmentsUploadsEnabled,
             attachmentsUploadsAvailable,
+            imageInputDisabledReason: imageInputAvailability.available
+                ? undefined : t('common.imageInputUnsupported', { agent: currentAgentLabel }),
             isReadOnly,
             isUploadingAttachments,
             onPickAttachmentFile: pickComposerAttachmentFile,
             onPickAttachmentImage: pickComposerAttachmentImage,
+            onAttachmentsPicked: addPickedAttachments,
             onPasteAttachmentImage: pasteAttachmentImage,
             onAppendLinkedPath: appendComposerLinkedPath,
             reviewCommentsEnabled,
@@ -5187,7 +5201,11 @@ export function useSessionComposerController({
             participantTargets,
             recipientState,
             sessionTalk,
+            sessionId,
+            serverId: sessionRouteServerId,
         });
+        const walkthroughRecipient = routingControls.walkthroughEngine !== undefined;
+        const walkthroughEngine = routingControls.walkthroughEngine ?? null;
         const sessionAttachmentRowItems = React.useMemo(() => (
             projectAgentInputAttachmentRowItems({
                 items: [
@@ -5204,16 +5222,17 @@ export function useSessionComposerController({
             routingControls.attachmentRowItems,
             sessionExtraActionPresentation.attachmentRowItems,
         ]);
-        const isRuntimeFreshActiveTurn =
-            sessionStatus.state === 'thinking'
-            || sessionStatus.state === 'permission_required'
-            || sessionStatus.state === 'action_required';
+        // The attention label also covers blocked input. Only the awareness
+        // owner's concurrent work/request facts prevent a route recovery restart.
+        const isRuntimeFreshActiveTurn = sessionStatus.awareness.operational.reasons.some(
+            reason => reason === 'working' || reason === 'permission_required' || reason === 'action_required',
+        );
         // "This session gets" (P8 U8.3): the capabilities chip and its one apply line share one P2 owner.
         const sessionCapabilitiesTarget = React.useMemo(() => ({
             kind: 'session' as const, sessionId, serverId: sessionRouteServerId ?? null, readOnly: isReadOnly,
         }), [sessionId, sessionRouteServerId, isReadOnly]);
         const stopSessionForCapabilities = React.useCallback(async () => (
-            await executeSessionLifecycleAction('session.stop', sessionId, { serverId: sessionRouteServerId })
+            await executeSessionLifecycleAction('session.stop', sessionId, { serverId: sessionRouteServerId, stopIntent: 'lifecycle_control' })
         ).success, [sessionId, sessionRouteServerId]);
         const resumeSessionForCapabilities = React.useCallback(() => handleResumeSession({ silent: true }), [handleResumeSession]);
         const sessionCapabilities = useExistingSessionCapabilitiesChip({
@@ -5245,10 +5264,8 @@ export function useSessionComposerController({
             deriveSessionIntentionalRestartSignals({
                 runtimeIssue: sessionRuntimeStatusSource.lastRuntimeIssue ?? null,
                 events: intentionalRestartSourceEvents,
-                recoveryEvidenceAtMs: intentionalRestartRecoveryEvidenceAtMs,
             })
         ), [
-            intentionalRestartRecoveryEvidenceAtMs,
             intentionalRestartSourceEvents,
             sessionRuntimeStatusSource.lastRuntimeIssue,
         ]);
@@ -5318,7 +5335,7 @@ export function useSessionComposerController({
                 ? parseQualifiedPluginContributionKey(currentSessionAgentCatalogEntry.qualifiedId)
                 : null,
             teamCredentialResources: teamCredentialConnectedServiceResources,
-            teamCredentialResourceCurrentKeys: teamCredentialCatalog.currentResourceKeys,
+            teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
             teamNameById: teamCredentialCatalog.teamNameById,
             sessionMetadata: ownerMetadata,
             settings: {
@@ -5334,12 +5351,23 @@ export function useSessionComposerController({
                     : null,
             sessionActive: session.active === true,
             intentionalRestartSignals,
+            intentionalRestartRecoveryEvidenceAtMs,
             passiveProviderRecoveryServiceId,
             applyBinding: applySessionConnectedServicesAuthBinding,
         });
         const connectedServicesRestartState = sessionConnectedServicesAuthSwitch.restartState;
+        const connectedServicesAuthRecoveryChip = sessionConnectedServicesAuthSwitch.connectedServicesAuthChip;
         const sessionStatusResuming = sessionStatus.state === 'resuming';
         const providerBindingBanner = React.useMemo(() => {
+            if (activeModelTransitionFailure) {
+                return {
+                    kind: 'unavailable' as const,
+                    action: 'choose-model' as const,
+                    title: t('session.providerBinding.modelChangeUnavailableTitle'),
+                    body: t('session.providerBinding.modelChangeUnavailableBody'),
+                    actionLabel: t('session.providerBinding.chooseModelAction'),
+                };
+            }
             const requestedTransitionSelection = effectiveModelTransitionActionRequired?.requestedSelection ?? null;
             // A Team resource is named by the Team's own resource, never by the
             // personal Provider connection this session happens to be launched
@@ -5442,6 +5470,7 @@ export function useSessionComposerController({
                     };
             }
         }, [
+            activeModelTransitionFailure,
             agentId,
             effectiveModelTransitionActionRequired,
             pendingProviderSwitchBanner,
@@ -5482,7 +5511,7 @@ export function useSessionComposerController({
                 text: t(presentation.titleKey ?? `session.pendingActivation.${presentation.kind}.title`),
                 detail: presentation.holdReason === 'managed_power_required'
                     ? t('managedWake.refusedDetail')
-                    : t(`session.pendingActivation.${presentation.kind}.body`),
+                    : t(presentation.bodyKey ?? `session.pendingActivation.${presentation.kind}.body`),
                 action,
                 color: presentation.kind === 'failed' || presentation.holdReason === 'managed_power_required'
                     ? theme.colors.state.attention.textForeground : sessionStatus.statusColor,
@@ -5492,9 +5521,22 @@ export function useSessionComposerController({
         const exchangeCheckInRoot = React.useMemo(() => pendingMessages.find((message) =>
             message.pendingDeliveryBlockedReason === 'autonomous_check_in')?.pendingAutonomousExchangeRoot ?? null, [pendingMessages]);
         // The main transcript's queue size, said once on the line instead of a header over the queue.
+        // A first message still owned by the New Session launch is not queued input.
         const mainPendingCount = React.useMemo(
-            () => pendingMessages.filter((message) => isPendingMessageForRecipient(message, undefined)).length,
+            () => pendingMessages.filter((message) => isPendingMessageForRecipient(message, undefined)
+                && !isLaunchOwnedPendingMessage(message)).length,
             [pendingMessages],
+        );
+        // While its launch is still starting, the Session is not a stopped one to resume: Resume would
+        // start a second runner for the same creation.
+        const launchStarting = React.useMemo(
+            () => pendingMessages.some((message) => isLaunchOwnedPendingMessage(message) && message.pendingLaunch?.state === 'starting'),
+            [pendingMessages],
+        );
+        // Only host updates in the queue (a worker's finish, told quietly): they wait for the next turn, not for a send.
+        const queuedAreNextTurnUpdates = React.useMemo(
+            () => mainPendingCount > 0 && pendingMessages.filter((message) => isPendingMessageForRecipient(message, undefined)).every(isNextTurnHostInput),
+            [mainPendingCount, pendingMessages],
         );
         const handlePendingQueueAction = React.useCallback(async (action: SessionViewPendingQueueAction) => {
             if (action === 'resume' || action === 'retry') await handleResumeSession();
@@ -5510,20 +5552,23 @@ export function useSessionComposerController({
         }), [autoResumeAdmission, guardPresentationKey, session.active, sessionStatusResuming]);
         const guardMachineId = controlMachineTarget?.machineId ?? null;
         const keepGuardedSessionRunning = React.useCallback(() => {
-            if (!guardMachineId) return;
+            if (!guardMachineId || !sessionAccountLifetime?.isCurrent()) return;
             fireAndForget((async () => {
                 const kept = await keepMachineGuardWorkRunningViaAction({ machineId: guardMachineId, serverId: sessionRouteServerId || null,
-                    expectedAccountId: null, sessionId });
+                    expectedAccountId: sessionAccountLifetime.scope.accountId, sessionId });
                 if (!kept.ok) Modal.alert(t('machineGuard.session.keepRunning'), t('machineGuard.session.keepRunningFailed'));
             })(), { tag: 'SessionView.guardKeepRunning' });
-        }, [guardMachineId, sessionId, sessionRouteServerId]);
+        }, [guardMachineId, sessionId, sessionRouteServerId, sessionAccountLifetime]);
+        useSessionGuardDraftActivity({ textStore: composerTextStore, keepRunning: keepGuardedSessionRunning,
+            warningKey: surfaceFocused && hasWriteAccess && guardMachineId && guardComposerState?.kind === 'warning'
+                ? JSON.stringify([sessionAccountScopeKey, sessionId, guardMachineId, guardComposerState.countdownTo]) : null });
         const connectionStatus = React.useMemo(() => resolveSessionViewConnectionStatus({
             connectedServicesRestartState,
             restartingText: t('connectedServices.authSwitch.status.restarting'),
             switchFailedText: t('connectedServices.authSwitch.switchFailed'),
-            inactiveStatusText,
-            inactiveResumeAvailable: !isSessionActive && isResumable && isMachineReachable
-                && hasWriteAccess && !sessionMachineAccessRemoved,
+            inactiveStatusText: launchStarting ? t('newSession.startingSession') : inactiveStatusText,
+            inactiveResumeAvailable: !launchStarting && !isSessionActive && isResumable && isMachineReachable
+                && hasWriteAccess && canOpenSession && !sessionMachineAccessRemoved,
             // The inactive cause's explanation rides the line while the composer shows it.
             inactiveDetail: shouldShowInput ? bottomNotice?.body ?? null : null,
             sessionStatusResuming,
@@ -5537,21 +5582,25 @@ export function useSessionComposerController({
             providerBinding: providerBindingLine,
             pendingQueue: {
                 line: pendingQueueLine,
-                countText: mainPendingCount > 0 ? t('session.pendingMessages.indicator', { count: mainPendingCount }) : null,
+                countText: mainPendingCount > 0
+                    ? t(queuedAreNextTurnUpdates ? 'session.pendingMessages.updatesWaiting' : 'session.pendingMessages.indicator', { count: mainPendingCount }) : null,
             },
         }), [
             providerBindingLine,
             pendingQueueLine,
             mainPendingCount,
+            queuedAreNextTurnUpdates,
             guardComposerState,
             theme.colors.state.attention.textForeground,
             theme.colors.text.tertiary,
             connectedServicesRestartState,
             inactiveStatusText,
+            launchStarting,
             isSessionActive,
             isResumable,
             isMachineReachable,
             hasWriteAccess,
+            canOpenSession,
             sessionMachineAccessRemoved,
             shouldShowInput,
             bottomNotice?.body,
@@ -5574,14 +5623,12 @@ export function useSessionComposerController({
         const askHappierConnectionStatus = React.useMemo(() => (
             connectionStatus && askHappierStatusAction ? { ...connectionStatus, action: askHappierStatusAction } : null
         ), [askHappierStatusAction, connectionStatus]);
-        const openSessionModelPicker = React.useCallback(() => {
-            setSessionModelPickerRequestKey((current) => String((Number.parseInt(current ?? '0', 10) || 0) + 1));
-        }, []);
         // Applies through the transition owner, restarting only when required:
         // the binding banner's Restart and the next-Send armed route (D15).
         // True only once the requested selection is ready; failures are presented.
         const restartSessionRunnerOnRequestedRoute = React.useCallback(async (): Promise<boolean> => {
             if (sessionViewCaller.signal.aborted) return false;
+            setModelTransitionFailure(null);
             try {
                 // Ask the same transition owner to apply at Send. Live model changes
                 // settle here; only its actual restart refusal enters runner restart.
@@ -5596,7 +5643,8 @@ export function useSessionComposerController({
                     const transition = SessionModelTransitionResultV1Schema.safeParse({ ok: false,
                         ...(result.details && typeof result.details === 'object' ? result.details : {}) });
                     if (!transition.success || transition.data.status !== 'restart_required') {
-                        Modal.alert(t('common.error'), resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'));
+                        if (presentUnavailableModelTransition(result)) return false;
+                        alertComposerActionResultFailure(result);
                         return false;
                     }
                 }
@@ -5646,10 +5694,10 @@ export function useSessionComposerController({
             effectiveModelTransitionActionRequired,
             openSessionModelPicker,
             presentMachineAgentRefusal,
+            presentUnavailableModelTransition,
             providerBindingStatus.status,
             providerLaunchBinding,
             sessionRouteServerId,
-            sessionRunnerRuntimeStatus,
             sessionViewCaller,
             sessionId,
             staleSessionRunnerMachineId,
@@ -5676,6 +5724,27 @@ export function useSessionComposerController({
             providerBindingStatus.refresh,
             restartSessionRunnerOnRequestedRoute,
         ]);
+        // One object per set of facts: the composer chrome is memoized, so a fresh line with a fresh
+        // action closure on every host render would re-render all of it.
+        const agentInputConnectionStatus = React.useMemo(() => (
+            connectionStatus
+                ? connectionStatus.guardAction === 'keep_running' && guardMachineId
+                    ? { ...connectionStatus, action: { label: t('machineGuard.session.keepRunning'), onPress: keepGuardedSessionRunning } }
+                    : connectionStatus.providerBindingAction && providerBindingBanner
+                        ? { ...connectionStatus, action: { label: providerBindingBanner.actionLabel, onPress: handleProviderBindingAction } }
+                        : connectionStatus.pendingQueueAction
+                            ? { ...connectionStatus, action: {
+                                label: t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction}`),
+                                onPress: () => fireAndForget(handlePendingQueueAction(connectionStatus.pendingQueueAction!), { tag: 'SessionView.pendingQueueAction' }),
+                            } }
+                            : connectionStatus.inactiveAction === 'resume'
+                                ? { ...connectionStatus, action: {
+                                    label: t('session.pendingActivation.actions.resume'),
+                                    onPress: () => fireAndForget(handleResumeSession(), { tag: 'SessionView.resume' }),
+                                } }
+                                : askHappierConnectionStatus ?? connectionStatus
+                : undefined
+        ), [askHappierConnectionStatus, connectionStatus, guardMachineId, handlePendingQueueAction, handleProviderBindingAction, handleResumeSession, keepGuardedSessionRunning, providerBindingBanner]);
         // D15: a route or model picked while the session runs is armed for the next message, exactly
         // like an Agent switch — the send control names it and the send applies it before dispatch.
         // The arm IS the session's pending model selection; its explicit cancel is the un-arm Action below.
@@ -5710,16 +5779,18 @@ export function useSessionComposerController({
         const { unarm: unarmSessionModel } = useSessionModelUnarm({ sessionId, serverId: sessionRouteServerId });
         const [unarmRoutePending, setUnarmRoutePending] = React.useState(false);
         const unarmRoute = React.useCallback(() => {
+            setModelTransitionFailure(null);
             setUnarmRoutePending(true);
             void unarmSessionModel().then((result) => {
                 if (!result.ok) {
-                    Modal.alert(t('common.error'), resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'));
+                    if (presentUnavailableModelTransition(result)) return;
+                    alertComposerActionResultFailure(result);
                 }
             }).finally(() => setUnarmRoutePending(false));
-        }, [unarmSessionModel]);
+        }, [presentUnavailableModelTransition, unarmSessionModel]);
         // The picker is built before this hook resolves the Agent's own account, so its heading reads it here.
         const sessionNativeSourceLabel = sessionConnectedServicesAuthSwitch.nativeSourceLabel;
-        const existingSessionModelPickerWithNativeSource = React.useMemo(() => existingSessionModelPicker ? (
+        const existingSessionModelPickerWithNativeSource = React.useMemo(() => existingSessionModelPicker !== undefined ? (
             <SessionModelNativeSourceLabelContext.Provider value={sessionNativeSourceLabel}>
                 {existingSessionModelPicker}
             </SessionModelNativeSourceLabelContext.Provider>
@@ -5741,13 +5812,13 @@ export function useSessionComposerController({
                     {...managedWakeNames} busy={pendingActivationActionBusy || pendingRecoveryApproval.approvalPending}
                     controllerPresence={managedWakeController ? describeMachinePresenceLine(managedWakeController, undefined, undefined, sessionAccountScope).label : t('status.unknown')}
                     onOpenMachine={() => { const target = managedWakeAuthorization?.managedWakeTargetV1;
-                        if (target && sessionAccountScope) router.push(machineCollectionHref({ serverId: sessionAccountScope.serverId,
-                            machineId: target.enrolledMachineId })); }}
+                        if (target && sessionAccountScope) router.push(admitInternalRouteHref(machineCollectionHref({ serverId: sessionAccountScope.serverId,
+                            machineId: target.enrolledMachineId }))); }}
                     onOpenController={() => { const controller = managedPendingMachine?.controller ?? managedWakeAuthorization?.managedWakeTargetV1?.controller;
-                        if (controller && sessionAccountScope) router.push(machineCollectionHref({ serverId: sessionAccountScope.serverId,
-                            machineId: controller.machineId })); }}
+                        if (controller && sessionAccountScope) router.push(admitInternalRouteHref(machineCollectionHref({ serverId: sessionAccountScope.serverId,
+                            machineId: controller.machineId }))); }}
                     onCheckNow={() => fireAndForget(handleManagedWakeRecovery('inspect'), { tag: 'SessionView.managedWake.inspect' })}
-                    {...((pendingActivationPresentation.primaryAction === 'retry' || pendingActivationPresentation.primaryAction === 'process_when_online') && pendingActivationPresentation.row
+                    {...(pendingActivationPresentation.primaryAction === 'retry' && pendingActivationPresentation.row
                         ? { onRetry: () => fireAndForget(handleManagedWakeRecovery('retry'), { tag: 'SessionView.managedWake.retry' }) } : {})}
                     {...(pendingActivationPresentation.managedWakeProjection?.canResumeRuntime && pendingActivationPresentation.row
                         ? { onResume: () => fireAndForget(handleManagedWakeRecovery('resume'), { tag: 'SessionView.managedWake.resume' }) } : {})}
@@ -5952,7 +6023,7 @@ export function useSessionComposerController({
         React.useEffect(() => {
             notifySessionComposerPresentationTargetChanged(sessionId);
             if (surfaceFocused && surfacePresented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
-        }, [composerActionChipKeys, sessionComposerAddress, sessionId, surfaceFocused, surfacePresented]);
+        }, [canSelectModel, composerActionChipKeys, sessionComposerAddress, sessionId, surfaceFocused, surfacePresented]);
 
     const { openFiles: openFileViewer } = useSessionFilePaneNavigation({
         scopeId: pane.scopeId,
@@ -5994,8 +6065,15 @@ export function useSessionComposerController({
         ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
     }));
     const handleAgentInputSend = React.useCallback(
-        (options?: AgentInputSendOptions) => { agentInputSendRef.current(options); },
-        [],
+        (options?: AgentInputSendOptions) => {
+            if (!sessionAccountLifetime) return;
+            const submission = activeComposerRefRef.current.kind === 'session'
+                ? submitSessionDraft({ sessionTarget: { ...sessionAccountLifetime.scope, sessionId }, sendOptions: options })
+                : agentInputSendRef.current(options);
+            fireAndForget(submission,
+                { tag: 'SessionView.composer.dispatch' });
+        },
+        [sessionAccountLifetime, sessionId],
     );
     const handleAgentInputAbort = useEventCallback(async () => {
         const lifetime = sessionAccountLifetime;
@@ -6066,6 +6144,12 @@ export function useSessionComposerController({
                             accessibilityLabel: t('sessionDirectoryRecovery.notNow'),
                             disabled: currentDirectoryRecovery.busy,
                             onPress: () => setDirectoryRecovery(null),
+                        }, {
+                            key: 'technical-details', testID: 'session-directory-missing-details',
+                            label: t('approvals.technicalDetails'), variant: 'quiet',
+                            accessibilityLabel: t('approvals.technicalDetails'),
+                            onPress: () => showActionFailureDetails({ code: currentDirectoryRecovery.failure.errorCode,
+                                context: { phase: 'session.open', targetHome: currentDirectoryRecovery.targetHome } }),
                         }]}
                     />
                 </ComposerAuxiliaryFrame>
@@ -6094,6 +6178,11 @@ export function useSessionComposerController({
             {visibleUsageLimitRecoveryPresentation ? (
                 <ComposerAuxiliaryFrame>
                     <SessionUsageLimitRecoveryBanner
+                        runtimeIssue={session.lastRuntimeIssue}
+                        onUseAnotherAccount={connectedServicesAuthRecoveryChip
+                            ? () => { requestComposerActionChipOpen(connectedServicesAuthRecoveryChip.key); }
+                            : undefined}
+                        accountRecoveryIsPrimary={visibleUsageLimitRecoveryPresentation.banner.mode === 'switch_account_now'}
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
                         surfaceFocused={surfaceFocused}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
@@ -6213,7 +6302,9 @@ export function useSessionComposerController({
                         ? guardComposerState.placeholder
                     : externalSessionOperationShell.composerPlaceholderKey
                         ? t(externalSessionOperationShell.composerPlaceholderKey)
-                        : embedded?.composerPlaceholder ?? t('session.inputPlaceholder')}
+                        : walkthroughRecipient
+                            ? t('agentStart.pane.replyTo', { agent: t('walkthrough.eyebrow') })
+                            : embedded?.composerPlaceholder ?? t('session.inputPlaceholder')}
                 onChangeText={setVisibleComposerDraftValue}
                 onComposerFocusChange={onComposerFocusChange}
                 onComposerFocusRequestChange={onComposerFocusRequestChange}
@@ -6247,6 +6338,13 @@ export function useSessionComposerController({
                 {...(embeddedComposerControls ? {
                     voiceAffordance: embeddedComposerControls.voiceAffordance,
                     engineControls: embeddedComposerControls.engineControls,
+                    allowPlacementCustomization: embeddedComposerControls.allowPlacementCustomization,
+                } : {})}
+                // A walkthrough question is answered by the Run that wrote it (lab WT3-D1): its model is named, not
+                // chosen, and the Session's own engine, permission and mode controls do not apply to it.
+                {...(walkthroughRecipient ? {
+                    engineControls: 'none' as const,
+                    ...(walkthroughEngine ? { engineLabel: walkthroughEngine.label, engineAgentId: walkthroughEngine.agentId } : {}),
                 } : {})}
                 onAgentPickerVisibilityChange={onAgentPickerVisibilityChange}
                 agentPickerSelectedOptionId={inSessionAgentPicker.agentPickerSelectedOptionId}
@@ -6264,8 +6362,8 @@ export function useSessionComposerController({
                 allowedPermissionModes={embedded?.permissionModePicker ?? null}
                 // Embedded: the mode stays a label unless the embed allows more than one mode (plan 04 §4.6).
                 // A controls-only composer offers only the granted model control.
-                onPermissionModeChange={!embeddedComposerControlsOnly && (!embedded || (embedded.permissionModePicker?.length ?? 0) > 1) ? updatePermissionMode : undefined}
-                onAcpSessionModeChange={!embedded && sessionModePickerControl ? updateAcpSessionModeOverride : undefined}
+                onPermissionModeChange={!walkthroughRecipient && !embeddedComposerControlsOnly && (!embedded || (embedded.permissionModePicker?.length ?? 0) > 1) ? updatePermissionMode : undefined}
+                onAcpSessionModeChange={!walkthroughRecipient && !embedded && sessionModePickerControl ? updateAcpSessionModeOverride : undefined}
                 onAcpConfigOptionChange={embeddedComposerControlsOnly ? undefined : updateAcpConfigOptionOverride}
                 modelMode={modelMode}
                 modelPickerPresentation={modelPickerPresentation}
@@ -6289,23 +6387,7 @@ export function useSessionComposerController({
                         `${t('profiles.sessionUses', { profile: profileInfo })}\n\n${t('profiles.profilesFixedPerSession')}`,
                     );
                 } : undefined}
-                connectionStatus={connectionStatus
-                    ? connectionStatus.guardAction === 'keep_running' && guardMachineId
-                        ? { ...connectionStatus, action: { label: t('machineGuard.session.keepRunning'), onPress: keepGuardedSessionRunning } }
-                        : connectionStatus.providerBindingAction && providerBindingBanner
-                            ? { ...connectionStatus, action: { label: providerBindingBanner.actionLabel, onPress: handleProviderBindingAction } }
-                            : connectionStatus.pendingQueueAction
-                                ? { ...connectionStatus, action: {
-                                    label: t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction}`),
-                                    onPress: () => fireAndForget(handlePendingQueueAction(connectionStatus.pendingQueueAction!), { tag: 'SessionView.pendingQueueAction' }),
-                                } }
-                                : connectionStatus.inactiveAction === 'resume'
-                                    ? { ...connectionStatus, action: {
-                                        label: t('session.pendingActivation.actions.resume'),
-                                        onPress: () => fireAndForget(handleResumeSession(), { tag: 'SessionView.resume' }),
-                                    } }
-                                    : askHappierConnectionStatus ?? connectionStatus
-                    : undefined}
+                connectionStatus={agentInputConnectionStatus}
                 // Stable wrapper (handleAgentInputSend) so AgentInput's memo holds;
                 // the assignment refreshes the latest-send ref with this render's
                 // closure, then the expression evaluates to the stable wrapper (R1).
@@ -6319,6 +6401,7 @@ export function useSessionComposerController({
                     }
                     const outboundAccountLifetime = sessionAccountLifetime;
                     if (!outboundAccountLifetime?.isCurrent()) return submissionResult;
+                    const acceptedOutboundAccountLifetime = readServerAccountScopeOwnerLifetime(outboundAccountLifetime);
                     if (externalSessionOperationShell.blocksNewOperation) return submissionResult;
                     if (composerInputEffects.readComposerInputLock() !== null) return submissionResult;
 
@@ -6332,11 +6415,12 @@ export function useSessionComposerController({
                         const message = pendingMessages[0];
                         if (!canChooseComposerSendActions || activePendingEdit || composerMessage.trim()
                             || sendableAttachmentDrafts(getAttachmentDraftsSnapshot()).length > 0 || hasIncludedReviewCommentDrafts
-                            || !message || !canUseDirectPendingDeliveryActions(message)
+                            || !message || !canUseDirectPendingDeliveryActions(message, undefined, session)
                             || (sendOptions.deliveryIntent !== 'agent_queue' && sendOptions.deliveryIntent !== 'interrupt')) return;
                         setIsComposerSending(true);
                         try {
                             await sendPendingMessageWithIntent({ sessionId, serverId: sessionRouteServerId ?? undefined, session, message,
+                                executor: actionExecutor, expectedAccountId: outboundAccountLifetime.scope.accountId,
                                 deliveryIntent: sendOptions.deliveryIntent === 'interrupt' ? 'interrupt_and_send' : 'steer_now',
                                 isCurrent: () => outboundAccountLifetime.isCurrent(),
                             });
@@ -6391,102 +6475,27 @@ export function useSessionComposerController({
                                                 mentions: snapshot.references,
                                                 composerAttachments: candidate.attachments,
                                             });
-                                            let preparedForAbandon: Extract<
-                                                import('@happier-dev/protocol').SessionPendingMessageComposerAdmissionPrepareResponseV1,
-                                                { ok: true }
-                                            > | null = null;
-                                            let pendingPatchAccepted = false;
-                                            let preparedAbandoned = false;
-                                            const abandonPrepared = async (): Promise<void> => {
-                                                if (preparedAbandoned || !preparedForAbandon?.sessionMediaCleanup) return;
-                                                if (pendingAccountLifetime && !pendingAccountLifetime.isCurrent()) return;
-                                                const abandonment: SessionPendingMessageComposerAdmissionAbandonedRequestV1 = {
-                                                    sessionId,
-                                                    localId: candidate.localId,
-                                                    structuredInput: preparedForAbandon.structuredInput,
-                                                    stagedMediaHandles: preparedForAbandon.stagedMediaHandles ?? [],
-                                                    ...(preparedForAbandon.stagedMediaReleaseIntents
-                                                        ? { stagedMediaReleaseIntents: preparedForAbandon.stagedMediaReleaseIntents }
-                                                        : {}),
-                                                    sessionMediaCleanup: preparedForAbandon.sessionMediaCleanup,
-                                                };
-                                                await abandonPendingMessageComposerAdmission(sessionId, abandonment, {
-                                                    serverId: sessionRouteServerId,
-                                                    ...(pendingAccountLifetime ? { accountLifetime: pendingAccountLifetime } : {}),
-                                                });
-                                                preparedAbandoned = true;
-                                            };
-                                            try {
-                                                const prepared = await preparePendingMessageComposerAdmission(sessionId, {
-                                                    localId: candidate.localId,
-                                                    text: snapshot.text,
-                                                    structuredInput: rawStructuredInput,
-                                                    sourceComposerRef: snapshot.ref,
-                                                }, {
-                                                    serverId: sessionRouteServerId,
-                                                    signal: composerPluginActionScopeSignal,
-                                                    ...(pendingAccountLifetime ? { accountLifetime: pendingAccountLifetime } : {}),
-                                                });
-                                                if (prepared.ok) preparedForAbandon = prepared;
-                                                if (!prepared.ok || !isStructuredInputCurrent()) {
-                                                    await abandonPrepared();
-                                                    return { status: 'rejected' };
-                                                }
-                                                const acceptedComposerAdmission = await sync.updatePendingMessage(
-                                                    sessionId,
-                                                    activePendingEdit.pendingId,
-                                                    prepared.text,
-                                                    prepared.structuredInput,
-                                                    {
-                                                        ...(candidate.replacementLocalId
-                                                            ? { replacementLocalId: candidate.replacementLocalId }
-                                                            : {}),
-                                                        preparedComposerAdmission: {
-                                                            stagedMediaHandles: prepared.stagedMediaHandles ?? [],
-                                                            ...(prepared.stagedMediaReleaseIntents
-                                                                ? { stagedMediaReleaseIntents: prepared.stagedMediaReleaseIntents }
-                                                                : {}),
-                                                            ...(prepared.sessionMediaMetadata
-                                                                ? { sessionMediaMetadata: prepared.sessionMediaMetadata }
-                                                                : {}),
-                                                        },
-                                                        serverId: sessionRouteServerId,
-                                                        ...(pendingAccountLifetime ? {
-                                                            accountLifetime: pendingAccountLifetime,
-                                                            session,
-                                                        } : {}),
-                                                    },
-                                                );
-                                                if (!acceptedComposerAdmission) {
-                                                    await abandonPrepared();
-                                                    throw new Error('Pending Composer PATCH accepted without its canonical admission fact');
-                                                }
-                                                pendingPatchAccepted = true;
-                                                acceptedReplacementLocalId = acceptedComposerAdmission.localId === activePendingEdit.localId
-                                                    ? null
-                                                    : acceptedComposerAdmission.localId;
-                                                acceptedPreparedAttachments = acceptedComposerAdmission.structuredInput.composerAttachments ?? [];
-                                                try {
-                                                    if (pendingAccountLifetime && !pendingAccountLifetime.isCurrent()) {
-                                                        return { status: 'accepted' };
-                                                    }
-                                                    await acceptPendingMessageComposerAdmission(sessionId, acceptedComposerAdmission, {
-                                                        serverId: sessionRouteServerId,
-                                                        ...(pendingAccountLifetime ? { accountLifetime: pendingAccountLifetime } : {}),
-                                                    });
-                                                } catch (error) {
-                                                    // The Pending PATCH is already authoritative. Keep
-                                                    // the accepted outcome while surfacing settlement/
-                                                    // notification failure to the user below.
-                                                    postAcceptanceError = error;
-                                                }
-                                                return { status: 'accepted' };
-                                            } catch (error) {
-                                                if (!pendingPatchAccepted) {
-                                                    await abandonPrepared().catch(() => undefined);
-                                                }
-                                                throw error;
-                                            }
+                                            const edited = await executePendingMessageEditWithActionApproval({
+                                                input: {
+                                                    sessionId, localId: activePendingEdit.localId,
+                                                    text: snapshot.text, structuredInput: rawStructuredInput,
+                                                    ...(candidate.replacementLocalId ? { replacementLocalId: candidate.replacementLocalId } : {}),
+                                                },
+                                                scope: (pendingAccountLifetime ?? outboundAccountLifetime).scope,
+                                                context: {
+                                                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                                                    serverId: sessionRouteServerId, defaultSessionId: sessionId,
+                                                    expectedAccountId: (pendingAccountLifetime ?? outboundAccountLifetime).scope.accountId,
+                                                },
+                                                isCurrent: isStructuredInputCurrent,
+                                                registerApproval: pendingRecoveryApproval.requestApproval,
+                                                signal: composerPluginActionScopeSignal,
+                                            });
+                                            if (edited.status !== 'accepted') return { status: 'rejected' };
+                                            acceptedReplacementLocalId = edited.localId === activePendingEdit.localId ? null : edited.localId;
+                                            acceptedPreparedAttachments = edited.structuredInput.composerAttachments ?? [];
+                                            if (edited.settlement === 'failed') postAcceptanceError = new Error(t('session.pendingMessages.errors.updateFailed'));
+                                            return { status: 'accepted' };
                                         },
                                     },
                                     clearAcceptedSnapshot: (snapshot) => {
@@ -6611,20 +6620,21 @@ export function useSessionComposerController({
                                 Modal.alert(t('common.error'), t('session.participants.unsupportedAttachmentsOrReviewComments'));
                                 return;
                             }
+                            if (!outboundAccountLifetime.isCurrent()) return;
                             const operations = createScmDiffSummaryResultOperations({
                                 sessionId, serverId: sessionRouteServerId,
                                 accountId: outboundAccountLifetime.scope.accountId,
-                                shouldContinue: () => outboundAccountLifetime.isCurrent(),
-                                composerDraft: { scope: outboundAccountLifetime.scope },
+                                shouldContinue: outboundAccountLifetime.isCurrent,
+                                composerDraft: outboundAccountLifetime,
                             });
                             setIsComposerSending(true);
                             try {
                                 const response = await operations.discuss({ ...scmDiscussion, message: messageToSend });
-                                if (!outboundAccountLifetime.isCurrent()) return;
                                 if (!response.success) {
-                                    Modal.alert(t('common.error'), response.error);
+                                    if (outboundAccountLifetime.isCurrent()) Modal.alert(t('common.error'), response.error);
                                     return;
                                 }
+                                if (!acceptedOutboundAccountLifetime.isCurrent()) return;
                                 const scopeKey = serverAccountScopeKeySuffix(outboundAccountLifetime.scope);
                                 for (const entry of Object.values(getScmDiffSummaryState().entriesByKey)) {
                                     if (entry.scopeKey === scopeKey && entry.sessionId === sessionId
@@ -6636,7 +6646,7 @@ export function useSessionComposerController({
                                 trackMessageSent();
                                 requestMountedTranscriptFollow();
                             } finally {
-                                setIsComposerSending(false);
+                                if (composerPresentationMountedRef.current) setIsComposerSending(false);
                             }
                             return;
                         }
@@ -6764,44 +6774,24 @@ export function useSessionComposerController({
                                             }) : null;
                                             if (attempt && !captured) return { status: 'rejected' };
                                             try {
-                                            const targetedExecutor = hasAttachments || captured?.structuredInput?.composerAttachments?.length
-                                                ? createDefaultActionExecutor({ sessionMessageComposerSubmission: {
+                                            const targetedExecute = hasAttachments || captured?.structuredInput?.composerAttachments?.length
+                                                ? createSessionDraftMessageExecute({
+                                                    sessionTarget: { ...outboundAccountLifetime.scope, sessionId },
                                                     sourceComposerRef: snapshot.ref, isCurrent: outboundAccountLifetime.isCurrent,
-                                                    ...(hasAttachments ? { legacyAttachments: { drafts: capturedLegacyDrafts,
-                                                        config: attachmentsUploadConfig, originalMessage: outboundMessage,
-                                                        onUploadedDraftCheckpoint: checkpoint => {
-                                                            if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) return;
-                                                            const submitted = submittedAttachmentDrafts.find(draft => draft.id === checkpoint.id);
-                                                            const current = getAttachmentDraftsSnapshot().find(draft => draft.id === checkpoint.id);
-                                                            if (!submitted || !current || submitted.source !== current.source) return;
-                                                            applyAttachmentDraftPatch(checkpoint.id, { targetUploadedCheckpoints:
-                                                                recordAttachmentTargetUploadCheckpoint(current.targetUploadedCheckpoints, checkpoint),
-                                                            }, submitted.source);
-                                                        },
-                                                        onUploadedDraftCheckpointStale: stale => {
-                                                            if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) return;
-                                                            const attemptedIds = new Set(stale.handles.map(handle => handle.id));
-                                                            for (const submitted of submittedAttachmentDrafts) {
-                                                                const current = getAttachmentDraftsSnapshot().find(draft => draft.id === submitted.id);
-                                                                if (!current || current.source !== submitted.source) continue;
-                                                                const previous = current.targetUploadedCheckpoints ?? [];
-                                                                const retained = previous.filter(checkpoint =>
-                                                                    !isAttachmentTargetUploadCheckpointFor(checkpoint, stale.target, stale.messageLocalId, stale.executionTarget)
-                                                                    || !checkpoint.attachmentHandle || !attemptedIds.has(checkpoint.attachmentHandle.id));
-                                                                if (retained.length !== previous.length) {
-                                                                    applyAttachmentDraftPatch(submitted.id, { targetUploadedCheckpoints: retained }, submitted.source);
-                                                                }
-                                                            }
-                                                        },
-                                                    } } : {}),
-                                                }, hostActionApprovalLifetime: { actionId: 'session.message.send',
-                                                    signal: composerPluginActionScopeSignal, surface: 'ui' } }) : actionExecutor;
+                                                    drafts: hasAttachments ? submittedAttachmentDrafts : [], config: attachmentsUploadConfig,
+                                                    originalMessage: outboundMessage, signal: composerPluginActionScopeSignal,
+                                                }) : createFrontDoorActionExecute(actionExecutor);
                                             const result = sessionMessaging.kind === 'post_update'
                                                 ? await createFrontDoorActionExecute(actionExecutor)('session.update.post', { summary: snapshot.text }, {
                                                     surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
                                                     expectedAccountId: outboundAccountLifetime.scope.accountId, signal: composerPluginActionScopeSignal,
                                                 })
-                                                : await createFrontDoorActionExecute(targetedExecutor)('session.message.send', {
+                                                : await submitSessionComposerMessagingAction({ execute: targetedExecute,
+                                                    scope: outboundAccountLifetime.scope, sessionId, localId: attempt!.localId,
+                                                    text: snapshot.text, intent: sessionMessaging,
+                                                    isCurrent: () => outboundAccountLifetime.isCurrent() && !composerPluginActionScopeSignal.aborted,
+                                                    isAccountCurrent: acceptedOutboundAccountLifetime.isCurrent,
+                                                    actionInput: {
                                                     sessionId: sessionMessaging.target, message: reviewedMessage,
                                                     ...(attempt ? { localId: attempt.localId } : {}),
                                                     requestedAction: { v: 1, kind: 'send_now' },
@@ -6812,15 +6802,15 @@ export function useSessionComposerController({
                                                         ...((sessionMessaging.reply ?? 'return') === 'return' ? { returnToSessionId: sessionId } : {}),
                                                         ...(sessionMessaging.timeoutSeconds ? { timeoutSeconds: sessionMessaging.timeoutSeconds } : {}),
                                                     } : { reply: 'none' }),
-                                                }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
-                                                    expectedAccountId: outboundAccountLifetime.scope.accountId, signal: composerPluginActionScopeSignal });
-                                            if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) return { status: 'rejected' };
+                                                }, context: { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
+                                                    expectedAccountId: outboundAccountLifetime.scope.accountId, signal: composerPluginActionScopeSignal } });
                                             submissionResult = result;
                                             const outcome = sessionMessaging.kind === 'post_update' ? null : readSessionComposerMessagingOutcome(result);
                                             const admitted = outcome === null
                                                 ? result.ok && SessionUpdatePostOutputV1Schema.safeParse(result.result).success
                                                 : outcome.kind === 'accepted';
                                             if (!admitted) {
+                                                if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) return { status: 'rejected' };
                                                 // The draft and its retry identity stay; say what actually happened.
                                                 if (outcome?.kind === 'partial') {
                                                     Modal.alert(t('session.participants.talk.partialTitle'), t('session.participants.talk.partialBody', {
@@ -6832,6 +6822,7 @@ export function useSessionComposerController({
                                                 }
                                                 return { status: 'rejected' };
                                             }
+                                            if (!acceptedOutboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                                             handoff.accept();
                                             if (attempt) clearSessionMessagingDraftMutationAttempt({ scope: outboundAccountLifetime.scope,
                                                 sessionId, localId: attempt.localId });
@@ -6842,7 +6833,7 @@ export function useSessionComposerController({
                                         },
                                     },
                                     clearAcceptedSnapshot: (acceptedSnapshot) => {
-                                        if (!outboundAccountLifetime.isCurrent()) return false;
+                                        if (!acceptedOutboundAccountLifetime.isCurrent()) return false;
                                         const cleared = clearSemanticDraftValuesAfterOutboundHandoff(semanticDraftSnapshot, {
                                             repositoryFieldIds: sessionMessaging.kind !== 'post_update' && submittedPermissionMode !== null
                                                 ? ['extensions.happier.nextPromptPermissionModeV1'] : [],
@@ -6856,20 +6847,18 @@ export function useSessionComposerController({
                                                 releaseComposerStagedMedia(released.handle, released.claimant);
                                             }
                                         }
-                                        if (cleared.textCleared) transient.clearTransientInputState();
+                                        if (composerPresentationMountedRef.current && cleared.textCleared) transient.clearTransientInputState();
                                         if (shouldSendReviewComments) clearSentReviewCommentDrafts();
                                         let clearedLegacyAttachments = false;
                                         if (hasAttachments) {
                                             const before = getAttachmentDraftsSnapshot();
                                             const remaining = attachmentDraftManager.removeSubmittedDrafts(submittedAttachmentDrafts);
                                             clearedLegacyAttachments = remaining.length !== before.length;
-                                            if (remaining.length === 0) clearMainAttachmentDrafts();
-                                            else writeMainAttachmentDrafts(remaining);
                                         }
                                         return clearedLegacyAttachments || cleared.textCleared || cleared.clearedFieldIds.length > 0;
                                     },
                                 });
-                            } finally { setIsComposerSending(false); }
+                            } finally { if (composerPresentationMountedRef.current) setIsComposerSending(false); }
                             return;
                         }
 
@@ -6981,9 +6970,11 @@ export function useSessionComposerController({
 
                         const mergeBrowserContextMetaForSend = (
                             metaOverrides?: Record<string, unknown>,
+                            uploadedAttachments?: Parameters<typeof mergeBrowserContextMessageMetaOverrides>[0]['uploadedAttachments'],
                         ): Record<string, unknown> | undefined | null => {
                             const result = mergeBrowserContextMessageMetaOverrides({
                                 state: browserContextStateForComposer,
+                                uploadedAttachments,
                                 metaOverrides: submittedPermissionMode
                                     ? { ...metaOverrides, permissionMode: submittedPermissionMode }
                                     : metaOverrides,
@@ -6997,6 +6988,12 @@ export function useSessionComposerController({
                         if (mergeBrowserContextMetaForSend() === null) {
                             return;
                         }
+
+                        const ensureReadyForComposerSend = async () => {
+                            if (outboundDestination.kind === 'sessionAgent' && !isSessionActive && resumeEligibility === 'unknown'
+                                && !(await handleResumeSession())) return false;
+                            return await externalSessionTakeover.ensureReadyForSend();
+                        };
 
                         const submittedComposerText = composerTextBeforeSend;
                         const sendSnapshot = { sessionId, text: submittedComposerText };
@@ -7019,20 +7016,20 @@ export function useSessionComposerController({
                             requestMountedTranscriptFollow();
                         };
                         const clearAfterOutboundHandoff = () => {
-                            if (!outboundAccountLifetime.isCurrent()) return false;
+                            if (!acceptedOutboundAccountLifetime.isCurrent()) return false;
                             // Composer admission ends at the durable outbound handoff. Runtime
                             // wake and provider delivery continue through their canonical session/Pending
                             // projections and must not keep the submit button in a local sending state.
-                            setIsComposerSending(false);
+                            if (composerPresentationMountedRef.current) setIsComposerSending(false);
                             const clearResult = clearSemanticDraftValuesAfterOutboundHandoff(semanticDraftSnapshot);
                             semanticDraftFieldsClearedAtHandoff = clearResult.clearedFieldIds;
                             didClearTextAtOutboundHandoff = clearResult.textCleared;
-                            if (clearResult.textCleared) {
+                            if (composerPresentationMountedRef.current && clearResult.textCleared) {
                                 transientInputStateHandoff.clearTransientInputState();
                             }
                             const didClear = clearResult.textCleared
                                 || clearResult.clearedFieldIds.length > 0;
-                            if (didClear) {
+                            if (composerPresentationMountedRef.current && didClear) {
                                 semanticDraftSnapshotAfterHandoffClear = captureComposerSemanticDraftCurrentnessSnapshot();
                             }
                             didClearAtOutboundHandoff = didClearAtOutboundHandoff || didClear;
@@ -7064,21 +7061,22 @@ export function useSessionComposerController({
                                     surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
                                     expectedAccountId: outboundAccountLifetime.scope.accountId, signal: cancellation.signal,
                                 });
+                                const applied = result.ok ? PendingResetStartSetResultV1Schema.safeParse(result.result) : null;
+                                if (applied?.success && applied.data.requestedAction.kind === 'reset_start'
+                                    && sameStrictJsonValue(applied.data.requestedAction.reset, resetStart)) {
+                                    if (!acceptedOutboundAccountLifetime.isCurrent()) return { status: 'rejected' };
+                                    outboundHandoffLocalId = prepared.localId;
+                                    onAccepted();
+                                    recordOutboundAccepted();
+                                    return { status: 'accepted' };
+                                }
                                 if (!outboundAccountLifetime.isCurrent() || cancellation.signal.aborted) return { status: 'rejected' };
                                 if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
                                     Modal.alert(t('usage.board.plans.resetStartTitle'), t('usage.board.plans.waitingApproval'));
                                     return { status: 'rejected' };
                                 }
-                                const applied = result.ok ? PendingResetStartSetResultV1Schema.safeParse(result.result) : null;
-                                if (!applied?.success || applied.data.requestedAction.kind !== 'reset_start'
-                                    || !sameStrictJsonValue(applied.data.requestedAction.reset, resetStart)) {
-                                    Modal.alert(t('common.error'), result.ok ? t('usage.board.plans.resetStartFailed') : usageResetStartFailureMessage(result));
-                                    return { status: 'rejected' };
-                                }
-                                outboundHandoffLocalId = prepared.localId;
-                                onAccepted();
-                                recordOutboundAccepted();
-                                return { status: 'accepted' };
+                                Modal.alert(t('common.error'), result.ok ? t('usage.board.plans.resetStartFailed') : usageResetStartFailureMessage(result));
+                                return { status: 'rejected' };
                             } catch (error) {
                                 if (outboundAccountLifetime.isCurrent() && !cancellation.signal.aborted) {
                                     Modal.alert(t('common.error'), error instanceof Error ? error.message : t('usage.board.plans.resetStartFailed'));
@@ -7146,7 +7144,6 @@ export function useSessionComposerController({
                         };
                         const restoreAttachmentDraftsFromSnapshot = (drafts: readonly AttachmentDraft[]) => {
                             attachmentDraftManager.replaceDrafts(drafts);
-                            writeMainAttachmentDrafts(drafts);
                         };
                         const restoreAfterFailedOutboundHandoff = (attachmentDraftsForRestore?: readonly AttachmentDraft[]) => {
                             const didRestore = restoreComposerAfterFailedOutboundHandoff({
@@ -7348,6 +7345,10 @@ export function useSessionComposerController({
                                 });
                                 return { status: 'rejected' };
                             }
+                            if (result.type === 'partially_applied' && result.applied === 'current_view_committed' && result.errorDetail) {
+                                presentResumeFailureRecovery(resolveResumeFailurePresentation({ errorDetail: result.errorDetail },
+                                    t('session.resumeFailed')), false, undefined, transitionSubmission.targetAgentLabel);
+                            }
                             // The armed row is dropped only once it stops being a
                             // truthful promise about the next message.
                             // Where canonical admission also clears the draft, keep
@@ -7399,7 +7400,7 @@ export function useSessionComposerController({
                                 };
                                 let attachmentDraftsForRestore = readSubmittedAttachmentDraftsFromCurrent();
                                 try {
-                                    const readyForSend = resetStart ? true : await externalSessionTakeover.ensureReadyForSend();
+                                    const readyForSend = resetStart ? true : await ensureReadyForComposerSend();
                                     if (!readyForSend || !outboundAccountLifetime.isCurrent()) {
                                         return { status: 'rejected' };
                                     }
@@ -7427,7 +7428,7 @@ export function useSessionComposerController({
                                         return { status: 'rejected' };
                                     }
                                     if (!resetStart && attachmentSendDestination.kind === 'sessionAgent'
-                                        && !isSessionActive && isResumable) {
+                                        && !isSessionActive && isResumable && resumeEligibility !== 'unknown') {
                                         const resumed = await handleResumeSession();
                                         if (!resumed || !outboundAccountLifetime.isCurrent()) {
                                             throw new Error(t('session.resumeFailed'));
@@ -7436,6 +7437,7 @@ export function useSessionComposerController({
 
                                     const { uploaded } = await uploadAttachmentDraftsToSession({
                                         sessionId,
+                                        sessionTarget: { ...outboundAccountLifetime.scope, sessionId },
                                         signal: composerPluginActionScopeSignal,
                                         drafts: submittedAttachmentDrafts,
                                         config: attachmentsUploadConfig,
@@ -7445,7 +7447,9 @@ export function useSessionComposerController({
                                         },
                                     });
                                     if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
-                                    const attachmentsMetaOverrides = buildAttachmentMessageMeta(uploaded);
+                                    // Input admission consumes issued handles. The daemon alone
+                                    // resolves them into transcript attachment descriptions.
+                                    const attachmentsMetaOverrides = buildSessionAttachmentIngressMeta(uploaded);
 
                                     const outbound = shouldSendReviewComments
                                         ? buildReviewCommentsOutboundMessage({
@@ -7473,7 +7477,7 @@ export function useSessionComposerController({
                                         outbound.metaOverrides,
                                         admissionStructuredInputMetaOverrides,
                                     );
-                                    const outboundMetaOverridesWithBrowserContext = mergeBrowserContextMetaForSend(outboundMetaOverrides);
+                                    const outboundMetaOverridesWithBrowserContext = mergeBrowserContextMetaForSend(outboundMetaOverrides, uploaded);
                                     if (outboundMetaOverridesWithBrowserContext === null) {
                                         return { status: 'rejected' };
                                     }
@@ -7481,11 +7485,10 @@ export function useSessionComposerController({
                                     attachmentDraftsForRestore = readSubmittedAttachmentDraftsFromCurrent();
                                     let didClearForAttachmentHandoff = false;
                                     const removeSubmittedAttachmentDraftsFromCurrent = () => {
-                                        const nextDrafts = attachmentDraftManager.removeSubmittedDrafts(submittedAttachmentDrafts);
-                                        writeMainAttachmentDrafts(nextDrafts);
+                                        attachmentDraftManager.removeSubmittedDrafts(submittedAttachmentDrafts);
                                     };
                                     const clearAttachmentsAfterProjectionHandoff = () => {
-                                        if (!outboundAccountLifetime.isCurrent()) return;
+                                        if (!acceptedOutboundAccountLifetime.isCurrent()) return;
                                         if (didClearForAttachmentHandoff) return;
                                         removeSubmittedAttachmentDraftsFromCurrent();
                                         didClearForAttachmentHandoff = handoff.accept();
@@ -7565,7 +7568,7 @@ export function useSessionComposerController({
                                             : null,
                                         permissionOverride: getPermissionModeOverrideForSpawn(sessionForSubmit),
                                         serverId: sessionRouteServerId,
-                                        accountLifetime: outboundAccountLifetime,
+                                        accountLifetime: acceptedOutboundAccountLifetime,
                                         requestRemoteControlAfterPendingEnqueue: shouldRequestRemoteControlAfterPendingEnqueue(sessionForSubmit, cliAuthState),
                                         callerSurface,
                                         onOutboundHandoff: (handoff) => {
@@ -7579,9 +7582,7 @@ export function useSessionComposerController({
                                     if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                                     clearReviewDraftsAfterSubmit(result);
                                     if (!composerPresentationMountedRef.current) return { status: 'rejected' };
-                                    if (result.type === 'wake_failed' && resolveResumeFailurePresentation(result, t('session.resumeFailed')).kind === 'directory_missing') {
-                                        setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false });
-                                    }
+                                    if (result.type === 'wake_failed') presentResumeFailureRecovery(resolveResumeFailurePresentation(result, t('session.resumeFailed')));
                                     if (result.type === 'send_failed' || result.type === 'rejected') {
                                         // An unavailable ACK does not revoke custody already
                                         // published by canonical Pending or the transcript.
@@ -7610,6 +7611,7 @@ export function useSessionComposerController({
                                     recordOutboundAccepted(result.localId ?? undefined);
                                     return { status: 'accepted' };
                                 } catch (e) {
+                                    if (e instanceof AttachmentUploadCancelled) return { status: 'rejected' };
                                     if (canRestoreFailedAttachmentHandoffSnapshot()) {
                                         restoreAfterFailedOutboundHandoff(attachmentDraftsForRestore);
                                     }
@@ -7657,7 +7659,7 @@ export function useSessionComposerController({
 
                                 if (!outbound) return { status: 'rejected' };
 
-                                const readyForSend = resetStart ? true : await externalSessionTakeover.ensureReadyForSend();
+                                const readyForSend = resetStart ? true : await ensureReadyForComposerSend();
                                 if (!readyForSend || !outboundAccountLifetime.isCurrent()) {
                                     return { status: 'rejected' };
                                 }
@@ -7831,7 +7833,7 @@ export function useSessionComposerController({
                                         : null,
                                     permissionOverride: getPermissionModeOverrideForSpawn(sessionForSubmit),
                                     serverId: sessionRouteServerId,
-                                    accountLifetime: outboundAccountLifetime,
+                                    accountLifetime: acceptedOutboundAccountLifetime,
                                     requestRemoteControlAfterPendingEnqueue: shouldRequestRemoteControlAfterPendingEnqueue(sessionForSubmit, cliAuthState),
                                     callerSurface,
                                     onOutboundHandoff: (handoff) => {
@@ -7847,9 +7849,7 @@ export function useSessionComposerController({
                                 clearReviewDraftsAfterSubmit(result);
                                 if (!composerPresentationMountedRef.current) return { status: 'rejected' };
 
-                                if (result.type === 'wake_failed' && resolveResumeFailurePresentation(result, t('session.resumeFailed')).kind === 'directory_missing') {
-                                    setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false });
-                                }
+                                if (result.type === 'wake_failed') presentResumeFailureRecovery(resolveResumeFailurePresentation(result, t('session.resumeFailed')));
                                 if (result.type === 'send_failed' || result.type === 'rejected') {
                                     if (acceptCanonicalOutboundHandoff(result.localId, () => admissionHandoff.accept())) {
                                         Modal.alert(t('common.error'), result.errorMessage ?? t('common.unavailable'));
@@ -7884,10 +7884,11 @@ export function useSessionComposerController({
 
                     // Resolve commands/templates from the cleaned authoring text, before
                     // expansion moves its ranges. Custody still compares the original draft.
-                    const messageForResolution = prepareComposerSubmissionSnapshot(
+                    const composerForResolution = prepareComposerSubmissionSnapshot(
                         readSessionComposerSubmissionSnapshot(composerMessage),
                         getAttachmentDraftsSnapshot().map(draft => draft.id),
-                    ).text;
+                    );
+                    const messageForResolution = composerForResolution.text;
                     if (sendOptions?.resetStart) {
                         await sendComposerText(messageForResolution, composerMessage, sendOptions);
                         return;
@@ -7903,6 +7904,10 @@ export function useSessionComposerController({
                     const promptInvocationsV1 = invocationCatalog.status === 'ready' && !invocationCatalog.stale ? invocationCatalog.value : null;
                     const resolved = resolveSessionComposerSend({
                         input: messageForResolution,
+                        emptyInputFallback: (armedContinuationTarget !== null || armedRouteContinuation !== null)
+                            && getAttachmentDraftsSnapshot().length === 0
+                            && composerForResolution.attachments.length === 0 && !hasIncludedReviewCommentDrafts
+                            ? t('common.continue') : undefined,
                         sessionId,
                         executionRunsEnabled,
                         goalControlsAvailable: providerSupportsEditableSessionGoals,
@@ -7933,20 +7938,7 @@ export function useSessionComposerController({
                         return;
                     }
 
-                    if (
-                        resolved.kind === 'goal' ||
-                        (
-                            resolved.kind === 'action' &&
-                            (
-                                resolved.actionId === 'ui.voice_global.reset' ||
-                                resolved.actionId === 'ui.pet.choose' ||
-                                resolved.actionId === 'execution.run.list' ||
-                                resolved.actionId === 'review.start' ||
-                                resolved.actionId === 'subagents.plan.start' ||
-                                resolved.actionId === 'subagents.delegate.start'
-                            )
-                        )
-                    ) {
+                    if (resolved.kind === 'goal' || resolved.kind === 'action') {
                         if (!agentId && resolved.kind === 'action' && resolved.actionId !== 'ui.pet.choose') {
                             Modal.alert(t('common.error'), t('session.resumeFailed'));
                             return;
@@ -7957,6 +7949,7 @@ export function useSessionComposerController({
                             sessionId,
                             accountLifetime: sessionAccountLifetime,
                             accountScope: sessionAccountScope,
+                            openExecutionRunDraft,
                             agentId: agentId ?? '',
                             backendTarget: resolveSessionActionDefaultTarget(sessionActionDefaultBackend),
                             permissionMode,
@@ -8010,6 +8003,7 @@ export function useSessionComposerController({
                 }
                 instrumentQuota={instrumentQuota}
                 statusBadges={agentInputStatusBadges}
+                statusRegions={composerPluginPresentation.statusRegions}
                 activeStatusBadgeKey={activeStatusBadgeKey}
                 onActiveStatusBadgeKeyChange={setActiveStatusBadgeKey}
                 extraActionChips={agentInputExtraActionChips}
@@ -8062,7 +8056,6 @@ export function useSessionComposerController({
         machineId,
         sessionRouteServerId,
         sessionAccountLifetime,
-        attachmentDraftManager,
         cliAuthState,
         currentSessionAgentCatalogEntry,
         controlSwitchAttemptIdRef,
@@ -8073,7 +8066,9 @@ export function useSessionComposerController({
         sessionViewCaller,
         executeRecoveryAction,
         externalTranscriptAuthorityState,
-        externalSessionTakeover,
+        externalSessionTakeoverRequestPreflight: externalSessionTakeover.requestTakeoverPreflight,
+        externalSessionTakeoverInFlight: externalSessionTakeover.takeoverInFlight,
+        externalSessionTakeoverPreflightInFlight: externalSessionTakeover.takeoverPreflightInFlight,
         externalSessionOperationShell,
         isHiddenSystemSessionSession,
         sessionAccountScope,
@@ -8081,20 +8076,17 @@ export function useSessionComposerController({
         sessionMachineAccessRemoved,
         machineName,
         inactiveUi,
-        theme,
         isLocallyAttached,
         shouldShowInput,
         bottomNotice,
         followBottomIntentSeq,
-        setFollowBottomIntentSeq,
         handleEditPendingMessage,
         boardPresentationUndoCurrentRef,
         actionExecutor,
         presentSessionActionOutcome,
-        activeStatusBadgeKey,
         setActiveStatusBadgeKey,
         sessionPresentationApplierRef,
-        sessionStatus,
+        sessionStatusState: sessionStatus.state,
         handleResumeSession
     } };
 }

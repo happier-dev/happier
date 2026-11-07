@@ -1,10 +1,12 @@
 import * as React from 'react';
+import { useStore } from 'zustand';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_PICKS_SOURCE_ID,
   type RegistryItemSummaryV1,
   type RegistryItemV1,
+  type RegistryItemPointerV1,
 } from '@happier-dev/protocol/registries';
 import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import { findHeldSkillV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
@@ -17,60 +19,69 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import {
   CapabilityAddModalBody,
   openCapabilityAddModalHost,
+  type CapabilityAddInputContext,
   type CapabilityAddModalConfig,
 } from '@/components/capabilities/add/CapabilityAddModal';
 import type { CapabilityTrust } from '@/components/capabilities/facts/CapabilityFacts';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import type { CustomModalInjectedProps } from '@/modal/types';
+import type { CustomModalDismissGuard, CustomModalInjectedProps } from '@/modal/types';
+import { useAuthoringDraftExitGuard } from '@/utils/navigation/useAuthoringDraftExitGuard';
 import { describeRegistrySourceStatus } from '@/registries/describeRegistrySourceStatus';
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import { useRegistryItems } from '@/registries/useRegistryItems';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { useRegistrySourcesSlot } from '@/registries/useRegistrySourcesSlot';
+import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
 import { useSkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
+import { SkillMark } from '../SkillKindGlyph';
 import { skillSource, skillSourceVerification } from '../skillsCollectionModel';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
 import { installSkills, previewSkillInstall, retrySkillInstall, describeSkillInstallIncomplete, type SkillInstallAcknowledgment } from './skillInstall';
-import { SkillLinkInput } from './SkillLinkInput';
-import { SkillUploadInput } from './SkillUploadInput';
+import { SkillLinkInput, createSkillLinkDraft, skillLinkMatchesPreview } from './SkillLinkInput';
+import { SkillUploadInput, createSkillUploadDraft } from './SkillUploadInput';
+import { commitSkillFoundDraft, createSkillFoundDraft } from './SkillFoundAdd';
+import { SkillWriteInput } from './SkillWriteInput';
+import { useSkillDraft } from './useSkillDraft';
 import { SkillInLibraryMark } from './SkillPreviewRows';
 import { SkillAddDetailBody, useSkillSiblingChoice } from './SkillAddDetailBody';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 
 export type SkillAddModeKey = 'browse' | 'link' | 'upload' | 'write';
+export type SkillAddSelection = Readonly<Omit<RegistryItemPointerV1, 'version'> & { version?: string }>;
 
 export type OpenSkillAddModalParams = Readonly<{
   modeKey?: SkillAddModeKey;
   sourceId?: string;
   query?: string;
+  initialSelection?: SkillAddSelection;
   /** The page selects the new row (the first skill added). */
   onAdded?: (skillId: string) => void;
-  /** Write: the page's draft (`/settings/skills/new`). */
-  onWrite: () => void;
 }>;
 
 const TEST_ID = 'skills.add';
+const EMPTY_FOUND_DRAFT = createSkillFoundDraft();
 
 /** Add a skill (P6 §4.4): Browse your registries, From a link, Upload, or Write, in the one capability Add modal. */
 export function openSkillAddModal(
   params: OpenSkillAddModalParams,
 ): Readonly<{ close: () => void }> {
+  let dismissGuard: CustomModalDismissGuard | null = null;
   return openCapabilityAddModalHost(
     SkillAddModal,
-    { params },
-    { title: t('capabilities.skillAdd.title'), testID: TEST_ID },
+    { params, registerDismissGuard: (guard: CustomModalDismissGuard | null) => { dismissGuard = guard; } },
+    { title: t('capabilities.skillAdd.title'), testID: TEST_ID, onDismissRequest: reason => dismissGuard?.(reason) },
   );
 }
 
 type Row = RegistryItemSummaryV1;
-const rowKey = (row: Row) => `${row.sourceId}|${row.itemId}`;
+const rowKey = (row: Pick<Row, 'sourceId' | 'itemId'>) => `${row.sourceId}|${row.itemId}`;
 const shortRef = (version: string | undefined) =>
   version && /^[0-9a-f]{40}$/.test(version)
     ? version.slice(0, 7)
@@ -92,12 +103,6 @@ function rowDescription(row: Row): string | null {
   if (!description) return null;
   return description === repositoryLabel(row.links?.repository) || description === row.publisher?.name ? null : description;
 }
-function compactCount(count: number): string {
-  return count >= 1000
-    ? `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`
-    : String(count);
-}
-
 type AddState =
   | Readonly<{ status: 'adding' }>
   | Readonly<{
@@ -107,14 +112,98 @@ type AddState =
     }>
   | Readonly<{ status: 'failed'; error: string }>;
 
-export function SkillAddModal(
-  props: CustomModalInjectedProps &
-    Readonly<{ params: OpenSkillAddModalParams }>,
-): React.ReactElement {
+type SkillAddModalProps = CustomModalInjectedProps & Readonly<{
+  params: OpenSkillAddModalParams; registerDismissGuard?: (guard: CustomModalDismissGuard | null) => void;
+}>;
+type SkillAddControllerProps = SkillAddModalProps & Readonly<{
+  children: (config: CapabilityAddModalConfig<Row> | null, resolving: boolean, requestClose: () => void) => React.ReactNode;
+}>;
+
+export function SkillAddModal(props: SkillAddModalProps): React.ReactElement {
+  return <SkillAddController {...props}>{(config, resolving, requestClose) => config
+    ? <CapabilityAddModalBody {...props} onClose={requestClose} config={config} />
+    : <SurfaceStateCard kind={resolving ? 'loading' : 'error'} size="line"
+      title={resolving ? t('common.loading') : t('common.unavailable')} testID={`${TEST_ID}.unavailable`} />}
+  </SkillAddController>;
+}
+
+/** One native draft, exact read and receipt owner for Add and Store listing hosts. */
+export function SkillAddController(props: SkillAddControllerProps): React.ReactNode {
+  const writeDraft = useSkillDraft();
+  if (!writeDraft.current) return props.children(null, writeDraft.resolving, props.onClose);
+  return <SkillAddModalContent {...props} writeDraft={writeDraft} />;
+}
+
+function SkillAddModalContent(props: SkillAddControllerProps & Readonly<{
+  writeDraft: ReturnType<typeof useSkillDraft>;
+}>): React.ReactNode {
   const { params } = props;
   const { theme } = useUnistyles();
   const scope = useAccountSettingsScope();
   const { execute } = useMountedActionExecution(scope?.serverId ?? null);
+  const [linkDraft] = React.useState(createSkillLinkDraft);
+  const [uploadDraft] = React.useState(createSkillUploadDraft);
+  const { writeDraft } = props;
+  const writeDirty = useStore(writeDraft.store, state => state.dirty);
+  const linkPresent = useStore(linkDraft, state => state.url.trim() !== '');
+  const linkMatchesPreview = useStore(linkDraft, skillLinkMatchesPreview);
+  const linkFound = useStore(linkDraft, state => state.state.kind === 'found' ? state.state.draft : EMPTY_FOUND_DRAFT);
+  const uploadFound = useStore(uploadDraft, state => state.state.kind === 'ready' ? state.state.draft : EMPTY_FOUND_DRAFT);
+  const linkSettled = useStore(linkFound, state => state.acknowledged !== null || [...state.detailAdds.values()].some(add => add.status === 'added'));
+  const uploadSettled = useStore(uploadFound, state => state.acknowledged !== null || [...state.detailAdds.values()].some(add => add.status === 'added'));
+  const linkSaveable = useStore(linkFound, state => !state.adding && state.ticks.ticked.size > 0);
+  const uploadSaveable = useStore(uploadFound, state => !state.adding && state.ticks.ticked.size > 0);
+  const inputDirty = linkPresent && !(linkMatchesPreview && linkSettled) || uploadFound !== EMPTY_FOUND_DRAFT && !uploadSettled;
+  const isDirty = writeDirty || inputDirty;
+  const dirtyRef = React.useRef(isDirty);
+  dirtyRef.current = isDirty;
+  const discard = React.useCallback(() => {
+    writeDraft.reset();
+    linkDraft.setState({ url: '', state: { kind: 'idle' } });
+    uploadDraft.setState({ state: { kind: 'idle' } });
+    dirtyRef.current = false;
+  }, [linkDraft, uploadDraft, writeDraft.reset]);
+  const save = React.useCallback(async () => {
+    if (!writeDraft.isCurrent()) return false;
+    const link = linkDraft.getState();
+    const upload = uploadDraft.getState();
+    const inputsUnchanged = () => linkDraft.getState().url === link.url && linkDraft.getState().state === link.state
+      && uploadDraft.getState().state === upload.state;
+    if (writeDraft.store.getState().dirty && (await writeDraft.create()) === null) return false;
+    if (!inputsUnchanged() || !writeDraft.isCurrent()) return false;
+    if (link.url.trim() !== '' && !linkSettled) {
+      if (!skillLinkMatchesPreview(link) || link.state.kind !== 'found') return false;
+      if ((await commitSkillFoundDraft(link.state.draft, execute, link.state.source, link.state.items)) === null) return false;
+    }
+    if (!inputsUnchanged() || !writeDraft.isCurrent()) return false;
+    if (upload.state.kind === 'ready' && !uploadSettled) {
+      if (!writeDraft.isCurrent()) return false;
+      if ((await commitSkillFoundDraft(upload.state.draft, execute,
+        { kind: 'upload', files: [...upload.state.files] }, upload.state.items)) === null) return false;
+    }
+    return writeDraft.isCurrent() && inputsUnchanged() && !writeDraft.store.getState().dirty;
+  }, [execute, linkDraft, linkSettled, uploadDraft, uploadSettled, writeDraft.create, writeDraft.isCurrent, writeDraft.store]);
+  const canSaveInputs = (!linkPresent || linkMatchesPreview && (linkSettled || linkSaveable))
+    && (uploadFound === EMPTY_FOUND_DRAFT || uploadSettled || uploadSaveable);
+  const exit = useAuthoringDraftExitGuard({ isDirty, isDirtyRef: dirtyRef, onDiscard: discard,
+    onSave: canSaveInputs ? save : undefined, onContinue: props.onClose });
+  const depart = React.useCallback(async (leave: () => void) => {
+    const link = linkDraft.getState();
+    const upload = uploadDraft.getState();
+    const settled = (found: ReturnType<typeof createSkillFoundDraft>) => found.getState().acknowledged !== null
+      || [...found.getState().detailAdds.values()].some(add => add.status === 'added');
+    dirtyRef.current = writeDraft.store.getState().dirty
+      || link.url.trim() !== '' && !(skillLinkMatchesPreview(link) && link.state.kind === 'found' && settled(link.state.draft))
+      || upload.state.kind === 'ready' && !settled(upload.state.draft);
+    if (await exit.requestExit() && writeDraft.isCurrent()) leave();
+  }, [exit.requestExit, linkDraft, uploadDraft, writeDraft.isCurrent, writeDraft.store]);
+  const close = React.useCallback(() => depart(props.onClose), [depart, props.onClose]);
+  const openSkill = React.useCallback((id: string) => depart(() => { props.onClose(); params.onAdded?.(id); }),
+    [depart, params.onAdded, props.onClose]);
+  React.useEffect(() => {
+    props.registerDismissGuard?.(exit.requestExit);
+    return () => props.registerDismissGuard?.(null);
+  }, [exit.requestExit, props.registerDismissGuard]);
   const library = useSkillsLibrary();
   const { sources: allSources } = useRegistrySources('skill');
   const sourceTitle = React.useCallback(
@@ -138,25 +227,28 @@ export function SkillAddModal(
             ? { ref: item.provenance.registry.ref.commit.slice(0, 7) }
             : {}),
           onOpen: () => {
-            props.onClose();
-            params.onAdded?.(item.skillId);
+            void openSkill(item.skillId);
           },
         })),
-    [library.items, params, props],
+    [library.items, openSkill],
   );
+  const [seedRequested, setSeedRequested] = React.useState(params.initialSelection !== undefined);
+  const discardSeed = React.useCallback(() => setSeedRequested(false), []);
   const slot = useRegistrySourcesSlot('skill', {
     itemsFromSource,
-    ...(params.sourceId ? { initialSelection: params.sourceId } : {}),
+    ...((params.initialSelection?.sourceId ?? params.sourceId)
+      ? { initialSelection: params.initialSelection?.sourceId ?? params.sourceId } : {}),
+    onSelectionChange: discardSeed,
     testID: `${TEST_ID}.registries`,
   });
   const [query, setQuery] = React.useState(params.query ?? '');
+  const changeQuery = React.useCallback((value: string) => { setQuery(value); setSeedRequested(false); }, []);
   const [catalogDemanded, setCatalogDemanded] = React.useState((params.modeKey ?? 'browse') === 'browse');
-  const onModeChange = React.useCallback((key: string) => setCatalogDemanded(key === 'browse'), []);
   const catalog = useRegistryItems({
     kind: 'skill',
     ...(slot.sourceIds ? { sourceIds: slot.sourceIds } : {}),
     ...(query.trim() ? { query: query.trim() } : {}),
-  }, catalogDemanded);
+  }, catalogDemanded && !seedRequested);
 
   // What the details read (the pinned version the primary installs) and what the person picked for Where.
   const [reads, setReads] = React.useState<ReadonlyMap<string, RegistryItemV1>>(
@@ -188,12 +280,16 @@ export function SkillAddModal(
     [],
   );
   const onRead = React.useCallback(
-    (key: string, item: RegistryItemV1) =>
-      setReads((previous) =>
-        previous.get(key) === item
-          ? previous
-          : new Map(previous).set(key, item),
-      ),
+    (key: string, item: RegistryItemV1 | null) =>
+      setReads((previous) => {
+        if (item === null) {
+          if (!previous.has(key)) return previous;
+          const next = new Map(previous);
+          next.delete(key);
+          return next;
+        }
+        return previous.get(key) === item ? previous : new Map(previous).set(key, item);
+      }),
     [],
   );
 
@@ -238,38 +334,18 @@ export function SkillAddModal(
     [adds, execute, library, setAdd],
   );
 
-  // The row's quick Add reads the item first (the same pinned version) and sends no Where.
-  const quickAdd = React.useCallback(
-    async (row: Row) => {
-      const key = rowKey(row);
-      const previous = adds.get(key);
-      if (previous?.status === 'added') {
-        await install(row, '', previous.where);
-        return;
-      }
-      setAdd(key, { status: 'adding' });
-      const read = await execute('registries.items.read', {
-        kind: 'skill',
-        sourceId: row.sourceId,
-        itemId: row.itemId,
-      });
-      const version = read.ok
-        ? (read.result as { item?: RegistryItemV1 } | undefined)?.item?.summary
-            .version
-        : undefined;
-      if (!version) {
-        setAdd(key, {
-          status: 'failed',
-          error: 'registry_version_unavailable',
-        });
-        return;
-      }
-      await install(row, version, undefined).catch(() => undefined);
-    },
-    [adds, execute, install, setAdd],
-  );
-
-  const items = catalog.items;
+  const seed = params.initialSelection;
+  const seedActive = seedRequested && seed !== undefined;
+  const items = React.useMemo(() => {
+    if (!seedActive || !seed) return catalog.items;
+    const listed = catalog.items.find(row => rowKey(row) === rowKey(seed));
+    const read = reads.get(rowKey(seed));
+    const summary = read && (!seed.version || read.summary.version === seed.version) ? read.summary : null;
+    const row = summary ? admitRegistrySummaryMark(summary, listed)
+      : listed && (!seed.version || listed.version === seed.version) ? listed
+        : admitRegistrySummaryMark({ ...seed, kind: 'skill', title: seed.itemId });
+    return [row, ...catalog.items.filter(item => rowKey(item) !== rowKey(row))];
+  }, [catalog.items, reads, seed, seedActive]);
   const groups = React.useMemo(() => {
     const picks = items
       .filter((row) => row.sourceId === HAPPIER_PICKS_SOURCE_ID)
@@ -304,6 +380,8 @@ export function SkillAddModal(
       buildCapabilityCollectionAnatomy<Row>({
         title: (row) => row.title,
         description: rowDescription,
+        // The same skill mark the library rail draws (lab `m:skill`): registry skills carry no brand of their own.
+        mark: () => <SkillMark />,
         whereSummary: (row) => {
           const state = adds.get(rowKey(row));
           const inLibrary =
@@ -326,50 +404,15 @@ export function SkillAddModal(
                     },
                   }
                 : {}),
-            extra: [
-              ...(row.installs !== undefined
-                ? [compactCount(row.installs)]
-                : []),
-              t('capabilities.skillAdd.via', {
+            extra: [t('capabilities.skillAdd.via', {
                 source: sourceTitle(row.sourceId),
-              }),
-            ],
+              })],
           };
-        },
-        action: (row) => {
-          const key = rowKey(row);
-          const state = adds.get(key);
-          if (state?.status === 'added' && (!state.outcome.ok || state.outcome.incomplete.length > 0)) return (
-            <SurfaceStateCard kind="error" size="line" title={describeSkillInstallIncomplete(state.outcome)}
-              action={{ label: t('capabilities.skillAdd.partial.tryAgain'), onPress: () => quickAdd(row) }}
-              testID={`${TEST_ID}.row.${row.itemId}.partial`} />
-          );
-          if (
-            state?.status === 'added' ||
-            libraryMatch(library.items, row) !== null ||
-            row.problem
-          )
-            return null;
-          return (
-            <RoundButton
-              size="small"
-              display="secondary"
-              title={
-                state?.status === 'failed'
-                  ? t('capabilities.skillAdd.partial.tryAgain')
-                  : t('capabilities.skillAdd.add')
-              }
-              loading={state?.status === 'adding'}
-              disabled={state?.status === 'adding'}
-              onPress={() => void quickAdd(row)}
-              testID={`${TEST_ID}.row.${row.itemId}.add`}
-            />
-          );
         },
         accessibilityLabel: (row) => row.title,
         testID: (row) => `${TEST_ID}.row.${row.itemId}`,
       }),
-    [adds, library.items, quickAdd, sourceTitle, theme.colors.text.secondary],
+    [adds, library.items, sourceTitle],
   );
 
   const config = React.useMemo(
@@ -377,7 +420,8 @@ export function SkillAddModal(
       title: t('capabilities.skillAdd.title'),
       testID: TEST_ID,
       initialModeKey: params.modeKey ?? 'browse',
-      onModeChange,
+      ...(seedActive && seed ? { initialItemKey: rowKey(seed) } : {}),
+      onCatalogDemandChange: setCatalogDemanded,
       modes: [
         {
           key: 'browse',
@@ -393,18 +437,18 @@ export function SkillAddModal(
           ownsTools: true,
           renderBody: (ctx) => (
             <SkillLinkInput
+              draft={linkDraft}
               ctx={ctx}
               execute={execute}
               onAdded={(skillId) => {
                 library.retry();
-                props.onClose();
-                params.onAdded?.(skillId);
+                return openSkill(skillId);
               }}
               onSelectAdded={(skillId) => {
                 library.retry();
-                params.onAdded?.(skillId);
+                return openSkill(skillId);
               }}
-              onDone={props.onClose}
+              onDone={close}
               testID={`${TEST_ID}.link`}
             />
           ),
@@ -417,18 +461,18 @@ export function SkillAddModal(
           ownsTools: true,
           renderBody: (ctx) => (
             <SkillUploadInput
+              draft={uploadDraft}
               ctx={ctx}
               execute={execute}
               onAdded={(skillId) => {
                 library.retry();
-                props.onClose();
-                params.onAdded?.(skillId);
+                return openSkill(skillId);
               }}
               onSelectAdded={(skillId) => {
                 library.retry();
-                params.onAdded?.(skillId);
+                return openSkill(skillId);
               }}
-              onDone={props.onClose}
+              onDone={close}
               testID={`${TEST_ID}.upload`}
             />
           ),
@@ -437,14 +481,18 @@ export function SkillAddModal(
           key: 'write',
           label: t('capabilities.skillAdd.modes.write'),
           icon: 'pencil-simple',
-          kind: 'handoff',
-          onSelect: params.onWrite,
+          kind: 'input',
+          ownsTools: true,
+          // The skill's files lead the list; SKILL.md, being written, is the details (lab `k:write`).
+          renderBody: (ctx: CapabilityAddInputContext) => <SkillWriteInput ctx={ctx} draft={writeDraft} onOpen={skillId => {
+            library.retry(); return openSkill(skillId);
+          }} onDone={close} />,
         },
       ],
       sources: slot.sources,
       catalog: {
         query,
-        onQueryChange: setQuery,
+        onQueryChange: changeQuery,
         searchPlaceholder: t('capabilities.skillAdd.searchPlaceholder', {
           count: catalog.pages.reduce<number | null>(
             (sum, page) =>
@@ -459,17 +507,17 @@ export function SkillAddModal(
         itemKey: rowKey,
         anatomy,
         loading: catalog.loading && items.length === 0,
+        ...(catalog.hasNextPage ? { loadMore: { label: t('common.more'), loading: catalog.loading, onPress: catalog.nextPage } } : {}),
         sourceFailures: catalog.sourceFailures.map((failure) => ({
           ...failure,
           message: `${sourceTitle(failure.sourceId)} · ${failure.message}`,
         })),
-        empty: (
+        empty: ({ selectMode }) => (
           <CatalogEmpty
             query={query}
-            onClear={() => setQuery('')}
+            onClear={() => changeQuery('')}
             onWrite={() => {
-              props.onClose();
-              params.onWrite();
+              selectMode('write');
             }}
           />
         ),
@@ -481,9 +529,13 @@ export function SkillAddModal(
           onRead={onRead}
           onHeld={onHeld}
           onOpenHeld={(skillId) => {
-            props.onClose();
-            params.onAdded?.(skillId);
+            void openSkill(skillId);
           }}
+          initialWhere={wheres.current.get(rowKey(row))}
+          savedRules={(heldByPreview.get(rowKey(row))
+            ? library.items.find(item => item.skillId === heldByPreview.get(rowKey(row)))
+            : libraryMatch(library.items, row))?.rules}
+          initialSelectPaths={selections.current.get(rowKey(row))}
           execute={execute}
           onWhereChange={(key, where) => {
             wheres.current.set(key, where);
@@ -515,7 +567,7 @@ export function SkillAddModal(
             ...(provenance ? { provenance } : {}),
             primary: {
               label: t('capabilities.skillAdd.open'),
-              onPress: async () => ({ itemId: existingId }),
+              onPress: async () => { await openSkill(existingId); return null; },
             },
           };
         }
@@ -526,9 +578,10 @@ export function SkillAddModal(
             primary: {
               label: t(partial ? 'capabilities.skillAdd.partial.tryAgain' : 'capabilities.skillAdd.open'),
               onPress: async () => {
-                const outcome = partial ? await install(row, version ?? '', state.where) : state.outcome;
+                if (!partial) { await openSkill(state.outcome.skillIds[0]!); return null; }
+                const outcome = await install(row, version ?? '', state.where);
                 if (!outcome.ok || outcome.incomplete.length > 0) throw new Error(describeSkillInstallIncomplete(outcome));
-                return { itemId: outcome.skillIds[0]!, then: 'stay' as const };
+                return null;
               },
             },
           };
@@ -556,17 +609,18 @@ export function SkillAddModal(
                 selections.current.get(key),
               );
               if (!result.ok || result.incomplete.length > 0) throw new Error(describeSkillInstallIncomplete(result));
-              return { itemId: result.skillIds[0]! };
+              return null;
             },
           },
         };
       },
-      onAdded: ({ itemId }) => params.onAdded?.(itemId),
     }),
     [
       adds,
       anatomy,
       catalog.loading,
+      catalog.hasNextPage,
+      catalog.nextPage,
       catalog.pages,
       catalog.sourceFailures,
       execute,
@@ -575,21 +629,28 @@ export function SkillAddModal(
       install,
       items,
       library,
-      onModeChange,
+      linkDraft,
+      uploadDraft,
       onRead,
       params,
       props,
       query,
+      changeQuery,
       reads,
       setAdd,
+      seed,
+      seedActive,
       slot.sources,
       sourceTitle,
       theme.colors.status.error,
       theme.colors.text.secondary,
+      writeDraft,
+      close,
+      openSkill,
     ],
   );
 
-  return <CapabilityAddModalBody {...props} config={config} />;
+  return props.children(config, false, () => { void close(); });
 }
 
 function CatalogEmpty(props: Readonly<{ query: string; onClear: () => void; onWrite: () => void }>) {
@@ -633,7 +694,7 @@ function CatalogEmpty(props: Readonly<{ query: string; onClear: () => void; onWr
 
 /**
  * A registry skill's details (lab sa A2): who it is with its pinned source, trust and cost; Where it's on (pick,
- * Everywhere by default); what it installs; what happens next; its files. Reads at the latest version once, and
+ * Everywhere by default); what it installs; what happens next; its files. Reads the selected reviewed version, and
  * hands that read up so the footer's Add installs exactly what is shown.
  */
 function SkillAddDetail(
@@ -641,10 +702,13 @@ function SkillAddDetail(
     row: Row;
     sourceTitle: string;
     execute: MountedAuthoringActionExecute;
-    onRead: (key: string, item: RegistryItemV1) => void;
+    onRead: (key: string, item: RegistryItemV1 | null) => void;
     onHeld: (key: string, held: string | null | undefined) => void;
     onOpenHeld: (skillId: string) => void;
     onWhereChange: (key: string, where: ReachRulesChangeV1 | undefined) => void;
+    initialWhere?: ReachRulesChangeV1;
+    savedRules?: SkillListItemV1['rules'];
+    initialSelectPaths?: readonly string[];
     onSelectionChange: (key: string, selectPaths: readonly string[] | undefined) => void;
   }>,
 ) {
@@ -654,10 +718,11 @@ function SkillAddDetail(
     kind: 'skill',
     sourceId: props.row.sourceId,
     itemId: props.row.itemId,
+    ...(props.row.version ? { version: props.row.version } : {}),
   });
   const { onRead, onWhereChange } = props;
   React.useEffect(() => {
-    if (read.item) onRead(key, read.item);
+    onRead(key, read.item);
   }, [key, onRead, read.item]);
   const onWhere = React.useCallback((where: ReachRulesChangeV1 | undefined) => onWhereChange(key, where), [key, onWhereChange]);
 
@@ -719,12 +784,13 @@ function SkillAddDetail(
     primary: offered?.primary ?? null,
     siblings: offered?.siblings ?? NO_PREVIEWS,
     outsideReferences,
+    initialSelectPaths: props.initialSelectPaths,
     onOpenHeld: props.onOpenHeld,
     testID: `${TEST_ID}.detail`,
   });
   React.useEffect(() => {
-    onSelectionChange(key, siblingChoice.selectPaths);
-  }, [key, onSelectionChange, siblingChoice.selectPaths]);
+    if (offered) onSelectionChange(key, siblingChoice.selectPaths);
+  }, [key, offered, onSelectionChange, siblingChoice.selectPaths]);
   const ref = skill?.ref.kind === 'gitTree'
     ? skill.ref.commit.slice(0, 7)
     : shortRef(read.item?.summary.version);
@@ -743,6 +809,8 @@ function SkillAddDetail(
       testID={`${TEST_ID}.detail`}
       title={props.row.title}
       purpose={purpose}
+      initialWhere={props.initialWhere}
+      savedRules={props.savedRules}
       facts={{
         presentation: 'row',
         ...(indexSource && indexVerification ? { source: indexSource, extra: [indexVerification] }
@@ -773,6 +841,7 @@ function SkillAddDetail(
           ) : null}
         </>
       }
+      reading={!read.item && !read.error}
       installs={
         skill && trust && cost
           ? {
@@ -780,20 +849,19 @@ function SkillAddDetail(
               scripts: skill.files.filter((file) => file.unixMode === 0o755).length,
               files: skill.files,
               cost,
+              // A repository source reads in Source and licence below; a well-known index stays here.
               ...(indexSource?.kind === 'link' && indexVerification
                 ? { source: { icon: 'link' as const, title: indexSource.host, subtitle: indexVerification } }
-                : repo
-                ? {
-                    source: {
-                      icon: 'github-logo' as const,
-                      title: repo,
-                      subtitle: t('capabilities.skillAdd.detail.sourceBody', { source: props.sourceTitle, ref }),
-                    },
-                  }
                 : {}),
             }
           : null
       }
+      listing={{
+        version: ref ?? null,
+        sourceTitle: props.sourceTitle,
+        license: (read.item?.summary ?? props.row).license ?? null,
+        links: skill?.ref.kind === 'gitTree' ? { repository: skill.ref.repo } : (read.item?.summary ?? props.row).links ?? null,
+      }}
       outsideReferences={siblingChoice.stillOutside}
       siblings={siblingChoice.rows}
       onWhereChange={onWhere}

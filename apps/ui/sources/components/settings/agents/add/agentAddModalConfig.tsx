@@ -1,17 +1,19 @@
 import * as React from 'react';
+import { z } from 'zod/mini';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AgentsAcpBackendsInstallFromRegistryOutputV1Schema } from '@happier-dev/protocol/acp/catalog/registry/registryInstallActionV1';
 import type { AcpPlatformFitV1 } from '@happier-dev/protocol/acp/catalog/registry/acpPlatformFitV1';
 import { selectAcpRegistryDistributionV1 } from '@happier-dev/protocol/acp/catalog/registry/mapAcpRegistryAgentV1';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type {
   AcpRegistryAgentV1,
+  RegistryItemPointerV1,
   RegistryItemSummaryV1,
 } from '@happier-dev/protocol/registries';
 
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
   CapabilityAddModalBody,
   openCapabilityAddModalHost,
@@ -19,24 +21,25 @@ import {
 } from '@/components/capabilities/add/CapabilityAddModal';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
 import { useAcpCatalogBackends } from '@/components/settings/acpCatalog/useAcpCatalogBackends';
-import { AcpAgentGlyph } from '@/components/settings/acpCatalog/CustomAcpAgentMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { useRegistryItems } from '@/registries/useRegistryItems';
+import { useRegistryItem } from '@/registries/useRegistryItem';
+import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { useRegistrySourcesSlot } from '@/registries/useRegistrySourcesSlot';
 import { useReachMachines } from '@/sync/domains/capabilities/reach/useReachProjection';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { confirmAgentInstallChange } from '../install/agentInstallChangeConfirm';
 import { useAgentAdministrationCatalog } from '../collection/useAgentAdministrationCatalog';
-import { presentMachineAdministrationTargetState } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { buildPluginListingRoute } from '../../plugins/model/pluginsSurfaceRoutes';
 import {
   AgentRegistryDetail,
   AgentBuiltInDetail,
@@ -63,6 +66,7 @@ export type OpenAgentAddModalParams = Readonly<{
   initialModeKey?: 'browse';
   sourceId?: string;
   query?: string;
+  initialSelection?: Readonly<Omit<RegistryItemPointerV1, 'version'> & { version?: string }>;
 }>;
 
 const TEST_ID = 'agents.add';
@@ -81,7 +85,7 @@ export function openAgentAddModal(
     AgentAddModal,
     {
       params,
-      onAddedStay: (definitionId: string) => {
+      onAddedStay: (definitionId: string | null) => {
         session.lastAdded = definitionId;
       },
     },
@@ -101,8 +105,9 @@ export type AgentAddState = Readonly<{
   status: 'added';
   definitionId: string;
   installOn: readonly string[];
+  jobs?: readonly Readonly<{ machineId: string; jobId: string }>[];
+  failures?: readonly Readonly<{ machineId: string; errorCode: string }>[];
 }>;
-type PluginAgentAddState = Readonly<{ status: 'added'; pluginId: string }>;
 
 /** Machines as the add details judge them: published OS/CPU facts, name, presence. */
 export function useAgentAddMachines(): readonly AgentAddMachine[] {
@@ -154,23 +159,25 @@ export async function addRegistryAgent(
     agent: AcpRegistryAgentV1;
     machines: readonly AgentAddMachine[];
     choice: AgentInstallChoice;
+    /** Explicit recovery targets this machine even while its presence is stale. */
+    retryMachineId?: string;
     execute: Execute;
     confirm?: typeof confirmAgentInstallChange;
+    /** The caller's original Account and admitted source/pin must survive confirmation. */
+    isCurrent?: () => boolean;
   }>,
-): Promise<Readonly<{
-  definitionId: string;
-  installOn: readonly string[];
-}> | null> {
+): Promise<Omit<AgentAddState, 'status'> | null> {
+  if (input.isCurrent?.() === false) return null;
   const fits = resolveAgentMachineFits(
     input.agent.distributions,
-    input.machines,
+    input.retryMachineId ? input.machines.filter(machine => machine.machineId === input.retryMachineId) : input.machines,
   );
   const runnable = fits
     .filter(({ fit }) => fit.kind === 'can_run')
     .map(({ machine }) => machine);
   const now =
     input.choice === 'now'
-      ? runnable.filter((machine) => !machine.offline)
+      ? runnable.filter((machine) => input.retryMachineId === machine.machineId || !machine.offline)
       : [];
   const firstUse = runnable.filter((machine) => !now.includes(machine));
   const confirmed = await (input.confirm ?? confirmAgentInstallChange)({
@@ -180,7 +187,7 @@ export async function addRegistryAgent(
     firstUseMachines: firstUse.map((machine) => machine.name),
     sourceHost: downloadHost(input.agent, fits),
   });
-  if (!confirmed) return null;
+  if (!confirmed || input.isCurrent?.() === false) return null;
   const installOn = now.map((machine) => machine.machineId);
   const result = await input.execute(
     'agents.acp.backends.installFromRegistry',
@@ -193,11 +200,24 @@ export async function addRegistryAgent(
       ...(installOn.length > 0 ? { installOn } : {}),
     },
     {
-      presentUserConfirmation: {
-        actionId: 'agents.acp.backends.installFromRegistry',
-      },
+      confirmed: true,
     },
   );
+  if (!result.ok && result.errorCode === 'agent_install_partial') {
+    const details = z.object({
+      definition: z.unknown(),
+      jobs: z.unknown(),
+      failures: z.array(z.strictObject({
+        machineId: z.string().check(z.minLength(1)),
+        errorCode: z.string().check(z.minLength(1)),
+      })),
+    }).parse(result.details);
+    const output = AgentsAcpBackendsInstallFromRegistryOutputV1Schema.parse({
+      definition: details.definition,
+      jobs: details.jobs,
+    });
+    return { definitionId: output.definition.id, installOn, jobs: output.jobs, failures: details.failures };
+  }
   if (!result.ok)
     throw new Error(result.error || t('capabilities.add.addFailed'));
   const output = AgentsAcpBackendsInstallFromRegistryOutputV1Schema.parse(
@@ -206,22 +226,35 @@ export async function addRegistryAgent(
   return {
     definitionId: output.definition.id,
     installOn: output.jobs.map((job) => job.machineId),
+    jobs: output.jobs,
+    failures: [],
   };
 }
 
-export function AgentAddModal(
-  props: CustomModalInjectedProps &
-    Readonly<{
-      params: OpenAgentAddModalParams;
-      onAddedStay: (definitionId: string) => void;
-    }>,
-): React.ReactElement {
+type AgentAddModalProps = CustomModalInjectedProps & Readonly<{
+  params: OpenAgentAddModalParams;
+  onAddedStay: (definitionId: string | null) => void;
+}>;
+
+export function AgentAddModal(props: AgentAddModalProps): React.ReactElement {
+  return <AgentAddController {...props}>{config => <CapabilityAddModalBody {...props} config={config} />}</AgentAddController>;
+}
+
+/** Reuse the selected-read, plugin handoff and setup/receipt controller in every listing host. */
+export function AgentAddController(props: AgentAddModalProps & Readonly<{
+  children: (config: CapabilityAddModalConfig<AgentAddRow>, resolving: boolean) => React.ReactNode;
+}>): React.ReactNode {
   const { params, onAddedStay } = props;
+  const router = useRouter();
   const { theme } = useUnistyles();
   const scope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(scope);
+  const execution = useMountedActionExecution(scope);
+  const { execute } = execution;
+  const openingBinding = React.useRef(execution.binding);
+  if (!openingBinding.current && execution.binding) openingBinding.current = execution.binding;
+  const current = Boolean(openingBinding.current && openingBinding.current === execution.binding && execution.ready);
   const machines = useAgentAddMachines();
-  const { agentEntries, targetSelection, executionTarget } = useAgentAdministrationCatalog({
+  const { agentEntries, targetSelection } = useAgentAdministrationCatalog({
     loadProjection: false,
   });
   const { backends: definitions } = useAcpCatalogBackends();
@@ -231,11 +264,17 @@ export function AgentAddModal(
       allSources.find((source) => source.id === sourceId)?.title ?? sourceId,
     [allSources],
   );
+  const [query, setQuery] = React.useState(params.query ?? '');
+  const [catalogDemanded, setCatalogDemanded] = React.useState(true);
+  const [seedRequested, setSeedRequested] = React.useState(params.initialSelection !== undefined);
+  const discardSeed = React.useCallback(() => setSeedRequested(false), []);
   const slot = useRegistrySourcesSlot('agent', {
-    ...(params.sourceId ? { initialSelection: params.sourceId } : {}),
+    ...((params.initialSelection?.sourceId ?? params.sourceId)
+      ? { initialSelection: params.initialSelection?.sourceId ?? params.sourceId } : {}),
+    onSelectionChange: discardSeed,
     testID: `${TEST_ID}.registries`,
   });
-  const [query, setQuery] = React.useState(params.query ?? '');
+  const changeQuery = React.useCallback((next: string) => { setQuery(next); setSeedRequested(false); }, []);
   const selectedFormat =
     slot.selection === 'all'
       ? null
@@ -246,13 +285,19 @@ export function AgentAddModal(
   const pluginSourceSelected = selectedFormat === 'happier-npm';
   const acpCatalog = useRegistryItems(
     { kind: 'agent', ...(acpSourceId ? { sourceIds: [acpSourceId] } : {}) },
-    pluginSourceSelected && acpSourceId !== null,
+    current && catalogDemanded && !seedRequested && pluginSourceSelected && acpSourceId !== null,
   );
   const catalog = useRegistryItems({
     kind: 'agent',
     ...(slot.sourceIds ? { sourceIds: slot.sourceIds } : {}),
     ...(query.trim() ? { query: query.trim() } : {}),
-  });
+  }, current && catalogDemanded && !seedRequested);
+  const seed = params.initialSelection;
+  const seedRead = useRegistryItem({ kind: 'agent', sourceId: seed?.sourceId ?? '', itemId: seed?.itemId ?? '',
+    ...(seed ? { version: seed.version } : {}) }, current && catalogDemanded && seedRequested);
+  const items = React.useMemo(() => !current ? [] : seedRequested
+    ? seedRead.item ? [admitRegistrySummaryMark(seedRead.item.summary)] : []
+    : catalog.items, [current, seedRequested, seedRead.item, catalog.items]);
 
   const [drafts, setDrafts] = React.useState<
     ReadonlyMap<string, AgentAddDraft>
@@ -260,7 +305,7 @@ export function AgentAddModal(
   // Built-in rows whose registry version the person chose to add as a separate agent (F5): they show the registry
   // agent's own details and its confirmed Add.
   const [separate, setSeparate] = React.useState<ReadonlySet<string>>(() => new Set());
-  const [adds, setAdds] = React.useState<ReadonlyMap<string, AgentAddState | PluginAgentAddState>>(
+  const [adds, setAdds] = React.useState<ReadonlyMap<string, AgentAddState>>(
     () => new Map(),
   );
   const draftSetters = React.useRef(
@@ -274,7 +319,8 @@ export function AgentAddModal(
           const current = previous.get(key);
           if (
             current &&
-            current.payload === draft.payload &&
+            current.item === draft.item &&
+            current.sourceRevision === draft.sourceRevision &&
             current.choice === draft.choice
           )
             return previous;
@@ -288,13 +334,33 @@ export function AgentAddModal(
   const { rows, groups } = React.useMemo(
     () =>
       buildAgentAddRows({
-        items: catalog.items,
+        items,
         catalogEntries: agentEntries,
         definitions,
         machines,
       }),
-    [agentEntries, catalog.items, definitions, machines],
+    [agentEntries, items, definitions, machines],
   );
+
+  // A queued press/confirmation consumes the current admitted row and original Account,
+  // never a payload left in this modal's draft map by an earlier source lifetime.
+  const readCurrent = seedRequested ? !seedRead.stale : !catalog.stale;
+  const live = React.useRef({ current, readCurrent, catalogDemanded, isCurrent: execution.isCurrent, rows, drafts, sourceRevision: catalog.sourceRevision });
+  live.current = { current, readCurrent, catalogDemanded, isCurrent: execution.isCurrent, rows, drafts, sourceRevision: catalog.sourceRevision };
+  const rowCurrent = React.useCallback((row: AgentAddRow) => {
+    const state = live.current;
+    return state.current && state.readCurrent && state.catalogDemanded && state.isCurrent() && state.rows.some(candidate => candidate.key === row.key
+      && candidate.summary.version === row.summary.version);
+  }, []);
+  const currentDraft = React.useCallback((row: AgentAddRow) => {
+    if (!rowCurrent(row)) return null;
+    const state = live.current;
+    const draft = state.drafts.get(row.key);
+    const summary = draft?.item?.summary;
+    return draft && summary && draft.sourceRevision === state.sourceRevision
+      && summary.sourceId === row.summary.sourceId && summary.itemId === row.summary.itemId
+      && (!row.summary.version || summary.version === row.summary.version) ? draft : null;
+  }, [rowCurrent]);
 
   const anatomy = React.useMemo(
     () =>
@@ -302,7 +368,7 @@ export function AgentAddModal(
         title: (row) => row.summary.title,
         description: (row) => row.summary.description?.trim() || null,
         mark: (row) => (
-          <AcpAgentGlyph iconUrl={row.summary.iconUrl ?? null} size={20} />
+          <HappierBrandMark brand={row.summary.brandMark ?? { displayName: row.summary.title }} pixelSize={20} externallyLabelled />
         ),
         whereSummary: (row) => {
           const status = adds.has(row.key)
@@ -362,6 +428,8 @@ export function AgentAddModal(
       subtitle: t('capabilities.agentAdd.subtitle'),
       testID: TEST_ID,
       initialModeKey: 'browse',
+      onCatalogDemandChange: setCatalogDemanded,
+      ...(seedRequested && seed ? { initialItemKey: agentAddRowKey(seed) } : {}),
       modes: [
         {
           key: 'browse',
@@ -380,7 +448,7 @@ export function AgentAddModal(
       sources: slot.sources,
       catalog: {
         query,
-        onQueryChange: setQuery,
+        onQueryChange: changeQuery,
         searchPlaceholder: t('capabilities.agentAdd.searchPlaceholder'),
         items: rows,
         groups: groups.map((group) => ({
@@ -393,8 +461,11 @@ export function AgentAddModal(
         })),
         itemKey: (row) => row.key,
         anatomy,
-        loading: catalog.loading && rows.length === 0,
-        sourceFailures: catalog.sourceFailures.map((failure) => ({
+        loading: (seedRequested ? seedRead.loading : catalog.loading) && rows.length === 0,
+        ...(!seedRequested && catalog.hasNextPage
+          ? { loadMore: { label: t('common.more'), loading: false, onPress: catalog.nextPage } } : {}),
+        sourceFailures: seedRequested ? seedRead.error && seed ? [{ sourceId: seed.sourceId,
+          message: `${sourceTitle(seed.sourceId)} · ${seedRead.error}`, onRetry: seedRead.refresh }] : [] : catalog.sourceFailures.map((failure) => ({
           ...failure,
           message: `${sourceTitle(failure.sourceId)} · ${failure.message}`,
         })),
@@ -405,11 +476,11 @@ export function AgentAddModal(
             {...(pluginSourceSelected && acpCatalog.items.length > 0
               ? { registryAgentCount: acpCatalog.items.length }
               : {})}
-            onClear={() => setQuery('')}
+            onClear={() => changeQuery('')}
             {...(acpSourceId
               ? {
                   onBrowseRegistry: () => {
-                    setQuery('');
+                    changeQuery('');
                     slot.setSelection(acpSourceId);
                   },
                 }
@@ -445,14 +516,33 @@ export function AgentAddModal(
             key={row.key}
             row={row}
             sourceTitle={sourceTitle(row.summary.sourceId)}
+            sourceRevision={catalog.sourceRevision}
             machines={machines}
             serverId={scope?.serverId ?? null}
             added={added && 'definitionId' in added ? added : null}
+            onRetryInstall={async (machineId) => {
+              const draft = currentDraft(row);
+              if (draft?.item?.payload.kind !== 'agent') return;
+              const retried = await addRegistryAgent({ row: row.summary, agent: draft.item.payload.agent,
+                machines, choice: 'now', retryMachineId: machineId, execute,
+                isCurrent: () => currentDraft(row) === draft });
+              if (!retried) return;
+              setAdds(previous => {
+                const current = previous.get(row.key);
+                if (!current || !('definitionId' in current)) return previous;
+                return new Map(previous).set(row.key, { ...current,
+                  jobs: [...(current.jobs ?? []).filter(job => job.machineId !== machineId), ...(retried.jobs ?? [])],
+                  failures: [...(current.failures ?? []).filter(failure => failure.machineId !== machineId), ...(retried.failures ?? [])],
+                });
+              });
+            }}
             existingDefinitionId={
               row.status?.kind === 'added' ? row.status.definitionId : null
             }
             targetSelection={targetSelection}
             onDraft={draftSetter(row.key)}
+            initialChoice={drafts.get(row.key)?.choice}
+            onAddedPresented={onAddedStay}
             testID={TEST_ID}
           />
         );
@@ -477,10 +567,10 @@ export function AgentAddModal(
               label: t('capabilities.agentAdd.openAgent', {
                 name: entry.title,
               }),
-              onPress: async () => ({
+              onPress: async () => rowCurrent(row) ? ({
                 itemId: `agent:${entry.agentId}`,
                 then: 'close' as const,
-              }),
+              }) : null,
             },
           };
         }
@@ -491,18 +581,16 @@ export function AgentAddModal(
               label: t('capabilities.agentAdd.openAgent', {
                 name: existing.title ?? existing.name,
               }),
-              onPress: async () => ({
+              onPress: async () => rowCurrent(row) ? ({
                 itemId: `definition:${existing.id}`,
                 then: 'close' as const,
-              }),
+              }) : null,
             },
           };
         }
-        const draft = drafts.get(row.key);
-        if (draft?.payload?.kind === 'plugin') {
-          const { listing, source } = draft.payload;
-          const target = scope && executionTarget && areServerProfileIdentifiersEquivalent(executionTarget.serverId, scope.serverId)
-            && targetSelection.selectedTargetServerMatchesActiveAccount ? executionTarget : null;
+        const draft = currentDraft(row);
+        if (draft?.item?.payload.kind === 'plugin') {
+          const { listing } = draft.item.payload;
           return {
             provenance: (
               <View style={styles.note}>
@@ -512,38 +600,20 @@ export function AgentAddModal(
                 </Text>
               </View>
             ),
-            ...(adds.has(row.key) ? { afterAdd: {} } : {}),
             primary: {
               label: t('capabilities.agentAdd.plugin.reviewAndInstall'),
-              ...(row.summary.problem ? { disabledReason: t('capabilities.agentAdd.detail.unsupportedEntry') }
-                : !target ? { disabledReason: targetSelection.state.kind === 'online'
-                    ? t('settingsPlugins.targetSelection.unknown') : presentMachineAdministrationTargetState(targetSelection.state).title } : {}),
+              ...(row.summary.problem ? { disabledReason: t('capabilities.agentAdd.detail.unsupportedEntry') } : {}),
               onPress: async () => {
-                if (!scope || !target || row.summary.problem) return null;
-                const fresh = targetSelection.resolveExecutionTarget({ accountScope: scope });
-                if (!fresh || !areServerProfileIdentifiersEquivalent(fresh.serverId, scope.serverId)
-                  || fresh.machine.id !== target.machine.id) return null;
-                const result = await execute('plugins.install', {
-                  machineId: fresh.machine.id,
-                  source: { kind: 'marketplace', sourceId: source.id, pluginId: listing.pluginId,
-                    version: listing.distribution.version, packageName: listing.distribution.packageName },
-                });
-                if (!result.ok) throw new Error(result.error || t('capabilities.add.addFailed'));
-                const output = getActionSpec('plugins.install').outputSchema?.parse(result.result);
-                if (!output || typeof output !== 'object' || !('ok' in output))
-                  throw new Error(t('capabilities.add.addFailed'));
-                if (!output.ok) {
-                  if ('change' in output && output.change && typeof output.change === 'object'
-                    && 'kind' in output.change && output.change.kind === 'cancelled') return null;
-                  throw new Error(t('capabilities.add.addFailed'));
-                }
-                setAdds(previous => new Map(previous).set(row.key, { status: 'added', pluginId: listing.pluginId }));
-                return { itemId: listing.pluginId, then: 'stay' as const };
+                if (row.summary.problem || currentDraft(row) !== draft) return null;
+                props.onClose();
+                router.push(buildPluginListingRoute('settings', { sourceId: row.summary.sourceId,
+                  itemId: row.summary.itemId, pluginId: listing.pluginId, version: listing.distribution.version }));
+                return null;
               },
             },
           };
         }
-        const agent = draft?.payload?.kind === 'agent' ? draft.payload.agent : null;
+        const agent = draft?.item?.payload.kind === 'agent' ? draft.item.payload.agent : null;
         const fits = agent
           ? resolveAgentMachineFits(agent.distributions, machines)
           : [];
@@ -566,7 +636,7 @@ export function AgentAddModal(
                     label: t('capabilities.agentAdd.openAgent', {
                       name: agent?.name ?? row.summary.title,
                     }),
-                    onPress: () => params.onOpenDefinition(addedState.definitionId),
+                    onPress: () => { if (rowCurrent(row)) params.onOpenDefinition(addedState.definitionId); },
                   },
                 },
               }
@@ -575,19 +645,19 @@ export function AgentAddModal(
             label: t('capabilities.agentAdd.addAgent'),
             ...(disabledReason ? { disabledReason } : {}),
             onPress: async () => {
-              if (!agent || !draft) return null;
+              if (!agent || !draft || currentDraft(row) !== draft) return null;
               const added = await addRegistryAgent({
                 row: row.summary,
                 agent,
                 machines,
                 choice: draft.choice,
                 execute,
+                isCurrent: () => currentDraft(row) === draft,
               });
               if (!added) return null;
               setAdds((previous) =>
                 new Map(previous).set(row.key, { status: 'added', ...added }),
               );
-              onAddedStay(added.definitionId);
               return { itemId: added.definitionId, then: 'stay' as const };
             },
           },
@@ -609,17 +679,28 @@ export function AgentAddModal(
       agentEntries,
       anatomy,
       catalog.loading,
+      catalog.hasNextPage,
+      catalog.nextPage,
       catalog.sourceFailures,
       definitions,
       draftSetter,
+      currentDraft,
+      rowCurrent,
       drafts,
       execute,
-      executionTarget,
       groups,
       machines,
       onAddedStay,
       params,
       query,
+      changeQuery,
+      seed,
+      seedRequested,
+      seedRead.loading,
+      seedRead.error,
+      seedRead.refresh,
+      props.onClose,
+      router,
       rows,
       acpSourceId,
       scope,
@@ -632,7 +713,7 @@ export function AgentAddModal(
     ],
   );
 
-  return <CapabilityAddModalBody {...props} config={config} />;
+  return props.children(config, !current || config.catalog.loading);
 }
 
 /**

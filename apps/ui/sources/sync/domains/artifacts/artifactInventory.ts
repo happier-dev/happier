@@ -2,6 +2,27 @@ import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifac
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { INBOX_ARTIFACT_KINDS } from './inboxArtifacts';
 import type { ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import type { DecryptedArtifact } from './artifactTypes';
+
+export type ArtifactInventoryView = 'browserListed' | 'promptLibrary';
+
+/** Unknown opaque classification is shared by local projection and absence reconciliation. */
+export function readArtifactBrowserMembership(artifact: DecryptedArtifact): boolean | null {
+    const header = artifact.rawHeader ?? artifact.header;
+    if (header) return doesArtifactInventorySelectionMatchHeader('browserListed', header);
+    return Object.hasOwn(artifact, 'kindHint') && artifact.kindHint !== undefined
+        ? getArtifactKindPolicyV1(artifact.kindHint).browserListed : null;
+}
+
+/** Local membership follows the query owner, retaining unresolved candidates truthfully. */
+export function doesArtifactInventoryViewMatchRow(view: ArtifactInventoryView, artifact: DecryptedArtifact): boolean {
+    if (artifact.draft) return false;
+    if (view === 'browserListed') return readArtifactBrowserMembership(artifact) !== false;
+    const header = artifact.rawHeader ?? artifact.header;
+    if (header) return doesArtifactInventorySelectionMatchHeader(PROMPT_LIBRARY_ARTIFACT_KINDS, header);
+    if (!Object.hasOwn(artifact, 'kindHint') || artifact.kindHint === undefined) return true;
+    return typeof artifact.kindHint === 'string' && PROMPT_LIBRARY_ARTIFACT_KINDS.includes(artifact.kindHint);
+}
 
 /** Omitted selects the full Account census; browser membership includes unknown ordinary kinds. */
 export type ArtifactInventorySelection = readonly string[] | 'browserListed' | 'inboxOpen'

@@ -1,0 +1,233 @@
+import type {
+  RegistryContentRefV1,
+  RegistryUpdateCheckResultV1,
+  RegistryUpstreamV1,
+} from '@happier-dev/protocol/registries';
+
+import { describeRegistrySourceStatus, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
+import type { RegistryUpdateCheckState } from '@/registries/useRegistryUpdateCheck';
+import { contentRefLabel } from '@/components/settings/skills/updates/useSkillsUpdates';
+import type { CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
+
+import type { ManagedInventoryRow as InstalledRow } from '../inventory/useManagedInventory';
+import type { BrowserExtensionActionIntent } from '../catalog/storeBrowserExtensions';
+
+/** The kinds whose owners record where they came from and what that source says now (the registry trackers). */
+export const STORE_UPDATE_KINDS = [
+  'mcpServer',
+  'skill',
+  'agent',
+  'browserExtension',
+] as const;
+export type StoreUpdateKind = typeof STORE_UPDATE_KINDS[number];
+
+export type StoreUpdateEntry = Readonly<{
+  key: string;
+  row: InstalledRow;
+  /**
+   * `available`: a newer version is waiting and the person never changed theirs. `needsChoice`: they changed it and
+   * the source changed too (Skills asks per file). `removed`: the source no longer lists it. `unchecked`: the last
+   * check could not reach the source and nothing recorded says a newer version is waiting.
+   */
+  state: 'available' | 'needsChoice' | 'removed' | 'unchecked';
+  reason?: RegistryFailureStatus;
+  status?: CapabilityStatus;
+  from: string | null;
+  to: string | null;
+  /** The native update Action binds the exact version selected by the registry check. */
+  apply?: Extract<BrowserExtensionActionIntent, { actionId: 'browser.extensions.update' }>;
+}>;
+
+export type StoreUpdatesView = Readonly<{
+  /** Last complete check of these held rows; null is unknown, including before the first check. */
+  count: number | null;
+  sections: readonly Readonly<{
+    kind: StoreUpdateKind;
+    entries: readonly StoreUpdateEntry[];
+  }>[];
+  /** Held items that came from a source that can publish a newer version; zero means "up to date" would mean nothing. */
+  tracked: number;
+  /** Items the latest check could not reach, by their source's failure. */
+  unchecked: number;
+  /** Coverage of the latest finite reply, restricted to still-current held subjects. */
+  freshness: Readonly<{ checked: number; tracked: number; checkedAt: number | null }>;
+}>;
+
+type Tracked = Readonly<{
+  kind: StoreUpdateKind;
+  key: string;
+  upstream: RegistryUpstreamV1 | undefined;
+  current: RegistryContentRefV1 | null;
+  modified: boolean;
+  basis: string;
+}>;
+
+/** The owner's own record of where an installed thing came from; null when nothing upstream can publish a newer one. */
+function readTracked(row: InstalledRow): Tracked | null {
+  switch (row.kind) {
+    case 'browserExtension': {
+      const extension = row.native.extension;
+      return { kind: 'browserExtension', key: JSON.stringify([row.native.profileId, extension.id]),
+        upstream: extension.upstream, current: { kind: 'version', version: extension.version }, modified: false,
+        basis: JSON.stringify([extension.source, extension.provenance, extension.version, extension.upstream]) };
+    }
+    case 'skill': {
+      const provenance = row.native.provenance;
+      if (
+        provenance.kind !== 'registry' &&
+        provenance.kind !== 'link' &&
+        provenance.kind !== 'wellKnown'
+      )
+        return null;
+      const current =
+        provenance.kind === 'registry'
+          ? provenance.registry.ref
+          : provenance.kind === 'link'
+            ? provenance.ref
+            : provenance;
+      return {
+        kind: 'skill',
+        key: row.native.skillId,
+        upstream: row.native.upstream,
+        current,
+        modified: row.native.modified,
+        basis: JSON.stringify([provenance, row.native.revision]),
+      };
+    }
+    case 'mcpServer': {
+      const origin = row.native.origin;
+      if (origin?.kind !== 'registry') return null;
+      return {
+        kind: 'mcpServer',
+        key: row.native.id,
+        upstream: origin.upstream,
+        current: origin.provenance.ref ?? null,
+        modified: false,
+        basis: JSON.stringify([origin.provenance, row.native.updatedAt, origin.upstream]),
+      };
+    }
+    case 'agent': {
+      if (row.subject !== 'definition' || !row.native.origin) return null;
+      const origin = row.native.origin;
+      return {
+        kind: 'agent',
+        key: row.native.id,
+        upstream: origin.upstream,
+        current: origin.provenance.ref ?? null,
+        modified: false,
+        basis: JSON.stringify([origin.provenance, row.native.updatedAt, origin.upstream]),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Capture only held provenance/revisions, once on explicit Check; never acquire another inventory. */
+export function captureStoreUpdateBasis(rows: readonly InstalledRow[]): ReadonlyMap<string, string> {
+  const basis = new Map<string, string>();
+  for (const row of rows) {
+    const item = readTracked(row);
+    if (item) basis.set(row.key, item.basis);
+  }
+  return basis;
+}
+
+/**
+ * Store → Updates: the owners' recorded observations, overlaid by this page's latest finite check. A failed check
+ * never turns into "current": it keeps a recorded newer version and otherwise says it could not check.
+ */
+export function buildStoreUpdates(
+  rows: readonly InstalledRow[],
+  results: RegistryUpdateCheckResultV1['results'],
+  check?: Pick<RegistryUpdateCheckState, 'checkedAt' | 'failed' | 'basis' | 'attemptedAt'>,
+): StoreUpdatesView {
+  const checked = new Map(
+    results.map((result) => [result.kind === 'browserExtension'
+      ? JSON.stringify([result.kind, result.machineId, result.key])
+      : `${result.kind}:${result.key}`, result.upstream]),
+  );
+  const byKind = new Map<StoreUpdateKind, StoreUpdateEntry[]>();
+  let tracked = 0;
+  let unchecked = 0;
+  let successful = 0;
+  let complete = check?.checkedAt != null && !check.failed;
+  for (const row of rows) {
+    const item = readTracked(row);
+    if (!item) continue;
+    tracked += 1;
+    const finite = checked.get(row.kind === 'browserExtension'
+      ? JSON.stringify([item.kind, row.machineId, item.key])
+      : `${item.kind}:${item.key}`);
+    const latest = check?.basis && check.basis.get(row.key) !== item.basis ? undefined : finite;
+    if (latest && latest.state !== 'unchecked') successful += 1;
+    const recorded = item.upstream;
+    // A new item was never checked. An advanced native version may supersede
+    // the checked one only when its owner has an explicit observation.
+    if (!finite || finite.state === 'unchecked' || !latest && !recorded) complete = false;
+    let entry: StoreUpdateEntry | null = null;
+    const from = item.current ? contentRefLabel(item.current) : null;
+    if (latest?.state === 'unchecked') {
+      unchecked += 1;
+      entry =
+        recorded?.state === 'update_available' ||
+        recorded?.state === 'removed_from_source'
+          ? null
+          : {
+              key: row.key,
+              row,
+              state: 'unchecked',
+              reason: latest.reason,
+              from,
+              to: null,
+            };
+    }
+    const upstream = latest && latest.state !== 'unchecked' ? latest : recorded;
+    if (!entry && upstream?.state === 'update_available') {
+      entry = {
+        key: row.key,
+        row,
+        state: item.modified ? 'needsChoice' : 'available',
+        from,
+        to: upstream.latest ? contentRefLabel(upstream.latest) : null,
+        ...(row.kind === 'browserExtension' && upstream.latest?.kind === 'version' ? {
+          apply: { actionId: 'browser.extensions.update' as const, input: { machineId: row.machineId,
+            profileId: row.native.profileId, extensionId: row.native.extension.id, expectedVersion: upstream.latest.version } },
+        } : {}),
+      };
+    } else if (!entry && upstream?.state === 'removed_from_source') {
+      entry = { key: row.key, row, state: 'removed', status: { kind: 'removed' }, from, to: null };
+    }
+    if (!entry) continue;
+    const list = byKind.get(item.kind);
+    if (list) list.push(entry);
+    else byKind.set(item.kind, [entry]);
+  }
+  const sections = STORE_UPDATE_KINDS.flatMap((kind) =>
+    byKind.has(kind) ? [{ kind, entries: byKind.get(kind)! }] : [],
+  );
+  return {
+    count: complete ? sections.reduce((total, section) => total + section.entries.length, 0) : null,
+    sections,
+    tracked,
+    unchecked,
+    freshness: { checked: successful, tracked, checkedAt: check?.attemptedAt ?? check?.checkedAt ?? null },
+  };
+}
+
+/**
+ * One line per failing source and reason, naming the source the native result labelled (`sourceTitle`, else
+ * `sourceId`). A result without a label stays unlabeled: the reason alone, never an invented name.
+ */
+export function describeUncheckedSources(
+  results: RegistryUpdateCheckResultV1['results'],
+): string[] {
+  const lines = new Set<string>();
+  for (const result of results) {
+    if (result.upstream.state !== 'unchecked') continue;
+    const reason = describeRegistrySourceStatus(result.upstream.reason);
+    const source = result.sourceTitle ?? result.sourceId;
+    lines.add(source ? `${source} · ${reason}` : reason);
+  }
+  return [...lines];
+}

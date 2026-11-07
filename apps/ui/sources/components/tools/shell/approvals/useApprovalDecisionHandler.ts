@@ -1,13 +1,17 @@
 import * as React from 'react';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
 
-import type { ActionExecutorContext, ActionId, ApprovalRequest, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
-import { ApprovalExecutionV1Schema, ApprovalRequestPublicSettlementSchema, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import { ApprovalExecutionV1Schema, ApprovalRequestPublicSettlementSchema, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { TeamInvitationCreateResultV1Schema, TeamInvitationReissueResultV1Schema } from '@happier-dev/protocol/teams';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import {
     createDefaultActionExecutor,
-    requiresExactDaemonApprovalReplay,
     resolveApprovalReplayRoute,
     type ApprovalReplayRoute,
 } from '@/sync/ops/actions/defaultActionExecutor';
@@ -17,6 +21,7 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { TeamLinkDelivery } from '@/components/settings/teams/TeamLinkDelivery';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { recordResourceProposalDeclines } from '@/components/approvals/resourceProposal/recordResourceProposalDeclines';
 import { t } from '@/text';
@@ -26,13 +31,6 @@ import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export { resolveApprovalReplayRoute };
-
-/** Availability refusals that arrive before an Action's effect: the Home rolled back, or could not be reached. */
-const TRANSIENT_AVAILABILITY_CODES: ReadonlySet<string> = new Set([
-    'database_connection_unavailable',
-    'database_transaction_conflict_exhausted',
-    'project_requester_home_unavailable',
-]);
 
 /** Live errors and durable execution failures retain the same typed outcome. */
 export function isApprovalDecisionStale(error: unknown): boolean {
@@ -65,11 +63,14 @@ export function presentApprovalFailure(
     if (error instanceof HappyError && error.code === 'present_user_required') {
         return { reason: t('approvals.decisionAuthorityError'), code: null };
     }
+    // The reviewed change met a newer revision, so the executor applied nothing; its English diagnostic is not product copy.
+    if (code === 'conflict') return { reason: t('approvals.conflictFailure'), code: null };
     // The approved plugin change never reached the Machine's plugin service; the code stays in Technical details.
     if (code === 'plugin_change_daemon_unavailable') return { reason: t('approvals.pluginChangeDaemonUnavailable'), code };
-    // The Home or its requester was briefly unreachable before the effect ran: nothing changed, and retrying is right.
-    if (typeof code === 'string' && TRANSIENT_AVAILABILITY_CODES.has(code) && !(error instanceof ApprovalExecutionError)) {
-        return { reason: t('approvals.transientFailure'), code };
+    // Only a confirmed no-effect refusal may promise that nothing changed.
+    const transient = readTransientAvailabilityFailure(code);
+    if (transient && !(error instanceof ApprovalExecutionError)) {
+        return { reason: transient.effectMayHaveApplied ? t('errors.scmOutcomeUnknown') : transient.message, code: transient.code };
     }
     // Detail pages may pass the stored executor diagnostic as their fallback.
     // Keep machine codes as diagnostics after readable copy on every Action.
@@ -120,23 +121,28 @@ export function assertApprovalExecutionSucceeded(execution: ApprovalExecutionV1)
 }
 
 type ApprovalDecisionArtifact = Pick<DecryptedArtifact, 'id' | 'header'>;
-type ApprovalHomeRequest = ApprovalRequest | TargetActionApprovalRequestV1;
+type ApprovalHomeRequest = ApprovalRequest | TargetActionApprovalRequestV1 | ExecutionRunHostActionApprovalRequestV1;
 
 function isTargetActionApproval(approval: ApprovalHomeRequest): approval is TargetActionApprovalRequestV1 {
     return 'kind' in approval && approval.kind === 'plugin_target_action';
 }
 
 function requiresResolvedReplayRoute(approval: ApprovalHomeRequest): boolean {
+    const executor = 'kind' in approval && approval.kind !== 'plugin_target_action' ? null : resolveApprovalExecutor(approval);
     if (isTargetActionApproval(approval)) {
-        return Boolean(approval.replayPlacement || approval.executionOriginV1?.serverIdentityId?.trim());
+        return executor?.kind === 'daemon' || Boolean(approval.executionOriginV1?.serverIdentityId?.trim());
     }
     return approval.v === 2 && (
-        requiresExactDaemonApprovalReplay(approval)
+        executor?.kind === 'daemon'
         || Boolean(approval.executionOriginV1.serverIdentityId?.trim())
     );
 }
 
-export function isApprovalReplayRouteUnavailable(approval: ApprovalRequest | null): boolean {
+export function isApprovalReplayRouteUnavailable(approval: ApprovalHomeRequest | null): boolean {
+    // Public credential-bound decisions already reach the exact admitted Home /
+    // Session through the executor. The daemon, not a browser profile alias,
+    // resolves and admits the saved execution origin on that transport.
+    if (getCurrentAuth()?.credentialAuthorityKind === 'api_token') return false;
     return Boolean(approval && requiresResolvedReplayRoute(approval) && !resolveApprovalReplayRoute(approval));
 }
 
@@ -197,6 +203,13 @@ export function useApprovalDecisionHandler(
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: (targetSessionId) => resolvePreferredServerIdForSessionId(targetSessionId) ?? null,
+            // An allowed Agent/MCP Saved Secret reveal is displayed once, here, to the person who allowed it;
+            // the replay and the requester receive only the value-free outcome.
+            savedSecretRevealAction: async ({ input, context }) => {
+                if (!context.serverId) return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
+                const { presentApprovedSavedSecretReveal } = await import('@/components/secrets/approvedSavedSecretReveal');
+                return await presentApprovedSavedSecretReveal(context.serverId, input);
+            },
         }),
         [],
     );
@@ -208,18 +221,19 @@ export function useApprovalDecisionHandler(
     }, [artifact.id, approval, serverId]);
     return React.useCallback(async (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => {
         if (!approval) return false;
-        const builtInApproval = isTargetActionApproval(approval) ? null : approval;
-        // Portable or daemon-owned origins must resolve their immutable Home identity. A
-        // present-user UI approval intentionally has no cryptographic Home identity and stays
-        // on its exact mounted route instead of being misclassified as cross-device replay.
-        if (decision !== 'cancel' && requiresResolvedReplayRoute(approval) && !replayRoute) {
-            throw new HappyError('approval_origin_unavailable', false, { code: 'approval_origin_unavailable' });
-        }
+        const builtInApproval = 'kind' in approval ? null : approval;
+        // Missing execution custody cannot record consent. Keep the request open
+        // even when its portable Home route is also unavailable.
         if (
             decision === 'approve'
-            && builtInApproval && requiresExactDaemonApprovalReplay(builtInApproval)
-            && (approval.v !== 2 || !approval.executionOriginV1.machineId?.trim())
-        ) throw new HappyError('approval_origin_unavailable', false, { code: 'approval_origin_unavailable' });
+            && builtInApproval && resolveApprovalExecutor(builtInApproval).kind === 'unavailable'
+        ) return false;
+        // Account-owned replay resolves immutable Home identity here. A child-token
+        // decision instead delegates that admission to its existing public transport;
+        // present-user UI approvals remain on their exact mounted route.
+        if (decision !== 'cancel' && isApprovalReplayRouteUnavailable(approval)) {
+            throw new HappyError('approval_origin_unavailable', false, { code: 'approval_origin_unavailable' });
+        }
         const revealsInvitation = decision === 'approve'
             && (builtInApproval?.actionId === 'teams.invitations.create' || builtInApproval?.actionId === 'teams.invitations.reissue');
         const publicLinkActionId = builtInApproval?.actionId === 'session.public_link.create' || builtInApproval?.actionId === 'artifact.public_link.create'
@@ -227,7 +241,6 @@ export function useApprovalDecisionHandler(
         const publicLink = decision === 'approve' && publicLinkActionId !== null;
         const preparation = publicLink ? new AbortController() : null;
         if (preparation) publicPreparation.current = preparation;
-        let publicLinkConfirmed = false;
         let narrowedInput = options?.narrowedInput;
         let account: LazyActionAccountContext | null = null;
         let retainedForReveal = false;
@@ -247,7 +260,6 @@ export function useApprovalDecisionHandler(
                 if (publicPreparation.current === preparation) publicPreparation.current = null;
                 if (prepared.kind === 'handled') return true;
                 narrowedInput = prepared.narrowedInput;
-                publicLinkConfirmed = true;
             }
             const decisionInput = {
                 artifactId: artifact.id,
@@ -257,7 +269,6 @@ export function useApprovalDecisionHandler(
             const decisionContext: ActionExecutorContext = { surface: 'ui',
                 ...(decision === 'approve' && narrowedInput !== undefined ? { authority: 'present_user' as const } : {}),
                 ...(serverId ? { serverId } : {}),
-                ...(publicLinkConfirmed && publicLinkActionId ? { presentUserConfirmation: { actionId: publicLinkActionId } } : {}),
                 ...(account ? { expectedAccountId: account.accountId } : {}) };
             let result = await executor.execute(
                 'approval.request.decide' as ActionId,
@@ -288,7 +299,7 @@ export function useApprovalDecisionHandler(
                 }).catch(() => null);
                 const receipt = observed?.ok && typeof observed.result === 'object' && observed.result !== null && 'request' in observed.result
                     ? ApprovalRequestPublicSettlementSchema.safeParse(observed.result.request) : null;
-                if (receipt?.success && (receipt.data.status === 'executed' || receipt.data.status === 'failed') && receipt.data.execution) {
+                if (receipt?.success && (receipt.data.status === 'executed' || receipt.data.status === 'failed' || receipt.data.status === 'outcome_unknown') && receipt.data.execution) {
                     outcome = { status: receipt.data.status, execution: receipt.data.execution };
                     // The retained originating form settles through its canonical
                     // Artifact reader/continuation, including a missing socket echo.
@@ -300,8 +311,12 @@ export function useApprovalDecisionHandler(
             // Never let a stale receipt become an optimistic "Approved" answer.
             const execution = typeof outcome === 'object' && outcome !== null && 'execution' in outcome
                 ? ApprovalExecutionV1Schema.safeParse(outcome.execution) : null;
-            if (execution?.success) assertApprovalExecutionSucceeded(execution.data);
+            // The Action owner has durably recorded this one-shot decision even
+            // when its effect failed. Wake every Artifact projection and expose
+            // that receipt before presenting the typed failure.
+            if (serverId) publishHomeAccountChange(serverId, [artifact.id], { changeKinds: ['artifact'] });
             options?.onExecution?.(execution?.success ? execution.data : null);
+            if (execution?.success) assertApprovalExecutionSucceeded(execution.data);
             // A storage proposal remembers what the person turned down; best effort, the decision stands.
             if (builtInApproval) void recordResourceProposalDeclines(builtInApproval, decision, narrowedInput, options?.declinedItems, serverId);
             // Token creation returns its secret to the retained requesting

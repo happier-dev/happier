@@ -99,5 +99,11 @@ export function publishActiveScopedPluginSettingsChanges(changes: readonly unkno
  * a second stream.
  */
 export function resetActiveScopedPluginSettingsChangeWatches(): void {
-    notifyWatches(activeScopedPluginSettingsChangeWatches);
+    captureActiveScopedPluginSettingsChangeReset()();
+}
+
+/** New observations read after the snapshot base and are covered by its subsequent replay. */
+export function captureActiveScopedPluginSettingsChangeReset(): () => void {
+    const watches = [...activeScopedPluginSettingsChangeWatches];
+    return () => notifyWatches(watches);
 }

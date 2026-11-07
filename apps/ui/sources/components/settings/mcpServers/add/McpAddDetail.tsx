@@ -2,18 +2,18 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
-  RegistryItemSummaryV1,
   RegistryItemV1,
 } from '@happier-dev/protocol/registries';
 import type { McpServerCatalogEntryV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
 
+import { CapabilityAddDetailAction } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityFacts } from '@/components/capabilities/facts/CapabilityFacts';
 import {
-  useDraftReachRules,
   WhereItsOnControl,
 } from '@/components/capabilities/where/WhereItsOnControl';
+import { whereItsOnReach } from '@/components/capabilities/where/whereItsOnPresentation';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -21,9 +21,11 @@ import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { ValueRefRowsEditor } from '@/components/ui/forms/valueRefs/ValueRefRowsEditor';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { CapabilityListingSections } from '@/components/capabilities/add/CapabilityListingSections';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useRegistryItem } from '@/registries/useRegistryItem';
@@ -34,10 +36,13 @@ import {
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 
-import { McpServerMark } from '../identity/McpServerMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import {
   buildMcpAddDetailModel,
+  buildMcpSuggestionDetailModel,
+  isMcpAddSuggestion,
   seedMcpAddValues,
+  type McpAddCatalogRow,
   type McpAddDetailModel,
   type McpAddField,
   type McpAddValues,
@@ -46,9 +51,12 @@ import type { McpAddPlaces } from './useMcpAddPlaces';
 
 /** What the footer needs from the open details: the read item, the model drawn from it, and what the person set. */
 export type McpAddDraft = Readonly<{
+  suggestionId?: string;
   item: RegistryItemV1 | null;
   model: McpAddDetailModel | null;
   values: McpAddValues;
+  /** Deliberate edits, separate from defaults arriving with the selected read. */
+  editedValues?: McpAddValues;
   where: ReachRulesChangeV1 | undefined;
 }>;
 
@@ -79,41 +87,64 @@ const RUNS_COPY = {
  * A registry server's details (lab ma-D / ma-N): who it is, what it needs (the shared value rows over its declared
  * inputs; a key waits for a Saved Secret, with Add key in that picker), Where it's on (pick), what runs where, and
  * what happens next. Reads the item once and hands it, with the person's values, up to the footer.
+ * Memoized: the controller re-renders for every catalog/source arrival, and only this row's own facts redraw it.
  */
-export function McpAddDetail(
+export const McpAddDetail = React.memo(function McpAddDetail(
   props: Readonly<{
     testID: string;
-    row: RegistryItemSummaryV1;
-    sourceTitle: string;
+    row: McpAddCatalogRow;
+    sourceTitle: string | null;
     existing: McpServerCatalogEntryV1 | null;
     state: McpAddState | null;
     scope: AccountSettingsScope | null;
     places: McpAddPlaces;
+    draft?: McpAddDraft;
     onDraft: (draft: McpAddDraft) => void;
+    onEdit: (update: (current: McpAddDraft) => McpAddDraft) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
+  const suggestion = isMcpAddSuggestion(props.row) ? props.row : null;
+  const registryRow = isMcpAddSuggestion(props.row) ? null : props.row;
+  // A selected unversioned pointer becomes pinned on its first admitted read.
+  // Loading that exact pin must not return the same selection to `latest`.
+  const [resolvedVersion, setResolvedVersion] = React.useState(registryRow?.version);
+  const version = registryRow?.version ?? resolvedVersion;
   const read = useRegistryItem({
     kind: 'mcpServer',
-    sourceId: props.row.sourceId,
-    itemId: props.row.itemId,
-  });
+    sourceId: registryRow?.sourceId ?? '',
+    itemId: registryRow?.itemId ?? '',
+    ...(version ? { version } : {}),
+  }, registryRow !== null);
+  const item = registryRow && !read.stale && read.item?.summary.sourceId === registryRow.sourceId
+    && read.item.summary.itemId === registryRow.itemId
+    && (!version || read.item.summary.version === version) ? read.item : null;
+  React.useEffect(() => {
+    if (!version && item?.summary.version) setResolvedVersion(item.summary.version);
+  }, [version, item?.summary.version]);
   const server =
-    read.item?.payload.kind === 'mcpServer' ? read.item.payload.server : null;
+    item?.payload.kind === 'mcpServer' ? item.payload.server : null;
   const model = React.useMemo(
-    () => (server ? buildMcpAddDetailModel(server) : null),
-    [server],
+    () => suggestion ? buildMcpSuggestionDetailModel(suggestion) : server ? buildMcpAddDetailModel(server) : null,
+    [server, suggestion],
   );
   const seed = React.useMemo(
     () => (model?.supported ? seedMcpAddValues(model.fields) : {}),
     [model],
   );
-  const [edited, setEdited] = React.useState<McpAddValues | null>(null);
+  const edited = props.draft?.editedValues ?? null;
   const values = edited ?? seed;
-  const draftReach = useDraftReachRules('mcp_server');
-  const catalog = useSavedSecretCatalog(
-    props.scope ? { scope: props.scope } : undefined,
-  );
+  const [defaultReach] = React.useState(() => whereItsOnReach.createDefault('mcp_server'));
+  const where = props.draft?.where;
+  const rules = React.useMemo(() => where ? whereItsOnReach.apply(defaultReach, where) : defaultReach, [defaultReach, where]);
+  const { onEdit } = props;
+  const changeReach = React.useCallback<React.ComponentProps<typeof WhereItsOnControl>['onChange']>(async change => {
+    onEdit(current => ({ ...current, where: change }));
+    return { ok: true };
+  }, [onEdit]);
+  const catalog = useSavedSecretCatalog({
+    scope: model?.supported && model.fields.length > 0 ? props.scope : null,
+  });
   const secrets = React.useMemo(
     () => [...catalog.materializedSecrets],
     [catalog.materializedSecrets],
@@ -122,33 +153,41 @@ export function McpAddDetail(
   const { onDraft } = props;
   React.useEffect(() => {
     onDraft({
-      item: read.item,
+      ...(suggestion ? { suggestionId: suggestion.suggestionId } : {}),
+      item,
       model,
       values,
-      where: draftReach.where,
+      ...(edited === null ? {} : { editedValues: edited }),
+      where,
     });
-  }, [draftReach.where, model, onDraft, read.item, values]);
+  }, [where, edited, model, onDraft, item, values, suggestion]);
 
   const projection = React.useMemo(
     () =>
       projectReachOnMachines(
-        draftReach.rules,
+        rules,
         props.places.machines as readonly ReachMachine[],
         undefined,
         props.places.workspaceRefs,
       ),
-    [draftReach.rules, props.places.machines, props.places.workspaceRefs],
+    [rules, props.places.machines, props.places.workspaceRefs],
   );
 
   const setValue = React.useCallback(
     (key: string, value: ValueRefV1) =>
-      setEdited((previous) => ({ ...(previous ?? seed), [key]: value })),
-    [seed],
+      onEdit(current => {
+        const values = { ...(current.editedValues ?? seed), [key]: value };
+        return { ...current, editedValues: values, values };
+      }),
+    [onEdit, seed],
   );
   const setGroup = React.useCallback(
     (next: Record<string, ValueRefV1>) =>
-      setEdited((previous) => ({ ...(previous ?? seed), ...next })),
-    [seed],
+      onEdit(current => {
+        const values = { ...(current.editedValues ?? seed), ...next };
+        return { ...current, editedValues: values, values };
+      }),
+    [onEdit, seed],
   );
 
   const supported = model?.supported === true ? model : null;
@@ -169,17 +208,25 @@ export function McpAddDetail(
   const deprecated = props.row.flags?.deprecated === true;
   const purpose =
     server?.description?.trim() || props.row.description?.trim() || null;
+  // Where the listing comes from closes its details, as every listing does (lab store `h:kNotion`).
+  const listed = item?.summary ?? registryRow;
+  const listing = listed ? {
+    version: listed.version ?? null,
+    sourceTitle: props.sourceTitle,
+    license: listed.license ?? null,
+    links: listed.links ?? null,
+  } : null;
 
   return (
-    <View style={styles.detail}>
+    <View>
       <ItemGroup surface="none">
         <BareSectionContent>
         <View style={styles.head}>
           <View style={styles.title}>
-            <McpServerMark
-              transport={supported?.transport === 'local' ? 'stdio' : 'http'}
-              iconUrl={props.row.iconUrl ?? null}
-              size={30}
+            <HappierBrandMark
+              brand={props.row.brandMark ?? { displayName: props.row.title }}
+              externallyLabelled
+              pixelSize={30}
             />
             <Text
               variant="title"
@@ -187,21 +234,15 @@ export function McpAddDetail(
               style={[styles.titleText, { color: theme.colors.text.primary }]}
               numberOfLines={2}
               testID={`${props.testID}.detail.title`}
+              // The item's name heads its details (a listing pane moves focus here).
+              accessibilityRole="header"
             >
               {props.row.title}
             </Text>
           </View>
-          {purpose ? (
-            <Text
-              variant="reading"
-              style={{ color: theme.colors.text.secondary }}
-            >
-              {purpose}
-            </Text>
-          ) : null}
           <CapabilityFacts
             presentation="row"
-            source={{ kind: 'registry', label: props.sourceTitle }}
+            {...(props.sourceTitle ? { source: { kind: 'registry' as const, label: props.sourceTitle } } : {})}
             extra={[
               ...(supported
                 ? [
@@ -213,7 +254,7 @@ export function McpAddDetail(
               ...(props.row.version ? [`v${props.row.version}`] : []),
             ]}
           />
-          {props.row.itemId !== props.row.title ? (
+          {props.row.itemId && props.row.itemId !== props.row.title ? (
           <View style={styles.verified}>
             {props.row.publisher?.verification ? (
               <Icon
@@ -230,6 +271,14 @@ export function McpAddDetail(
               {props.row.itemId}
             </Text>
           </View>
+          ) : null}
+          {purpose ? (
+            <Text
+              variant="reading"
+              style={[styles.purpose, { color: theme.colors.text.secondary }]}
+            >
+              {purpose}
+            </Text>
           ) : null}
           {deprecated ? (
             <Text variant="meta" style={{ color: theme.colors.status.actionRequired }}>
@@ -258,9 +307,23 @@ export function McpAddDetail(
               {t('capabilities.mcpAdd.detail.unsupported')}
             </Text>
           ) : null}
+          {/* The one action, right under what it adds (lab `m:mcp`); the body supplies it. */}
+          <CapabilityAddDetailAction />
         </View>
         </BareSectionContent>
       </ItemGroup>
+
+      {props.existing === null && !supported && !model && !read.error ? (
+        // The item is being read: its sections hold their place, so the body does not arrive blank and then jump.
+        <>
+          <ItemGroup title={t('capabilities.mcpAdd.detail.needsTitle')}>
+            <SkeletonRows rows={2} />
+          </ItemGroup>
+          <ItemGroup title={t('capabilities.mcpAdd.detail.nextTitle')}>
+            <SkeletonRows rows={3} />
+          </ItemGroup>
+        </>
+      ) : null}
 
       {props.existing === null && supported ? (
         <>
@@ -271,21 +334,7 @@ export function McpAddDetail(
               : {})}
           >
             {supported.fields.length === 0 ? (
-              supported.signIn ? (
-                <Item
-                  icon={
-                    <Icon
-                      name="key"
-                      size={ICON_SIZE.md}
-                      color={theme.colors.text.secondary}
-                    />
-                  }
-                  title={t('capabilities.mcpAdd.detail.signInTitle', {
-                    name: props.row.title,
-                  })}
-                  subtitle={t('capabilities.mcpAdd.detail.signInBody')}
-                />
-              ) : (
+              supported.signIn ? null : (
                 <SectionContentRow>
                   <Text
                     variant="body"
@@ -302,6 +351,8 @@ export function McpAddDetail(
                     <ValueRefRowsEditor
                       kind="env"
                       declaredNames
+                      commitOnChange
+                      inSectionRow
                       descriptions={descriptionsOf(envFields)}
                       entries={entriesOf(envFields, values)}
                       onChangeEntries={setGroup}
@@ -314,6 +365,8 @@ export function McpAddDetail(
                     <ValueRefRowsEditor
                       kind="header"
                       declaredNames
+                      commitOnChange
+                      inSectionRow
                       descriptions={descriptionsOf(headerFields)}
                       entries={entriesOf(headerFields, values)}
                       onChangeEntries={setGroup}
@@ -352,13 +405,15 @@ export function McpAddDetail(
                 </View>
               </SectionContentRow>
             )}
+            {/* The browser sign-in is a need whether or not the server also asks for values (as in a paste). */}
+            {supported.signIn ? <McpAddSignInItem name={props.row.title} /> : null}
           </ItemGroup>
 
           <WhereItsOnControl
             testID={`${props.testID}.detail.where`}
             kind="mcp_server"
             presentation="pick"
-            rules={draftReach.rules}
+            rules={rules}
             status="ready"
             projection={projection}
             places={{
@@ -367,7 +422,7 @@ export function McpAddDetail(
               projects: props.places.projects,
             }}
             agentTakes={props.places.agentTakes}
-            onChange={draftReach.onChange}
+            onChange={changeReach}
           />
 
           {supported.runs !== 'remoteSignIn' ? (
@@ -385,33 +440,48 @@ export function McpAddDetail(
           </ItemGroup>
           ) : null}
 
-          <ItemGroup title={t('capabilities.mcpAdd.detail.nextTitle')}>
-            <SectionContentRow>
-            <View style={styles.steps}>
-              {[
-                hasSecret
-                  ? t('capabilities.mcpAdd.detail.nextSavedKey')
-                  : t('capabilities.mcpAdd.detail.nextSaved'),
-                supported.signIn
-                  ? t('capabilities.mcpAdd.detail.nextSignIn')
-                  : t('capabilities.mcpAdd.detail.nextSessions'),
-                t('capabilities.mcpAdd.detail.nextUntouched'),
-              ].map((line, index) => (
-                <Text
-                  key={line}
-                  variant="body"
-                  style={{ color: theme.colors.text.primary }}
-                >
-                  {`${index + 1}. ${line}`}
-                </Text>
-              ))}
-            </View>
-            </SectionContentRow>
-          </ItemGroup>
+          <McpAddNextSteps savedKey={hasSecret} signIn={supported.signIn} />
         </>
       ) : null}
 
+      {listing ? <CapabilityListingSections testID={`${props.testID}.detail.listing`} facts={listing} /> : null}
     </View>
+  );
+});
+
+/** The browser sign-in a server asks for after it is saved: shared by the catalog's and a paste's details. */
+export function McpAddSignInItem(props: Readonly<{ name: string }>) {
+  return (
+    <Item
+      title={t('capabilities.mcpAdd.detail.signInTitle', { name: props.name })}
+      subtitle={t('capabilities.mcpAdd.detail.signInBody')}
+    />
+  );
+}
+
+/** What happens once a server is added: one numbered section, shared by the catalog's and a paste's details. */
+export function McpAddNextSteps(props: Readonly<{ savedKey: boolean; signIn: boolean }>) {
+  const { theme } = useUnistyles();
+  return (
+    <ItemGroup title={t('capabilities.mcpAdd.detail.nextTitle')}>
+      <SectionContentRow>
+        <View style={styles.steps}>
+          {[
+            props.savedKey
+              ? t('capabilities.mcpAdd.detail.nextSavedKey')
+              : t('capabilities.mcpAdd.detail.nextSaved'),
+            props.signIn
+              ? t('capabilities.mcpAdd.detail.nextSignIn')
+              : t('capabilities.mcpAdd.detail.nextSessions'),
+            t('capabilities.mcpAdd.detail.nextUntouched'),
+          ].map((line, index) => (
+            <Text key={line} variant="body" style={{ color: theme.colors.text.primary }}>
+              {`${index + 1}. ${line}`}
+            </Text>
+          ))}
+        </View>
+      </SectionContentRow>
+    </ItemGroup>
   );
 }
 
@@ -461,8 +531,8 @@ function TextField(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  detail: { gap: theme.space.s24 },
   head: { gap: theme.space.s8 },
+  purpose: { marginTop: theme.space.s4 },
   title: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12 },
   titleText: { flexShrink: 1 },
   verified: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },

@@ -14,7 +14,7 @@ import { builtInSettingUiDeclaration } from '@/components/settings/catalog/setti
 import { t } from '@/text';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { getActionSpec } from '@happier-dev/protocol/actions';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { settleApprovalRequestActionArgs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
@@ -22,6 +22,59 @@ import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serv
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { applyMcpServerCatalogSnapshot, resetMcpServerCatalogSnapshotsForTests } from '@/sync/store/settings/mcpServerCatalogSnapshot';
 import { resetMcpServerCatalogEngineForTests } from '@/sync/engine/settings/mcpServerCatalogEngine';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentReviewConflictFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+
+it('renders settled failure facts and recovery in the shared disclosure in both approval anatomies', async () => {
+    const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict',
+        effectAttempted: false, details: DeploymentReviewConflictFailureDetailsV1Schema.parse({ serverId: 'home', environmentId: 'environment',
+            targetLinkId: 'target', requiredFact: 'currentEnvironmentRevision', currentEnvironmentRevision: 9,
+            remedy: 'Review the latest environment and try again.' }) });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'failed', createdAtMs: 1, updatedAtMs: 2,
+        createdBy: { surface: 'cli' }, actionId: 'session.title.set', summary: 'Rename session',
+        actionArgs: { sessionId: 'session', title: 'Release notes' },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+            serverId: 'home', actionId: 'session.title.set', requestId: 'rename' },
+        decision: { kind: 'approve', decidedAtMs: 2 },
+        execution: { executedAtMs: 2, ...failure } });
+    const outcome = presentApprovalFailureOutcome(request, failure);
+    for (const anatomy of ['page', 'card'] as const) {
+        const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy}
+            presentation={{ ...describeApprovalActionFields(request), rows: [] }} failureTechnicalDetails={outcome.technicalDetails} />);
+        expect(screen.getTextContent()).not.toContain('currentEnvironmentRevision');
+        const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
+        await act(async () => { details?.props.onExpandedChange(true); });
+        const text = screen.getTextContent();
+        for (const value of ['deployment_conflict', 'false', 'currentEnvironmentRevision', '9', 'Review the latest environment and try again.']) {
+            expect(text).toContain(value);
+        }
+        await screen.unmount();
+    }
+});
+
+
+it('reads ceiling decision context in both approval anatomies without borrowing an unknown Home', async () => {
+    const request = ApprovalRequestV2Schema.parse({
+        v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli' }, actionId: 'machines.guard.sessionCeiling.set',
+        summary: 'Change this session’s memory ceiling',
+        actionArgs: { machineId: 'machine', sessionId: 'session', bytes: 2 ** 30 },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli',
+            caller: { kind: 'host' }, serverId: 'unknown-home',
+            actionId: 'machines.guard.sessionCeiling.set', requestId: 'ceiling-review' },
+    });
+    for (const anatomy of ['page', 'card'] as const) {
+        const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy} request={request}
+            serverId={null} presentation={describeApprovalActionFields(request)} />);
+        const text = screen.getTextContent();
+        expect(text).toContain('1 GB');
+        expect(text).toContain('Not reported');
+        expect(text).toMatch(/stop.*resume/is);
+        expect(text).not.toContain(String(2 ** 30));
+        await screen.unmount();
+    }
+});
 
 it('localizes declared enum options in both approval anatomies through the shared presentation', async () => {
     const presentation = describeApprovalActionFields({ actionId: 'machines.managed.power.set',
@@ -73,6 +126,23 @@ it('reads a Browser view command by its target, keeping its ids and a failure co
     const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
     await act(async () => { details?.props.onExpandedChange(true); });
     for (const exact of ['cmd-1', 'browser-session-1', 'view-1', 'target-1', 'openView', 'sandbox_unavailable']) expect(screen.getTextContent()).toContain(exact);
+});
+
+it('renders the shared failure projection in the existing technical disclosure', async () => {
+    const { presentActionFailureTechnicalDetails } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
+    const { DeploymentSourceAdmissionFailureV1Schema } = await import('@happier-dev/protocol/deployments/deploymentReceiptEventsV1');
+    const failureTechnicalDetails = presentActionFailureTechnicalDetails({ errorCode: 'agent_isolation_unavailable',
+        error: 'agent_isolation_unavailable', effectAttempted: false,
+        details: DeploymentSourceAdmissionFailureV1Schema.parse({ phase: 'deployment_source_admission',
+            reason: 'requester_authority_unavailable', requiredFact: 'verified_root_requester', remedy: 'retry_original_request' }) });
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" failureTechnicalDetails={failureTechnicalDetails}
+        presentation={describeApprovalActionFields({ actionId: 'session.title.set', actionArgs: { sessionId: 'session-1', title: 'Release notes' } })} />);
+    expect(screen.getTextContent()).not.toContain('verified_root_requester');
+    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
+    await act(async () => { details?.props.onExpandedChange(true); });
+    for (const value of ['agent_isolation_unavailable', 'requester_authority_unavailable', 'verified_root_requester', 'retry_original_request']) {
+        expect(screen.getTextContent()).toContain(value);
+    }
 });
 
 it('keeps the exact identity of a Home this device cannot name in Technical details, never in the readable rows', async () => {
@@ -269,55 +339,92 @@ afterEach(async () => {
     for (const id of profiles.splice(0)) await removeServerProfile(id);
 });
 
-it('presents a plugin install approval through the install review facts, keeping raw values in Technical details', async () => {
+it('presents a plugin install approval as the simple install consent, keeping raw values in Technical details', async () => {
     const locator = '/plugins/acme.example';
     const actionArgs = { path: locator, kind: 'path' as const, dev: true };
-    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    const network = {
+        id: 'network', capability: 'network', reason: 'Call the service.',
+        authorizationClass: 'cooperativeDisclosure' as const,
+        normalizedScope: { methods: ['POST'], targets: [{ kind: 'fixedOrigin', origin: 'http://127.0.0.1:5199' }] },
+    };
+    const rawCredential = {
+        accessMode: 'raw' as const,
+        contribution: { pluginId: 'acme.example', localId: 'speech' },
+        credentialSlot: { id: 'api_key', title: 'API key', purpose: 'voice.speech' },
+        sourceClass: { kind: 'savedSecret' as const, secretKinds: ['apiKey' as const] },
+        realm: 'daemon' as const, phase: 'speech' as const,
+        request: { kind: 'environment' as const, keys: ['VOICE_TOKEN'] },
+    };
+    const requestFor = (pendingReview: Readonly<Record<string, unknown>>) => ApprovalRequestV2Schema.parse({
+        v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
         createdBy: { surface: 'cli' }, actionId: 'plugins.install', actionArgs, summary: 'Install plugin',
         executionOriginV1: { v: 1, authority: 'account_automation', caller: { kind: 'host' },
             requestId: 'plugin-install-request', surface: 'cli', serverId: 'home', actionId: 'plugins.install' },
         preview: { actionId: 'plugins.install', actionArgs, pluginInstall: {
-            permissionsDisclosure: 'daemonEvaluated', pendingReview: {
-                kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: 'pending-plugin-install',
-                reason: 'firstInstall', currentVersion: null, authorityExpansion: [],
-                review: createPluginInstallationReviewFixture({
-                    source: { kind: 'path', locator },
-                    updateChannel: { kind: 'path', locator, development: true },
-                    requiredHostAccess: [{
-                    id: 'network', capability: 'network', reason: 'Call the service.',
-                    authorizationClass: 'cooperativeDisclosure',
-                    normalizedScope: { methods: ['POST'], targets: [{ kind: 'fixedOrigin', origin: 'http://127.0.0.1:5199' }] },
-                }] }),
-            },
-        },
-    } });
-    const presentation = describeApprovalRequestFields(request);
+            permissionsDisclosure: 'daemonEvaluated',
+            pendingReview: { kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: 'pending-plugin-install', ...pendingReview },
+        } },
+    });
+    const firstInstall = describeApprovalRequestFields(requestFor({
+        reason: 'firstInstall', currentVersion: null, authorityExpansion: [],
+        review: createPluginInstallationReviewFixture({
+            source: { kind: 'path', locator }, updateChannel: { kind: 'path', locator, development: true },
+            requiredHostAccess: [network],
+        }),
+    }));
+    const newScope = describeApprovalRequestFields(requestFor({
+        reason: 'authorityExpansion', currentVersion: '0.9.0', authorityExpansion: ['rawCredentialAccess'],
+        review: createPluginInstallationReviewFixture({ requiredHostAccess: [network], rawCredentialAccess: [rawCredential] }),
+    }));
 
     for (const anatomy of ['card', 'page'] as const) {
-        const screen = await renderScreen(<ActionApprovalFieldsCard presentation={presentation} anatomy={anatomy} />);
+        const screen = await renderScreen(<ActionApprovalFieldsCard presentation={firstInstall} anatomy={anatomy} />);
         const text = screen.getTextContent();
-        // The same words as the Settings install review: its sections, its labels for declared enums.
-        for (const value of [t('settingsPlugins.installReviewSections.requiredAccess'),
-            t('settingsPlugins.installReviewSections.authorizationClass.cooperativeDisclosure'),
-            t('settingsPlugins.installReviewSections.uiArtifactStatus.none'),
-            t('settingsPlugins.installReviewSections.trustedCodeTitle'), 'network']) {
+        // First install: the plugin and everything it uses, in one short reading.
+        for (const value of ['Example', t('settingsPlugins.installReviewSections.requiredAccess'), 'Network']) {
             expect(text).toContain(value);
         }
-        // The declared host scope reads as one sentence; its raw structure waits behind Technical details.
-        expect(text).toContain(t('settingsPlugins.installReviewSections.networkAccess', { methods: 'POST', targets: 'http://127.0.0.1:5199' }));
-        for (const raw of ['Fixed origin', 'Methods:', 'Targets:']) expect(text).not.toContain(raw);
-        // The local path is said once, in the Identity section, with its development flag; the install's
-        // own arguments for it wait behind Technical details.
-        expect(text.split(locator)).toHaveLength(2);
-        expect(text).toContain(`${locator} · development`);
-        // Raw enum values and key-derived labels never lead; they wait behind Technical details.
-        for (const raw of ['cooperativeDisclosure', 'notProvided', 'notApplicable', 'Ui artifacts', 'Runtime api version']) {
-            expect(text).not.toContain(raw);
+        // The detailed evidence review is gone; raw values wait behind Technical details.
+        for (const gone of [t('settingsPlugins.installReviewSections.trustedCodeTitle'),
+            t('settingsPlugins.installReviewSections.evidence'), 'cooperativeDisclosure']) {
+            expect(text).not.toContain(gone);
         }
         const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
         await act(async () => { details?.props.onExpandedChange(true); });
         expect(screen.getTextContent()).toContain('cooperativeDisclosure');
+
+        // An update that asks for more lists only what is new, against the installed version.
+        const update = (await renderScreen(<ActionApprovalFieldsCard presentation={newScope} anatomy={anatomy} />)).getTextContent();
+        for (const value of ['0.9.0 → 1.0.0', t('settingsPlugins.installReviewSections.rawCredentials'), 'API key']) {
+            expect(update).toContain(value);
+        }
+        expect(update).not.toContain(t('settingsPlugins.installReviewSections.requiredAccess'));
     }
+});
+
+it('keeps an installed plugin update\'s source selector behind Technical details, like an install\'s', async () => {
+    // The Plugins page's Update asks `plugins.install` for the installed plugin by its source selector.
+    const actionArgs = { source: { kind: 'installed' as const, pluginId: 'acme.example' } };
+    const request = ApprovalRequestV2Schema.parse({
+        v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli' }, actionId: 'plugins.install', actionArgs, summary: 'Install plugin',
+        executionOriginV1: { v: 1, authority: 'account_automation', caller: { kind: 'host' },
+            requestId: 'plugin-update-request', surface: 'cli', serverId: 'home', actionId: 'plugins.install' },
+        preview: { actionId: 'plugins.install', actionArgs, pluginInstall: {
+            permissionsDisclosure: 'daemonEvaluated',
+            pendingReview: { kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: 'pending-plugin-update',
+                reason: 'authorityExpansion', currentVersion: '0.9.0', authorityExpansion: ['requiredHostAccess'],
+                review: createPluginInstallationReviewFixture({}) },
+        } },
+    });
+    const screen = await renderScreen(<ActionApprovalFieldsCard presentation={describeApprovalRequestFields(request)} anatomy="page" />);
+    const text = screen.getTextContent();
+    expect(text).toContain('0.9.0 → 1.0.0');
+    // The consent names the plugin; its selector is routing, not something the person decides on.
+    expect(text).not.toContain('acme.example');
+    const details = screen.findAllByTestId('approvals.technical-details').find(node => typeof node.props.onExpandedChange === 'function');
+    await act(async () => { details?.props.onExpandedChange(true); });
+    expect(screen.getTextContent()).toContain('acme.example');
 });
 
 it('identifies a Delete approval by Session title, Machine, and id tail', async () => {
@@ -349,6 +456,26 @@ it('identifies a Delete approval by Session title, Machine, and id tail', async 
         expect(text).toContain('QA workstation');
         expect(text).toContain(sessionId.slice(-8));
     }
+});
+
+it('tells a Machine apart from same-named Machines on its Home by the suffix its picker uses', async () => {
+    const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://same-name-machines.test' });
+    profiles.push(home.id);
+    const named = (id: string) => createMachineFixture({ id, metadata: {
+        ...createMachineFixture().metadata!, displayName: 'NLDW3-5-36-33', host: 'nldw3' } });
+    const target = named('eadc2422-7f3c');
+    const peer = named('eadf0913-2b1a');
+    await act(async () => {
+        storage.setState({
+            settingsScope: { serverId: home.id, accountId: 'account' },
+            machines: { ...storage.getState().machines, [target.id]: target, [peer.id]: peer },
+            machineListByServerId: { ...storage.getState().machineListByServerId, [home.id]: [target, peer] },
+        });
+    });
+    const presentation = describeApprovalActionFields({ actionId: 'plugins.install', actionArgs: {
+        machineId: target.id, source: { kind: 'installed', pluginId: 'acme.storage' } } });
+    const screen = await renderScreen(<ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={home.id} />);
+    expect(screen.getTextContent()).toContain('NLDW3-5-36-33 · eadc');
 });
 
 it('keeps widget placement internals behind the canonical Details disclosure', async () => {
@@ -473,8 +600,9 @@ it('gives a structured value the same row as its sibling arguments on the approv
     const screen = await renderScreen(<ActionApprovalFieldsCard presentation={presentation} anatomy="page" />);
     // Every argument reads name-over-value through the one row owner, so a structured value cannot
     // invert the hierarchy its siblings use (a small label over large values).
-    const titles = screen.findAllByType(Item).map((item) => item.props.title);
-    expect(titles).toEqual(['Group id', 'Widget surface']);
+    // A wide page sets each label in the one label column beside its value; a phone stacks it as the title.
+    const labels = screen.findAllByType(Item).map((item) => typeof item.props.title === 'string' ? item.props.title : item.props.title.props.label);
+    expect(labels).toEqual(['Group id', 'Widget surface']);
     expect(screen.getTextContent()).toContain('Area');
 });
 

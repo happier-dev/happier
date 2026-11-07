@@ -7,6 +7,7 @@ import {
   resolveHappierMenuContent,
   resolveHappierMenuKeyAction,
   resolveHappierMenuRadioGroups,
+  resolveHappierMenuRowNavigation,
   resolveHappierMenuSelection,
   resolveHappierMenuTypeahead,
   resolveHappierPopoverPlacement,
@@ -28,6 +29,29 @@ describe('shared menu selection and keyboard semantics', () => {
     expect(resolveHappierMenuKeyAction('End')).toEqual({ kind: 'edge', edge: 'end' });
     expect(resolveHappierMenuKeyAction('Enter')).toEqual({ kind: 'activate' });
     expect(resolveHappierMenuKeyAction('x')).toEqual({ kind: 'typeahead', value: 'x' });
+    expect(resolveHappierMenuKeyAction('ArrowRight')).toEqual({ kind: 'cross', direction: 1 });
+    expect(resolveHappierMenuKeyAction('ArrowLeft')).toEqual({ kind: 'cross', direction: -1 });
+  });
+
+  it('moves across a row of items sideways and between rows vertically', () => {
+    const grid = [
+      { id: 'blue', row: 'presets' }, { id: 'green', row: 'presets', disabled: true }, { id: 'red', row: 'presets' },
+      { id: 'custom-1', row: 'custom' },
+      { id: 'picker' },
+    ];
+    const getRowGroup = (item: { row?: string }) => item.row ?? null;
+    const nav = (selectedIndex: number, action: { kind: 'move' | 'cross'; direction: -1 | 1 }) =>
+      resolveHappierMenuRowNavigation({ items: grid, selectedIndex, action, getRowGroup });
+
+    expect(nav(0, { kind: 'cross', direction: 1 })).toBe(2);
+    expect(nav(2, { kind: 'cross', direction: 1 })).toBeNull();
+    expect(nav(0, { kind: 'cross', direction: -1 })).toBeNull();
+    expect(nav(2, { kind: 'cross', direction: -1 })).toBe(0);
+    expect(nav(4, { kind: 'cross', direction: 1 })).toBeNull();
+    expect(nav(0, { kind: 'move', direction: 1 })).toBe(3);
+    expect(nav(3, { kind: 'move', direction: 1 })).toBe(4);
+    expect(nav(4, { kind: 'move', direction: -1 })).toBe(3);
+    expect(nav(3, { kind: 'move', direction: -1 })).toBe(0);
   });
 
   it('finds the next enabled label match for shared typeahead', () => {

@@ -1,15 +1,17 @@
 import type { SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import type { CapabilitySource } from '@/components/capabilities/facts/CapabilityFacts';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import type { RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import type { RegistryItemSummaryV1, RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 
 /** Index the catalog once; row adapters receive only their own displayed source name. */
-export function createSkillSourceNameResolver(sources: readonly Pick<RegistrySourceDescriptorV1, 'id' | 'title' | 'url'>[]) {
+export function createSkillSourceNameResolver(sources: readonly (Pick<RegistrySourceDescriptorV1, 'id' | 'title'> & { readonly url?: string })[]) {
   const byId = new Map(sources.map(source => [source.id, source.title]));
-  const byUrl = new Map(sources.map(source => [source.url, source.title]));
-  return (item: Pick<SkillListItemV1, 'provenance'>): string | undefined => {
+  const byUrl = new Map(sources.flatMap(source => source.url === undefined ? [] : [[source.url, source.title] as const]));
+  return (item: Pick<SkillListItemV1, 'provenance'> | Pick<RegistryItemSummaryV1, 'sourceId'>): string | undefined => {
+    if ('sourceId' in item) return byId.get(item.sourceId);
     const provenance = item.provenance;
-    if (provenance.kind === 'registry') return byId.get(provenance.registry.sourceId) ?? byUrl.get(provenance.registry.sourceUrl);
+    if (provenance.kind === 'registry') return byId.get(provenance.registry.sourceId)
+      ?? (provenance.registry.sourceUrl === undefined ? undefined : byUrl.get(provenance.registry.sourceUrl));
     if (provenance.kind === 'wellKnown') return byUrl.get(provenance.indexUrl);
     if (provenance.kind === 'link' && provenance.ref.kind === 'wellKnown') return byUrl.get(provenance.ref.indexUrl);
     return undefined;
@@ -41,13 +43,13 @@ export function skillSource(
       return { kind: 'machine', machineName: machineName(provenance.machineId) };
     case 'wellKnown':
       return { kind: 'link', host: hostOf(provenance.indexUrl) };
-    case 'registry':
+    case 'registry': {
       if (provenance.registry.ref.kind === 'wellKnown') return skillSource({ provenance: provenance.registry.ref }, machineName);
-      return {
-        kind: 'git',
-        label: repositoryLabel(provenance.registry.ref.kind === 'gitTree' ? provenance.registry.ref.repo : undefined)
-          ?? repositoryLabel(provenance.registry.sourceUrl) ?? hostOf(provenance.registry.sourceUrl),
-      };
+      const label = repositoryLabel(provenance.registry.ref.kind === 'gitTree' ? provenance.registry.ref.repo : undefined)
+        ?? repositoryLabel(provenance.registry.sourceUrl)
+        ?? (provenance.registry.sourceUrl === undefined ? undefined : hostOf(provenance.registry.sourceUrl));
+      return label === undefined ? undefined : { kind: 'git', label };
+    }
     case 'link': {
       if (provenance.ref.kind === 'wellKnown') return skillSource({ provenance: provenance.ref }, machineName);
       const repository = repositoryLabel(provenance.url);

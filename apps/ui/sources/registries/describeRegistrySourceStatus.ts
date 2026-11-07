@@ -21,7 +21,8 @@ export type RegistryFailureStatus = Exclude<RegistrySourceStatusV1, { state: 'ok
 
 /** Human-facing source identity and typed reason; transport exception text is never presentation input. */
 export function describeRegistrySourceFailure(status: RegistryFailureStatus | null, sourceTitle?: string | null): string {
-    const reason = status ? describeRegistrySourceStatus(status) : t('common.unavailable');
+    // A read that failed without a typed status still says what happened, never a bare "Unavailable".
+    const reason = status ? describeRegistrySourceStatus(status) : t('promptLibrary.registriesStatus.unreachable');
     return sourceTitle ? `${sourceTitle} · ${reason}` : reason;
 }
 /** The registry owner's typed failure (rate limited, token rejected, …) as it crosses an Action failure's details. */

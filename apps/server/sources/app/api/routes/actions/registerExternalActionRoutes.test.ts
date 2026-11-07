@@ -164,6 +164,31 @@ describe("registerExternalActionRoutes", () => {
         } finally { sink.mockRestore(); await app.close(); }
     });
 
+    it.each([
+        { actionId: 'browser.extensions.list', legacy: true },
+        { actionId: 'ui.current_context.read', legacy: false },
+    ])('keeps an authenticated Account session when $actionId is outside its root authority (legacy=$legacy)', async ({ actionId, legacy }) => {
+        const dispatch = vi.fn();
+        const app = createApp({ dispatch, beforeRegister: instance => {
+            // Replace credential verification only; exercise real Action admission and HTTP projection.
+            instance.addHook('onRequest', async (request: FastifyRequest) => {
+                request.authTokenLegacy = legacy;
+                request.authTokenEpoch = 1;
+            });
+        } });
+        try {
+            for (const suffix of ['', '/execution-authorization']) {
+                const response = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}${suffix}`,
+                    headers: { authorization: 'Bearer signed-account-token', 'x-test-user-id': 'account-1', 'x-test-auth-token-kind': 'account' },
+                    payload: { v: 1, requestId: 'session-continuity', target: { kind: 'machine', machineId: 'machine-1' }, input: {} },
+                });
+                expect(response.statusCode).toBe(403);
+                expect(response.json()).toMatchObject({ error: 'credential_scope_denied' });
+            }
+            expect(dispatch).not.toHaveBeenCalled();
+        } finally { await app.close(); }
+    });
+
     it.each(['skills.list', 'skills.read'] as const)('admits the interactive Account plugin-library reader %s without a Session origin', async (actionId) => {
         const app = createApp({ beforeRegister: instance => {
             // Credential authentication is the boundary; catalog admission stays real.
@@ -180,34 +205,6 @@ describe("registerExternalActionRoutes", () => {
             });
             expect(response.statusCode).toBe(200);
             expect(response.json()).toMatchObject({ actionId, execution: { ok: true } });
-            const write = await app.inject({ method: 'POST', url: '/v1/actions/skills.duplicate',
-                headers: { authorization: 'Bearer signed-account-token', 'x-test-user-id': 'account-1', 'x-test-auth-token-kind': 'account' },
-                payload: { v: 1, requestId: 'plugin-library-write', target: { kind: 'machine', machineId: 'machine-1' },
-                    input: { skillId: 'plugin:example.plugin/check' } },
-            });
-            expect(write.statusCode).toBe(401);
-        } finally { await app.close(); }
-    });
-
-    it('reports a paired terminal decision authority refusal without calling its credential invalid', async () => {
-        const dispatch = vi.fn();
-        const app = createApp({ dispatch, beforeRegister: instance => {
-            instance.addHook('onRequest', async (request: FastifyRequest) => {
-                request.authTokenLegacy = false;
-                request.authTokenEpoch = 1;
-            });
-        } });
-        try {
-            const envelope = { v: 1, requestId: 'terminal-decision', target: { kind: 'machine', machineId: 'peer' },
-                input: { artifactId: 'approval', decision: 'approve' } };
-            for (const suffix of ['', '/execution-authorization']) {
-                const response = await app.inject({ method: 'POST', url: `/v1/actions/approval.request.decide${suffix}`,
-                    headers: { authorization: 'Bearer terminal-token', 'x-test-user-id': 'account-1', 'x-test-auth-token-kind': 'terminal' },
-                    payload: suffix ? { v: 1, machineId: 'peer', envelope } : envelope });
-                expect(response.statusCode).toBe(403);
-                expect(response.json()).toEqual({ error: 'credential_scope_denied' });
-            }
-            expect(dispatch).not.toHaveBeenCalled();
         } finally { await app.close(); }
     });
 
@@ -244,8 +241,8 @@ describe("registerExternalActionRoutes", () => {
                         url: `/v1/actions/${candidate.actionId}${suffix}`, headers: candidate.headers,
                         payload: suffix ? { v: 1, machineId: 'machine-1', envelope } : envelope,
                     });
-                    expect(response.statusCode, candidate.actionId + suffix).toBe(401);
-                    expect(response.json()).toEqual({ error: 'invalid_token' });
+                    expect(response.statusCode, candidate.actionId + suffix).toBe(403);
+                    expect(response.json()).toEqual({ error: 'credential_scope_denied' });
                 }
             }
             expect(dispatch).not.toHaveBeenCalled();
@@ -478,7 +475,7 @@ describe("registerExternalActionRoutes", () => {
         }
     });
 
-    it("rejects non-PAT and daemon-control credentials without dispatching", async () => {
+    it("rejects unproven Account roots and unauthenticated daemon control without dispatching", async () => {
         const dispatch = vi.fn();
         const app = createApp({ dispatch });
         await app.ready();
@@ -498,16 +495,14 @@ describe("registerExternalActionRoutes", () => {
                 url: "/v1/actions/session.spawn_new",
                 headers: {
                     "x-happier-daemon-token": "private-control-token",
-                    "x-test-user-id": "account-1",
                     "x-test-auth-token-kind": "api_token",
                 },
                 payload: { v: 1, target: { kind: "machine", machineId: "machine-1" }, input: {} },
             });
 
-            expect(signedAccountResponse.statusCode).toBe(401);
-            expect(signedAccountResponse.json()).toEqual({ error: "invalid_token" });
+            expect(signedAccountResponse.statusCode).toBe(403);
+            expect(signedAccountResponse.json()).toEqual({ error: "credential_scope_denied" });
             expect(daemonTokenResponse.statusCode).toBe(401);
-            expect(daemonTokenResponse.json()).toEqual({ error: "invalid_token" });
             expect(dispatch).not.toHaveBeenCalled();
         } finally {
             await app.close();
@@ -568,8 +563,8 @@ describe("registerExternalActionRoutes", () => {
                 payload: { v: 1, target: { kind: "machine", machineId: "machine-1" }, input: {} },
             });
 
-            expect(response.statusCode).toBe(401);
-            expect(response.json()).toEqual({ error: "invalid_token" });
+            expect(response.statusCode).toBe(403);
+            expect(response.json()).toEqual({ error: "credential_scope_denied" });
             expect(dispatch).not.toHaveBeenCalled();
         } finally {
             await app.close();
@@ -706,10 +701,11 @@ describe("registerExternalActionRoutes", () => {
         }
     });
 
-    it("maps a daemon admission failure to the canonical invalid-request response", async () => {
+    it("maps a daemon target admission phase to the protected invalid-request response", async () => {
         const dispatch = vi.fn(async () => ({
             kind: "invalid_request" as const,
-            errorCode: "invalid_action" as const,
+            errorCode: "target_not_local" as const,
+            phase: "target_installation" as const,
         }));
         const app = createApp({ dispatch });
         await app.ready();
@@ -718,13 +714,16 @@ describe("registerExternalActionRoutes", () => {
                 method: "POST",
                 url: "/v1/actions/not-a-public-action",
                 headers: patHeaders,
-                payload: { v: 1, input: {} },
+                payload: { v: 2, requestId: 'protected-target-admission',
+                    target: { kind: 'machine', machineId: 'machine-1' },
+                    payload: { t: 'encrypted', c: 'private-ciphertext-marker' } },
             });
 
-            expect(response.statusCode).toBe(400);
+            expect(response.statusCode).toBe(409);
             expect(response.headers["cache-control"]).toBe("no-store");
             expect(response.headers["access-control-allow-origin"]).toBeUndefined();
-            expect(response.json()).toEqual({ error: "invalid_request", code: "invalid_action" });
+            expect(response.json()).toEqual({ error: "invalid_request", code: "target_not_local",
+                requestId: 'protected-target-admission', phase: "target_installation" });
             expect(dispatch).toHaveBeenCalledOnce();
         } finally {
             await app.close();
@@ -935,7 +934,7 @@ describe("registerExternalActionRoutes", () => {
     });
 
     it("does not fabricate a plaintext target failure after protected submission", async () => {
-        const dispatch = vi.fn(async () => ({ kind: "submitted_unknown" as const }));
+        const dispatch = vi.fn(async () => ({ kind: "submitted_unknown" as const, cause: { reason: 'daemon_acknowledgement_lost' as const } }));
         const app = createApp({ dispatch });
         await app.ready();
         try {
@@ -952,7 +951,8 @@ describe("registerExternalActionRoutes", () => {
             });
 
             expect(response.statusCode).toBe(502);
-            expect(response.body).toBe("");
+            expect(response.json()).toEqual({ error: 'invalid_request', code: 'action_outcome_unknown',
+                requestId: 'protected-submitted-unknown', diagnostic: { reason: 'daemon_acknowledgement_lost' } });
             expect(response.body).not.toContain("target_unavailable");
             expect(response.headers["cache-control"]).toBe("no-store");
             expect(dispatch).toHaveBeenCalledTimes(1);

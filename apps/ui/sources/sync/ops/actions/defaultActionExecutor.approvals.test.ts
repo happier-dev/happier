@@ -1,10 +1,17 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
-    API_TOKEN_FULL_GRANT_V1, ApprovalRequestSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, DEFAULT_SESSION_CAPABILITIES,
-    MACHINE_PLAIN_DATA_KEY_MARKER, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent,
-    type AccountApiTokenSummaryV1, type ApprovalRequest,
-} from '@happier-dev/protocol';
+    API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ApprovalRequestSchema, type ApprovalRequest,
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { DEFAULT_SESSION_CAPABILITIES} from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
+import {
+    MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+    type AccountApiTokenSummaryV1} from '@happier-dev/protocol/auth/accountApiTokens';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -14,7 +21,8 @@ import tweetnacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { answerDiscussionThreadForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerDiscussionThreadForTests, createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { TestWebCryptoWorker } from '@/dev/testkit/harness/webCryptoWorkerBoundary';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { deriveDocCommentDiscussionCreationLocalIdV1, DocEditAcceptTransportInputV1Schema,
     DOC_EDIT_PROPOSAL_HTTP_PATHS_V1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -23,8 +31,10 @@ import { DiscussionDocEditProposalContentV1Schema } from '@happier-dev/protocol/
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -34,7 +44,6 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
     ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
-import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { buildWidgetSurfaceArtifactIdV1 } from '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -54,6 +63,7 @@ installDisconnectedServerSocketBoundary((socket) => {
     vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
         // Sync also acknowledges subscriptions; only RPC envelopes are Action effects.
         if (event === SOCKET_RPC_EVENTS.CALL) outgoing.push(payload);
+        if (event === SOCKET_RPC_EVENTS.CALL && rpcAcknowledgement instanceof Error) throw rpcAcknowledgement;
         if (event === SOCKET_RPC_EVENTS.CALL && rpcAcknowledgement !== undefined) return rpcAcknowledgement;
         return { ok: true, result: decisionReceiver && payload.method.endsWith(':' + RPC_METHODS.APPROVAL_REQUEST_DECIDE)
             ? await decisionReceiver(payload.params) : rpcResult };
@@ -75,6 +85,7 @@ let webLocks: ReturnType<typeof installWebLockManagerMock>;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 const context = () => ({ surface: 'ui' as const, serverId: homeId });
 const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
+const retainedInvocations: { abort: AbortController; settled: Promise<unknown> }[] = [];
 
 async function connectPermissionTransport(): Promise<void> {
     const { apiSocket } = await import('@/sync/api/session/apiSocket');
@@ -115,6 +126,30 @@ async function invitationApproval(actionId: 'teams.invitations.create' | 'teams.
     homes.answer(homeId, '/v1/machines', { body: [machineRow] });
     // The original Account Machine is read by id (a532f4a1e0): it is the same Home row, installation identity included.
     homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: { ...machineRow, kind: 'persistent' } } });
+    if (getActionSpec(actionId).approvalResultCustody === 'live_only' && !publicProposal) {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const abort = new AbortController();
+        let announce!: (artifactId: string) => void;
+        const pending = new Promise<string>(resolve => { announce = resolve; });
+        const originalExecutor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => homeId,
+            onBlockingApprovalPending: ({ artifactId }) => announce(artifactId) });
+        const originalInvocation = originalExecutor.execute(actionId, input, {
+            surface: 'agent', authority: 'account_automation', serverId: homeId, signal: abort.signal,
+            actionCaller: signed ? caller : { kind: 'host' }, actionRequestId: requestId,
+            ...(signed ? { defaultSessionId: 's1', defaultSessionMachineId: target.machineId,
+                callerPermissionMode: null, sessionInputSource: { sourceSessionId: 's1', sourceTurnId: 'turn-1', via: 'action' as const },
+                externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+                signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
+                    signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
+                        actionId: args.actionId, input: args.input, target: args.target, privateKey: installation.secretKey }),
+            } : {}),
+        });
+        retainedInvocations.push({ abort, settled: originalInvocation.catch(() => null) });
+        const artifactId = await Promise.race([pending, originalInvocation.then(result => {
+            throw new Error(`Original invitation did not wait: ${result.ok ? 'settled' : result.errorCode}`);
+        })]);
+        return { artifactId, input, proposed: { ok: true, result: { kind: 'approval_request_created', artifactId } }, originalInvocation };
+    }
     if (!signed) {
         // Retained host-CLI approvals remain replayable; current CLI admission
         // does not grant automation permission to create a fresh invitation proposal.
@@ -130,7 +165,7 @@ async function invitationApproval(actionId: 'teams.invitations.create' | 'teams.
             },
             actionId, actionArgs: input, summary: 'Retained Account proposal',
         }));
-        return { artifactId, input, proposed: { ok: true, result: { kind: 'approval_request_created', artifactId } } };
+        return { artifactId, input, proposed: { ok: true, result: { kind: 'approval_request_created', artifactId } }, originalInvocation: undefined };
     }
     const proposed = await executor.execute(publicProposal ? 'approval.request.create' : actionId,
         publicProposal ? proposalInput : input, {
@@ -147,7 +182,7 @@ async function invitationApproval(actionId: 'teams.invitations.create' | 'teams.
         result: publicProposal ? { artifactId: expect.any(String) } : { kind: 'approval_request_created' } });
     if (!proposed.ok || !proposed.result || typeof proposed.result !== 'object'
         || !('artifactId' in proposed.result) || typeof proposed.result.artifactId !== 'string') throw new Error('expected_approval');
-    return { artifactId: proposed.result.artifactId, input, proposed };
+    return { artifactId: proposed.result.artifactId, input, proposed, originalInvocation: undefined };
 }
 
 function approvalRequest(actionId: 'session.title.set' | 'session.stop' = 'session.title.set'): ApprovalRequest {
@@ -172,6 +207,16 @@ async function seedApproval(id: string, request: ApprovalRequest): Promise<void>
     });
     expect(response?.ok).toBe(true);
 }
+function liveCliConfidentialApproval() {
+    return ApprovalRequestV2Schema.parse({
+        v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli' }, requestedSurface: 'cli', approval: { flow: 'blocking', result: 'required' },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+            serverId: 'cli-only-profile', serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+            actionId: 'secrets.create', requestId: 'cli-private-request' },
+        actionId: 'secrets.create', actionArgs: { name: 'Reviewed credential', kind: 'token' }, summary: 'Create credential',
+    });
+}
 function persistedApproval(id: string): ApprovalRequest {
     return ApprovalRequestSchema.parse(JSON.parse(homes.artifacts(homeId).readPlainBody(id) ?? 'null'));
 }
@@ -187,10 +232,11 @@ async function setVoiceApprovalDelegation(enabled: boolean): Promise<void> {
     homes.answer(homeId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
     expect(storage.getState().settings.voice.canApproveRequests).toBe(enabled);
 }
-function expectFailedApproval(id: string, errorCode = 'approval_stale'): void {
+function expectReusableApproval(id: string): void {
     expect(persistedApproval(id)).toMatchObject({
-        status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode },
+        status: 'approved', decision: { kind: 'approve' },
     });
+    expect(persistedApproval(id).execution).toBeUndefined();
     expect(outgoing).toEqual([]);
     // Tuple mutations PATCH the Session row; metadata-upgrades is a legitimate
     // background GET. Legacy Socket metadata writes are covered by outgoing.
@@ -202,6 +248,218 @@ await import('@/sync/syncEngine');
 await import('./defaultActionExecutor');
 
 describe('createDefaultActionExecutor approvals', () => {
+    it('executes a stored Account approval in the approving app regardless of plugin origin', async () => {
+        const artifactId = 'plugin-account-placement';
+        await seedApproval(artifactId, ApprovalRequestSchema.parse({
+            v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'system', pluginId: 'acme.reviewer', contributionLocalId: 'review' },
+            requestedSurface: 'plugin', approval: { flow: 'deferred', result: 'required' },
+            executionOriginV1: {
+                v: 1, authority: 'account_automation', surface: 'plugin',
+                caller: { kind: 'plugin', pluginId: 'acme.reviewer', contributionLocalId: 'review',
+                    sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'archive' } },
+                serverId: homeId, serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+                machineId: 'machine-exact', actionId: 'account.name.set', requestId: 'plugin-account-request',
+            },
+            actionId: 'account.name.set', actionArgs: { name: 'Captain' }, summary: 'Set my name',
+        }));
+        homes.answer(homeId, '/v1/account/profile', { body: { name: 'Captain', firstName: 'Captain', lastName: null, timestamp: 10 } });
+        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+        expect(result).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        expect(persistedApproval(artifactId).status).toBe('executed');
+        expect(homes.requestsFor('/v1/account/profile').filter(request => request.input !== null)).toHaveLength(1);
+        expect(outgoing).toEqual([]);
+    });
+
+    it('delivers signed live CLI consent to its original daemon instead of an unpublished terminal relay', async () => {
+        const artifactId = 'signed-cli-live';
+        const original = liveCliConfidentialApproval();
+        const target = { kind: 'machine' as const, machineId: 'machine-exact' };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+            v: 1, token: 'signed-live-cli-proof', binding: {
+                accountId: 'account-a', authentication: { kind: 'account', tokenEpoch: 0 },
+                serverIdentityId: 'srv_approval_home', machineId: target.machineId,
+                installationId: 'installation-1', custodianAccountId: 'account-a', accountEncryptionMode: 'plain',
+                actionId: original.actionId, requestId: original.executionOriginV1.requestId, target,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+                    v: 1, requestId: original.executionOriginV1.requestId, target, input: projectNativeJsonValueForTransport(original.actionArgs),
+                }),
+            },
+        });
+        await seedApproval(artifactId, ApprovalRequestV2Schema.parse({ ...original, executionOriginV1: {
+            ...original.executionOriginV1, machineId: target.machineId, target,
+            externalActionExecutionAuthorization: authorization,
+            externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+                actionId: original.actionId, input: original.actionArgs, target, privateKey: installation.secretKey }),
+        } }));
+        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: {
+            ...createPlainMachineRowFixture({ id: target.machineId, accountId: 'account-a' }), kind: 'persistent',
+        } } });
+        homes.answer(homeId, '/v1/actions/approval.request.decide', { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            expect(envelope.target).toEqual(target);
+            expect(envelope.input).toMatchObject({ artifactId, decision: 'approve' });
+            return { body: { v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId,
+                execution: { ok: true, result: { ok: true, status: 'approved' } } } };
+        } });
+        expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context()))
+            .toMatchObject({ ok: true, result: { status: 'approved' } });
+        expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+        expect(outgoing).toEqual([]);
+    });
+
+    it.each(['ui', 'voice'] as const)('delivers a live CLI confidential approval to its request-bound origin from %s', async surface => {
+        const { liveCliApprovalOriginScope, LIVE_CLI_APPROVAL_DECIDE_METHOD } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const artifactId = 'live-cli-confidential';
+        const originRequestId = 'cli-private-request';
+        await seedApproval(artifactId, liveCliConfidentialApproval());
+        if (surface === 'voice') await setVoiceApprovalDelegation(true);
+        // The live receiver releases its own retained waiter; completion arrives through the incumbent Artifact projection.
+        rpcResult = { ok: true, result: { ok: true, status: 'approved' } };
+        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+            { ...context(), surface, authority: 'present_user', actionCaller: { kind: 'host' } });
+        expect(result).toEqual(rpcResult);
+        expect(outgoing).toHaveLength(1);
+        expect(outgoing[0]).toMatchObject({ method: `${liveCliApprovalOriginScope(originRequestId)}:${LIVE_CLI_APPROVAL_DECIDE_METHOD}`,
+            params: { artifactId, decision: 'approve', serverIdentityId: 'srv_approval_home', originServerId: 'cli-only-profile' } });
+        expect(outgoing[0]?.params).toEqual({ artifactId, decision: 'approve', serverIdentityId: 'srv_approval_home', originServerId: 'cli-only-profile' });
+        expect(persistedApproval(artifactId)).toMatchObject({ status: 'approved',
+            decision: { kind: 'approve', authority: 'present_user' } });
+        expect(persistedApproval(artifactId).execution).toBeUndefined();
+    });
+
+    it.each(['reject', 'cancel'] as const)('settles live CLI %s through the incumbent Artifact owner without origin RPC', async decision => {
+        const artifactId = 'live-cli-declined';
+        await seedApproval(artifactId, liveCliConfidentialApproval());
+        const status = decision === 'reject' ? 'rejected' : 'canceled';
+        expect(await executor.execute('approval.request.decide', { artifactId, decision },
+            { ...context(), authority: 'present_user', actionCaller: { kind: 'host' } }))
+            .toMatchObject({ ok: true, result: { status } });
+        expect(persistedApproval(artifactId).status).toBe(status);
+        expect(outgoing).toEqual([]);
+    });
+
+    it.each(['refused', 'malformed'] as const)('settles a dispatched live CLI %s reply through the incumbent outcome owner without fallback', async reply => {
+        const artifactId = 'live-cli-confidential-refusal';
+        await seedApproval(artifactId, liveCliConfidentialApproval());
+        rpcResult = reply === 'refused'
+            ? { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' }
+            : { status: 'executed' };
+        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+            { ...context(), authority: 'present_user', actionCaller: { kind: 'host' } });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'outcome_unknown',
+            execution: { ok: false, errorCode: 'approval_execution_outcome_unknown' } } });
+        expect(outgoing).toHaveLength(1);
+        expect(persistedApproval(artifactId)).toMatchObject({ status: 'outcome_unknown',
+            execution: { ok: false, errorCode: 'approval_execution_outcome_unknown', effectAttempted: true } });
+        expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
+    });
+
+    it.each(['automation', 'session'] as const)('refuses %s authority for a live CLI approval without origin traffic', async rejected => {
+        const { replayLiveCliApproval } = await import('./liveCliApprovalReplay');
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const account = await captureLazyActionAccountContext(homeId);
+        const callerContext: ActionExecutorContext = { ...context(),
+            authority: rejected === 'automation' ? 'account_automation' : 'present_user',
+            actionCaller: rejected === 'session'
+                ? { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 } : { kind: 'host' } };
+        try {
+            expect(await replayLiveCliApproval({ account, artifactId: 'live-cli-forbidden',
+                request: liveCliConfidentialApproval(), decision: 'approve', context: callerContext }))
+                .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+            expect(outgoing).toEqual([]);
+        } finally { account.dispose(); }
+    });
+
+    it('retains a live CLI approval receipt when invocation cancellation arrives after acknowledgement', async () => {
+        const { replayLiveCliApproval } = await import('./liveCliApprovalReplay');
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const cancellation = new AbortController();
+        const account = await captureLazyActionAccountContext(homeId, cancellation.signal);
+        const receipt = { ok: true, result: { ok: true, status: 'approved' } };
+        // Cancellation occurs during admitted ACK decoding, after the shared ACK owner settled the call.
+        rpcAcknowledgement = { ok: true, get result() { cancellation.abort(); return receipt; } };
+        try {
+            await expect(replayLiveCliApproval({ account, artifactId: 'live-cli-cancel-after-ack',
+                request: liveCliConfidentialApproval(), decision: 'approve',
+                context: { ...context(), authority: 'present_user', actionCaller: { kind: 'host' } },
+                signal: cancellation.signal,
+            })).resolves.toEqual(receipt);
+            expect(outgoing).toHaveLength(1);
+        } finally { account.dispose(); }
+    });
+
+    it('keeps the applied Voice receipt after an actual Account preference change and refuses the next decision', async () => {
+        await seedApproval('voice-live-preference', liveCliConfidentialApproval());
+        await seedApproval('voice-live-next', liveCliConfidentialApproval());
+        await setVoiceApprovalDelegation(true);
+        const receipt = { ok: true, result: { ok: true, status: 'approved' } };
+        // The Socket.IO boundary applies an external Account settings update
+        // before returning the already-applied remote decision acknowledgement.
+        rpcAcknowledgement = { then: async (resolve: (value: unknown) => void) => {
+            await setVoiceApprovalDelegation(false);
+            resolve({ ok: true, result: receipt });
+        } };
+        const voiceContext = { ...context(), surface: 'voice' as const, actionCaller: { kind: 'host' as const } };
+        expect(await executor.execute('approval.request.decide', {
+            artifactId: 'voice-live-preference', decision: 'approve',
+        }, voiceContext)).toEqual(receipt);
+        expect(await executor.execute('approval.request.decide', {
+            artifactId: 'voice-live-next', decision: 'approve',
+        }, voiceContext)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        expect(outgoing).toHaveLength(1);
+    });
+
+    it('uses admitted execution-run authority and refuses automation authority', async () => {
+        const { createExecutionRunHostApprovalReplay } = await import('./executionRunHostApproval');
+        const { ExecutionRunHostActionApprovalRequestV1Schema } = await import('@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1');
+        const request = ExecutionRunHostActionApprovalRequestV1Schema.parse({
+            v: 1, kind: 'execution_run_host_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+            actionId: 'reviews.comments.create', sessionId: 'session-1', runId: 'run-1', callId: 'call-1',
+            profileId: 'review', pluginId: 'review', agentId: 'codex', projectId: 'project-1',
+            workspaceId: 'workspace-1', serverId: homeId, proposalCount: 1, proposalPreview: [],
+            subjectFingerprint: 'a'.repeat(64), summary: 'Create a review comment',
+        });
+        let effects = 0;
+        const replay = createExecutionRunHostApprovalReplay({
+            read: async () => null,
+            // The remote Session host's decision RPC is the system boundary.
+            decide: async () => { effects++; return { ok: true, status: 'approved' }; },
+        });
+        const input = { artifactId: 'run-approval', decision: 'approve' as const, initialRead: { request },
+            context: { ...context(), surface: 'voice' as const, authority: 'present_user' as const } };
+        await expect(replay(input)).resolves.toMatchObject({ ok: true, result: { status: 'approved' } });
+        await expect(replay({ ...input, context: { ...input.context, authority: 'account_automation' } }))
+            .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        expect(effects).toBe(1);
+    });
+
+    it.each(['before_dispatch', 'after_reply'] as const)('admits live CLI consent once and preserves an applied receipt (%s)', async phase => {
+        const { replayLiveCliApproval } = await import('./liveCliApprovalReplay');
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const account = await captureLazyActionAccountContext(homeId);
+        const dispatched: boolean[] = [];
+        rpcAcknowledgement = { ok: true, result: { ok: true, result: { status: 'executed' } } };
+        try {
+            const pending = replayLiveCliApproval({ account, artifactId: 'live-cli-authority',
+                request: liveCliConfidentialApproval(), decision: 'approve',
+                context: { ...context(), authority: phase === 'before_dispatch' ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' } },
+                onReplayDispatched: (value = true) => { dispatched.push(value); },
+            });
+            if (phase === 'before_dispatch') await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+            else {
+                await expect(pending).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+                await expect(replayLiveCliApproval({ account, artifactId: 'next-live-cli-authority',
+                    request: liveCliConfidentialApproval(), decision: 'approve',
+                    context: { ...context(), authority: 'account_automation', actionCaller: { kind: 'host' } },
+                })).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+            }
+            expect(outgoing).toHaveLength(phase === 'before_dispatch' ? 0 : 1);
+            expect(dispatched).toEqual(phase === 'before_dispatch' ? [] : [true]);
+        } finally { account.dispose(); }
+    });
+
     it.each(['approve', 'reject'] as const)('keeps a suspended admitted Voice %s through its decision CAS', async decision => {
         const { artifactId } = await invitationApproval('account.name.set', false);
         homes.answer(homeId, '/v1/account/profile', { body: { name: 'Captain', firstName: 'Captain', lastName: null, timestamp: 10 } });
@@ -330,15 +588,15 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(persistedApproval('artifact-1').status).toBe('open');
     });
 
-    it('acquires an ordinary built-in once for initial family routing, retaining the fresh CAS read', async () => {
+    it('reuses one ordinary built-in acquisition for family routing and the first decision CAS', async () => {
         const result = await executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'reject' }, context());
         expect(result, JSON.stringify({ result, paths: homes.requests.map(request => request.path) }))
             .toMatchObject({ ok: true, result: { status: 'rejected' } });
         const requests = homes.requestsFor('/v1/artifacts/artifact-1');
         const firstWrite = requests.findIndex(request => request.input !== null);
         expect(firstWrite).toBeGreaterThan(0);
-        // One initial classification acquisition plus the writer's fresh revision basis.
-        expect(requests.slice(0, firstWrite).filter(request => request.input === null)).toHaveLength(2);
+        // The acquired row carries the expected versions; no second pre-write GET.
+        expect(requests.slice(0, firstWrite).filter(request => request.input === null)).toHaveLength(1);
         expect(persistedApproval('artifact-1')).toMatchObject({ status: 'rejected' });
         expect(outgoing).toEqual([]);
     });
@@ -393,7 +651,10 @@ describe('createDefaultActionExecutor approvals', () => {
         else expect(persistedApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true } });
     });
 
-    it.each(['approve', 'reject'] as const)('records a public %s decision for a live Account Action without a Machine', async decision => {
+    it.each([
+        { decision: 'approve', remote: false, live: true }, { decision: 'reject', remote: false, live: false },
+        { decision: 'approve', remote: true, live: false }, { decision: 'approve', remote: false, live: false },
+    ] as const)('records a public $decision decision for a live target Action (remote: $remote, live: $live)', async ({ decision, remote, live }) => {
         const artifactId = `account-target-${decision}`;
         const request = TargetActionApprovalRequestV1Schema.parse({
             v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -403,21 +664,58 @@ describe('createDefaultActionExecutor approvals', () => {
             sourceCustody: { kind: 'account_release', pluginId: 'acme.account-actions', version: '1.0.0',
                 archiveDigestSha256: `sha256:${'a'.repeat(64)}` },
             policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'c'.repeat(64), summary: 'Write personal value',
+            ...(remote ? { replayPlacement: { serverId: homeId, machineId: 'machine-exact' }, executionOriginV1: {
+                v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+                serverId: homeId, serverIdentityId: 'srv_approval_home', accountId: 'account-a', machineId: 'machine-exact',
+                actionId: 'action.invoke', requestId: 'target-live-request', target: { kind: 'machine', machineId: 'machine-exact' },
+            } } : {}),
         });
         const seeded = await homes.artifacts(homeId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
             id: artifactId, header: encodePlainArtifactStoredContent(buildTargetActionApprovalArtifactHeaderV1(request)),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         }) });
         expect(seeded?.ok).toBe(true);
+        let original: Promise<unknown> | null = null;
+        if (live) {
+            const { getSharedBlockingApprovalCoordinator } = await import('@happier-dev/protocol/actions/blockingApprovalCoordinator');
+            const abort = new AbortController();
+            original = getSharedBlockingApprovalCoordinator().waitForDecision({ artifactId, request, signal: abort.signal });
+            retainedInvocations.push({ abort, settled: original.catch(() => null) });
+        }
+        if (remote) {
+            homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: {
+                ...createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' }), kind: 'persistent',
+            } } });
+            homes.answer(homeId, '/v1/actions/approval.request.decide', { select: body => {
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+                expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-exact' });
+                return { body: { v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId,
+                    execution: { ok: true, result: { ok: true, status: 'approved' } } } };
+            } });
+        }
         const result = await executor.execute('approval.request.decide', { artifactId, decision }, context());
+        if (decision === 'approve' && !remote && !live) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+            expect(TargetActionApprovalRequestV1Schema.parse(JSON.parse(homes.artifacts(homeId).readPlainBody(artifactId) ?? 'null')))
+                .toMatchObject({ status: 'failed', execution: { ok: false, effectAttempted: false } });
+            expect(outgoing).toEqual([]);
+            return;
+        }
         expect(result, JSON.stringify({ result, paths: homes.requests.map(request => request.path) }))
             .toMatchObject({ ok: true, result: { status: decision === 'approve' ? 'approved' : 'rejected' } });
+        if (remote) {
+            expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+            expect(homes.requestsFor(`/v1/artifacts/${artifactId}`).filter(request => request.input !== null)).toEqual([]);
+            expect(outgoing).toEqual([]);
+            return;
+        }
         expect(TargetActionApprovalRequestV1Schema.parse(JSON.parse(homes.artifacts(homeId).readPlainBody(artifactId) ?? 'null')))
             .toMatchObject({ status: decision === 'approve' ? 'approved' : 'rejected', decision: { kind: decision } });
+        if (original) await expect(original).resolves.toMatchObject({ decision: 'approve' });
         const requests = homes.requestsFor(`/v1/artifacts/${artifactId}`);
         const firstWrite = requests.findIndex(request => request.input !== null);
         expect(firstWrite).toBeGreaterThan(0);
-        expect(requests.slice(0, firstWrite).filter(request => request.input === null)).toHaveLength(2);
+        expect(requests.slice(0, firstWrite).filter(request => request.input === null)).toHaveLength(1);
         if (decision === 'approve') {
             // Consent readback is a later phase and must not reuse the open initial body.
             expect(requests.slice(firstWrite + 1).filter(request => request.input === null).length).toBeGreaterThan(0);
@@ -513,12 +811,16 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(outgoing).toEqual([]);
         expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
     });
-    it.each(['current', 'replaced', 'unavailable', 'detached'] as const)('W04 returns a mounted widget-area approval to its live app waiter (%s)', async source => {
+    it.each([true, false])('W04 delivers widget-area consent without checking the origin (live waiter: %s)', async live => {
         const { getSharedBlockingApprovalCoordinator } = await import('@happier-dev/protocol/actions/blockingApprovalCoordinator');
-        const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const coordinator = getSharedBlockingApprovalCoordinator();
         const artifactId = 'w04-mounted-area';
         const machineId = 'machine-exact';
+        const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        homes.answer(homeId, `/v1/machines/${machineId}`, { body: { machine: {
+            ...createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }),
+            kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        } } });
         const surface = { serverId: homeId, accountId: 'account-a', owner: {
             kind: 'pluginArea' as const, pluginId: 'external.widgets', pageId: 'overview', area: 'pinned' } };
         const request = ApprovalRequestSchema.parse({
@@ -537,43 +839,20 @@ describe('createDefaultActionExecutor approvals', () => {
             },
         });
         await seedApproval(artifactId, request);
-        const machine = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }),
-            installationId: 'installation-1', installationPublicKey: encodeBase64(installation.publicKey, 'base64'),
-            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
-        homes.answer(homeId, '/v1/machines', { body: [machine] });
-        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: { ...machine, kind: 'persistent' } } });
-        rpcResult = source === 'unavailable'
-            ? { status: 'unavailable', code: 'plugin_targeted_contributions_target_unavailable' }
-            : { status: 'current', targetedContributions: PluginUiTargetedContributionsV1Schema.parse({
-                target: { pluginId: 'external.widgets', occurrenceId: 'occurrence', sourceCustody: {
-                    kind: 'development', registeredRootId: source === 'replaced' ? '/replacement/widgets' : '/external/widgets' } },
-                points: [],
-            }), targetedSurfaceMounts: [] };
-        // Only the actual remote boundary is substituted. The daemon cannot reach
-        // an app-local waiter or its followed page values; consent remains approved.
-        homes.answer(homeId, '/v1/actions/approval.request.decide', { select: body => {
-            const carried = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            return { body: { v: 1, actionId: 'approval.request.decide', requestId: carried.requestId,
-                execution: { ok: true, result: { ok: true, status: 'approved' } } } };
-        } });
+        // A Machine cannot rebuild this app-local invocation's followed page values.
         const cancellation = new AbortController();
-        const pending = source === 'detached' ? null : coordinator.waitForDecision({ artifactId, request, signal: cancellation.signal });
+        const pending = live ? coordinator.waitForDecision({ artifactId, request, signal: cancellation.signal }) : null;
         const completed = pending?.catch(() => null);
         try {
-            expect(coordinator.getLiveWaiterCount(artifactId)).toBe(source === 'detached' ? 0 : 1);
+            expect(coordinator.getLiveWaiterCount(artifactId)).toBe(live ? 1 : 0);
             const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
-            expect(decided).toMatchObject({ ok: true });
-            const status = source === 'replaced' || source === 'unavailable' ? 'failed' : 'approved';
-            expect(persistedApproval(artifactId)).toMatchObject({ status,
-                ...(status === 'failed' ? { execution: { ok: false, errorCode: 'approval_stale',
-                    details: { reason: source === 'unavailable' ? 'currentness_read_failed' : 'plugin_source_changed' } } } : {}) });
+            expect(decided, JSON.stringify(decided)).toMatchObject(live ? { ok: true }
+                : { ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false });
+            expectReusableApproval(artifactId);
             expect(coordinator.getLiveWaiterCount(artifactId)).toBe(0);
-            if (completed) await expect(completed).resolves.toMatchObject({ decision: 'approve', request: { status } });
-            expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(source === 'detached' ? 1 : 0);
-            expect(outgoing).toEqual(expect.arrayContaining([expect.objectContaining({
-                method: machineId + ':' + RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ,
-                params: expect.objectContaining({ machineId, pluginId: 'external.widgets' }),
-            })]));
+            if (completed) await expect(completed).resolves.toMatchObject({ decision: 'approve', request: { status: 'approved' } });
+            expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
+            expect(outgoing).toEqual([]);
             // Decision delivery owns no widget effect. In particular, withdrawn
             // custody cannot create the area's domain Artifact while settling.
             expect(homes.artifacts(homeId).readPlainBody(buildWidgetSurfaceArtifactIdV1(surface))).toBeNull();
@@ -661,13 +940,23 @@ describe('createDefaultActionExecutor approvals', () => {
             homes.requests.length = 0;
         }
         const artifactId = `blocking-${actionId}`;
+        const target = { kind: 'machine' as const, machineId };
+        const requestId = `request-${actionId}`;
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-live-daemon', binding: {
+            accountId: 'account-a', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'srv_approval_home',
+            machineId, installationId: 'installation-1', custodianAccountId: 'account-a', accountEncryptionMode: 'plain',
+            actionId, requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target,
+                input: projectNativeJsonValueForTransport(input) }),
+        } });
         await seedApproval(artifactId, ApprovalRequestSchema.parse({
             v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'cli' }, requestedSurface: 'cli',
             approval: { flow: 'blocking', result: 'required' },
             executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
                 serverId: homeId, serverIdentityId: 'srv_approval_home', accountId: 'account-a',
-                machineId, actionId, requestId: `request-${actionId}` },
+                machineId, actionId, requestId, target, externalActionExecutionAuthorization: authorization,
+                externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+                    actionId, input, target, privateKey: installation.secretKey }) },
             actionId, actionArgs: getActionSpec(actionId).inputSchema.parse(input), summary: 'Live result requested by CLI',
         }));
         homes.answer(homeId, '/v1/actions/approval.request.decide', { select: body => {
@@ -782,10 +1071,19 @@ describe('createDefaultActionExecutor approvals', () => {
         if (!accountCredential) throw new Error('missing_current_account_credential');
         connection = await restoreServerAccountForTest({ serverUrl: 'https://approval-actions.test',
             serverIdentityId: 'srv_approval_home', accountId: 'account-a', request: homes.request,
+            additionalRequestOrigins: ['https://post-actions.test'],
             credentials: { token: accountCredential } });
         getStorage().getState().applySettingsForScope({ serverId: connection.serverId, accountId: 'account-a' }, getStorage().getState().settings, 0);
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-        getStorage().setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId: connection.serverId, active: true }) } });
+        const s1 = createSessionFixture({ id: 's1', serverId: connection.serverId, active: true });
+        getStorage().setState({ sessions: { s1 } });
+        // A Session-called Action reads its caller's approval-profile selection from the Home once at admission
+        // (docs/actions.md "Saved approval profiles"); serve the seeded caller Session as a current tuple
+        // (display projection included) so that read resolves without display backfill writes.
+        const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+        const s1Answer = { body: { session: createPlainSessionWithDisplayRecordFixture({ id: 's1', active: true, metadata: s1.metadata }) } };
+        homes.answer(homeId, '/v2/sessions/s1', s1Answer);
+        homes.answer(homeId, '/v2/sessions/s1?accessProjectionVersion=1', s1Answer);
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => homeId });
         await seedApproval('artifact-1', approvalRequest());
@@ -796,6 +1094,8 @@ describe('createDefaultActionExecutor approvals', () => {
         decisionReceiver = null;
     });
     afterEach(async () => {
+        for (const invocation of retainedInvocations) invocation.abort.abort();
+        await Promise.all(retainedInvocations.splice(0).map(invocation => invocation.settled));
         await connection.dispose();
         const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
         const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
@@ -855,9 +1155,12 @@ describe('createDefaultActionExecutor approvals', () => {
             const { isOpenApprovalInboxArtifact, readOpenApprovalDiscussionAttention } = await import('@/sync/domains/artifacts/approvalArtifacts');
             expect(isOpenApprovalInboxArtifact(artifact)).toBe(true);
             expect(readOpenApprovalDiscussionAttention(artifact)).toMatchObject({ discussionId: 'discussion', reason: 'draft_waiting' });
+            const { readOpenApprovalInboxEntry } = await import('@/sync/domains/artifacts/approvalArtifactAdmission');
+            const admittedApproval = readOpenApprovalInboxEntry(artifact);
+            if (!admittedApproval) throw new Error('Missing admitted private approval');
             const { buildInboxItems } = await import('@/components/inbox/inboxItems');
             const rows = buildInboxItems({ workGroups: [{ key: 'other', root: { kind: 'other' },
-                items: [{ kind: 'approval', key: `approval:${artifactId}`, artifact }] }],
+                items: [{ kind: 'approval', key: `approval:${artifactId}`, artifact, approval: admittedApproval }] }],
                 sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] },
                 workflowServerId: null, accountServerId: original.serverId, notices: [] });
             expect(rows).toHaveLength(1);
@@ -867,6 +1170,26 @@ describe('createDefaultActionExecutor approvals', () => {
         } finally { original.dispose(); }
         expect(homes.requests.filter(entry => entry.serverId === otherHome)).toEqual([]);
         expect(homes.requests.filter(entry => entry.path.startsWith('/v1/sessions') || entry.path.includes('/messages'))).toEqual([]);
+        expect(outgoing).toEqual([]);
+    });
+
+    it('discovers only the exact Workflow Run publication through the public approval Action and private Artifact store', async () => {
+        const { createWorkflowPublicationApprovalArtifact } = await import('@/dev/testkit/fixtures/workflowPublicationApprovalFixture');
+        for (const [id, runId] of [['workflow-approval-a', 'workflow-a'], ['workflow-approval-b', 'workflow-b']] as const) {
+            const artifact = createWorkflowPublicationApprovalArtifact({ id, runId,
+                scope: { serverId: 'srv_approval_home', accountId: 'account-a' } });
+            if (typeof artifact.body !== 'string') throw new Error('Expected producer approval body');
+            await seedApproval(id, ApprovalRequestSchema.parse(JSON.parse(artifact.body)));
+        }
+        const foreign = createWorkflowPublicationApprovalArtifact({ id: 'foreign-home-approval', runId: 'workflow-a',
+            scope: { serverId: 'srv_foreign_home', accountId: 'account-a' } });
+        await seedApproval(foreign.id, ApprovalRequestSchema.parse(JSON.parse(foreign.body)));
+        const listed = await executor.execute('approval.request.list', {
+            status: 'open', workflowRunId: 'workflow-a',
+        }, context());
+        expect(listed).toEqual({ ok: true, result: expect.objectContaining({
+            items: [expect.objectContaining({ artifactId: 'workflow-approval-a', actionId: 'discussion.reply', status: 'open' })],
+        }) });
         expect(outgoing).toEqual([]);
     });
 
@@ -967,13 +1290,16 @@ describe('createDefaultActionExecutor approvals', () => {
             expect(await decisionReceiver({ artifactId, decision, serverId: homeId }))
                 .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
             expect(persistedApproval(artifactId).status).toBe('open');
-            // This daemon has no live plugin-generation authority. Admission
-            // therefore settles approve as stale instead of inventing execution.
+            // This daemon has no live plugin-generation authority. Its refusal
+            // precedes the claim, so consent remains reusable without a receipt.
             await expect(replayApprovalRequestAtExactDaemon({ artifactId, decision,
                 executionTarget: { serverId: homeId, machineId: 'machine-exact',
                     serverIdentityId: 'srv_approval_home', originServerId: 'creator-profile' },
-            })).resolves.toMatchObject({ ok: true, result: { status: decision === 'approve' ? 'failed' : 'rejected' } });
-            expect(persistedApproval(artifactId).status).toBe(decision === 'approve' ? 'failed' : 'rejected');
+            })).resolves.toMatchObject(decision === 'approve'
+                ? { ok: false, effectAttempted: false, errorCode: 'approval_stale', details: { reason: 'currentness_owner_unavailable' } }
+                : { ok: true, result: { status: 'rejected' } });
+            expect(persistedApproval(artifactId).status).toBe(decision === 'approve' ? 'approved' : 'rejected');
+            expect(persistedApproval(artifactId).execution).toBeUndefined();
             const request = outgoing.find(entry => entry.method === 'machine-exact:' + RPC_METHODS.APPROVAL_REQUEST_DECIDE);
             expect(request).toBeDefined();
             expect(getActionSpec('approval.request.decide').inputSchema.safeParse(request?.params).success).toBe(true);
@@ -1018,10 +1344,10 @@ describe('createDefaultActionExecutor approvals', () => {
         homes.answer(homeId, '/v2/sessions/s1?accessProjectionVersion=1', sessionAnswer);
         const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
         const decided = await decide();
-        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
-            status: currentHome ? 'executed' : 'failed',
-            execution: currentHome ? { ok: true } : { ok: false, errorCode: 'approval_stale' },
-        } });
+        expect(decided, JSON.stringify(decided)).toMatchObject(currentHome
+            ? { ok: true, result: { status: 'executed', execution: { ok: true } } }
+            : { ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+        if (!currentHome) expectReusableApproval(artifactId);
         await decide();
         expect(homes.requestsFor(path)).toHaveLength(currentHome ? 1 : 0);
         if (currentHome) {
@@ -1039,7 +1365,8 @@ describe('createDefaultActionExecutor approvals', () => {
         const output = { name: 'Captain', firstName: 'Captain', lastName: null, timestamp: 10 };
         homes.answer(homeId, path, { body: output });
         const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
-        expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        const decided = await decide();
+        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
         await decide();
         const mutations = homes.requestsFor(path).filter(request => request.input !== null);
         expect(mutations).toHaveLength(1);
@@ -1055,7 +1382,8 @@ describe('createDefaultActionExecutor approvals', () => {
     it('refuses a self-name proposal borrowing an unrelated read carrier', async () => {
         const { artifactId } = await invitationApproval('account.name.set', true, true, 'teams.list');
         expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context()))
-            .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+        expectReusableApproval(artifactId);
         expect(homes.requestsFor('/v1/account/profile').filter(request => request.input !== null)).toEqual([]);
         expect(outgoing).toEqual([]);
     });
@@ -1067,7 +1395,7 @@ describe('createDefaultActionExecutor approvals', () => {
         { actionId: 'teams.invitations.reissue', signed: false },
     ] as const)(
         'replays $actionId through its original custody (signed Session: $signed)', async ({ actionId, signed }) => {
-            const { artifactId, input, proposed } = await invitationApproval(actionId, signed);
+            const { artifactId, input, proposed, originalInvocation } = await invitationApproval(actionId, signed);
             const invitation = { id: 'invitation-a', teamId: 'team-a', state: 'active', role: 'member',
                 historyAccess: 'from_membership', recipientEmailMask: null, expiresAt: 2, createdAt: 1,
                 createdByAccountId: 'account-a', acceptedByAccountId: null, lastEmailDelivery: null };
@@ -1078,14 +1406,12 @@ describe('createDefaultActionExecutor approvals', () => {
             homes.answer(homeId, path, { body: output });
             const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
             const human = await decide();
-            // Account effects without a Machine effect use the approving app
-            // under the 2026-10-12 ruling, including signed Session proposals.
-            // Avoid emitting a one-time fixture URL in assertion failures.
-            const outcome = human.ok && typeof human.result === 'object' && human.result !== null
-                ? human.result as { status?: string; execution?: { errorCode?: string } } : null;
-            expect(outcome?.status === 'executed', human.ok ? outcome?.execution?.errorCode : human.errorCode).toBe(true);
-            expect(human.ok && typeof human.result === 'object' && human.result !== null
-                && 'liveExecution' in human.result && JSON.stringify(human.result.liveExecution).includes(joinUrl)).toBe(true);
+            expect(human.ok).toBe(true);
+            if (!originalInvocation) throw new Error('Missing original live invitation');
+            const originalResult = await originalInvocation;
+            // Only the original requester receives the show-once result.
+            expect(originalResult.ok && JSON.stringify(originalResult).includes(joinUrl)).toBe(true);
+            expect(JSON.stringify(human).includes(joinUrl)).toBe(false);
             expect(homes.requestsFor(path)).toHaveLength(1);
             expect(homes.requestsFor(path)[0]?.input).toEqual(input);
             expect(homes.requestsFor(path)[0]?.token === homes.findByServerUrl('https://approval-actions.test')?.token).toBe(true);
@@ -1108,11 +1434,19 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(homes.requestsFor('/v1/teams/invitations/create')).toEqual([]);
         expect(outgoing).toEqual([]);
     });
-    it('routes an unsigned native private Discussion Post to its exact Machine, not the live Session', async () => {
+    it.each(['ordinary', 'earlier body read', 'bulk inventory'] as const)('prepares a private Discussion Post using only exact reads, without joining prior work (%s)', async priorWork => {
+        const heldEarlierRead = priorWork === 'earlier body read';
+        const heldInventory = priorWork === 'bulk inventory';
+        const secret = new Uint8Array(32).fill(73);
+        const credentials = { token: createAccountTokenForTests('account-a', { currentAccount: true }),
+            secret: encodeBase64(secret, 'base64url') };
+        // A captured background Home has no Account-restoration traffic to
+        // confuse with the decision's own transport work.
+        homeId = await homes.addHome({ name: 'Post Home', serverUrl: 'https://post-actions.test',
+            serverIdentityId: 'srv_post_home', accountId: 'account-a', currentAccount: true, active: false,
+            ...(heldInventory ? { credentials, accountEncryptionMode: 'e2ee' as const } : {}) });
         const artifactId = 'unsigned-native-private-discussion';
-        const machine = createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' });
-        homes.answer(homeId, '/v1/machines?includeRevoked=true', { body: [machine] });
-        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine } });
+        let machine = createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' });
         const request = ApprovalRequestSchema.parse({
             v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 's1' }, requestedSurface: 'agent',
@@ -1120,9 +1454,9 @@ describe('createDefaultActionExecutor approvals', () => {
             executionOriginV1: {
                 v: 1, authority: 'account_automation', surface: 'agent',
                 caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
-                serverId: 'creator-cli-profile', serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+                serverId: 'creator-cli-profile', serverIdentityId: 'srv_post_home', accountId: 'account-a',
                 sessionId: 's1', machineId: 'machine-exact', actionId: 'discussion.reply', requestId: 'private-native-answer',
-                discussionReplyReturn: { serverId: 'srv_approval_home', requestLocalId: 'discussion-follow-v1:question',
+                discussionReplyReturn: { serverId: 'srv_post_home', requestLocalId: 'discussion-follow-v1:question',
                     acceptedTurnId: 'native-turn-question' },
             },
             actionId: 'discussion.reply', summary: 'Review private answer', actionArgs: {
@@ -1131,25 +1465,145 @@ describe('createDefaultActionExecutor approvals', () => {
                 replyTarget: { kind: 'message', messageId: 'question' },
             },
         });
-        await seedApproval(artifactId, request);
-        const { ExternalActionResponseEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { ArtifactEncryption } = await import('@/sync/encryption/artifactEncryption');
+        const { decryptArtifactListItems } = await import('@/sync/engine/artifacts/syncArtifacts');
+        const encryption = heldInventory ? await Encryption.create(secret) : null;
+        const dataKey = new Uint8Array(32).fill(74);
+        const artifactEncryption = new ArtifactEncryption(dataKey);
+        if (encryption) {
+            machine = { ...machine, access: { ...machine.access!, resourceMode: 'e2ee' },
+                dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64'),
+                metadata: await artifactEncryption.encryptHeader({ host: 'post-machine', platform: 'linux' }) };
+            const response = await homes.artifacts(homeId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+                id: artifactId, header: await artifactEncryption.encryptHeader(buildApprovalRequestArtifactHeaderV1(request)),
+                body: await artifactEncryption.encryptBody({ body: JSON.stringify(request) }),
+                dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64'),
+            }) });
+            expect(response?.ok).toBe(true);
+        } else await seedApproval(artifactId, request);
+        homes.answer(homeId, '/v1/machines?includeRevoked=true', { body: [machine] });
+        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine } });
+        // Home inventories are unavailable; neither is an admission prerequisite.
+        homes.answer(homeId, 'GET /v1/artifacts', { status: 503, body: { error: 'inventory_unavailable' } });
+        homes.answer(homeId, 'POST /v2/sessions/query', { status: 503, body: { error: 'inventory_unavailable' } });
+        const { ExternalActionResponseEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+        const { openExternalActionRequestV2, prepareExternalActionResponseV2 } = await import('@happier-dev/protocol/actions/externalActionEncryption');
         const path = '/v1/actions/approval.request.decide';
-        // The real UI executor owns consent/CAS and routing. Only the remote
-        // Machine's execution response is substituted at the HTTP boundary.
+        // The exact daemon owns consent/CAS and publication. A transport refusal
+        // cannot leave browser-recorded consent stranded before that owner.
         homes.answer(homeId, path, { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            const sealed = heldInventory ? ExternalActionRequestEnvelopeV2Schema.parse(body) : null;
+            const binding = sealed ? { serverIdentityId: 'srv_post_home', accountId: 'account-a',
+                authentication: { kind: 'account' as const, tokenEpoch: 0 }, actionId: 'approval.request.decide' as const,
+                requestId: sealed.requestId, target: { kind: 'machine' as const, machineId: 'machine-exact' } } : null;
+            const material = { type: 'dataKey' as const, machineKey: encryption?.getContentPrivateKey() ?? secret };
+            const envelope = sealed && binding ? { ...sealed,
+                input: openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: sealed, binding, material })?.input }
+                : ExternalActionRequestEnvelopeV1Schema.parse(body);
+            // Post's preparation is exact: current approval content and Machine
+            // custody, plus the Account-mode authority needed to open the content.
+            expect(homes.requests.filter(entry => entry.serverId === homeId).map(entry => entry.path).sort()).toEqual([
+                '/v1/account/encryption',
+                '/v2/account/settings',
+                heldInventory ? '/v1/artifacts/read' : '/v1/artifacts/' + artifactId,
+                '/v1/machines/read-batch',
+                path,
+            ].sort());
             expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-exact' });
             expect(envelope.input).toEqual({ artifactId, decision: 'approve',
-                serverIdentityId: 'srv_approval_home', originServerId: 'creator-cli-profile' });
+                serverIdentityId: 'srv_post_home', originServerId: 'creator-cli-profile' });
+            if (sealed && binding) return { body: prepareExternalActionResponseV2({ binding, request: sealed,
+                executedMachineId: 'machine-exact', material, randomBytes: tweetnacl.randomBytes,
+                execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } }).response };
             return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
                 requestId: envelope.requestId, execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } }) };
         } });
-        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        let inventory: ReturnType<typeof decryptArtifactListItems> | undefined;
+        let inventorySettled = false;
+        if (encryption) {
+            TestWebCryptoWorker.instances = [];
+            TestWebCryptoWorker.hold = true;
+            vi.stubGlobal('Worker', TestWebCryptoWorker);
+            vi.stubGlobal('window', { location: { href: 'https://post-actions.test/' } });
+            const header = await artifactEncryption.encryptHeader({ v: 1, kind: 'artifact.legacy' });
+            const artifacts = await Promise.all(Array.from({ length: 500 }, async (_, index) => ({
+                id: `inventory-${index}`, ownerAccountId: 'account-a', access: 'owner' as const,
+                encryptionMode: 'e2ee' as const, header, headerVersion: 1,
+                dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64'),
+                seq: index, createdAt: 0, updatedAt: 0,
+            })));
+            inventory = decryptArtifactListItems({ artifacts, encryption, artifactDataKeys: new Map(), includeBody: false })
+                .then(rows => { inventorySettled = true; return rows; });
+            await vi.waitFor(() => expect(TestWebCryptoWorker.instances[0]?.pendingReplies).toHaveLength(1));
+            // Only the OS reply for the already-dispatched inventory stays held.
+            TestWebCryptoWorker.hold = false;
+        }
+        const earlierAccount = heldEarlierRead ? await captureLazyActionAccountContext(homeId) : null;
+        let releaseEarlier!: () => void;
+        const release = new Promise<void>(resolve => { releaseEarlier = resolve; });
+        let earlier: ReturnType<NonNullable<typeof earlierAccount>['fetchArtifact']> | undefined;
+        if (earlierAccount) {
+            let acquired!: () => void;
+            const acquiredRead = new Promise<void>(resolve => { acquired = resolve; });
+            let reads = 0;
+            const artifactPath = '/v1/artifacts/' + artifactId;
+            homes.answer(homeId, 'GET ' + artifactPath, { select: async () => {
+                const response = await homes.artifacts(homeId).handle(artifactPath, { method: 'GET' });
+                if (!response) throw new Error('Missing approval boundary response');
+                const body: unknown = await response.json();
+                if (++reads === 1) { acquired(); await release; }
+                return { body };
+            } });
+            earlier = earlierAccount.fetchArtifact(artifactId);
+            await Promise.race([acquiredRead, earlier.then(() => { throw new Error('Expected suspended earlier read'); })]);
+        }
+        homes.requests.length = 0;
+        const pending = executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+        let result: Awaited<typeof pending>;
+        try {
+            // The older acquisition stays suspended until after dispatch. This
+            // count fails if consent borrows a read acquired before the click.
+            await vi.waitFor(() => expect(homes.requestsFor(path)).toHaveLength(1));
+            if (heldInventory) {
+                expect(inventorySettled).toBe(false);
+                expect(TestWebCryptoWorker.instances).toHaveLength(2);
+            }
+            result = await pending;
+        } finally {
+            TestWebCryptoWorker.hold = false;
+            for (const worker of TestWebCryptoWorker.instances) {
+                for (const reply of worker.pendingReplies.splice(0)) await reply();
+            }
+            if (inventory) {
+                const rows = await inventory;
+                expect(rows.filter(row => row?.isDecrypted)).toHaveLength(500);
+            }
+            releaseEarlier();
+            await earlier;
+            earlierAccount?.dispose();
+            const settled = await pending;
+            if (heldInventory) {
+                expect(settled).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+                expect(homes.requestsFor(path)).toHaveLength(1);
+                for (const worker of TestWebCryptoWorker.instances) {
+                    worker.onerror?.({ error: new Error('Test Worker retired'), preventDefault() {} } as ErrorEvent);
+                    worker.terminate();
+                }
+                vi.unstubAllGlobals();
+            }
+        }
         expect(result, JSON.stringify({ result, requests: homes.requests.map(({ serverId, serverUrl, path }) => ({ serverId, serverUrl, path })) }))
             .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
-        expect(persistedApproval(artifactId)).toMatchObject({ status: 'approved',
-            decision: { kind: 'approve', authority: 'present_user' }, executionOriginV1: request.executionOriginV1 });
-        expect(persistedApproval(artifactId).execution).toBeUndefined();
+        const storedBody = heldInventory
+            ? (await artifactEncryption.decryptBody(homes.artifacts(homeId).read(artifactId)!.body!))?.body
+            : homes.artifacts(homeId).readPlainBody(artifactId);
+        if (typeof storedBody !== 'string') throw new Error('Expected retained approval text');
+        const stored = ApprovalRequestSchema.parse(JSON.parse(storedBody));
+        expect(stored).toMatchObject({ status: 'open', executionOriginV1: request.executionOriginV1 });
+        expect(stored.decision).toBeUndefined();
+        expect(stored.execution).toBeUndefined();
         expect(homes.requestsFor(path)).toHaveLength(1);
         expect(homes.requests.filter(entry => entry.path.startsWith('/v1/discussions'))).toEqual([]);
         expect(outgoing).toEqual([]);
@@ -1188,17 +1642,50 @@ describe('createDefaultActionExecutor approvals', () => {
                 requestId: envelope.requestId, execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } }) };
         } });
         expect(await executor.execute('approval.request.decide', { artifactId: 'signed-machine-approval', decision: 'approve' }, context()))
-            .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            .toMatchObject({ ok: true, result: { status: 'outcome_unknown', execution: {
+                ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown',
+                details: { reasonCode: 'target_unavailable' },
+            } } });
+        await executor.execute('approval.request.decide', { artifactId: 'signed-machine-approval', decision: 'approve' }, context());
         expect(homes.requestsFor(path)).toHaveLength(1);
         expect(outgoing).toEqual([]);
         expect(homes.requestsFor('/v1/teams/invitations/create')).toEqual([]);
     });
+    it('lets the origin daemon admit an approval whose requester Account differs from the deciding app', async () => {
+        const artifactId = 'remote-origin-admission';
+        await seedApproval(artifactId, ApprovalRequestV2Schema.parse({
+            v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, summary: 'Review original Machine read',
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+            actionId: 'paths.list_recent', actionArgs: { machineId: 'machine-exact', limit: 10 },
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+                serverId: 'origin-profile', serverIdentityId: 'srv_approval_home', accountId: 'original-requester',
+                machineId: 'machine-exact', actionId: 'paths.list_recent', requestId: 'remote-origin-request' },
+        }));
+        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: {
+            ...createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' }), kind: 'persistent',
+        } } });
+        const { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+        const path = '/v1/actions/approval.request.decide';
+        homes.answer(homeId, path, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-exact' });
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
+                requestId: envelope.requestId, execution: { ok: false, effectAttempted: false,
+                    errorCode: 'credential_scope_denied', error: 'credential_scope_denied' } }) };
+        } });
+        const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'credential_scope_denied' });
+        expect(homes.requestsFor(path)).toHaveLength(1);
+        expect(persistedApproval(artifactId)).toMatchObject({ status: 'approved' });
+        expect(persistedApproval(artifactId).execution).toBeUndefined();
+    });
     it('records the authenticated Home effect failure and does not retry it on a repeated decision', async () => {
-        const { artifactId } = await invitationApproval('teams.invitations.create', false);
+        const { artifactId, originalInvocation } = await invitationApproval('teams.invitations.create', false);
         const path = '/v1/teams/invitations/create';
         homes.answer(homeId, path, { status: 403, body: { error: 'permission_denied' } });
         const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
-        await expect(decide()).resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false } } });
+        await expect(decide()).resolves.toMatchObject({ ok: true });
+        await expect(originalInvocation).resolves.toMatchObject({ ok: false });
         expect(persistedApproval(artifactId)).toMatchObject({ status: 'failed',
             decision: { kind: 'approve', authority: 'present_user' }, execution: { ok: false } });
         await decide();
@@ -1312,7 +1799,7 @@ describe('createDefaultActionExecutor approvals', () => {
             .resolves.toEqual({ ok: true, result: { items: [], cursor: null } });
         expect(homes.requestsFor(path)).toHaveLength(1);
     });
-    it('routes permission grants and webhook endpoints through the Action front door dependencies', async () => {
+    it('routes permission grants and reversible webhook setup directly for the present person', async () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
         homes.answer(homeId, '/v1/plugins/permissions/grants/list', { body: { grants: [], pendingRequests: [] } });
         await expect(executor.execute('plugins.permissions.grants.list', { pluginId: 'example.plugin' }, context()))
@@ -1331,7 +1818,7 @@ describe('createDefaultActionExecutor approvals', () => {
         await expect(executor.execute('plugin.webhook.endpoint.ensure', input, context()))
             .resolves.toMatchObject({ ok: true, result: { readiness: 'ready' } });
         expect(homes.requestsFor('/v1/plugins/webhooks/endpoints/ensure')[0]?.input).toEqual(input);
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).not.toHaveBeenCalled();
     });
     it('routes Account plugin erase recovery through one shared policy confirmation without forwarding generic retry identity metadata', async () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
@@ -1347,13 +1834,20 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(homes.requestsFor('/v1/plugins/data/account-erase')[0]?.input).toEqual({ pluginId: 'example.orphaned-plugin' });
         expect(Modal.confirm).toHaveBeenCalledTimes(1);
     });
+    it('cancels permanent Account plugin erase before issuing the destructive request', async () => {
+        vi.mocked(Modal.confirm).mockResolvedValue(false);
+        homes.answer(homeId, '/v1/plugins/data/account-erase', { body: { status: 'erased', changed: false } });
+        const result = await executor.execute('account.plugins.data.erase', { pluginId: 'example.orphaned-plugin' }, context());
+        expect(homes.requestsFor('/v1/plugins/data/account-erase')).toEqual([]);
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    });
     it('routes the host-present current-Account sign-out-everywhere action', async () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
         homes.answer(homeId, '/v1/auth/sessions/sign-out-everywhere', { body: { status: 'signed_out' } });
         await expect(executor.execute('account.sessions.signOutEverywhere', {}, { ...context(), actionCaller: { kind: 'host' } }))
             .resolves.toEqual({ ok: true, result: { status: 'signed_out' } });
         expect(homes.requestsFor('/v1/auth/sessions/sign-out-everywhere')[0]?.input).toEqual({});
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).not.toHaveBeenCalled();
     });
     it('routes current-Account API-token Actions through their scoped transport with no caller-selected Account', async () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
@@ -1505,6 +1999,15 @@ describe('createDefaultActionExecutor approvals', () => {
             reason: 'approved from UI', updatedPermissions: { allowedTools: ['shell'] },
         } });
     });
+    it('refuses a Session-called Action with a typed result when its caller Session cannot be read', async () => {
+        // The caller's approval-profile selection is unknown, so admission fails closed instead of rejecting.
+        const unavailable = { status: 503, body: { error: 'unavailable' } };
+        homes.answer(homeId, '/v2/sessions/s1', unavailable);
+        homes.answer(homeId, '/v2/sessions/s1?accessProjectionVersion=1', unavailable);
+        const result = await executor.execute('ui.voice_global.get', {}, { surface: 'agent', authority: 'account_automation',
+            serverId: homeId, defaultSessionId: 's1', actionCaller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+    });
     it('routes session.message.send through the active readiness barrier', async () => {
         const features = createRootLayoutFeaturesResponse({ capabilities: {
             serverIdentity: { serverIdentityId: 'srv_approval_home' },
@@ -1529,10 +2032,10 @@ describe('createDefaultActionExecutor approvals', () => {
             localId: 'ui-input-1', requestedAction: { v: 1, kind: 'steer_if_active' },
         });
     });
-    it('fails an Account approval with missing Home identity before replay', async () => {
+    it('retains an Account approval with missing Home identity before replay', async () => {
         await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-1', decision: 'approve' }, context()))
-            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
-        expectFailedApproval('artifact-1');
+            .resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+        expectReusableApproval('artifact-1');
     });
     it('requires an exact Home scope before creating a surfaced UI approval', async () => {
         await homes.requireUiApproval(homeId, 'review.start');
@@ -1549,16 +2052,16 @@ describe('createDefaultActionExecutor approvals', () => {
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().setState({ sessions: {} });
         await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-stop-no-cache', decision: 'approve' }, context()))
-            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_origin_unavailable' } } });
-        expectFailedApproval('artifact-stop-no-cache', 'approval_origin_unavailable');
+            .resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable' });
+        expectReusableApproval('artifact-stop-no-cache');
     });
     it('does not replay an approved MCP stop locally without its exact daemon origin', async () => {
         await seedApproval('artifact-stop', approvalRequest('session.stop'));
         await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-stop', decision: 'approve' }, context()))
-            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_origin_unavailable' } } });
-        expectFailedApproval('artifact-stop', 'approval_origin_unavailable');
+            .resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable' });
+        expectReusableApproval('artifact-stop');
     });
-    it('fails a legacy directory approval safely when immutable execution origin is unavailable', async () => {
+    it('retains a legacy directory approval when immutable execution origin is unavailable', async () => {
         await seedApproval('artifact-directory-spawn', ApprovalRequestSchema.parse({
             v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'mcp' }, requestedSurface: 'mcp',
             actionId: 'session.spawn_new', actionArgs: {
@@ -1571,8 +2074,8 @@ describe('createDefaultActionExecutor approvals', () => {
             summary: 'Create session', serverId: homeId,
         }));
         await expect(executor.execute('approval.request.decide', { artifactId: 'artifact-directory-spawn', decision: 'approve' }, context()))
-            .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_stale' } } });
-        expectFailedApproval('artifact-directory-spawn');
+            .resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+        expectReusableApproval('artifact-directory-spawn');
     });
     it('does not let an approval built from a stale open read overwrite a rejection committed before its write', async () => {
         let rejected: unknown;
@@ -1598,7 +2101,11 @@ describe('createDefaultActionExecutor approvals', () => {
             timeoutMs: null, params: { artifactId: 'approval-cross-device' } }]);
         expect(homes.requestsFor('/v1/machines/read-batch')[0]?.serverId).toBe(homeId);
     });
-    it.each(['cli', 'ui'] as const)('replays an approved daemon-retained plugin install without issuing a second decision Action (%s)', async surface => {
+    it.each([
+        { surface: 'cli', reply: 'success' }, { surface: 'ui', reply: 'success' },
+        { surface: 'ui', reply: 'pre_effect' }, { surface: 'ui', reply: 'older_daemon' },
+        { surface: 'ui', reply: 'malformed' }, { surface: 'ui', reply: 'lost' },
+    ] as const)('replays an approved daemon-retained plugin install without issuing a second decision Action ($surface/$reply)', async ({ surface, reply }) => {
         homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: {
             ...createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' }),
             id: 'machine-exact', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -1646,9 +2153,26 @@ describe('createDefaultActionExecutor approvals', () => {
         }));
         rpcResult = { ok: true, result: { status: 'executed', execution: { ok: true,
             result: { ok: true, kind: 'plugins_install', outcome: 'applied' } } } };
-        await expect(executor.execute('approval.request.decide', {
+        if (reply === 'pre_effect' || reply === 'older_daemon' || reply === 'malformed') {
+            rpcResult = { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable',
+                ...(reply === 'pre_effect' ? { effectAttempted: false }
+                    : reply === 'malformed' ? { effectAttempted: 'false' } : {}) };
+        }
+        if (reply === 'lost') rpcAcknowledgement = new Error('Replay acknowledgement lost');
+        const decided = await executor.execute('approval.request.decide', {
             artifactId: 'approval-plugin-install', decision: 'approve',
-        }, context())).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+        }, context());
+        const status = reply === 'success' ? 'executed' : reply === 'pre_effect' ? 'approved' : 'outcome_unknown';
+        expect(decided, JSON.stringify(decided)).toMatchObject(reply === 'pre_effect'
+            ? { ok: false, errorCode: 'approval_context_unavailable', effectAttempted: false }
+            : { ok: true, result: { status,
+                ...(reply === 'success' ? {} : { execution: { ok: false, effectAttempted: true } }),
+            } });
+        if (reply !== 'success') {
+            expect(persistedApproval('approval-plugin-install')).toMatchObject({ status });
+            if (reply === 'pre_effect') expect(persistedApproval('approval-plugin-install').execution).toBeUndefined();
+            else expect(await executor.execute('approval.request.decide', { artifactId: 'approval-plugin-install', decision: 'approve' }, context())).toEqual(decided);
+        }
         expect(outgoing).toMatchObject([{ method: 'machine-exact:' + RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,
             params: { artifactId: 'approval-plugin-install' } }]);
         expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);

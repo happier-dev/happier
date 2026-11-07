@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { githubRegistryAdapterV1, readGitHubRepositoryV1, registryRelativePathV1 } from './github.js';
 import type { RegistryFetchContextV1, RegistrySkillFormatAdapterV1 } from './registryFormatAdapterV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';
-import type { RegistryContentRefV1, RegistryProvenanceV1 } from '../registryItemsV1.js';
+import type { RegistryContentRefV1, RegistryRemoteProvenanceV1 } from '../registryItemsV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 const pluginSchema=z.object({name:z.string().check(z.minLength(1)),source:z.union([z.string(),z.object({source:z.string(),repo:z.optional(z.string()),path:z.optional(z.string()),ref:z.optional(z.string())})]),
   hooks:z.optional(z.unknown()),commands:z.optional(z.unknown()),mcpServers:z.optional(z.unknown()),agents:z.optional(z.unknown())});
@@ -66,7 +66,7 @@ return {
     if(!items.length)return result;
     const source:RegistrySourceV1=options?.source??{id:items[0]!.sourceId,title:items[0]!.sourceUrl,format:'claude-marketplace',kinds:['skill'],url:items[0]!.sourceUrl,enabled:true,addedAt:0};
     const catalog=await plugins(ctx,source);
-    const groups=new Map<string,{source:RegistrySourceV1;items:{original:string;provenance:RegistryProvenanceV1}[]}>();
+    const groups=new Map<string,{source:RegistrySourceV1;items:{original:string;provenance:RegistryRemoteProvenanceV1}[]}>();
     for(const item of items){
       const slash=item.itemId.indexOf('/'),name=item.itemId.slice(0,slash);
       if(slash<1)throw new RegistryFetchErrorV1({state:'invalid_source'});

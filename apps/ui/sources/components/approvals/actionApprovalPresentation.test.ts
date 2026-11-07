@@ -11,6 +11,46 @@ import { readActionApprovalReview } from './actionApprovalReview';
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('leaves the installation question to its review facts without repeating the title in a summary', () => {
+        const spec = getActionSpec('machines.managed.bootstrap.respond');
+        const actionArgs = spec.inputSchema.parse({ serverId: 'profile', homeId: 'home', managedId: 'managed',
+            operationId: 'operation', taskId: 'task', purpose: 'approve', approved: true,
+            prompt: { kind: 'ssh.trustHost', message: 'Trust this machine?', host: 'guest.example',
+                keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null } });
+        expect(presentActionApproval({ actionId: spec.id, actionArgs }).summary).toBeNull();
+    });
+    it.each([
+        ['en', 'Delete view'], ['fr', 'Supprimer la vue'], ['de', 'Ansicht löschen'],
+        ['es', 'Eliminar vista'], ['it', 'Elimina vista'], ['pt', 'Excluir visualização'],
+        ['pl', 'Usuń widok'], ['ru', 'Удалить представление'], ['ja', 'ビューを削除'],
+        ['ca', 'Elimina la vista'], ['zh-Hans', '删除视图'], ['zh-Hant', '刪除檢視'],
+    ] as const)('names the destructive view deletion in %s through the Action declaration', async (language, verb) => {
+        await preloadTranslations(language);
+        setPreferredLanguageFromSettings(language);
+        expect(presentActionApproval({ actionId: 'widgets.area.layout.delete' }))
+            .toMatchObject({ title: verb, confirmLabel: verb });
+    });
+    it('keeps saved-result Clear consequences and target identity in shared confirmation presentation', async () => {
+        const actionArgs = getActionSpec('scm.diffSummary.result.clear').inputSchema.parse({ results: [{
+            cwd: '/repo', resultId: 'saved', expectedRevision: 1, comparisonId: 'comparison',
+        }] });
+        const presentation = presentActionApproval({ actionId: 'scm.diffSummary.result.clear', actionArgs,
+            subject: 'Studio', authoredSummary: 'Clear one saved result.' });
+        expect(presentation).toMatchObject({
+            title: t('walkthroughSettings.clearTitle'),
+            summary: t('walkthroughSettings.clearDescription', { machine: 'Studio' }),
+            confirmLabel: t('walkthroughSettings.clear'), destructive: true,
+        });
+        expect(presentActionApproval({ actionId: 'scm.diffSummary.result.clear', actionArgs }).summary)
+            .toBe(t('walkthroughSettings.clearDescription', { machine: t('machine.thisMachineInSentence') }));
+        await preloadTranslations('fr');
+        setPreferredLanguageFromSettings('fr');
+        expect(presentActionApproval({ actionId: 'scm.diffSummary.result.clear', actionArgs, subject: 'Studio' }))
+            .toMatchObject({ title: t('walkthroughSettings.clearTitle'),
+                summary: t('walkthroughSettings.clearDescription', { machine: 'Studio' }),
+                confirmLabel: t('walkthroughSettings.clear'), destructive: true });
+    });
+
     it('summarizes a declared Service Start by its Service and project, never by the agent-facing Action description', () => {
         const actionArgs = getActionSpec('localServices.launcher.start').inputSchema.parse({
             machineId: 'worker', targetId: 'project-service:a',
@@ -113,10 +153,11 @@ describe('the shared Action approval presentation owner', () => {
         const reversible = readActionApprovalReview(requestFor('updates.batch.start'));
         expect(reversible.approveVerb).toBe('Update');
         expect(reversible.irreversible).toBe(false);
-        // An Action that declares no verb leaves each surface its own default word.
+        // No declared verb leaves each surface its default word; ownership transfer
+        // still requires the new owner's cooperation to undo (session-collaboration.md).
         const undeclared = readActionApprovalReview(requestFor('discussion.owner.transfer'));
         expect(undeclared.approveVerb).toBeNull();
-        expect(undeclared.irreversible).toBe(false);
+        expect(undeclared.irreversible).toBe(true);
     });
     it('retains captured widget and plugin-page names in a request preview across locales', async () => {
         const actionArgs = { ref: { surface: { serverId: 'home', accountId: 'account', owner: {
@@ -170,10 +211,18 @@ describe('the shared Action approval presentation owner', () => {
     });
 
     it('localizes the declared confirmation verb', async () => {
-        expect(presentActionApproval({ actionId: 'session.draft.delete' }).confirmLabel).toBe('Delete');
+        const deletions = ['session.draft.delete', 'workflow.run.delete', 'workflow.definition.delete',
+            'workflow.trigger.remove', 'artifact.delete'] as const;
+        for (const actionId of deletions) {
+            const presentation = presentActionApproval({ actionId });
+            expect(presentation.confirmLabel).toBe('Delete');
+            expect(presentation.destructive).toBe(true);
+        }
         await preloadTranslations('fr');
         setPreferredLanguageFromSettings('fr');
-        expect(presentActionApproval({ actionId: 'session.draft.delete' }).confirmLabel).toBe('Supprimer');
+        for (const actionId of deletions) {
+            expect(presentActionApproval({ actionId }).confirmLabel).toBe('Supprimer');
+        }
         // An id the catalog does not know has no Action title to borrow: the caller keeps its own default.
         expect(presentActionApproval({ actionId: 'plugin.unknown', authoredTitle: 'Do it' }).confirmLabel).toBeNull();
     });
@@ -189,8 +238,36 @@ describe('the shared Action approval presentation owner', () => {
     it('uses declared irreversibility even when the UI does not ask by default', () => {
         // Explicit irreversibility applies even when the UI does not ask by default.
         expect(presentActionApproval({ actionId: 'session.delete' }).destructive).toBe(true);
-        for (const actionId of ['machines.terminal.open', 'session.draft.open', 'discussion.owner.transfer'] as const) {
+        expect(presentActionApproval({ actionId: 'discussion.owner.transfer' }).destructive).toBe(true);
+        for (const actionId of ['machines.terminal.open', 'session.draft.open'] as const) {
             expect(presentActionApproval({ actionId }).destructive, actionId).toBeFalsy();
+        }
+    });
+
+    it('says what Resume brings back and Refresh changes, in the reader language, without a destructive confirm', async () => {
+        for (const language of ['en', 'fr'] as const) {
+            await preloadTranslations(language);
+            setPreferredLanguageFromSettings(language);
+            const resume = presentActionApproval({ actionId: 'account.public_profile.resume', actionArgs: {} });
+            expect(resume.summary, language).toBe(t('publicIdentity.profile.resumeConfirm'));
+            expect(resume.title, language).toContain(t('actionPresentation.titles.account_public_profile_resume'));
+            expect(resume.destructive).toBeUndefined();
+        }
+        setPreferredLanguageFromSettings('en');
+        const refresh = presentActionApproval({ actionId: 'account.public_profile.refresh', actionArgs: {} });
+        expect(refresh.summary).toBe('Your page gets fresh numbers. What it shares stays the same.');
+        expect(refresh.destructive).toBeUndefined();
+    });
+
+    it('says what Unpublish withdraws and keeps, and confirms with Unpublish, in the reader language', async () => {
+        for (const language of ['en', 'fr'] as const) {
+            await preloadTranslations(language);
+            setPreferredLanguageFromSettings(language);
+            const presentation = presentActionApproval({ actionId: 'account.public_profile.unpublish', actionArgs: {} });
+            expect(presentation.summary, language).toBe(t('publicIdentity.profile.unpublishConfirm'));
+            expect(presentation.confirmLabel, language).toBe(t('publicIdentity.profile.unpublishTitle'));
+            expect(presentation.title, language).toContain(t('actionPresentation.titles.account_public_profile_unpublish'));
+            expect(presentation.destructive).toBe(true);
         }
     });
 
@@ -288,12 +365,3 @@ describe('the shared Action approval presentation owner', () => {
             .toBe('My own explanation');
     });
 });
-
-    it('leaves the installation question to its review facts without repeating the title in a summary', () => {
-        const spec = getActionSpec('machines.managed.bootstrap.respond');
-        const actionArgs = spec.inputSchema.parse({ serverId: 'profile', homeId: 'home', managedId: 'managed',
-            operationId: 'operation', taskId: 'task', purpose: 'approve', approved: true,
-            prompt: { kind: 'ssh.trustHost', message: 'Trust this machine?', host: 'guest.example',
-                keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null } });
-        expect(presentActionApproval({ actionId: spec.id, actionArgs }).summary).toBeNull();
-    });

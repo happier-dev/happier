@@ -1,7 +1,9 @@
 import * as React from 'react';
+import { formatHappierCapabilityCount } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ReachRulesChangeV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
+import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import type { SkillInstallPreviewV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 
 import {
@@ -9,6 +11,8 @@ import {
   type CapabilityFactsProps,
   type CapabilityTrust,
 } from '@/components/capabilities/facts/CapabilityFacts';
+import { CapabilityAddDetailAction } from '@/components/capabilities/add/CapabilityAddModal';
+import { CapabilityListingSections, type CapabilityListingFacts } from '@/components/capabilities/add/CapabilityListingSections';
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
 import {
   useDraftReachRules,
@@ -18,6 +22,8 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -31,6 +37,8 @@ import {
   SkillAlsoAddsNote,
   SkillOutsideReferencesItem,
 } from '../outsideReferences';
+import { SkillInstructionsSection } from '../detail/SkillInstructionsSection';
+import { SkillMark } from '../SkillKindGlyph';
 import { useSkillPlaces } from '../useSkillPlaces';
 import { heldSkillRowProps } from './SkillPreviewRows';
 
@@ -46,71 +54,95 @@ export type SkillAddDetailInstalls = Readonly<{
   source?: Readonly<{ icon: IconName; title: string; subtitle: string }>;
 }>;
 
-const tokens = (count: number) =>
-  count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
-
 /**
  * The details of a skill being added (lab sa A2), the same for Browse, a link and an upload: the name with its
  * purpose and facts; Where it's on (pick, Everywhere until the person narrows it); what it installs, with the
  * sibling skills it refers to; what happens next; its files. The caller owns the read, the footer and the Add.
  */
-export function SkillAddDetailBody(
-  props: Readonly<{
+type SkillAddDetailProps = Readonly<{
     title: string;
     purpose: string | null;
     facts: CapabilityFactsProps;
     /** A problem or a failed read, under the facts. */
     notice?: React.ReactNode;
     installs: SkillAddDetailInstalls | null;
+    /** The skill is still being read: What it installs keeps its place. */
+    reading?: boolean;
     outsideReferences: readonly string[];
     /** The sibling rows (`useSkillSiblingChoice`), inside What it installs. */
     siblings?: React.ReactNode;
     onWhereChange: (where: ReachRulesChangeV1 | undefined) => void;
+    initialWhere?: ReachRulesChangeV1;
+    /** Membership and reach of an already held Skill come from its native library row. */
+    savedRules?: ReachRulesV1;
+    /** A listed skill's Versions and Source and licence, closing its details (lab store `h:kPdf`). */
+    listing?: CapabilityListingFacts;
+    /** The SKILL.md text of a found skill (a link or an upload): shown read-only as Its instructions (lab `k:upload`). */
+    instructions?: string;
     testID: string;
-  }>,
-) {
-  const { theme } = useUnistyles();
+  }>;
+
+export type SkillAddDetailPlaces = Pick<ReturnType<typeof useSkillPlaces>,
+  'machines' | 'workspaceRefs' | 'agentIds' | 'placeMachines' | 'projects' | 'agentTakes'>;
+
+export function SkillAddDetailBody(props: SkillAddDetailProps) {
   const places = useSkillPlaces();
-  const draftReach = useDraftReachRules('skill');
+  return <SkillAddDetailView {...props} places={places} />;
+}
+
+/** The skill detail's presentation over the admitted places supplied by its read owner. */
+export function SkillAddDetailView(props: SkillAddDetailProps & Readonly<{ places: SkillAddDetailPlaces }>) {
+  const { theme } = useUnistyles();
+  const { places } = props;
+  const draftReach = useDraftReachRules('skill', props.initialWhere);
+  const rules = props.savedRules ?? draftReach.rules;
   const { onWhereChange } = props;
   React.useEffect(() => {
-    onWhereChange(draftReach.where);
-  }, [draftReach.where, onWhereChange]);
+    if (props.savedRules === undefined) onWhereChange(draftReach.where);
+  }, [draftReach.where, onWhereChange, props.savedRules]);
   const projection = React.useMemo(
     () =>
       projectReachOnMachines(
-        draftReach.rules,
+        rules,
         places.machines as readonly ReachMachine[],
         undefined,
         places.workspaceRefs,
       ),
-    [draftReach.rules, places.machines, places.workspaceRefs],
+    [rules, places.machines, places.workspaceRefs],
   );
   const installs = props.installs;
   const trust = installs?.trust;
   return (
-    <View style={styles.detail}>
+    <View>
       <ItemGroup surface="none">
         <BareSectionContent>
           <View style={styles.head}>
-            <Text
-              variant="title"
-              emphasis="semiBold"
-              style={{ color: theme.colors.text.primary }}
-              testID={`${props.testID}.title`}
-            >
-              {props.title}
-            </Text>
+            {/* Identity first, as every Add family's details open (lab `m:skill`, `k:link`, `k:upload`): the skill mark, then its name. */}
+            <View style={styles.titleRow}>
+              <SkillMark size={28} />
+              <Text
+                variant="title"
+                emphasis="semiBold"
+                style={[styles.titleText, { color: theme.colors.text.primary }]}
+                testID={`${props.testID}.title`}
+                // The item's name heads its details (a listing pane moves focus here).
+                accessibilityRole="header"
+              >
+                {props.title}
+              </Text>
+            </View>
+            <CapabilityFacts {...props.facts} />
             {props.purpose ? (
               <Text
                 variant="reading"
-                style={{ color: theme.colors.text.secondary }}
+                style={{ color: theme.colors.text.secondary, marginTop: theme.space.s4 }}
               >
                 {props.purpose}
               </Text>
             ) : null}
-            <CapabilityFacts {...props.facts} />
             {props.notice ?? null}
+            {/* Browse's one action, right under what it adds (lab `m:skill`); found results keep their batch footer. */}
+            <CapabilityAddDetailAction />
           </View>
         </BareSectionContent>
       </ItemGroup>
@@ -118,7 +150,8 @@ export function SkillAddDetailBody(
         testID={`${props.testID}.where`}
         kind="skill"
         presentation="pick"
-        rules={draftReach.rules}
+        rules={rules}
+        {...(props.savedRules === undefined ? {} : { readOnlyReason: t('capabilities.skillsFound.inLibrary') })}
         status="ready"
         projection={projection}
         places={{
@@ -129,11 +162,15 @@ export function SkillAddDetailBody(
         agentTakes={places.agentTakes}
         onChange={draftReach.onChange}
       />
+      {installs === null && props.reading === true ? (
+        // Still reading the skill: What it installs holds its place, so the details don't arrive and then jump.
+        <ItemGroup title={t('capabilities.skillAdd.detail.installsTitle')}>
+          <SkeletonRows rows={3} />
+        </ItemGroup>
+      ) : null}
       {installs ? (
-        <ItemGroup
-          title={t('capabilities.skillAdd.detail.installsTitle')}
-          surface="none"
-        >
+        // One sheet per section, as Where it's on beside it and the MCP details are (lab `m:skill`).
+        <ItemGroup title={t('capabilities.skillAdd.detail.installsTitle')}>
           <Item
             icon={
               <Icon
@@ -180,7 +217,7 @@ export function SkillAddDetailBody(
               />
             }
             title={t('capabilities.skillAdd.detail.tokensWhenUsed', {
-              count: tokens(installs.cost.bodyTokens),
+              count: formatHappierCapabilityCount(installs.cost.bodyTokens),
             })}
             subtitle={t('capabilities.skillAdd.detail.alwaysOnBody', {
               count: String(installs.cost.descriptionTokens),
@@ -202,11 +239,20 @@ export function SkillAddDetailBody(
           {props.siblings ?? null}
         </ItemGroup>
       ) : null}
-      <ItemGroup
-        title={t('capabilities.skillAdd.detail.nextTitle')}
-        surface="none"
-      >
-        <BareSectionContent>
+      {props.instructions !== undefined ? (
+        <SkillInstructionsSection
+          testID={`${props.testID}.instructions`}
+          skillId={props.title}
+          skillMd={props.instructions}
+          readOnly={NO_NOTE}
+          onSave={neverSaves}
+          onDirtyChange={noDirty}
+          readTheirs={noTheirs}
+          adoptTheirs={noAdopt}
+        />
+      ) : null}
+      <ItemGroup title={t('capabilities.skillAdd.detail.nextTitle')}>
+        <SectionContentRow>
           <View style={styles.steps}>
             {[
               t('capabilities.skillAdd.detail.next1'),
@@ -220,14 +266,13 @@ export function SkillAddDetailBody(
               >{`${index + 1}. ${line}`}</Text>
             ))}
           </View>
-        </BareSectionContent>
+        </SectionContentRow>
       </ItemGroup>
-      {installs && installs.files.length > 0 ? (
+      {installs && installs.files.length > (props.instructions !== undefined ? 1 : 0) ? (
         <ItemGroup
           title={t('capabilities.skillAdd.detail.filesTitle', {
             count: installs.files.length,
           })}
-          surface="none"
           density="compact"
         >
           {installs.files.map((file) => (
@@ -244,9 +289,16 @@ export function SkillAddDetailBody(
           ))}
         </ItemGroup>
       ) : null}
+      {props.listing ? <CapabilityListingSections testID={`${props.testID}.listing`} facts={props.listing} /> : null}
     </View>
   );
 }
+
+const NO_NOTE = {};
+const neverSaves = async () => ({ ok: true as const, revision: '' });
+const noTheirs = async () => null;
+const noAdopt = async () => {};
+const noDirty = () => {};
 
 /**
  * The sibling skills a skill's instructions refer to, from the install preview: added with it unless unticked (held
@@ -261,6 +313,8 @@ export function useSkillSiblingChoice(
     siblings: readonly SkillInstallPreviewV1[];
     /** The references to report when no preview answered (a registry read before its dry run). */
     outsideReferences: readonly string[];
+    /** The same open task's per-item sibling choice, restored when its detail remounts. */
+    initialSelectPaths?: readonly string[];
     onOpenHeld: (skillId: string) => void;
     testID: string;
   }>,
@@ -270,13 +324,16 @@ export function useSkillSiblingChoice(
   rows: React.ReactNode;
 }> {
   const { primary, siblings } = input;
+  const initialUnticked = () => new Set(input.initialSelectPaths === undefined ? []
+    : siblings.filter(sibling => !input.initialSelectPaths!.includes(sibling.path)).map(sibling => sibling.path));
   const [unticked, setUnticked] = React.useState<ReadonlySet<string>>(
-    () => new Set(),
+    initialUnticked,
   );
   const siblingKey = siblings.map((sibling) => sibling.path).join('\n');
   React.useEffect(() => {
-    setUnticked(new Set());
-  }, [primary?.path, siblingKey]);
+    const next = initialUnticked();
+    setUnticked(previous => previous.size === next.size && [...previous].every(path => next.has(path)) ? previous : next);
+  }, [primary?.path, siblingKey, input.initialSelectPaths]);
   const held = React.useMemo(
     () =>
       new Set(
@@ -361,8 +418,9 @@ export function useSkillSiblingChoice(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  detail: { gap: theme.space.s24 },
   head: { gap: theme.space.s8 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12 },
+  titleText: { flexShrink: 1 },
   steps: { gap: theme.space.s8, paddingTop: theme.space.s4 },
   mono: { ...Typography.mono() },
 }));

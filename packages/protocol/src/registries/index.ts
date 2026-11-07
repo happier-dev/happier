@@ -1,7 +1,8 @@
 export * from './registrySourcesV1.js';
+export * from '../plugins/contributions/deploymentTemplates.js';
 export * from './registryPluginSourcesV1.js';
+export * from './registryPackageContentV1.js';
 export * from './registryItemsV1.js';
-export * from './registryBrowserExtensionV1.js';
 export * from './registryListV1.js';
 export * from './registryUpdatesV1.js';
 export * from './registrySourcesMutationV1.js';
@@ -10,17 +11,7 @@ export * from './registryFetchPlanV1.js';
 export * from './registryRpcV1.js';
 export * from './registryActionsV1.js';
 export * from './registryHostV1.js';
+export * from './registryBotTemplateUpdatePointerV1.js';
 export * from './formats/index.js';
 export * from './formats/registryMarketplaceCatalogBindingV1.js';
-
-export { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-
-export { DeploymentTemplateDataV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-
-export { DeploymentTemplateSecretProfileV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-
-export type { DeploymentTemplateV1 } from '../plugins/contributions/deploymentTemplates.js';
-
-export type { DeploymentTemplateDataV1 } from '../plugins/contributions/deploymentTemplates.js';
-
-export type { DeploymentTemplateSecretProfileV1 } from '../plugins/contributions/deploymentTemplates.js';
+export * from './registryBrowserExtensionV1.js';

@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { RegistryFetchErrorV1, type RegistryListPageV1 } from '../registryListV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';
-import type { RegistrySkillItemV1, RegistryProvenanceV1, RegistryContentRefV1 } from '../registryItemsV1.js';
+import type { RegistrySkillItemV1, RegistryRemoteProvenanceV1, RegistryContentRefV1 } from '../registryItemsV1.js';
 import type { RegistryFetchContextV1, RegistrySkillFormatAdapterV1, RegistryHttpResultV1 } from './registryFormatAdapterV1.js';
 
 export function readGitHubRepositoryV1(url: string): Readonly<{ owner: string; repo: string; url: string;ref?:string;path?:string }> | null {
@@ -95,7 +95,7 @@ return {
   },
   async latest(ctx,items,options) {
     const result = new Map<string,RegistryContentRefV1|'removed'>();
-    const repos = new Map<string,RegistryProvenanceV1[]>();
+    const repos = new Map<string,RegistryRemoteProvenanceV1[]>();
     for (const item of items) { const group = repos.get(item.sourceUrl) ?? []; group.push(item); repos.set(item.sourceUrl,group); }
     for (const [url,group] of repos) {
       const source:RegistrySourceV1 = options ? {...options.source,url} : {id:group[0]!.sourceId,title:url,format:'git',kinds:['skill'],url,enabled:true,addedAt:0};
@@ -107,10 +107,10 @@ return {
         continue;
       }
       const resolved = await readRegistryGitHubCommitV1(ctx,source,undefined,credentials);
-      const targetPath = (item: RegistryProvenanceV1) => registryRelativePathV1(options?.source.format==='git'
+      const targetPath = (item: RegistryRemoteProvenanceV1) => registryRelativePathV1(options?.source.format==='git'
         ? [source.path ?? readGitHubRepositoryV1(source.url)?.path, registryRelativePathV1(item.itemId)].filter(Boolean).join('/')
         : item.ref.kind==='gitTree' ? item.ref.path : '');
-      const unchanged = (item: RegistryProvenanceV1) => item.ref.kind==='gitTree' && item.ref.commit===resolved.commit
+      const unchanged = (item: RegistryRemoteProvenanceV1) => item.ref.kind==='gitTree' && item.ref.commit===resolved.commit
         && item.ref.repo===resolved.repo.url && item.ref.path===targetPath(item);
       const changed = group.filter(item=>item.ref.kind==='gitTree' && !unchanged(item));
       const tree = changed.length ? (await readCommittedTree(ctx,resolved,credentials)).tree : undefined;

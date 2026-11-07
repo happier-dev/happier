@@ -1,12 +1,54 @@
+import { settleMountedWidgetAreaLayoutDeletion } from '../../domains/widgets/widgetAreaLayoutSelection';
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
 import type { ArtifactInventoryPublication, ArtifactInventorySelection } from '../../domains/artifacts/artifactInventory';
-import { doesArtifactInventorySelectionMatchHeader, isApprovalSessionInventorySelection, isApprovalStateInventorySelection } from '../../domains/artifacts/artifactInventory';
-import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { doesArtifactInventoryViewMatchRow, readArtifactBrowserMembership, isApprovalSessionInventorySelection, isApprovalStateInventorySelection } from '../../domains/artifacts/artifactInventory';
+import { patchInboxArtifactOrder, readInboxArtifactEntry, type InboxArtifactEntry, type InboxArtifactOrderChange } from '../../domains/artifacts/inboxArtifacts';
+import type { ListedOpenApproval, OpenApprovalInboxEntry } from '../../domains/artifacts/approvalArtifactAdmission';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { StoreGet, StoreSet } from './_shared';
 import type { ServerAccountScope } from '../../domains/scope/serverAccountScope';
 import { reconcileFailedApprovalDismissals, retireFailedApprovalDismissals } from '../../domains/state/failedApprovalUiState';
+import { readApprovalArtifactHeaderSessionIds, readDiscussionRequesterApprovalFact } from '../../domains/artifacts/approvalArtifactAdmission';
+import { projectArtifactInventoryIndex, selectArtifactInventoryRows, type ArtifactInventoryIndex } from './artifactInventoryIndex';
+import { projectWidgetAreaLayoutPublications, type WidgetAreaLayoutPublications } from './widgetAreaLayoutPublications';
+import { patchEnvironmentHealthNotices, type EnvironmentHealthNotices } from '../../domains/artifacts/healthNoticeEnvironments';
+
+type ApprovalArtifactGroups = Record<string, Record<string, DecryptedArtifact>>;
+
+/** Patch only the relationships of the admitted changed row. Home matching remains live at read time. */
+function patchApprovalArtifactGroups(
+  groups: ApprovalArtifactGroups,
+  baseline: ApprovalArtifactGroups,
+  id: string,
+  previousKeys: readonly string[],
+  nextKeys: readonly string[],
+  artifact: DecryptedArtifact | null,
+  projection: 'session' | 'discussion',
+  removedGroups: Set<string>,
+): ApprovalArtifactGroups {
+  for (const key of new Set([...previousKeys, ...nextKeys])) {
+    const current = groups[key];
+    const next = artifact && nextKeys.includes(key) ? artifact : null;
+    if (next ? current?.[id] === next : !current?.[id]) continue;
+    const previous = current?.[id];
+    // Session readers consume the admitted request/relationship, not freshness or
+    // grant-enrichment carriers. Decisions still read the current Artifact by id.
+    // Discussion receipts consume the full revision record and never use this projection.
+    if (projection === 'session' && previous && next && previous.header === next.header && previous.body === next.body
+      && previous.sessions === next.sessions && previous.sourceServerId === next.sourceServerId
+      && previous.draft === next.draft && previous.isDecrypted === next.isDecrypted) continue;
+    if (groups === baseline) groups = { ...groups };
+    const rows = !current || current === baseline[key] ? { ...current } : current;
+    if (next) rows[id] = next;
+    else {
+      delete rows[id];
+      removedGroups.add(key);
+    }
+    groups[key] = rows;
+  }
+  return groups;
+}
 
 function retainArtifactSlices(previous: DecryptedArtifact | undefined, incoming: DecryptedArtifact): DecryptedArtifact {
   if (!previous?.isDecrypted || !incoming.isDecrypted) return incoming;
@@ -67,11 +109,13 @@ function reconcileArtifacts(
     const missingKnownAccess = before && (
       (incomingArtifact.access === undefined && before.access !== undefined)
       || (incomingArtifact.ownerAccountId === undefined && before.ownerAccountId !== undefined)
+      || (incomingArtifact.sourceServerId === undefined && before.sourceServerId !== undefined)
     );
     const withKnownAccess = missingKnownAccess ? {
       ...incomingArtifact,
       ...(before.access !== undefined ? { access: incomingArtifact.access ?? before.access } : {}),
       ...(before.ownerAccountId !== undefined ? { ownerAccountId: incomingArtifact.ownerAccountId ?? before.ownerAccountId } : {}),
+      ...(before.sourceServerId !== undefined ? { sourceServerId: incomingArtifact.sourceServerId ?? before.sourceServerId } : {}),
     } : incomingArtifact;
     const artifact = retainArtifactSlices(before, retainOpenedContent(before, withKnownAccess));
     if (sameStrictJsonValue(before, artifact)) continue;
@@ -99,16 +143,8 @@ function inventoryUnready(artifact: DecryptedArtifact | undefined): boolean {
     && (!artifact.isDecrypted || !artifact.rawHeader || artifact.access === undefined);
 }
 
-/** Missing opaque classification cannot establish whether a retained row belongs to the browser. */
-function browserMembership(artifact: DecryptedArtifact): boolean | null {
-  const header = artifact.rawHeader ?? artifact.header;
-  if (header) return getArtifactKindPolicyV1(header.kind).browserListed;
-  return Object.hasOwn(artifact, 'kindHint') && artifact.kindHint !== undefined
-    ? getArtifactKindPolicyV1(artifact.kindHint).browserListed : null;
-}
-
 function browserUnready(artifact: DecryptedArtifact | undefined): boolean {
-  return artifact !== undefined && browserMembership(artifact) !== false
+  return artifact !== undefined && readArtifactBrowserMembership(artifact) !== false
     && (!artifact.isDecrypted || !artifact.rawHeader);
 }
 
@@ -118,14 +154,83 @@ function isOpenWorkflowPublicationCandidate(artifact: DecryptedArtifact | undefi
     && artifact.header.approvalStatus === 'open';
 }
 
+function approvalArtifactCandidate(artifact: DecryptedArtifact | undefined): DecryptedArtifact | null {
+  return artifact && !artifact.draft
+    && Object.values(APPROVAL_ARTIFACT_KINDS_V1).some(kind => kind === artifact.header?.kind) ? artifact : null;
+}
+
 /** Publish narrow inventory inputs at the same ingress as the admitted Artifact rows. */
 function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<string, DecryptedArtifact>, changedIds: Iterable<string>) {
   let revisions = state.artifactSkillRevisions;
   let unreadyCount = state.artifactInventoryUnreadyCount;
   let browserLoaded = state.artifactBrowserLoaded;
-  let publications = state.artifactOpenWorkflowPublicationArtifacts;
+  // One publication per page: appended and revised candidates are applied together after the loop.
+  const publicationsAdded: DecryptedArtifact[] = [];
+  const publicationsRevised = new Map<string, DecryptedArtifact | null>();
+  let inbox = state.artifactInboxEntries;
+  const inboxOrderChanges: InboxArtifactOrderChange[] = [];
+  let environmentHealth = state.artifactHealthNoticesByEnvironmentId;
+  let openApprovals = state.artifactOpenApprovalEntries;
+  let listedApprovals = state.artifactListedOpenApprovals;
+  let discussionAttention = state.artifactDiscussionAttentionEntries;
+  let incompleteInbox = state.artifactIncompleteInboxArtifacts;
+  let browser = state.artifactBrowserArtifacts;
+  let prompts = state.artifactPromptLibraryArtifacts;
+  let sessionApprovals = state.artifactApprovalArtifactsBySessionId;
+  let discussionApprovals = state.artifactApprovalArtifactsByDiscussionId;
+  const removedSessionGroups = new Set<string>();
+  const removedDiscussionGroups = new Set<string>();
   for (const id of changedIds) {
     const artifact = artifacts[id];
+    const beforeApproval = approvalArtifactCandidate(state.artifacts[id]);
+    const approval = approvalArtifactCandidate(artifact);
+    if (approval || beforeApproval) {
+      sessionApprovals = patchApprovalArtifactGroups(sessionApprovals, state.artifactApprovalArtifactsBySessionId, id,
+        beforeApproval ? readApprovalArtifactHeaderSessionIds(beforeApproval) : [],
+        approval ? readApprovalArtifactHeaderSessionIds(approval) : [], approval, 'session', removedSessionGroups);
+      const beforeDiscussion = beforeApproval ? readDiscussionRequesterApprovalFact(beforeApproval)?.discussion.discussionId : undefined;
+      const discussion = approval ? readDiscussionRequesterApprovalFact(approval)?.discussion.discussionId : undefined;
+      discussionApprovals = patchApprovalArtifactGroups(discussionApprovals, state.artifactApprovalArtifactsByDiscussionId, id,
+        beforeDiscussion ? [beforeDiscussion] : [], discussion ? [discussion] : [], approval, 'discussion', removedDiscussionGroups);
+    }
+    const inboxEntry = artifact ? readInboxArtifactEntry(artifact) : null;
+    environmentHealth = patchEnvironmentHealthNotices(environmentHealth, state.artifactHealthNoticesByEnvironmentId,
+      id, state.artifactInboxEntries[id], inboxEntry);
+    const openApproval = inboxEntry?.openApproval ?? null;
+    if (openApproval || openApprovals[id]) {
+      if (openApprovals === state.artifactOpenApprovalEntries) openApprovals = { ...openApprovals };
+      if (openApproval) openApprovals[id] = openApproval; else delete openApprovals[id];
+    }
+    const listed = inboxEntry?.listedApproval ?? null;
+    if (listed || listedApprovals[id]) {
+      if (listedApprovals === state.artifactListedOpenApprovals) listedApprovals = { ...listedApprovals };
+      if (listed) listedApprovals[id] = listed; else delete listedApprovals[id];
+    }
+    const attention = listed?.discussionAttention ? listed : null;
+    if (attention || discussionAttention[id]) {
+      if (discussionAttention === state.artifactDiscussionAttentionEntries) discussionAttention = { ...discussionAttention };
+      if (attention) discussionAttention[id] = attention; else delete discussionAttention[id];
+    }
+    const incomplete = inboxEntry && !inboxEntry.complete ? artifact : null;
+    if (incomplete || incompleteInbox[id]) {
+      if (incompleteInbox === state.artifactIncompleteInboxArtifacts) incompleteInbox = { ...incompleteInbox };
+      if (incomplete) incompleteInbox[id] = incomplete; else delete incompleteInbox[id];
+    }
+    if (inboxEntry || inbox[id]) {
+      if (inbox === state.artifactInboxEntries) inbox = { ...inbox };
+      inboxOrderChanges.push({ previous: state.artifactInboxEntries[id], next: inboxEntry ?? undefined });
+      if (inboxEntry) inbox[id] = inboxEntry; else delete inbox[id];
+    }
+    const browserRow = artifact && doesArtifactInventoryViewMatchRow('browserListed', artifact) ? artifact : null;
+    if (browserRow || browser[id]) {
+      if (browser === state.artifactBrowserArtifacts) browser = { ...browser };
+      if (browserRow) browser[id] = browserRow; else delete browser[id];
+    }
+    const promptRow = artifact && doesArtifactInventoryViewMatchRow('promptLibrary', artifact) ? artifact : null;
+    if (promptRow || prompts[id]) {
+      if (prompts === state.artifactPromptLibraryArtifacts) prompts = { ...prompts };
+      if (promptRow) prompts[id] = promptRow; else delete prompts[id];
+    }
     // This is discovery membership only. The approval owner admits matching
     // header/body revisions before a publication can be associated with a Run.
     const candidate = artifact && isOpenWorkflowPublicationCandidate(artifact) ? artifact : null;
@@ -134,10 +239,8 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
     if (candidate !== null || wasCandidate) {
       if (!candidate || before?.header !== candidate.header || before?.body !== candidate.body
         || before?.isDecrypted !== candidate.isDecrypted || before?.draft !== candidate.draft) {
-        publications = candidate ? wasCandidate
-          ? publications.map(entry => entry.id === id ? candidate : entry)
-          : [...publications, candidate]
-          : publications.filter(entry => entry.id !== id);
+        if (wasCandidate) publicationsRevised.set(id, candidate);
+        else if (candidate) publicationsAdded.push(candidate);
       }
     }
     const revision = skillRevision(artifacts[id]);
@@ -148,12 +251,57 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
     unreadyCount += Number(inventoryUnready(artifacts[id])) - Number(inventoryUnready(state.artifacts[id]));
     if (browserLoaded && browserUnready(artifacts[id])) browserLoaded = false;
   }
+  // Relationship removals share this synchronous publication. Retire each
+  // touched bucket only after its complete changed-id batch has applied.
+  for (const [groups, removedGroups] of [[sessionApprovals, removedSessionGroups], [discussionApprovals, removedDiscussionGroups]] as const) {
+    for (const key of removedGroups) if (Object.keys(groups[key]!).length === 0) delete groups[key];
+  }
+  let publications = state.artifactOpenWorkflowPublicationArtifacts;
+  // At most one pass over the retained candidates per page, never one per changed row.
+  if (publicationsRevised.size > 0) publications = publications.flatMap(entry => {
+    if (!publicationsRevised.has(entry.id)) return [entry];
+    const revised = publicationsRevised.get(entry.id);
+    return revised ? [revised] : [];
+  });
+  if (publicationsAdded.length > 0) publications = publications.concat(publicationsAdded);
   return { artifactSkillRevisions: revisions, artifactInventoryUnreadyCount: unreadyCount, artifactBrowserLoaded: browserLoaded,
+    artifactInventoryIndex: projectArtifactInventoryIndex(state.artifactInventoryIndex, state.artifacts, artifacts, changedIds),
+    artifactWidgetAreaLayoutPublications: projectWidgetAreaLayoutPublications(state.artifactWidgetAreaLayoutPublications, state.artifacts, artifacts, changedIds),
+    artifactApprovalArtifactsBySessionId: sessionApprovals,
+    artifactApprovalArtifactsByDiscussionId: discussionApprovals,
+    artifactHealthNoticesByEnvironmentId: environmentHealth,
+    artifactInboxEntries: inbox, artifactInboxOrder: patchInboxArtifactOrder(state.artifactInboxOrder, inboxOrderChanges),
+    artifactOpenApprovalEntries: openApprovals,
+    artifactListedOpenApprovals: listedApprovals,
+    artifactDiscussionAttentionEntries: discussionAttention, artifactIncompleteInboxArtifacts: incompleteInbox,
+    artifactBrowserArtifacts: browser, artifactPromptLibraryArtifacts: prompts,
     artifactOpenWorkflowPublicationArtifacts: publications };
 }
 
 export type ArtifactsDomain = {
   artifacts: Record<string, DecryptedArtifact>;
+  /** Changed-id query membership; selected refreshes never enumerate the retained Account map. */
+  artifactInventoryIndex: ArtifactInventoryIndex;
+  artifactWidgetAreaLayoutPublications: WidgetAreaLayoutPublications;
+  /** Raw approval relationship buckets, maintained from changed ids by the Artifact owner. */
+  artifactApprovalArtifactsBySessionId: ApprovalArtifactGroups;
+  artifactApprovalArtifactsByDiscussionId: ApprovalArtifactGroups;
+  /** Selection membership is projected once at admission, never by whole-inventory subscribers. */
+  artifactBrowserArtifacts: Record<string, DecryptedArtifact>;
+  artifactPromptLibraryArtifacts: Record<string, DecryptedArtifact>;
+  artifactInboxEntries: Record<string, InboxArtifactEntry>;
+  /** The same entries newest first, merged per applied page; retained entries are never re-sorted. */
+  artifactInboxOrder: readonly InboxArtifactEntry[];
+  /** Private C1 health relationships, keyed by authenticated Home/Account/Environment. */
+  artifactHealthNoticesByEnvironmentId: EnvironmentHealthNotices;
+  /** Strictly admitted open requests; notices and settled receipt changes retain this identity. */
+  artifactOpenApprovalEntries: Record<string, OpenApprovalInboxEntry>;
+  /** Listed open requests (header facts; body admission once read): the Inbox list's approval rows. */
+  artifactListedOpenApprovals: Record<string, ListedOpenApproval>;
+  /** Actual Discussion links only (header list facts); unrelated open requests retain this input identity. */
+  artifactDiscussionAttentionEntries: Record<string, ListedOpenApproval>;
+  /** Incomplete admissions only; completed open requests never restart body selection. */
+  artifactIncompleteInboxArtifacts: Record<string, DecryptedArtifact>;
   /** Open Run-request candidates, maintained only from changed Artifact ids at ingress. */
   artifactOpenWorkflowPublicationArtifacts: readonly DecryptedArtifact[];
   /** Content revisions only; unrelated Artifacts and body hydration retain this identity. */
@@ -177,17 +325,31 @@ export type ArtifactsDomain = {
     inventorySelection?: ArtifactInventorySelection, publication?: ArtifactInventoryPublication) => void;
   addArtifact: (artifact: DecryptedArtifact) => void;
   updateArtifact: (artifact: DecryptedArtifact) => void;
-  deleteArtifact: (artifactId: string) => void;
+  deleteArtifact: (artifactId: string, reason?: 'deleted' | 'unavailable') => void;
 };
 
 export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope?: ServerAccountScope | null }>({
   set,
+  get,
 }: {
   set: StoreSet<S>;
   get: StoreGet<S>;
 }): ArtifactsDomain {
   return {
     artifacts: {},
+    artifactInventoryIndex: new Map(),
+    artifactWidgetAreaLayoutPublications: { byArtifactId: new Map(), bySurface: new Map() },
+    artifactApprovalArtifactsBySessionId: {},
+    artifactApprovalArtifactsByDiscussionId: {},
+    artifactBrowserArtifacts: {},
+    artifactPromptLibraryArtifacts: {},
+    artifactInboxEntries: {},
+    artifactInboxOrder: [],
+    artifactHealthNoticesByEnvironmentId: {},
+    artifactOpenApprovalEntries: {},
+    artifactListedOpenApprovals: {},
+    artifactDiscussionAttentionEntries: {},
+    artifactIncompleteInboxArtifacts: {},
     artifactOpenWorkflowPublicationArtifacts: [],
     artifactSkillRevisions: {},
     artifactInventoryUnreadyCount: 0,
@@ -217,21 +379,19 @@ export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope
         const observesBrowser = inventorySelection === undefined || inventorySelection === 'browserListed';
         let browserOpaqueSurvivor = false;
         if (inventoryReadStartedWith && members) {
-          for (const [id, artifact] of Object.entries(state.artifacts)) {
-            const selected = inventorySelection === 'browserListed' ? browserMembership(artifact) === true
-              : doesArtifactInventorySelectionMatchHeader(inventorySelection, artifact.rawHeader ?? artifact.header ?? {});
-            if (selected && !members.has(id) && artifact === inventoryReadStartedWith[id]) {
+          for (const [id, artifact] of Object.entries(selectArtifactInventoryRows(state, inventorySelection))) {
+            if (!members.has(id) && artifact === inventoryReadStartedWith[id]) {
               if (reconciled === state.artifacts) reconciled = { ...reconciled };
               delete reconciled[id];
               retiredIds.push(id);
               changedIds.add(id);
               removed = true;
-            } else if (observesBrowser && browserUnready(reconciled[id])) {
-              // Retained unresolved rows remain visible in the shared browser
-              // projection, so their counts cannot be certified as complete.
-              browserOpaqueSurvivor = true;
             }
           }
+          // Unknown retained rows may be browser members without being selected
+          // for absence reconciliation. Private approval history is not a browser input.
+          if (observesBrowser) browserOpaqueSurvivor = Object.keys(state.artifactBrowserArtifacts)
+            .some(id => browserUnready(reconciled[id]));
         }
         if (complete && members && inventorySelection === undefined) {
           reconcileFailedApprovalDismissals(state.profileScope, id => members.has(id) || Object.hasOwn(reconciled, id));
@@ -297,10 +457,13 @@ export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope
           artifactsStorageRevision: state.artifactsStorageRevision + Number(updated.storageChanged),
         };
       }),
-    deleteArtifact: (artifactId) =>
+    deleteArtifact: (artifactId, reason = 'deleted') => {
+      const current = get();
+      retireFailedApprovalDismissals(current.profileScope, [artifactId]);
+      if (!Object.prototype.hasOwnProperty.call(current.artifacts, artifactId)) return;
+      // A failed read retires a local row without changing the person's selected layout.
+      if (reason === 'deleted') settleMountedWidgetAreaLayoutDeletion(artifactId);
       set((state) => {
-        retireFailedApprovalDismissals(state.profileScope, [artifactId]);
-        if (!Object.prototype.hasOwnProperty.call(state.artifacts, artifactId)) return state;
         const { [artifactId]: _, ...remainingArtifacts } = state.artifacts;
 
         return {
@@ -309,6 +472,7 @@ export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope
           ...projectArtifactInventory(state, remainingArtifacts, [artifactId]),
           artifactsStorageRevision: state.artifactsStorageRevision + 1,
         };
-      }),
+      });
+    },
   };
 }

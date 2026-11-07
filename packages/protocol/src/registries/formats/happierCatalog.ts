@@ -1,17 +1,19 @@
-import { parseMarketplaceIndexSourceSnapshotV1, type HappierPickV1 } from '../../marketplace/marketplaceIndexV1.js';
+import { parseMarketplaceIndexSourceSnapshotV1, type HappierPickV1, type MarketplaceIndexEntryV1, type MarketplaceCatalogDiscoveryV1 } from '../../marketplace/marketplaceIndexV1.js';
 import { readMarketplaceSourceListingsV1 } from '../../marketplace/marketplaceSourceListingsV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
-import { REGISTRY_FORMAT_KINDS_V1, deriveRegistrySourceIdV1, type RegistrySourceV1 } from '../registrySourcesV1.js';
-import { RegistryItemV1Schema, type RegistryContentRefV1, type RegistryItemSummaryV1, type RegistryProvenanceV1 } from '../registryItemsV1.js';
+import { BUILT_IN_REGISTRY_SOURCES_V1, REGISTRY_FORMAT_KINDS_V1, deriveRegistrySourceIdV1, type RegistrySourceV1 } from '../registrySourcesV1.js';
+import { RegistryItemV1Schema, type RegistryContentRefV1, type RegistryItemSummaryV1, type RegistryRemoteProvenanceV1 } from '../registryItemsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './index.js';
 import { registryPluginItemV1, registryPluginSummaryV1, registryPluginSupportsKindV1 } from './registryPluginListingV1.js';
 import { bindRegistryMarketplaceCatalogV1 } from './registryMarketplaceCatalogBindingV1.js';
+import { HappierAppCatalogV1Schema, latestHappierAppCatalogRefsV1, listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from './happierAppCatalog.js';
 import { readHappierBrowserExtensionCatalogItemV1, registryBrowserExtensionSummaryV1 } from './happierBrowserExtensionCatalog.js';
+import type { RegistryBrowserExtensionCatalogEntryV1 } from '../registryBrowserExtensionV1.js';
 
 async function readCatalog(ctx: RegistryFetchContextV1, source: RegistrySourceV1,
-  pinned?: Readonly<{ pluginId: string; version: string }>) {
-  const response = await ctx.http.getJson(source.url, { source });
+  pinned?: Readonly<{ pluginId: string; version: string }>, acquired?: Readonly<{ value: unknown; fetchedAt: number }>) {
+  const response = acquired ? { ok: true as const, ...acquired } : await ctx.http.getJson(source.url, { source });
   if (!response.ok) throw new RegistryFetchErrorV1(response.status);
   let catalog;
   try { catalog = parseMarketplaceIndexSourceSnapshotV1(response.value); }
@@ -22,9 +24,12 @@ async function readCatalog(ctx: RegistryFetchContextV1, source: RegistrySourceV1
 
 export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
   format: 'happier-catalog', kinds: REGISTRY_FORMAT_KINDS_V1['happier-catalog'], browserFetchable: () => true, supportsQuery: true,
+  supportsContributionFamily: true,
   async detect(ctx, url) {
     const response = await ctx.http.getJson(url);
     if (!response.ok) return null;
+    const apps = HappierAppCatalogV1Schema.safeParse(response.value);
+    if (apps.success) return { format: 'happier-catalog', kinds: ['app'], title: new URL(url).hostname, itemCount: apps.data.apps.length };
     try { const catalog = parseMarketplaceIndexSourceSnapshotV1(response.value);
       return { format: 'happier-catalog', kinds: [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
         ...(catalog.entries.some(entry => registryPluginSupportsKindV1(entry, 'agent')) ? ['agent' as const] : []),
@@ -34,57 +39,59 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
   },
   async list(ctx, req) {
     try {
-      const { catalog, fetchedAt } = await readCatalog(ctx, req.source);
+      let acquired: Readonly<{ value: unknown; fetchedAt: number }> | undefined;
+      if (req.kind === 'app') {
+        const response = await ctx.http.getJson(req.source.url, { source: req.source });
+        if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+        const parsed = HappierAppCatalogV1Schema.safeParse(response.value);
+        if (parsed.success) return listHappierAppCatalogV1({ sourceId: req.source.id, catalog: parsed.data, fetchedAt: response.fetchedAt, query: req.query });
+        acquired = response;
+      }
+      const { catalog, fetchedAt } = await readCatalog(ctx, req.source, undefined, acquired);
       const query = (req.query ?? '').trim().toLocaleLowerCase();
+      const discovery = catalog.discovery ?? legacyDiscovery(req.source, catalog);
       if (req.kind === 'browserExtension') {
         const items = (catalog.browserExtensions ?? []).map(entry => registryBrowserExtensionSummaryV1(req.source.id, entry))
           .filter(item => !query || `${item.title} ${item.description ?? ''} ${item.itemId}`.toLocaleLowerCase().includes(query));
-        return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, items, total: items.length, nextCursor: null };
+        return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, items, total: items.length, nextCursor: null, discovery };
       }
       if (req.kind !== 'plugin') {
         const picks = catalog.picks.filter(pick => pick.kind === req.kind);
         const counts = new Map<string, number>();
         for (const pick of picks) { const id = pickItemId(pick); counts.set(id, (counts.get(id) ?? 0) + 1); }
-        const items = (await Promise.all(picks.map(async pick => {
+        const items = picks.map(pick => {
           const itemId = pickItemId(pick);
-          if (counts.get(itemId)! > 1) {
+          if (counts.get(itemId)! > 1 || !targetAdapter(pick)) {
             return pickSummary(req.source, pick, { code: 'unsupported_entry', reason: 'distribution' });
           }
-          const adapter = targetAdapter(pick);
-          if (!adapter) return pickSummary(req.source, pick, { code: 'unsupported_entry', reason: 'distribution' });
-          try {
-            const target = { source: pickSource(pick), kind: pick.kind, itemId: pick.itemId };
-            const read = ctx.readTargetItem ? await ctx.readTargetItem(target) : await adapter.read(ctx, target);
-            if (read === null) return pickSummary(req.source, pick);
-            const item = RegistryItemV1Schema.parse(read);
-            return { ...item.summary, sourceId: req.source.id, itemId, flags: { ...item.summary.flags, pick: true as const } };
-          } catch (error) {
-            if (!(error instanceof RegistryFetchErrorV1)) throw error;
-            // An unavailable target is not proof of removal. Its own registry
-            // retains the typed recovery; recommendations quietly omit it.
-            if (error.status.state !== 'invalid_source') return null;
-            const page = await adapter.list(ctx, { source: pickSource(pick), kind: pick.kind });
-            if (page.status.state !== 'ok') return null;
-            const listed = page.items.find(item => item.itemId === pick.itemId);
-            if (!listed) return pickSummary(req.source, pick, { code: 'removed_from_source' });
-            return listed.problem ? { ...listed, sourceId: req.source.id, itemId, flags: { ...listed.flags, pick: true as const } } : null;
-          }
-        }))).filter((item): item is RegistryItemSummaryV1 => item !== null)
+          return pickSummary(req.source, pick);
+        })
           .filter(item => !query || `${item.title} ${item.description ?? ''} ${item.itemId}`.toLocaleLowerCase().includes(query));
         const plugins = catalog.entries.filter(entry => registryPluginSupportsKindV1(entry, req.kind)
           && (!query || `${entry.display.title} ${entry.display.description ?? ''} ${entry.pluginId}`.toLocaleLowerCase().includes(query)))
           .map(entry => registryPluginSummaryV1(req.source, entry));
         return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, total: items.length + plugins.length,
-          items: [...items, ...plugins], nextCursor: null };
+          items: [...items, ...plugins], nextCursor: null, discovery };
       }
-      const entries = catalog.entries.filter(entry => !query || `${entry.display.title} ${entry.display.description ?? ''} ${entry.pluginId}`.toLocaleLowerCase().includes(query));
+      const entries = catalog.entries.filter(entry => (!req.contributionFamily || entry.summary.contributions.includes(req.contributionFamily))
+        && (!query || `${entry.display.title} ${entry.display.description ?? ''} ${entry.pluginId}`.toLocaleLowerCase().includes(query)));
       return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, total: entries.length,
-        items: entries.map(entry => registryPluginSummaryV1(req.source, entry)), nextCursor: null };
+        items: entries.map(entry => registryPluginSummaryV1(req.source, entry)), nextCursor: null,
+        discovery };
     } catch (error) { if (error instanceof RegistryFetchErrorV1) return { sourceId: req.source.id, status: error.status, items: [], nextCursor: null }; throw error; }
   },
   async read(ctx, req) {
+    let acquired: Readonly<{ value: unknown; fetchedAt: number }> | undefined;
+    if (req.kind === 'app') {
+      const response = await ctx.http.getJson(req.source.url, { source: req.source });
+      if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+      const parsed = HappierAppCatalogV1Schema.safeParse(response.value);
+      if (parsed.success) return readHappierAppCatalogItemV1({ sourceId: req.source.id, catalog: parsed.data,
+        fetchedAt: response.fetchedAt, itemId: req.itemId, version: req.version });
+      acquired = response;
+    }
     const { catalog, fetchedAt } = await readCatalog(ctx, req.source,
-      (req.kind === 'plugin' || req.kind === 'agent') && req.version ? { pluginId: req.itemId, version: req.version } : undefined);
+      (req.kind === 'plugin' || req.kind === 'agent') && req.version ? { pluginId: req.itemId, version: req.version } : undefined, acquired);
     if (req.kind === 'browserExtension') return readHappierBrowserExtensionCatalogItemV1({ sourceId: req.source.id,
       entries: catalog.browserExtensions ?? [], itemId: req.itemId, version: req.version, fetchedAt });
     if (req.kind !== 'plugin') {
@@ -99,7 +106,6 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
       if (!pick || !adapter) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
       const target = { source: pickSource(pick), kind: pick.kind, itemId: pick.itemId, ...(req.version === undefined ? {} : { version: req.version }) };
       const read = ctx.readTargetItem ? await ctx.readTargetItem(target) : await adapter.read(ctx, target);
-      if (read === null) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
       const item = RegistryItemV1Schema.parse(read);
       return { ...item, summary: { ...item.summary, sourceId: req.source.id, itemId: req.itemId,
         flags: { ...item.summary.flags, pick: true as const } } };
@@ -113,9 +119,14 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     if (items.length === 0) return result; // Plugins keep the plugin update-policy owner.
     const source = options?.source;
     if (!source) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-    const { catalog } = await readCatalog(ctx, source);
+    const response = await ctx.http.getJson(source.url, { source });
+    if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+    const apps = HappierAppCatalogV1Schema.safeParse(response.value);
+    if (apps.success) return latestHappierAppCatalogRefsV1({ sourceId: source.id, catalog: apps.data,
+      fetchedAt: response.fetchedAt, itemIds: items.map(item => item.itemId) });
+    const { catalog } = await readCatalog(ctx, source, undefined, response);
     const groups = new Map<string, { source: RegistrySourceV1; adapter: RegistryFormatAdapterV1;
-      items: { catalogId: string; provenance: RegistryProvenanceV1 }[] }>();
+      items: { catalogId: string; provenance: RegistryRemoteProvenanceV1 }[] }>();
     for (const item of items) {
       const matches = catalog.picks.filter(pick => pickItemId(pick) === item.itemId);
       if (matches.length === 0) { result.set(item.itemId, 'removed'); continue; }
@@ -140,13 +151,38 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
   },
 };
 
+/** Old pointer-only catalogs are also one inert, cross-kind acquisition. No
+ * target fact is manufactured: unresolved versions stay absent until selection. */
+function legacyDiscovery(source: RegistrySourceV1, catalog: Readonly<{ picks: readonly HappierPickV1[]; entries: readonly MarketplaceIndexEntryV1[];
+  browserExtensions?: readonly RegistryBrowserExtensionCatalogEntryV1[] }>): MarketplaceCatalogDiscoveryV1 {
+  const summaries = [...catalog.picks.map(pick => pickSummary(source, pick)),
+    ...catalog.entries.map(entry => registryPluginSummaryV1(source, entry)),
+    ...(catalog.browserExtensions ?? []).map(entry => registryBrowserExtensionSummaryV1(source.id, entry))];
+  const counts = new Map<string, number>();
+  for (const summary of summaries) {
+    const key = JSON.stringify([summary.kind, summary.itemId]);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return { items: summaries.flatMap(summary => counts.get(JSON.stringify([summary.kind, summary.itemId])) !== 1 ? [] : [{
+    id: JSON.stringify([summary.kind, summary.itemId]), title: summary.title,
+    ...(summary.description === undefined ? {} : { description: summary.description }),
+    reference: { type: 'registryItem' as const, kind: summary.kind, sourceId: source.id, itemId: summary.itemId,
+      ...(summary.version === undefined ? {} : { version: summary.version }) },
+  }]), categories: [], jobs: [] };
+}
+
 /** Root skills from different repositories share their native item id. The
  * catalog pointer retains the complete location while target payload refs stay native. */
 function pickItemId(pick: HappierPickV1): string {
   return pick.kind === 'skill' ? `pick:${JSON.stringify([pick.format, pick.sourceUrl, pick.path ?? '', pick.itemId])}` : pick.itemId;
 }
 function pickSource(pick: HappierPickV1): RegistrySourceV1 {
-  return { id: deriveRegistrySourceIdV1(pick.sourceUrl), title: new URL(pick.sourceUrl).hostname,
+  // A pointer to the exact declared app catalog retains that source's identity.
+  // The pointer has no source ref, so it cannot borrow a differently pinned source.
+  const builtin = pick.kind === 'app' ? BUILT_IN_REGISTRY_SOURCES_V1.find(candidate => !('packageContent' in candidate)
+    && candidate.kinds.includes('app') && candidate.format === pick.format && candidate.url === pick.sourceUrl
+    && candidate.path === pick.path && candidate.ref === undefined) : undefined;
+  return { id: builtin?.id ?? deriveRegistrySourceIdV1(pick.sourceUrl), title: new URL(pick.sourceUrl).hostname,
     format: pick.format, kinds: [pick.kind], url: pick.sourceUrl, ...(pick.path === undefined ? {} : { path: pick.path }), enabled: true, addedAt: 0 };
 }
 function targetAdapter(pick: HappierPickV1): RegistryFormatAdapterV1 | undefined {
@@ -154,6 +190,8 @@ function targetAdapter(pick: HappierPickV1): RegistryFormatAdapterV1 | undefined
 }
 function pickSummary(source: RegistrySourceV1, pick: HappierPickV1, problem?: NonNullable<RegistryItemSummaryV1['problem']>): RegistryItemSummaryV1 {
   const url = new URL(pick.sourceUrl);
-  return { sourceId: source.id, kind: pick.kind, itemId: pickItemId(pick), title: pick.itemId || pick.path || url.pathname.split('/').filter(Boolean).at(-1) || url.hostname,
+  return { sourceId: source.id, kind: pick.kind, itemId: pickItemId(pick),
+    title: pick.display?.title ?? (pick.itemId || pick.path || url.pathname.split('/').filter(Boolean).at(-1) || url.hostname),
+    ...(pick.display?.description === undefined ? {} : { description: pick.display.description }),
     flags: { pick: true }, ...(problem === undefined ? {} : { problem }) };
 }

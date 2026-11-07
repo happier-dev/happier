@@ -1,6 +1,5 @@
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import type { MachineAgent, MachineAgentState } from '@/agents/machineAgents/machineAgentTypes';
-import { resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
@@ -18,7 +17,7 @@ export type AgentCollectionRow = Readonly<{
     definition?: AcpBackendDefinitionV1;
     status: AgentCollectionRowStatus;
     signIn: MachineAgent['signIn'] | null;
-    /** Only a problem the user must fix (a signed-out installed agent) is flagged. */
+    /** Last verified sign-in trouble; pending refreshes do not resolve it. */
     trouble: boolean;
 }>;
 
@@ -42,14 +41,12 @@ export function buildAgentCollection(params: Readonly<{
     definitions?: readonly AgentCollectionDefinition[];
     query: string;
 }>): AgentCollection {
-    const query = params.query.trim().toLocaleLowerCase();
     const onMachine: AgentCollectionRow[] = [];
     const available: AgentCollectionRow[] = [];
     const agentsById = new Map(params.agents.map((agent) => [agent.agentId, agent]));
     // Configured custom ACP agents are listed once, in their own group with their editor.
     const entries = params.entries.filter((entry) => !isCustomAcpAgentEntry(entry));
     for (const entry of entries) {
-        if (query && !entry.title.toLocaleLowerCase().includes(query)) continue;
         const agent = agentsById.get(entry.agentId);
         if (agent?.state === 'notInstalled' || agent?.state === 'unsupported') {
             available.push({ key: entry.agentId, entry, status: agent.state, signIn: agent.signIn, trouble: false });
@@ -58,12 +55,11 @@ export function buildAgentCollection(params: Readonly<{
         const status: AgentCollectionRowStatus = entry.enabled === false
             ? 'disabled'
             : agent?.state ?? 'unknown';
-        onMachine.push({ key: entry.agentId, entry, status, signIn: agent?.signIn ?? null, trouble: status === 'needsSignIn' && agent?.stale !== true });
+        onMachine.push({ key: entry.agentId, entry, status, signIn: agent?.signIn ?? null, trouble: status !== 'disabled' && agent?.signInTrouble === true });
     }
     const definitions = (params.definitions ?? []).filter(({ definition }) => !isCommandAgentDefinition(definition));
     const agentsByDefinition = new Map(params.agents.flatMap((agent) => (agent.definitionId ? [[agent.definitionId, agent] as const] : [])));
     for (const { definition, entry } of definitions) {
-        if (query && !entry.title.toLocaleLowerCase().includes(query)) continue;
         const key = `definition:${definition.id}`;
         const agent = agentsByDefinition.get(definition.id);
         if (!agent || agent.state === 'notInstalled' || agent.state === 'unsupported') {
@@ -71,9 +67,17 @@ export function buildAgentCollection(params: Readonly<{
             continue;
         }
         const status: AgentCollectionRowStatus = entry.enabled === false ? 'disabled' : agent.state;
-        onMachine.push({ key, entry, definition, status, signIn: agent.signIn, trouble: status === 'needsSignIn' && agent.stale !== true });
+        onMachine.push({ key, entry, definition, status, signIn: agent.signIn, trouble: status !== 'disabled' && agent.signInTrouble === true });
     }
-    return { onMachine, available, total: entries.length + definitions.length };
+    return filterAgentCollectionByQuery({ onMachine, available, total: entries.length + definitions.length }, params.query);
+}
+
+/** Text search is a local lens; ordinary held facts stay available to the condition header. */
+export function filterAgentCollectionByQuery(collection: AgentCollection, query: string): AgentCollection {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return collection;
+    const matches = (row: AgentCollectionRow) => row.entry.title.toLocaleLowerCase().includes(normalized);
+    return { ...collection, onMachine: collection.onMachine.filter(matches), available: collection.available.filter(matches) };
 }
 
 /** "Custom agents" are the ones started from a command; a registry agent is an agent like the built-in ones. */
@@ -96,17 +100,4 @@ export function resolveSelectedAgentCollectionId(
         ? entry.identity?.pluginId === route.pluginId && entry.identity.localId === route.agentId
         : entry.identity === null && entry.agentId === route.agentId));
     return match?.agentId ?? null;
-}
-
-/**
- * The agent a wide collection opens when its route names none: the one visited last while it is
- * still listed, else the first agent on the machine, else the first listed.
- */
-export function resolveAgentCollectionLandingId(
-    collection: AgentCollection,
-    lastVisitedAgentId: string | null,
-): string | null {
-    // Definition rows open their own editor route; the landing opens a catalog agent.
-    const rows = [...collection.onMachine, ...collection.available].filter((row) => !row.definition);
-    return resolveHappierCollectionInitialKey({ keys: rows.map((row) => row.entry.agentId), lastVisited: lastVisitedAgentId });
 }

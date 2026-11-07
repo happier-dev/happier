@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { createStore } from 'zustand/vanilla';
+import { useStore } from 'zustand';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
@@ -23,7 +25,18 @@ import { nativePickFiles } from '@/utils/files/nativePickFiles';
 import { readWebDroppedEntries } from '@/utils/files/webDroppedEntries';
 
 import { previewSkillInstall } from './skillInstall';
-import { SkillFoundAdd } from './SkillFoundAdd';
+import { SkillFoundAdd, createSkillFoundDraft } from './SkillFoundAdd';
+
+type UploadPreview =
+  | Readonly<{ kind: 'idle' }>
+  | Readonly<{ kind: 'reading' }>
+  | Readonly<{ kind: 'ready'; files: readonly SkillFileInputV1[]; items: readonly SkillInstallPreviewV1[];
+      draft: ReturnType<typeof createSkillFoundDraft> }>
+  | Readonly<{ kind: 'error'; message: string }>;
+
+export function createSkillUploadDraft() {
+  return createStore<{ state: UploadPreview }>(() => ({ state: { kind: 'idle' } }));
+}
 
 function describeUploadError(error: SkillUploadError): string {
   switch (error.code) {
@@ -63,34 +76,31 @@ export function SkillUploadInput(
   props: Readonly<{
     ctx: CapabilityAddInputContext;
     execute: MountedAuthoringActionExecute;
-    onAdded: (skillId: string) => void;
+    onAdded: (skillId: string) => void | Promise<void>;
     /** A detail's Add closed the dialog: the page selects that skill. */
-    onSelectAdded: (skillId: string) => void;
+    onSelectAdded: (skillId: string) => void | Promise<void>;
     /** Closes the dialog (the footer's Done when everything found is already held). */
     onDone: () => void;
     testID: string;
+    draft?: ReturnType<typeof createSkillUploadDraft>;
   }>,
 ) {
   const { theme } = useUnistyles();
   const edge = useAddDialogEdge();
   const { ctx } = props;
-  const [state, setState] = React.useState<
-    | Readonly<{ kind: 'idle' }>
-    | Readonly<{ kind: 'reading' }>
-    | Readonly<{
-        kind: 'ready';
-        files: readonly SkillFileInputV1[];
-        items: readonly SkillInstallPreviewV1[];
-      }>
-    | Readonly<{ kind: 'error'; message: string }>
-  >({ kind: 'idle' });
+  const [localDraft] = React.useState(createSkillUploadDraft);
+  const draft = props.draft ?? localDraft;
+  const state = useStore(draft, state => state.state);
+  const setState = React.useCallback((state: UploadPreview) => draft.setState({ state }), [draft]);
   const [dragging, setDragging] = React.useState(false);
 
   const accept = React.useCallback(
     async (source: UploadSource) => {
       ctx.openDetail(null);
-      setState({ kind: 'reading' });
+      const reading = { kind: 'reading' } as const;
+      setState(reading);
       const read = await readSkillUpload(source);
+      if (draft.getState().state !== reading) return;
       if (!read.ok) {
         setState({ kind: 'error', message: describeUploadError(read.error) });
         return;
@@ -99,6 +109,7 @@ export function SkillUploadInput(
         kind: 'upload',
         files: [...read.files],
       });
+      if (draft.getState().state !== reading) return;
       if (!preview.ok || preview.items.length === 0) {
         setState({
           kind: 'error',
@@ -106,11 +117,11 @@ export function SkillUploadInput(
         });
         return;
       }
-      setState({ kind: 'ready', files: read.files, items: preview.items });
+      setState({ kind: 'ready', files: read.files, items: preview.items, draft: createSkillFoundDraft(preview.items) });
       // One skill is the details themselves: Where it's on, then Add.
       if (preview.items.length === 1) ctx.openDetail(preview.items[0]!.path);
     },
-    [ctx, props.execute],
+    [ctx, draft, props.execute, setState],
   );
 
   const acceptWebFiles = React.useCallback(
@@ -215,10 +226,13 @@ export function SkillUploadInput(
       // Another upload is a new set to choose from: its ticks, adds and details start over.
       key={ready ? String(ready.files.length) + ready.items.map((item) => item.path).join('|') : ''}
       ctx={ctx}
+      draft={ready?.draft}
       execute={props.execute}
       source={ready ? { kind: 'upload', files: ready.files } : null}
       items={ready?.items ?? null}
-      groupTitle={t('capabilities.skillAdd.link.chooseWhich')}
+      isCurrentInput={() => draft.getState().state === state}
+      // One skill leaves nothing to choose: the heading says what the upload holds (lab `k:upload`).
+      groupTitle={ready?.items.length === 1 ? t('capabilities.skillAdd.upload.found', { count: 1 }) : t('capabilities.skillAdd.link.chooseWhich')}
       // Once something is read, choosing again stands where Browse has its search.
       {...(ready ? { field: choosers('small') } : {})}
       empty={

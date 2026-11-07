@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { projectSessionSpawnNewApiRequest } from '../actions/actionSpecs.js';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
+import { projectSessionSpawnNewActionInputV2, SessionSpawnNewInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import {
   API_TOKEN_FULL_GRANT_V1 as full, ApiTokenGrantV1Schema,
   evaluateApiTokenGrantV1 as evaluate, isApiTokenGrantWithinV1 as within,
@@ -27,6 +29,73 @@ const spawn = {
 const grant = (patch: Partial<ApiTokenGrantV1> = {}): ApiTokenGrantV1 => ApiTokenGrantV1Schema.parse({ ...full, ...patch });
 
 describe('API token grant admission', () => {
+  it('admits Automatic only for one Environment deploy grant and never amplifies the saved consent', () => {
+    const automatic = { ...full,
+      actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: ['staging'] },
+      deployApproval: 'automatic',
+    };
+    const saved = ApiTokenGrantV1Schema.parse(automatic);
+    expect(within(saved, full)).toBe(false);
+    expect(within(saved, saved)).toBe(true);
+    const { deployApproval: _approval, ...ask } = automatic;
+    expect(within(ApiTokenGrantV1Schema.parse(ask), saved)).toBe(true);
+    for (const patch of [
+      { approve: true }, { actions: null }, { actions: { families: [], ids: ['deployments.deploy'] } },
+      { targets: null }, { targets: { sessions: [], machines: ['machine-a'], environments: ['staging'] } },
+      { targets: { sessions: ['session-a'], machines: [], environments: ['staging'] } },
+      { targets: { sessions: [], machines: [], environments: ['staging', 'production'] } },
+      { actions: { families: ['deployments'], ids: ['deployments.deploy', 'action.operations.get'] } },
+      { create },
+    ]) expect(ApiTokenGrantV1Schema.safeParse({ ...automatic, ...patch }).success).toBe(false);
+    const production = ApiTokenGrantV1Schema.parse({ ...automatic,
+      targets: { sessions: [], machines: [], environments: ['production'] },
+    });
+    expect(within(production, saved)).toBe(false);
+  });
+  it('admits only exact Environment operands without granting their controller Machine', () => {
+    const g = ApiTokenGrantV1Schema.parse({ ...full,
+      actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: ['staging'] },
+    });
+    for (const actionId of ['deployments.deploy', 'action.operations.get']) {
+      expect(evaluate({ grant: g, actionId, environmentId: 'staging' })).toEqual({ ok: true });
+      expect(evaluate({ grant: g, actionId, environmentId: 'staging', environmentAdmission: 'pre_open', target: machine }))
+        .toEqual({ ok: true });
+      for (const environmentId of [undefined, null, '', 'production', ' staging', { id: 'staging' }]) {
+        expect(evaluate({ grant: g, actionId, environmentId, target: machine, targetMachineId: 'm1' }).ok).toBe(false);
+        expect(evaluate({ grant: g, actionId, environmentId, environmentAdmission: 'pre_open', target: machine }).ok).toBe(false);
+      }
+    }
+    expect(evaluate({ grant: g, actionId: 'action.spec.get' })).toEqual({ ok: true });
+    expect(evaluate({ grant: g, actionId: 'session.message.send', target: machine }).ok).toBe(false);
+    const controllerGrant = grant({ targets: { sessions: [], machines: ['m1'] } });
+    expect(evaluate({ grant: controllerGrant, actionId: 'deployments.deploy', environmentId: 'staging', target: machine }).ok).toBe(false);
+    expect(evaluate({ grant: full, actionId: 'deployments.deploy', environmentId: 'staging' })).toEqual({ ok: true });
+  });
+  it('rejects unknown Environment operands and opaque admission outside its declared Actions', () => {
+    for (const environmentId of [undefined, null, '', ' staging', { id: 'staging' }]) {
+      expect(evaluate({ grant: full, actionId: 'deployments.deploy', environmentId }).ok).toBe(false);
+    }
+    expect(evaluate({ grant: full, actionId: 'session.message.send', target: machine,
+      environmentId: 'staging', environmentAdmission: 'pre_open' }).ok).toBe(false);
+    expect(evaluate({ grant: full, actionId: 'action.spec.get', environmentId: { id: 'staging' } }).ok).toBe(false);
+  });
+  it('preserves Environment authority when narrowing a child grant', () => {
+    const parent = ApiTokenGrantV1Schema.parse({ ...full,
+      targets: { sessions: [], machines: [], environments: ['staging', 'preview'] },
+    });
+    const child = ApiTokenGrantV1Schema.parse({ ...parent,
+      actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: ['staging'] },
+    });
+    expect(within(child, parent)).toBe(true);
+    expect(within(child, full)).toBe(true);
+    expect(within(parent, child)).toBe(false);
+    expect(within({ ...child, targets: null }, child)).toBe(false);
+    expect(within(child, grant({ targets: { sessions: [], machines: ['staging'] } }))).toBe(false);
+    expect(within(grant({ targets: { sessions: ['s1'], machines: [] } }), parent)).toBe(false);
+  });
   it('restricts run-now to exact Automation IDs without replacing Machine admission', () => {
     const g = ApiTokenGrantV1Schema.parse({ ...full,
       actions: { families: [], ids: ['workflow.trigger.run_now'] },
@@ -62,6 +131,11 @@ describe('API token grant admission', () => {
     expect(projectApiTokenSessionSpawnAdmissionV1(authored))
       .toEqual({ ...spawn, connectedServices });
     const facts = projectApiTokenSessionSpawnAdmissionV1(authored);
+    const withSetup = projectApiTokenSessionSpawnAdmissionV1({ ...authored, machineSetupPlanInput: {
+      homeId: 'home', machineId: 'm1', sources: [{ kind: 'direct', setup: { scripts: [{ body: 'private setup' }] } }],
+    } });
+    expect(withSetup).toEqual({ ...facts, machineSetupRequested: true });
+    expect(withSetup).not.toHaveProperty('machineSetupPlanInput');
     const creationGrant = grant({ create: { ...create, connectedServices } });
     expect(evaluate({ grant: creationGrant, actionId: 'session.spawn_new', target: machine, spawnInput: facts }))
       .toEqual(evaluate({ grant: creationGrant, actionId: 'session.spawn_new', target: machine,
@@ -70,29 +144,62 @@ describe('API token grant admission', () => {
     expect(facts).not.toHaveProperty('agentSessionStartupInstructionsV1');
   });
   it('admits projected API creation against the verified pre-open Machine target without weakening execution checks', () => {
-    const projected = projectSessionSpawnNewApiRequest(spawn);
+    const publicSpawn = projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse(spawn));
+    const projected = projectSessionSpawnNewApiRequest(publicSpawn);
+    expect(projectApiTokenSessionSpawnAdmissionV1(spawn)).toEqual(spawn);
+    expect(() => projectApiTokenSessionSpawnAdmissionV1(publicSpawn as never)).toThrow();
     const creationGrant = grant({ create });
     const request = {
       grant: creationGrant, actionId: 'session.spawn_new',
       target: projected.target, spawnInput: projected.input,
     };
-    expect(evaluate({ ...request, contributedActionAdmission: 'pre_open' })).toEqual({ ok: true });
+    expect(evaluate({ ...request, contributedActionAdmission: 'pre_open', sessionSpawnInputKind: 'public_api' }))
+      .toEqual({ ok: true });
+    expect(evaluate({
+      grant: creationGrant,
+      actionId: 'session.spawn_new',
+      target: machine,
+      spawnInput: spawn,
+      contributedActionAdmission: 'pre_open',
+      sessionSpawnInputKind: 'canonical_admission',
+    })).toEqual({ ok: true });
     expect(evaluate(request)).toEqual({ ok: false, reason: 'create_not_granted' });
     expect(evaluate({ ...request, target: { kind: 'machine', machineId: 'm2' },
-      contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+      contributedActionAdmission: 'pre_open', sessionSpawnInputKind: 'public_api' }))
+      .toEqual({ ok: false, reason: 'create_not_granted' });
     expect(evaluate({ ...request, spawnInput: { ...projected.input,
-      organizationPlacement: { folderId: 'other', tagIds: [] } },
-      contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+      organizationPlacement: { sectionId: 'other', tagIds: [] } },
+      contributedActionAdmission: 'pre_open', sessionSpawnInputKind: 'public_api' }))
+      .toEqual({ ok: false, reason: 'create_not_granted' });
     expect(evaluate({ ...request, spawnInput: { ...spawn,
       executionTarget: { serverId: 'home', machineId: 'm2' } },
-      contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+      contributedActionAdmission: 'pre_open', sessionSpawnInputKind: 'public_api' }))
+      .toEqual({ ok: false, reason: 'create_not_granted' });
     for (const deniedInput of [
       { ...projected.input, executionTarget: null },
       { ...projected.input, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
       { ...projected.input, directory: { kind: 'path', path: '/other' } },
     ]) {
       expect(evaluate({ ...request, spawnInput: deniedInput,
-        contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+        contributedActionAdmission: 'pre_open', sessionSpawnInputKind: 'public_api' }))
+        .toEqual({ ok: false, reason: 'create_not_granted' });
+    }
+  });
+  it('requires an input-capable token before attaching a manager during direct or template Session creation', () => {
+    const managedSpawn = { ...spawn, manager: { sessionId: 's1' } };
+    for (const request of [
+      { actionId: 'session.spawn_new', spawnInput: managedSpawn },
+      { actionId: BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, spawnInput: { creation: managedSpawn } },
+    ]) {
+      const scoped = grant({ actions: { families: [], ids: [request.actionId] },
+        targets: { sessions: ['s1'], machines: ['m1'] } });
+      expect(evaluate({ ...request, grant: scoped, target: machine }))
+        .toEqual({ ok: false, reason: 'action_not_granted', deniedActionId: 'session.message.send' });
+      expect(evaluate({ ...request, spawnInput: request.actionId === 'session.spawn_new' ? spawn : { creation: spawn },
+        grant: scoped, target: machine })).toEqual({ ok: true });
+      expect(evaluate({ ...request, grant: grant({ actions: { families: [], ids: [request.actionId, 'session.turn.cancel'] },
+        targets: { sessions: ['s1'], machines: ['m1'] } }), target: machine })).toEqual({ ok: true });
+      expect(evaluate({ ...request, grant: full, target: machine })).toEqual({ ok: true });
     }
   });
   it('chooses only models for the requested agent and refuses an empty agent-specific grant', () => {
@@ -163,11 +270,14 @@ describe('API token grant admission', () => {
   it('treats approve as the sole decision switch, while preserving target membership', () => {
     const g = grant({ actions: { families: [], ids: ['session.message.send'] }, approve: true, targets: { sessions: ['s1'], machines: [] } });
     expect(evaluate({ grant: g, actionId: 'approval.request.decide', target: session })).toEqual({ ok: true });
+    expect(evaluate({ grant: g, actionId: 'approval.request.list', target: session })).toEqual({ ok: true });
+    expect(evaluate({ grant: g, actionId: 'approval.request.get', target: session })).toEqual({ ok: true });
     expect(evaluate({ grant: { ...g, approve: false }, actionId: 'approval.request.decide', target: session }).ok).toBe(false);
+    expect(evaluate({ grant: { ...g, approve: false }, actionId: 'approval.request.list', target: session }).ok).toBe(false);
     expect(evaluate({ grant: g, actionId: 'session.permission.respond', target: { kind: 'session', sessionId: 's2' } }).ok).toBe(false);
   });
 
-  it('admits agent-question answers exactly when Send is admitted', () => {
+  it('admits exact agent-question answers and answers implied by Send without granting Send in return', () => {
     for (const actions of [
       { families: [], ids: ['session.message.send'] },
       { families: [], ids: ['session.user_action.answer'] },
@@ -175,9 +285,18 @@ describe('API token grant admission', () => {
       null,
     ]) {
       const g = ApiTokenGrantV1Schema.parse({ ...full, actions });
-      expect(evaluate({ grant: g, actionId: 'session.user_action.answer', target: session }).ok)
-        .toBe(evaluate({ grant: g, actionId: 'session.message.send', target: session }).ok);
+      expect(evaluate({ grant: g, actionId: 'session.user_action.answer', target: session })).toEqual({ ok: true });
     }
+    const answerOnly = grant({ actions: { families: [], ids: ['session.user_action.answer'] },
+      targets: { sessions: ['s1'], machines: [] } });
+    expect(evaluate({ grant: answerOnly, actionId: 'session.message.send', target: session }))
+      .toEqual({ ok: false, reason: 'action_not_granted' });
+    expect(evaluate({ grant: answerOnly, actionId: 'session.user_action.answer', target: { kind: 'session', sessionId: 's2' } }))
+      .toEqual({ ok: false, reason: 'target_not_granted' });
+    expect(resolveApiTokenSessionCapabilityCeilingV1(answerOnly).has('submitAgentInput')).toBe(false);
+    const approveOnly = grant({ actions: { families: ['session_transcripts'], ids: [] }, approve: true });
+    expect(evaluate({ grant: approveOnly, actionId: 'session.user_action.answer', target: session }))
+      .toEqual({ ok: false, reason: 'action_not_granted' });
   });
 
   it('enforces all creation bindings through the same evaluator', () => {
@@ -294,13 +413,18 @@ describe('monotonic child attenuation', () => {
 
   it('uses the same conversational admission when attenuating explicit action ids', () => {
     const send = grant({ actions: { families: [], ids: ['session.message.send'] } });
+    const answer = grant({ actions: { families: [], ids: ['session.user_action.answer'] } });
     const sendAndAnswer = grant({ actions: { families: [], ids: ['session.message.send', 'session.user_action.answer'] } });
+    expect(within(answer, answer)).toBe(true);
+    expect(within(answer, send)).toBe(true);
     expect(within(sendAndAnswer, send)).toBe(true);
     for (const actionId of ['session.message.send', 'session.user_action.answer']) {
       expect(evaluate({ grant: sendAndAnswer, actionId, target: session })).toEqual({ ok: true });
       expect(evaluate({ grant: send, actionId, target: session })).toEqual({ ok: true });
     }
-    expect(within(send, grant({ actions: { families: [], ids: ['session.user_action.answer'] } }))).toBe(false);
+    expect(within(send, answer)).toBe(false);
+    expect(within(sendAndAnswer, answer)).toBe(false);
+    expect(within(grant({ actions: { families: ['messaging'], ids: [] } }), answer)).toBe(false);
   });
   it('does not introduce contributed actions absent from the parent', () => {
     const contributed = grant({ actions: { families: [], ids: ['example/action'] } });
@@ -325,12 +449,12 @@ describe('monotonic child attenuation', () => {
   });
 
   it('every accepted nullable transition admits only parent outcomes', () => {
-    const variants = [full, grant({ actions: { families: ['messaging'], ids: [] } }), grant({ actions: { families: [], ids: ['example/action'] } }), grant({ targets: { sessions: ['s1'], machines: ['m1'] } }), grant({ models: [modelA] }), grant({ permissionModes: ['default'] }), grant({ create: { ...create, placement: { folderId: 'leads', tagIds: ['inbound'] } } })];
+    const variants = [full, grant({ actions: { families: ['messaging'], ids: [] } }), grant({ actions: { families: [], ids: ['session.user_action.answer'] } }), grant({ actions: { families: [], ids: ['session.message.send'] } }), grant({ actions: { families: [], ids: ['example/action'] } }), grant({ targets: { sessions: ['s1'], machines: ['m1'] } }), grant({ models: [modelA] }), grant({ permissionModes: ['default'] }), grant({ create: { ...create, placement: { folderId: 'leads', tagIds: ['inbound'] } } })];
     const requests = [
       { actionId: 'action.invoke', contributedQualifiedId: 'example/action', target: session },
       { actionId: 'session.spawn_new', target: machine, spawnInput: spawn },
       { actionId: 'session.spawn_new', target: { kind: 'machine', machineId: 'm2' } as const, spawnInput: { ...spawn, executionTarget: { ...spawn.executionTarget, machineId: 'm2' } } },
-      ...['s1', 's2'].flatMap((sessionId) => ['session.message.send', 'approval.request.decide'].map((actionId) => ({ actionId, target: { kind: 'session', sessionId } as const }))),
+      ...['s1', 's2'].flatMap((sessionId) => ['session.message.send', 'session.user_action.answer', 'approval.request.decide'].map((actionId) => ({ actionId, target: { kind: 'session', sessionId } as const }))),
     ];
     for (const parent of variants) for (const child of variants) {
       if (!within(child, parent)) continue;

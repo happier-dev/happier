@@ -1,7 +1,8 @@
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_PAGE_METRICS, HappierCollectionNavigationBackClosesDetailContext } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HappierCollectionNavigationBackClosesDetailContext, HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import {
   Collection,
   useHappierCollection,
@@ -12,6 +13,7 @@ import {
   type RegistryFormatV1,
   type RegistryKindV1,
   type RegistrySourceDescriptorV1,
+  type RegistryRemoteSourceDescriptorV1,
 } from '@happier-dev/protocol/registries';
 import type { z } from 'zod/mini';
 import type { RegistryDetectedSourceV1Schema } from '@happier-dev/protocol/registries';
@@ -75,6 +77,8 @@ const passThroughScroller = (children: React.ReactNode) => children;
 export function RegistrySourcesView(
   props: Readonly<{
     kind: RegistryKindV1;
+    /** A retained management surface can withdraw acquisition without losing its draft/selection. */
+    enabled?: boolean;
     initialIntent?: 'manage' | 'add';
     itemsFromSource?: (
       sourceId: string,
@@ -85,16 +89,31 @@ export function RegistrySourcesView(
     /** On a settings page the resting list is one hairline sheet under the header (a modal's list stays flat on its pane). */
     pageSheet?: boolean;
     /**
-     * The host page owns the open source in its route (a phone: opening one pushes a route and the navigation's own
-     * Back, which the route's parent resolves to the list, closes it), so the pushed detail draws no Back of its own.
-     * `value` is the route's source, `null` the list; `onChange` asks the route to open one (`null`: back to the list).
+     * The host page owns the open source in its route. `value` is the route's source, `null` none (a phone's list; a
+     * wide page's own default); `onChange` asks the route to open one (`null`: none). An id the Account no longer has
+     * is none, and `onStale` asks the route to drop it (a link has no list behind it to pop to).
+     * `navigationBackClosesDetail`: opening one pushes a route and the navigation's own Back, which the
+     * route's parent resolves to the list, closes it, so the pushed detail draws no Back of its own.
      */
-    selection?: Readonly<{ value: string | null; onChange: (next: string | null) => void }>;
+    selection?: Readonly<{
+      value: string | null;
+      onChange: (next: string | null) => void;
+      onStale: () => void;
+      navigationBackClosesDetail: boolean;
+    }>;
     testID: string;
   }>,
 ): React.ReactElement {
+  const sources = useRegistrySources(props.kind, props.enabled !== false);
+  return <RegistrySourcesViewWithSources {...props} registry={sources} />;
+}
+
+/** Source management inside an Add flow consumes the same descriptor read as its selector. */
+export function RegistrySourcesViewWithSources(
+  props: React.ComponentProps<typeof RegistrySourcesView> & Readonly<{ registry: ReturnType<typeof useRegistrySources> }>,
+): React.ReactElement {
   const { theme } = useUnistyles();
-  const sources = useRegistrySources(props.kind);
+  const sources = props.registry;
   const rows = React.useMemo<readonly Row[]>(
     () => [
       NEW_ROW,
@@ -109,8 +128,16 @@ export function RegistrySourcesView(
     props.initialIntent === 'add' ? NEW_KEY : undefined,
   );
   const phone = useDeviceType() === 'phone';
-  const choice = props.selection ? props.selection.value : localChoice;
+  const routed = props.selection?.value ?? undefined;
+  const settled = sources.hasValue || props.enabled !== false && !sources.loading;
+  const routedIsKnown = routed === NEW_KEY || sources.sources.some((source) => source.id === routed);
+  const staleRoute = props.selection !== undefined && routed !== undefined && settled && !routedIsKnown;
+  const choice = props.selection ? (staleRoute ? undefined : routed) : localChoice;
   const setOpenKey = props.selection ? props.selection.onChange : setLocalChoice;
+  const dropStaleRoute = props.selection?.onStale;
+  React.useEffect(() => {
+    if (staleRoute) dropStaleRoute?.();
+  }, [staleRoute, dropStaleRoute]);
   const defaultKey = React.useMemo(
     () => (sources.sources.find((source) => source.origin.kind === 'user') ?? sources.sources[0])?.id ?? null,
     [sources.sources],
@@ -187,6 +214,8 @@ export function RegistrySourcesView(
       <RegistrySourceDetail
         key={source.id}
         kind={props.kind}
+        enabled={props.enabled !== false}
+        sourceLoading={sources.loading}
         source={source}
         pushed={context.pushed}
         itemsFromSource={props.itemsFromSource?.(source.id) ?? []}
@@ -201,7 +230,7 @@ export function RegistrySourcesView(
   const pageResting = props.pageSheet === true && openKey === null;
   return (
     <CoreCollectionScope {...(pageResting ? { renderPageScroller: passThroughScroller } : {})}>
-      <HappierCollectionNavigationBackClosesDetailContext.Provider value={props.selection !== undefined}>
+      <HappierCollectionNavigationBackClosesDetailContext.Provider value={props.selection?.navigationBackClosesDetail === true}>
       <View style={[styles.fill, resting && !pageResting ? styles.restingGutter : null]} testID={props.testID}>
         <Collection<Row>
           {...(pageResting ? { scroll: 'page' as const } : {})}
@@ -229,18 +258,18 @@ export function RegistrySourcesView(
  * The source's token (P4 F4): names where it is sent before the tap, binds a private Saved Secret through
  * `registries.sources.token.set` (applied directly, D22) and offers Undo for the change just made.
  */
-function RegistrySourceTokenRow(props: Readonly<{ source: RegistrySourceDescriptorV1; testID: string }>) {
+function RegistrySourceTokenRow(props: Readonly<{ source: RegistryRemoteSourceDescriptorV1; sourceLoading: boolean; testID: string }>) {
   const { theme } = useUnistyles();
   const { source } = props;
   const mutations = useRegistrySourceMutations();
   const picker = useRegistryTokenPicker();
   const [busy, setBusy] = React.useState(false);
-  const [last, setLast] = React.useState<Readonly<{ added: boolean; previous: RegistrySourceDescriptorV1['token'] | null }> | null>(null);
+  const [last, setLast] = React.useState<Readonly<{ added: boolean; previous: RegistryRemoteSourceDescriptorV1['token'] | null }> | null>(null);
   const [failed, setFailed] = React.useState(false);
   const host = registryTokenHost(source.url);
   const currentRef = source.token?.secretRef ?? null;
   const currentName = picker.nameOf(currentRef);
-  const apply = React.useCallback((token: RegistrySourceDescriptorV1['token'] | null, undo: boolean) => {
+  const apply = React.useCallback((token: RegistryRemoteSourceDescriptorV1['token'] | null, undo: boolean) => {
     const previous = source.token ?? null;
     setBusy(true);
     setFailed(false);
@@ -249,7 +278,8 @@ function RegistrySourceTokenRow(props: Readonly<{ source: RegistrySourceDescript
       .catch(() => setFailed(true))
       .finally(() => setBusy(false));
   }, [mutations, source.id, source.token]);
-  const choose = React.useCallback(() => picker.pick({
+  const choose = React.useCallback((event?: unknown) => picker.pick({
+    anchor: resolvePressTriggerAnchor(event),
     selectedId: currentRef,
     includeNoneRow: currentRef !== null,
     onSelectId: (secretRef) => {
@@ -272,11 +302,16 @@ function RegistrySourceTokenRow(props: Readonly<{ source: RegistrySourceDescript
         <View style={styles.tokenActions}>
           {last ? (
             <RoundButton size="small" display="secondary" title={t('capabilities.registries.detail.undo')}
-              disabled={busy} onPress={() => apply(last.previous, true)} testID={`${props.testID}:undo`} />
+              disabled={busy || props.sourceLoading || !mutations.ready} onPress={() => apply(last.previous, true)} testID={`${props.testID}:undo`} />
+          ) : null}
+          {/* Dismissing the sheet never clears a token; removing it is this explicit action (Undo brings it back). */}
+          {currentRef !== null ? (
+            <RoundButton size="small" display="secondary" title={t('common.remove')}
+              disabled={busy || props.sourceLoading || !mutations.ready} onPress={() => apply(null, false)} testID={`${props.testID}:remove`} />
           ) : null}
           <RoundButton size="small" display="secondary"
             title={currentRef === null ? t('capabilities.registries.detail.tokenAdd') : t('capabilities.registries.detail.tokenChange')}
-            loading={busy} disabled={busy} onPress={choose} testID={`${props.testID}:choose`} />
+            loading={busy || props.sourceLoading} disabled={busy || props.sourceLoading || !mutations.ready} onPress={choose} testID={`${props.testID}:choose`} />
         </View>
       }
     />
@@ -306,7 +341,10 @@ function DetailFrame(
             props.pushed ? styles.bodyPushed : null,
           ]}
         >
-          {props.children}
+          {/* The body pads its content by the page's text inset, so the identity header's title sits on the edge of the sections under it. */}
+          {props.pushed ? props.children : (
+            <HappierColumnEdgeContext.Provider value={HAPPIER_PAGE_METRICS.pageTextInsetPx}>{props.children}</HappierColumnEdgeContext.Provider>
+          )}
         </ScrollView>
         {props.footer ? <View style={[styles.footer, props.pushed ? styles.footerPushed : null]}>{props.footer}</View> : null}
       </View>
@@ -325,6 +363,8 @@ function formatClock(at: number): string {
 function RegistrySourceDetail(
   props: Readonly<{
     kind: RegistryKindV1;
+    enabled: boolean;
+    sourceLoading: boolean;
     source: RegistrySourceDescriptorV1;
     pushed: boolean;
     itemsFromSource: readonly RegistrySourcesViewItemFromSource[];
@@ -347,7 +387,7 @@ function RegistrySourceDetail(
   // The page of this source answers count, status and "Checked HH:MM"; it reads only while the source is on.
   const items = useRegistryItems(
     { kind: props.kind, sourceIds: [source.id] },
-    source.enabled,
+    props.enabled && source.enabled,
   );
   const page =
     items.pages.find((candidate) => candidate.sourceId === source.id) ?? null;
@@ -446,6 +486,7 @@ function RegistrySourceDetail(
                 icon: 'trash',
                 display: 'bordered',
                 busy: busy === 'remove',
+                disabled: !mutations.ready,
                 onPress: remove,
                 testID: `${props.testID}:remove`,
               },
@@ -495,6 +536,7 @@ function RegistrySourceDetail(
             <FieldTextInput
               testID={`${props.testID}:name`}
               value={name}
+              editable={mutations.ready}
               onChangeText={setName}
               onBlur={commitName}
               onSubmitEditing={commitName}
@@ -509,7 +551,7 @@ function RegistrySourceDetail(
           title={registrySourceLocation(source)}
           titleStyle={styles.mono}
           subtitle={
-            source.ref
+            !('packageContent' in source) && source.ref
               ? t('capabilities.registries.detail.refOn', { ref: source.ref })
               : undefined
           }
@@ -541,8 +583,8 @@ function RegistrySourceDetail(
             />
           }
         />
-        {editable && source.format !== 'happier-catalog' ? (
-          <RegistrySourceTokenRow source={source} testID={`${props.testID}:token`} />
+        {editable && !('packageContent' in source) ? (
+          <RegistrySourceTokenRow source={source} sourceLoading={props.sourceLoading} testID={`${props.testID}:token`} />
         ) : null}
         <Item
           title={t('capabilities.registries.detail.useTitle')}
@@ -554,7 +596,7 @@ function RegistrySourceDetail(
             <Switch
               testID={`${props.testID}:enabled`}
               value={source.enabled}
-              disabled={busy === 'enable'}
+              disabled={busy === 'enable' || !mutations.ready}
               onValueChange={setEnabled}
             />
           }
@@ -634,6 +676,7 @@ function formatOption(
 }
 function unsupportedCopy(
   reason: Extract<Detected, { unsupported: string }>['unsupported'],
+  formats: string,
 ): string {
   switch (reason) {
     case 'organisation':
@@ -641,7 +684,7 @@ function unsupportedCopy(
     case 'unreachable':
       return t('capabilities.registries.add.unreachable');
     default:
-      return t('capabilities.registries.add.unknownFormat');
+      return t('capabilities.registries.add.unknownFormat', { formats });
   }
 }
 function looksLikeLink(value: string): boolean {
@@ -705,6 +748,8 @@ function RegistryAddForm(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link, mutations.detect]);
 
+  const formats = addableFormats(props.kind);
+  const supportedFormatTitles = formats.map(format => formatOption(format, props.kind).title).join(', ');
   const detected = detection.state === 'done' ? detection.detected : null;
   const supported =
     detected !== null &&
@@ -721,9 +766,9 @@ function RegistryAddForm(
     detection.state === 'failed'
       ? t('capabilities.registries.add.unreachable')
       : detected !== null && 'unsupported' in detected && !needsToken
-        ? unsupportedCopy(detected.unsupported)
+        ? unsupportedCopy(detected.unsupported, supportedFormatTitles)
         : detected !== null && supported === null && !needsToken
-          ? t('capabilities.registries.add.unknownFormat')
+          ? t('capabilities.registries.add.unknownFormat', { formats: supportedFormatTitles })
           : null;
   const canAdd = supported !== null || (needsToken && token !== null);
 
@@ -782,7 +827,7 @@ function RegistryAddForm(
       }
     >
       <View style={styles.formHead}>
-        <Text variant="title" emphasis="semiBold">
+        <Text variant="title" emphasis="semiBold" style={{ color: theme.colors.text.primary }}>
           {t('capabilities.registries.add.title')}
         </Text>
         <Text variant="reading" style={{ color: theme.colors.text.secondary }}>
@@ -837,8 +882,8 @@ function RegistryAddForm(
                 size="small"
                 display="secondary"
                 title={token === null ? t('capabilities.registries.detail.tokenAdd') : t('capabilities.registries.detail.tokenChange')}
-                onPress={() =>
-                  picker.pick({ selectedId: token, includeNoneRow: false, onSelectId: (secretRef) => setToken(secretRef) })
+                onPress={(event) =>
+                  picker.pick({ anchor: resolvePressTriggerAnchor(event), selectedId: token, includeNoneRow: false, onSelectId: (secretRef) => setToken(secretRef) })
                 }
                 testID={`${props.testID}:token:choose`}
               />
@@ -895,7 +940,7 @@ function RegistryAddForm(
         </ItemGroup>
       ) : (
         <ItemGroup title={t('capabilities.registries.add.whatYouCanAdd')}>
-          {addableFormats(props.kind).map((format) => {
+          {formats.map((format) => {
             const option = formatOption(format, props.kind);
             return (
               <Item

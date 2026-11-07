@@ -5,8 +5,11 @@ import { HappierBreadcrumb } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -24,58 +27,47 @@ import { t } from '@/text';
 
 import { catalogReviewStatusLabel, formatCatalogEntryVersion } from '../model/pluginMarketplaceModel';
 import { usePluginSettingsScreenState, type PluginSettingsScreenState } from '../model/usePluginSettingsScreenState';
-import { buildPluginDetailRoute, buildPluginsHomeRoute, PLUGINS_HOME_TITLE_KEY } from '../model/pluginsSurfaceRoutes';
+import { buildPluginDetailRoute, buildPluginsHomeRoute, pluginsHomeTitleKey } from '../model/pluginsSurfaceRoutes';
 import { usePluginsSurfaceHost } from '../model/usePluginsSurfaceHost';
+import type { PluginListingRouteParams } from '../model/pluginsSurfaceRoutes';
 import { PluginMark } from '../PluginMark';
+import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSections';
 import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 import { PluginListingAddsSection, PluginListingFacts } from './PluginListingFacts';
+import { usePluginInstallOnMachines } from './PluginInstallOnMachines';
 
 /**
  * A marketplace listing before install (lab PL4): identity, what it is for and what it adds; beside
  * it the one action — Install & Trust on the machine named in the header, or Manage once installed —
  * then the facts and links. The install review that follows stays the security gate.
  *
- * The listing is re-read from its exact source through the one Discover query on arrival, so a
+ * The listing is re-read from its exact source and pin on arrival, so a
  * reload or a deep link shows current truth, and Install acts under the same authority as a card.
  */
-export const PluginListingScreen = React.memo(function PluginListingScreen(props: Readonly<{
-    sourceId: string;
-    pluginId: string;
-}>) {
+export const PluginListingScreen = React.memo(function PluginListingScreen(props: PluginListingRouteParams) {
     const isFocused = useIsFocused();
-    const state = usePluginSettingsScreenState({ focused: isFocused });
-    // Discovery belongs to the admitted Account, independently of the install Machine.
-    // Reissue a cold page's demand when its credential-backed registry scope admits.
-    const [requestedKey, setRequestedKey] = React.useState<string | null>(null);
-    const requestKey = JSON.stringify([state.marketplaceSourceRegistryScopeKey, props.sourceId, props.pluginId]);
-    const { openDiscoverListing } = state;
-    // Declared after the state owner's own effects, so this request is made after the owner has
-    // settled the Account scope for this mount; made earlier, the scope reset would drop it.
-    React.useEffect(() => {
-        if (requestedKey === requestKey) return;
-        setRequestedKey(requestKey);
-        openDiscoverListing({ sourceId: props.sourceId, pluginId: props.pluginId });
-    }, [openDiscoverListing, props.pluginId, props.sourceId, requestKey, requestedKey]);
-    return (
-        <PluginListingView
-            sourceId={props.sourceId}
-            pluginId={props.pluginId}
-            state={state}
-            presentation="page"
-            listingRequested={requestedKey === requestKey}
-        />
-    );
+    const state = usePluginSettingsScreenState({ focused: isFocused, listing: props });
+    return <PluginListingView {...props} state={state} presentation="page" listingRequested />;
+});
+
+/** The visible pane uses the same exact-listing operation owner as the page. */
+export const PluginListingPane = React.memo(function PluginListingPane(props: PluginListingRouteParams) {
+    const isFocused = useIsFocused();
+    const state = usePluginSettingsScreenState({ focused: isFocused, listing: props });
+    return <PluginListingView {...props} presentation="pane" state={state} listingRequested />;
 });
 
 /**
  * One listing, as its own page (`page`: breadcrumb, machine chip, re-read from its source on
- * arrival) or beside the Plugins Browse view (`pane`: the page's own results, chip and state — the
- * listing is already loaded there, and re-reading it would narrow the page's results to it).
+ * arrival) or beside the Plugins collection (`pane`: the same exact-listing owner, without
+ * narrowing the parent's Browse results or depending on a previously loaded row).
  */
 export const PluginListingView = React.memo(function PluginListingView(props: Readonly<{
     sourceId: string;
     pluginId: string;
+    itemId?: string;
+    version?: string;
     state: PluginSettingsScreenState;
     presentation: 'page' | 'pane';
     /** The page has asked its source for this listing (a pane shows the page's loaded results). */
@@ -102,14 +94,31 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     )) ?? null;
     const installed = state.installedPluginById.has(props.pluginId);
     const title = entry?.title ?? props.pluginId;
+    // Install's evaluated review opens here, where it was pressed; its outcome stays under the action.
+    const approvalReview = useInPlaceApprovalReview(state.pluginActionApproval);
+    // Installing on several Machines is its own combined review, opened only by the person's tap.
+    const installOnMachines = usePluginInstallOnMachines(state, entry);
+    const outcome = (
+        <>
+            {approvalReview.waiting ? (
+                <ActionApprovalPendingNotice
+                    testID="settings.plugins.listing.approvalWaiting"
+                    message={t('approvals.waitingForYou')}
+                    summary={state.pluginActionApproval.approvalSummary}
+                    onOpenApproval={approvalReview.reopen}
+                />
+            ) : null}
+            <PluginRoutineOperationSettlementRow settlement={state.routineOperationSettlement} scope="discover" />
+        </>
+    );
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.listing">
             {pane ? null : <HappierBreadcrumb style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar"
                 separator={<Icon name="caret-right" size={12} color={styles.crumbSeparator.color} />}
-                colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.pressed }}
+                colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
                 items={[
-                    { key: 'plugins', label: t(PLUGINS_HOME_TITLE_KEY), onPress: () => router.dismissTo(buildPluginsHomeRoute(host)), testID: 'settings.plugins.listing.crumb.plugins' },
+                    { key: 'plugins', label: t(pluginsHomeTitleKey(host)), onPress: () => router.dismissTo(buildPluginsHomeRoute(host)), testID: 'settings.plugins.listing.crumb.plugins' },
                     { key: 'browse', label: t('settingsPlugins.catalog.browse'), onPress: () => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse' })), testID: 'settings.plugins.listing.crumb.browse' },
                 ]}
                 renderLabel={(item) => <Text style={styles.crumb}>{item.label}</Text>}
@@ -150,8 +159,10 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                         disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
                         targetMachine={state.administrationTargetLabel?.machine ?? null}
                         onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
+                        onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
                         onManage={() => router.push(buildPluginDetailRoute(host, entry.id))}
                     />
+                    {outcome}
                     {entry.description ? <Text style={styles.description}>{entry.description}</Text> : null}
                     <PluginListingAddsSection entry={entry} />
                     <PluginListingFacts entry={entry} />
@@ -169,11 +180,17 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                             disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
                             targetMachine={state.administrationTargetLabel?.machine ?? null}
                             onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
+                            onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
                             onManage={() => router.push(buildPluginDetailRoute(host, entry.id))}
                         />
+                        {outcome}
                         <PluginListingFacts entry={entry} />
                     </ItemGroupColumn>
                 </ItemGroupColumns>
+            ) : pane && state.loadingDiscover ? (
+                <ItemGroup>
+                    <Item testID="settings.plugins.listing.loading" title={t('common.loading')} loading mode="info" showChevron={false} />
+                </ItemGroup>
             ) : pane ? (
                 // Beside Browse the listing comes from the page's own results; when they no longer
                 // carry it (a new search, another source), say so rather than wait for it.
@@ -182,12 +199,10 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                     kind="unavailable"
                     title={t('settingsPlugins.surfaces.listingNotFoundTitle')}
                     reason={t('settingsPlugins.surfaces.listingNotFoundBody')}
+                    action={{ label: t('settingsPlugins.catalog.browse'),
+                        onPress: () => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse', sourceId: props.sourceId })) }}
                 />
-            ) : noTarget ? (
-                <ItemGroup>
-                    <Item testID="settings.plugins.listing.noTarget" title={t('settingsPlugins.surfaces.listingChooseMachine')} mode="info" showChevron={false} />
-                </ItemGroup>
-            ) : notice ? null : state.loadingDiscover || !listingRequested ? (
+            ) : state.loadingDiscover || !listingRequested ? (
                 <ItemGroup>
                     <Item testID="settings.plugins.listing.loading" title={t('common.loading')} loading mode="info" showChevron={false} />
                 </ItemGroup>
@@ -198,8 +213,10 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                     title={t('settingsPlugins.surfaces.listingNotFoundTitle')}
                     reason={t('settingsPlugins.surfaces.listingNotFoundBody')}
                     action={{
-                        label: t('common.retry'),
-                        onPress: () => state.openDiscoverListing({ sourceId: props.sourceId, pluginId: props.pluginId }),
+                        label: state.unresolvedListing ? t('settingsPlugins.catalog.browse') : t('common.retry'),
+                        onPress: state.unresolvedListing
+                            ? () => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse', sourceId: props.sourceId }))
+                            : state.refreshDiscover,
                     }}
                 />
             )}
@@ -213,6 +230,8 @@ function ListingActionCard(props: Readonly<{
     disabled: boolean;
     targetMachine: string | null;
     onInstall: () => void;
+    /** Present when the plugin can go to several of the person's Machines at once. */
+    onInstallOnMachines?: () => void;
     onManage: () => void;
 }>) {
     const styles = stylesheet;
@@ -234,6 +253,10 @@ function ListingActionCard(props: Readonly<{
                         : t('settingsPlugins.surfaces.listingChooseMachine')}
                 </Text>
             )}
+            {!props.installed && props.onInstallOnMachines ? (
+                <TextLinkButton testID="settings.plugins.listing.installOnMachines" size="meta"
+                    label={t('settingsPlugins.installOnMachines')} disabled={props.disabled} onPress={props.onInstallOnMachines} />
+            ) : null}
             {!props.installed && entry.registrySelectionOrigin !== null ? (
                 <Text testID="settings.plugins.listing.registrySelection" style={styles.actionNote}>
                     {t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })}

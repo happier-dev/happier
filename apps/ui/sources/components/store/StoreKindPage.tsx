@@ -1,0 +1,794 @@
+import type { MarketplaceCatalogReferenceV1 } from '@happier-dev/protocol/marketplace';
+import type { HappierCapabilityFactsInput } from '@happier-dev/plugin-ui/presentation';
+import * as React from 'react';
+import { StoreProjectScopeChip } from './StoreProjectScopeChip';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import {
+  Collection,
+  type CollectionAnatomy,
+  type CollectionGroupAction,
+  useHappierCollection,
+} from '@happier-dev/plugin-ui';
+import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
+import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
+
+import { RegistryShelfAddControl } from '@/components/capabilities/add/RegistryShelf';
+import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
+import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
+import { Text } from '@/components/ui/text/Text';
+import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
+import { useRegistrySources } from '@/registries/useRegistrySources';
+import { describeRegistrySourceFailure, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
+import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
+import { useMcpAdded, useSkillAdded, useAgentAdded, useProviderAdded } from './catalog/storeAdded';
+import { useStoreOpenReference } from './catalog/useStoreOpenReference';
+import { StoreItemMark } from './catalog/StoreItemMark';
+import { StoreListingPaneHost, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
+import type { StoreListingReference } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import {
+  storeKinds,
+  type StoreAgentItem,
+  type StoreKind,
+} from './catalog/storeKinds';
+import {
+  type StoreKindList,
+} from './StoreKindScreen';
+import { storeEditorialGroupKey } from './catalog/storeColumnAdapter';
+import { useStoreFilterFields } from './catalog/useStoreFilterFields';
+import { StoreDirectory as StoreQueryDirectory, type StoreSearchState } from './StoreSearch';
+import { StoreDiscover } from './StoreDiscover';
+import { StoreDiscoverItemMark } from './discover/StoreDirectorySection';
+import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
+import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
+import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
+
+export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
+/** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
+const ROW_MARK_PX = 26;
+/** The page is the scroller: the directory's Collection draws none of its own. */
+const passThroughScroller = (children: React.ReactNode) => children;
+
+/** One directory row: the native item it came from and how it reads, never a second identity. */
+export type DirectoryRow = Readonly<{
+  key: string;
+  title: string;
+  description: string | null;
+  mark: React.ReactNode;
+  group: string;
+  facts?: HappierCapabilityFactsInput;
+  /** Opens its listing (the pane beside the page, or its own page on a phone). */
+  open: () => void;
+  /** The + : the kind's own Add owner at this exact item. Defaults to `open` (rows whose home is a page). */
+  add?: () => void;
+  /** Native action wording for a mixed-kind directory. */
+  addLabel?: string;
+  /** The Account already holds this exact item (the kind's Installed reader); the + reads Added. */
+  added?: boolean;
+  /** Built-in entries open their own page; there is nothing to add. */
+  addable?: boolean;
+}>;
+export type DirectoryGroup = Readonly<{
+  key: string;
+  title: string;
+  description?: string;
+}>;
+
+/** A Store kind page (lab `h:apps`, translated per kind): header, search with its catalog, then sections of catalog rows. */
+export function StoreKindPage(
+  props: Readonly<{ kind: StoreDirectoryKind; presented: boolean }>,
+): React.ReactNode {
+  const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
+  return <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
+    <KindQuery {...props} demand={demand} curation={curation.curation} curationComplete={complete} />
+  }</StoreDiscover>;
+}
+
+/** Reads only the admitted pages and their completeness: other curation publications leave the page still. */
+const KindQuery = React.memo(function KindQuery(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean;
+  demand: Readonly<{ presented: boolean }>; curation: RegistryCuration['curation']; curationComplete: boolean }>) {
+  const fields = useStoreFilterFields(props.curation, props.presented);
+  return <StoreQueryDirectory kind={props.kind} demand={props.demand} fields={fields}
+    curation={props.curation} curationComplete={props.curationComplete}
+    unavailable={<StoreDirectoryUnavailable view="kind" kind={props.kind} />}>
+    {state => <KindResults kind={props.kind} presented={props.presented} state={state} curation={props.curation} />}
+  </StoreQueryDirectory>;
+});
+
+function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean; state: StoreSearchState; curation: RegistryCuration['curation'] }>) {
+  const { state } = props;
+  const { filter } = state;
+  const source = filter.filters.source;
+  const sourceId = source?.include.length === 1 && source.exclude.length === 0 ? source.include[0]! : null;
+  const setSourceId = React.useCallback((id: string | null) => filter.setFilters(filters => {
+    const { source: _source, ...rest } = filters;
+    return id ? { ...rest, source: { include: [id], exclude: [] } } : rest;
+  }), [filter.setFilters]);
+  const visible = React.useMemo(() => new Set(state.rows), [state.rows]);
+  const browsing = !state.query.trim() && Object.keys(filter.filters).length === 0;
+  const frame = (body: React.ReactNode) => (
+    <StoreKindFrame
+      kind={props.kind}
+      query={state.query}
+      onQueryChange={state.setQuery}
+      sourceId={sourceId}
+      onSourceChange={setSourceId}
+      presented={props.presented}
+      filter={filter}
+    >
+      {body}
+    </StoreKindFrame>
+  );
+  switch (props.kind) {
+    case 'browserExtension':
+      if (state.lists.browserExtension) return frame(<RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: props.curation,
+        items: state.lists.browserExtension.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} />);
+      break;
+    case 'app':
+      if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
+        items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} />);
+      break;
+    case 'mcpServer':
+      if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: props.curation,
+        items: state.lists.mcpServer.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
+      break;
+    case 'skill':
+      if (state.lists.skill) return frame(<SkillDirectory list={{ ...state.lists.skill, curation: props.curation,
+        items: state.lists.skill.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
+      break;
+    case 'agent':
+      if (state.lists.agent) return frame(<AgentDirectory list={{ ...state.lists.agent, curation: props.curation,
+        items: state.lists.agent.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
+      break;
+    case 'provider':
+      if (state.lists.provider) return frame(<ProviderDirectory list={{ ...state.lists.provider,
+        items: state.lists.provider.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} />);
+      break;
+  }
+  return frame(<Directory kind={props.kind} rows={[]} groups={[]} list={{ loading: false, hasNextPage: false }} query={state.query} sourceTitle={null} />);
+}
+
+/** A kind page's frame: header, search with its one condition beside it, the directory, and the listing pane. */
+export function StoreKindFrame(
+  props: Readonly<{
+    kind: StoreDirectoryKind | 'software' | 'bot';
+    query: string;
+    onQueryChange: (query: string) => void;
+    sourceId?: string | null;
+    onSourceChange?: (sourceId: string | null) => void;
+    /** A kind whose condition is not a catalog (Software reads one Machine) supplies its own control; `fill` is true where it stacks under the search (a phone). */
+    accessory?: React.ReactNode;
+    presented: boolean;
+    filter?: StoreSearchState['filter'];
+    children: React.ReactNode;
+  }>,
+): React.ReactNode {
+  const copy = kindCopy(props.kind);
+  const registryKind =
+    props.kind === 'provider' || props.kind === 'software' ? null : props.kind === 'bot' ? 'plugin' : props.kind;
+  // A phone has no room for the condition beside the search: it stacks under it at full width.
+  const stacked = useDeviceType() === 'phone';
+  const registrySelect = registryKind && props.onSourceChange ? (
+    <CatalogSelect
+      kind={registryKind}
+      presented={props.presented}
+      sourceId={props.sourceId ?? null}
+      onSourceChange={props.onSourceChange}
+    />
+  ) : undefined;
+  const accessory = props.accessory ?? registrySelect;
+  // Software reads one Machine, so a project scope has nothing to narrow there.
+  const scoped = props.kind !== 'software';
+  return (
+    <StoreListingPaneHost title={copy.title} testID={`store.kind.${props.kind}`}>
+    <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
+      <PageContentColumn>
+        {/* A phone's description keeps the line's width; the scope chip stands under it, as on Discover (TASTE-S4060 D8). */}
+        {/* Like every Store page, the kind's name stays in the body: a phone's bar keeps saying Store (TASTE-S4060 D8). */}
+        <PageHeader title={copy.title} description={copy.description} alwaysShowTitle {...(stacked || !scoped ? {} : { actions: <StoreProjectScopeChip />, actionsPlacement: 'page' as const })} />
+        {/* Everything that says what the page shows stands on one line; the search keeps its own. */}
+        {stacked ? <View style={styles.phoneScope}>{scoped ? <StoreProjectScopeChip /> : null}{accessory}</View> : null}
+        <CompactSearchField
+          placement="page"
+          testID={`store.kind.${props.kind}.search`}
+          value={props.query}
+          onChangeText={props.onQueryChange}
+          placeholder={copy.search}
+          trailing={props.filter?.filterButton}
+          {...(stacked ? {} : { accessory })}
+        />
+        {props.filter?.tokenRow}
+        {props.children}
+      </PageContentColumn>
+    </ItemList>
+    </StoreListingPaneHost>
+  );
+}
+
+/** Only registry-backed kinds choose a catalog (S40 §5); it narrows remote demand before fetching. */
+function CatalogSelect(
+  props: Readonly<{
+    kind: 'app' | 'mcpServer' | 'skill' | 'agent' | 'browserExtension' | 'plugin';
+    presented: boolean;
+    sourceId: string | null;
+    onSourceChange: (sourceId: string | null) => void;
+  }>,
+): React.ReactNode {
+  const registry = useRegistrySources(props.kind, props.presented);
+  const sources = registry.sources.filter((source) => source.enabled);
+  // Held in place while the catalogs load, so the search beside it never changes width on arrival.
+  if (registry.hasValue && sources.length < 2) return null;
+  return (
+    <SelectionListFilterChip filter={{
+      id: 'store-catalog',
+      testID: `store.kind.${props.kind}.catalog`,
+      label: t('capabilities.store.catalogLabel'),
+      options: [
+        { id: 'all', label: t('capabilities.store.allCatalogs') },
+        ...sources.map((source) => ({ id: source.id, label: source.title })),
+      ],
+      selectedId: props.sourceId ?? 'all',
+      onChange: (id) => props.onSourceChange(id === 'all' ? null : id),
+      disabled: !registry.hasValue,
+    }} />
+  );
+}
+
+type RegistryList = StoreKindList<'mcpServer'>;
+
+export function kindCopy(kind: StoreDirectoryKind | 'plugin' | 'software' | 'bot'): Readonly<{ title: string; description: string; search: string }> {
+    switch (kind) {
+        case 'bot': return { title: t('bots.title'), description: t('botTemplates.storeDescription'), search: t('botTemplates.storeSearch') };
+        case 'app': return { title: t('capabilities.store.kinds.app.title'), description: t('capabilities.store.kinds.app.description'), search: t('capabilities.store.kinds.app.search') };
+        case 'browserExtension': return { title: t('capabilities.store.kinds.browserExtension.title'), description: t('capabilities.store.kinds.browserExtension.description'), search: t('capabilities.store.kinds.browserExtension.search') };
+        case 'software': return { title: t('capabilities.store.kinds.software.title'), description: t('capabilities.store.softwarePage.description'), search: t('capabilities.store.softwarePage.search') };
+        case 'mcpServer': return { title: t('capabilities.store.kinds.mcpServer.title'), description: t('capabilities.store.kinds.mcpServer.description'), search: t('capabilities.store.kinds.mcpServer.search') };
+        case 'skill': return { title: t('capabilities.store.kinds.skill.title'), description: t('capabilities.store.kinds.skill.description'), search: t('capabilities.store.kinds.skill.search') };
+        case 'agent': return { title: t('capabilities.store.kinds.agent.title'), description: t('capabilities.store.kinds.agent.description'), search: t('capabilities.store.kinds.agent.search') };
+        case 'provider': return { title: t('capabilities.store.kinds.provider.title'), description: t('capabilities.store.kinds.provider.description'), search: t('capabilities.store.kinds.provider.search') };
+        case 'plugin': return { title: t('capabilities.store.kinds.plugin.title'), description: t('capabilities.store.kinds.plugin.description'), search: t('capabilities.store.kinds.plugin.search') };
+    }
+}
+
+const EMPTY_CURATED: readonly RegistryCatalogItemSummary[] = [];
+const curatedIdentity = (item: RegistryCatalogItemSummary) => JSON.stringify([item.sourceId, item.itemId]);
+
+/** A kind's curated items as summaries, from the words the catalog's curation already holds. */
+function curatedSummaries(curation: RegistryList['curation'], kind: RegistryCatalogItemSummary['kind']): readonly RegistryCatalogItemSummary[] {
+  const seen = new Set<string>();
+  return curation.flatMap(page => page.discovery.items.flatMap((item): RegistryCatalogItemSummary[] => {
+    const reference = item.reference;
+    if (reference.type !== 'registryItem' || reference.kind !== kind) return [];
+    const identity = JSON.stringify([reference.sourceId, reference.itemId]);
+    if (seen.has(identity)) return [];
+    seen.add(identity);
+    return [{ sourceId: reference.sourceId, itemId: reference.itemId, kind, title: item.title,
+      ...(item.description === undefined ? {} : { description: item.description }),
+      ...(reference.version === undefined ? {} : { version: reference.version }), flags: { pick: true } }];
+  }));
+}
+
+/** Groups a registry kind's rows: Happier picks first, then the curated categories, then each other catalog. */
+export function useRegistryRows(
+  list: Readonly<{ items: readonly RegistryCatalogItemSummary[]; curation: RegistryList['curation'];
+    /** Browsing this kind unfiltered: its curated items lead the page even before their catalog page has loaded. */
+    curatedKind?: RegistryCatalogItemSummary['kind'] }>,
+  open: (item: RegistryCatalogItemSummary) => void,
+  sourceTitle: (sourceId: string) => string,
+  isAdded?: (item: RegistryCatalogItemSummary) => boolean,
+  add?: (item: RegistryCatalogItemSummary) => void,
+): Readonly<{
+  rows: readonly DirectoryRow[];
+  groups: readonly DirectoryGroup[];
+}> {
+  // A row is the Collection's unit of work: the one built for an item keeps its identity while that item, its group
+  // and its added state stay the same, however the list around it (a search narrowing it) or the caller's callbacks change.
+  const latest = React.useRef({ open, add });
+  latest.current = { open, add };
+  const held = React.useRef<ReadonlyMap<string, Readonly<{
+    item: RegistryCatalogItemSummary; group: string; added: boolean; addable: boolean; row: DirectoryRow;
+  }>>>(new Map());
+  const published = React.useRef<Readonly<{ rows: readonly DirectoryRow[]; groups: readonly DirectoryGroup[] }> | null>(null);
+  const curatedItems = React.useMemo(() => list.curatedKind ? curatedSummaries(list.curation, list.curatedKind) : EMPTY_CURATED,
+    [list.curation, list.curatedKind]);
+  return React.useMemo(() => {
+    const curatedIdentities = new Set(curatedItems.map(curatedIdentity));
+    const categories = new Map<
+      string,
+      Readonly<{ title: string; description?: string; members: Set<string> }>
+    >();
+    for (const page of list.curation) {
+      const byId = new Map(
+        page.discovery.items.map((item) => [item.id, item.reference]),
+      );
+      for (const category of page.discovery.categories) {
+        const members = new Set<string>();
+        for (const id of category.items) {
+          const ref = byId.get(id);
+          if (ref?.type === 'registryItem')
+            members.add(JSON.stringify([ref.sourceId, ref.itemId]));
+        }
+        categories.set(storeEditorialGroupKey(page.sourceId, category.id), {
+          title: category.title,
+          ...(category.description
+            ? { description: category.description }
+            : {}),
+          members,
+        });
+      }
+    }
+    const groups = new Map<string, DirectoryGroup>();
+    const next = new Map<string, Readonly<{
+      item: RegistryCatalogItemSummary; group: string; added: boolean; addable: boolean; row: DirectoryRow;
+    }>>();
+    const loaded = new Set(list.items.map(curatedIdentity));
+    const items = [...curatedItems.filter(item => !loaded.has(curatedIdentity(item))), ...list.items];
+    const rows = items.map((item): DirectoryRow => {
+      const identity = JSON.stringify([item.sourceId, item.itemId]);
+      const category =
+        item.sourceId === HAPPIER_PICKS_SOURCE_ID
+          ? null
+          : [...categories].find(([, value]) => value.members.has(identity));
+      const group: DirectoryGroup =
+        item.sourceId === HAPPIER_PICKS_SOURCE_ID || (!category && curatedIdentities.has(identity))
+          ? {
+              key: 'picks',
+              title: t('capabilities.store.picksTitle'),
+              description: t('capabilities.store.picksDescription'),
+            }
+          : category
+            ? {
+                key: `category:${category[0]}`,
+                title: category[1].title,
+                ...(category[1].description
+                  ? { description: category[1].description }
+                  : {}),
+              }
+            : {
+                key: `source:${item.sourceId}`,
+                title: t('capabilities.store.fromSource', {
+                  source: sourceTitle(item.sourceId),
+                }),
+              };
+      if (!groups.has(group.key)) groups.set(group.key, group);
+      const key = `${item.kind}|${item.sourceId}|${item.itemId}`;
+      const added = isAdded?.(item) ?? false;
+      const addable = add !== undefined;
+      const previous = held.current.get(key);
+      const row: DirectoryRow = previous && previous.item === item && previous.group === group.key
+        && previous.added === added && previous.addable === addable ? previous.row : {
+        key,
+        title: item.title,
+        description: item.description?.trim() || null,
+        group: group.key,
+        open: () => latest.current.open(item),
+        ...(addable ? { add: () => latest.current.add?.(item) } : {}),
+        added,
+        // The item's one mark (its listing's artwork, else its kind glyph), as Discover and Search draw it.
+        // Curation carries no artwork: a curated row reads it the way Discover does, until its catalog page arrives.
+        mark: !loaded.has(identity) ? <StoreDiscoverItemMark size={ROW_MARK_PX} item={{ key: identity, id: item.itemId, sourceId: item.sourceId,
+          kind: item.kind, title: item.title, description: null,
+          reference: { type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId } }} />
+          : <StoreItemMark facts={{ kind: item.kind, title: item.title, brand: item.brandMark }} size={ROW_MARK_PX} />,
+      };
+      next.set(key, { item, group: group.key, added, addable, row });
+      return row;
+    });
+    held.current = next;
+    const order = (key: string) =>
+      key === 'picks' ? 0 : key.startsWith('category:') ? 1 : 2;
+    const orderedGroups = [...groups.values()].sort(
+      (left, right) => order(left.key) - order(right.key),
+    );
+    const before = published.current;
+    const same = before !== null && before.rows.length === rows.length && before.rows.every((row, index) => row === rows[index])
+      && before.groups.length === orderedGroups.length
+      && before.groups.every((group, index) => group.key === orderedGroups[index]!.key
+        && group.title === orderedGroups[index]!.title && group.description === orderedGroups[index]!.description);
+    if (same) return before;
+    published.current = { rows, groups: orderedGroups };
+    return published.current;
+  }, [list.curation, list.items, curatedItems, open, sourceTitle, isAdded, add]);
+}
+
+export function useSourceTitle(
+  kind: Exclude<StoreDirectoryKind, 'provider'>,
+): (sourceId: string) => string {
+  const registry = useRegistrySources(kind);
+  return React.useCallback(
+    (sourceId: string) =>
+      registry.sources.find((source) => source.id === sourceId)?.title ??
+      sourceId,
+    [registry.sources],
+  );
+}
+
+function RegistryDirectory(
+  props: Readonly<{
+    kind: 'app' | 'browserExtension' | 'mcpServer' | 'skill';
+    list: RegistryList;
+    query: string;
+    browsing: boolean;
+    isAdded?: (item: RegistryCatalogItemSummary) => boolean;
+  }>,
+): React.ReactNode {
+  const open = useOpenRegistryItem();
+  const add = useAddRegistryItem();
+  const sourceTitle = useSourceTitle(props.kind);
+  const curated = React.useMemo(() => ({ items: props.list.items, curation: props.list.curation,
+    ...(props.browsing ? { curatedKind: props.kind } : {}) }), [props.list.items, props.list.curation, props.browsing, props.kind]);
+  const { rows, groups } = useRegistryRows(curated, open, sourceTitle, props.isAdded, add);
+  return (
+    <Directory
+      kind={props.kind}
+      rows={rows}
+      groups={groups}
+      list={props.list}
+      query={props.query}
+      sourceTitle={sourceTitle}
+    />
+  );
+}
+
+const registryReference = (item: RegistryCatalogItemSummary) => ({ type: 'registryItem' as const, kind: item.kind,
+  sourceId: item.sourceId, itemId: item.itemId, ...(item.version ? { version: item.version } : {}) });
+
+/** A row opens its exact listing (S40 §4.5): the pane beside the page, or its own page on a phone. */
+export function useOpenRegistryItem(): (item: RegistryCatalogItemSummary) => void {
+  const openListing = useOpenStoreListing();
+  return React.useCallback((item: RegistryCatalogItemSummary) => openListing(registryReference(item)), [openListing]);
+}
+
+/** The row's + adds through the Store's one open owner, seeded at this exact item. */
+export function useAddRegistryItem(): (item: RegistryCatalogItemSummary) => void {
+  const openReference = useStoreOpenReference();
+  return React.useCallback((item: RegistryCatalogItemSummary) => openReference(registryReference(item)), [openReference]);
+}
+
+/** The directory key of the selected listing, so the row its pane shows reads selected. */
+export function directoryKeyOf(reference: StoreListingReference | null): string | null {
+  return reference?.type === 'registryItem' ? `${reference.kind}|${reference.sourceId}|${reference.itemId}` : null;
+}
+
+function McpDirectory(props: Readonly<{ list: RegistryList; query: string; presented: boolean; browsing: boolean }>): React.ReactNode {
+  const isAdded = useMcpAdded(props.presented);
+  return <RegistryDirectory kind="mcpServer" list={props.list} query={props.query} browsing={props.browsing} isAdded={isAdded} />;
+}
+
+function SkillDirectory(props: Readonly<{ list: RegistryList; query: string; presented: boolean; browsing: boolean }>): React.ReactNode {
+  const isAdded = useSkillAdded(props.presented);
+  return <RegistryDirectory kind="skill" list={props.list} query={props.query} browsing={props.browsing} isAdded={isAdded} />;
+}
+
+/** The Agents built into Happier: each opens its own Settings page through the Store's open owner (nothing to add). */
+export function useBuiltInAgentRows(items: StoreKindList<'agent'>['items']): readonly DirectoryRow[] {
+  const openReference = useStoreOpenReference();
+  return React.useMemo(
+    () =>
+      items
+        .filter(
+          (item): item is Exclude<StoreAgentItem, RegistryCatalogItemSummary> =>
+            !('itemId' in item) && item.backendTargetKey !== null,
+        )
+        .map((entry): DirectoryRow => ({
+          key: `agent|${entry.qualifiedId}`,
+          title: entry.title,
+          description: storeKinds.agent.summary(entry).description ?? null,
+          group: 'builtIn',
+          addable: false,
+          open: () => openReference({ type: 'agentContribution', targetKey: entry.backendTargetKey! }),
+          mark: (
+            <StoreItemMark
+              facts={{ kind: 'agent', title: entry.title, agentId: entry.iconAgentId ?? entry.catalogAgentId }}
+              size={ROW_MARK_PX}
+            />
+          ),
+        })),
+    [openReference, items],
+  );
+}
+
+function AgentDirectory(
+  props: Readonly<{ list: StoreKindList<'agent'>; query: string; presented: boolean; browsing: boolean }>,
+): React.ReactNode {
+  const openRegistry = useOpenRegistryItem();
+  const addRegistry = useAddRegistryItem();
+  const sourceTitle = useSourceTitle('agent');
+  const isAdded = useAgentAdded(props.presented);
+  const registryItems = React.useMemo(
+    () =>
+      props.list.items.filter(
+        (item): item is RegistryCatalogItemSummary => 'itemId' in item,
+      ),
+    [props.list.items],
+  );
+  const registryList = React.useMemo(() => ({ items: registryItems, curation: props.list.curation,
+    ...(props.browsing ? { curatedKind: 'agent' as const } : {}) }), [registryItems, props.list.curation, props.browsing]);
+  const registry = useRegistryRows(
+    registryList,
+    openRegistry,
+    sourceTitle,
+    isAdded,
+    addRegistry,
+  );
+  const builtIn = useBuiltInAgentRows(props.list.items);
+  const rows = React.useMemo(
+    () => [...builtIn, ...registry.rows],
+    [builtIn, registry.rows],
+  );
+  const groups = React.useMemo(
+    () => [
+      ...(builtIn.length
+        ? [
+            {
+              key: 'builtIn',
+              title: t('capabilities.store.builtIn'),
+              description: t('capabilities.store.builtInDescription'),
+            },
+          ]
+        : []),
+      ...registry.groups,
+    ],
+    [builtIn.length, registry.groups],
+  );
+  return (
+    <Directory
+      kind="agent"
+      rows={rows}
+      groups={groups}
+      list={props.list}
+      query={props.query}
+      sourceTitle={sourceTitle}
+    />
+  );
+}
+
+/** Provider rows: each opens its setup (the S20 hand-off); a contribution the Account already connected reads Added. */
+export function useProviderRows(items: StoreKindList<'provider'>['items'], presented: boolean): readonly DirectoryRow[] {
+  const openReference = useStoreOpenReference();
+  const isAdded = useProviderAdded(presented);
+  return React.useMemo(
+    () =>
+      items.map(
+        (item: AccountProviderDeclarationV1): DirectoryRow => ({
+          key: `provider|${item.contributionKey}`,
+          title: item.definition.name,
+          description: null,
+          group: 'provider',
+          added: isAdded(item.contributionKey),
+          open: () => openReference({ type: 'providerContribution', contributionKey: item.contributionKey }),
+          mark: (
+            <StoreItemMark
+              facts={{ kind: 'provider', title: item.definition.name, providerContributionKey: item.contributionKey,
+                providerIcon: item.definition.icon }}
+              size={ROW_MARK_PX}
+            />
+          ),
+        }),
+      ),
+    [isAdded, openReference, items],
+  );
+}
+
+function ProviderDirectory(
+  props: Readonly<{ list: StoreKindList<'provider'>; query: string; presented: boolean }>,
+): React.ReactNode {
+  const rows = useProviderRows(props.list.items, props.presented);
+  const groups = React.useMemo(() => [{ key: 'provider', title: '' }], []);
+  return (
+    <Directory
+      kind="provider"
+      rows={rows}
+      groups={groups}
+      list={props.list}
+      query={props.query}
+      sourceTitle={null}
+    />
+  );
+}
+
+export type DirectoryList = Readonly<{
+  loading: boolean;
+  error?: string | null;
+  status?: RegistryFailureStatus | null;
+  refresh?: () => void | Promise<void>;
+  hasNextPage: boolean;
+  nextPage?: () => Promise<void>;
+  sourceFailures?: readonly Readonly<{
+    sourceId: string | null;
+    message: string;
+    onRetry: () => void | Promise<void>;
+  }>[];
+}>;
+
+const keyOf = (row: DirectoryRow) => row.key;
+
+export function Directory(
+  props: Readonly<{
+    /** The kind page it belongs to, or `search` for the all-kind results. */
+    kind: StoreDirectoryKind | 'search' | 'software' | 'bot';
+    /** The row + verb when it is not Add (Software: Install on…). */
+    addLabel?: string;
+    /** The open row, for a page that holds its own listing (Software); otherwise the route's selection. */
+    selectedKey?: string | null;
+    /** The directory's accessible name (default: the kind page's title). */
+    label?: string;
+    /** Clears what narrows the rows; the no-match line offers it. */
+    onClear?: () => void;
+    /** Beside Load more: what the rows so far cover (a search over loaded pages). */
+    moreNote?: string | null;
+    rows: readonly DirectoryRow[];
+    groups: readonly DirectoryGroup[];
+    list: DirectoryList;
+    query: string;
+    sourceTitle: ((sourceId: string) => string) | null;
+    /** A section's own trailing link (search's All N ›), beside its title. */
+    groupAction?: (groupKey: string) => CollectionGroupAction | null;
+    /** Contributed sections own their own empty results; native rows cannot describe the whole search. */
+    showEmptyState?: boolean;
+  }>,
+): React.ReactNode {
+  const { rows } = props;
+  const selection = useStoreListingSelection();
+  const selectedKey = React.useMemo(() => {
+    const key = props.selectedKey !== undefined ? props.selectedKey : directoryKeyOf(selection);
+    return key !== null && rows.some((row) => row.key === key) ? key : null;
+  }, [rows, selection, props.selectedKey]);
+  // A kind page clears its own search, the route condition it reads.
+  const clearQuery = useStoreDirectoryState().setQuery;
+  const onClear = props.onClear ?? (() => clearQuery(''));
+  const onOpenChange = React.useCallback(
+    (key: string | null) => rows.find((row) => row.key === key)?.open(),
+    [rows],
+  );
+  const grouping = React.useMemo(
+    () => ({ axis: props.groups, groupOf: (row: DirectoryRow) => row.group }),
+    [props.groups],
+  );
+  const model = useHappierCollection<DirectoryRow>({
+    items: rows,
+    keyOf,
+    groups: grouping,
+    openKey: selectedKey,
+    onOpenChange,
+  });
+  const addLabel = props.addLabel ?? t('capabilities.store.add');
+  const anatomy = React.useMemo(
+    (): CollectionAnatomy<DirectoryRow> =>
+      buildCapabilityCollectionAnatomy<DirectoryRow>({
+        title: (row) => row.title,
+        description: (row) => row.description,
+        mark: (row) => row.mark,
+        facts: (row) => row.facts ?? {},
+        // The + is its own target: it opens the same Add owner the row does, never a second Add.
+        action: (row) => row.addable === false ? null : (
+          <RegistryShelfAddControl
+            testID={`store.kind.${props.kind}.row.${row.key}`}
+            state={row.added ? 'added' : 'available'}
+            title={row.title}
+            addLabel={row.addLabel ?? addLabel}
+            addedLabel={t('capabilities.store.added')}
+            failedLabel={t('capabilities.store.retry')}
+            onAdd={row.add ?? row.open}
+          />
+        ),
+        accessibilityLabel: (row) => row.title,
+        testID: (row) => `store.kind.${props.kind}.row.${row.key}`,
+      }),
+    [addLabel, props.kind],
+  );
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const loadMore = props.list.nextPage;
+  const onLoadMore = React.useCallback(async () => {
+    if (!loadMore) return;
+    setLoadingMore(true);
+    try {
+      await loadMore();
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadMore]);
+  // One line per failing catalog, however many kinds asked it.
+  const sourceFailures = props.list.sourceFailures ?? [];
+  const readFailures = props.list.error && !props.list.loading && sourceFailures.length === 0 && props.list.refresh
+    ? [{ sourceId: null, message: describeRegistrySourceFailure(props.list.status ?? null), onRetry: props.list.refresh }] : [];
+  const failures = [...sourceFailures, ...readFailures].filter((failure, index, all) =>
+    all.findIndex((other) => other.sourceId === failure.sourceId) === index);
+  const empty =
+    !props.list.loading && rows.length === 0 && failures.length === 0;
+  // Every catalog failed and nothing is held: that failure is the page's state, said once.
+  const pageFailure = !props.list.loading && rows.length === 0 && failures.length > 0 && props.showEmptyState !== false;
+  return (
+    <View style={styles.body}>
+      {empty && props.showEmptyState === false ? null : empty && props.query ? (
+        // The same inline no-match state Installed uses: what found nothing, and the way to clear it.
+        <EmptyState
+          testID={`store.kind.${props.kind}.empty`}
+          layout="inline"
+          iconName="magnifying-glass"
+          title={t('capabilities.store.noMatch', { query: props.query })}
+          primaryAction={{ label: t('capabilities.store.clear'), onPress: onClear }}
+        />
+      ) : empty ? (
+        // Nothing around it: the page's own state, not a line waiting for rows that aren't there.
+        <EmptyState
+          testID={`store.kind.${props.kind}.empty`}
+          layout="page"
+          scene="noPlugins"
+          title={t('capabilities.store.emptyTitle')}
+          subtitle={t('capabilities.store.emptyBody')}
+        />
+      ) : pageFailure ? null : (
+        <CoreCollectionScope renderPageScroller={passThroughScroller}>
+          <Collection<DirectoryRow>
+            testID={`store.kind.${props.kind}.list`}
+            model={model}
+            anatomy={anatomy}
+            accessibilityLabel={
+              props.label ?? (props.kind === 'search' ? '' : kindCopy(props.kind).title)
+            }
+            presentation="list"
+            detail="none"
+            scroll="page-virtualized"
+            minListWidth={280}
+            minDetailWidth={280}
+            preferredListRatio={1}
+            loading={props.list.loading && rows.length === 0}
+            {...(props.groupAction ? { groupAction: props.groupAction } : {})}
+          />
+        </CoreCollectionScope>
+      )}
+      {/* Results come first; the catalogs that didn't answer are said once under them (LV-JUDGE-1102 UI-FIX-D). */}
+      <RegistrySourcesUnavailable
+        testID={`store.kind.${props.kind}.failure`}
+        size={pageFailure ? 'page' : 'line'}
+        failures={failures.map((failure) => ({
+          key: failure.sourceId ?? 'index',
+          message: props.sourceTitle && failure.sourceId
+            ? `${props.sourceTitle(failure.sourceId)} · ${failure.message}`
+            : failure.message,
+          ...(props.sourceTitle && failure.sourceId ? { source: props.sourceTitle(failure.sourceId), reason: failure.message } : {}),
+          onRetry: failure.onRetry,
+        }))}
+      />
+      {props.list.hasNextPage && loadMore ? (
+        <View style={styles.more}>
+          {props.moreNote ? (
+            <Text variant="reading" style={styles.moreNote} testID={`store.kind.${props.kind}.moreNote`}>
+              {props.moreNote}
+            </Text>
+          ) : null}
+          <RoundButton
+            testID={`store.kind.${props.kind}.loadMore`}
+            size="small"
+            display="secondary"
+            title={t('capabilities.store.loadMore')}
+            loading={loadingMore}
+            onPress={() => {
+              void onLoadMore();
+            }}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  body: { gap: theme.space.s16 },
+  phoneScope: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'center', paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(), marginBottom: theme.space.s8 },
+  // On the page text edge with the section titles above it.
+  more: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s12,
+    paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
+  moreNote: { color: theme.colors.text.secondary, flexShrink: 1 },
+}));

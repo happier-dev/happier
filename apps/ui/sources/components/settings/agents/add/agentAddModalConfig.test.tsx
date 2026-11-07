@@ -2,9 +2,12 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mapAcpRegistryAgentToDefinitionV1 } from '@happier-dev/protocol/acp/catalog/registry/mapAcpRegistryAgentV1';
-import { AcpRegistryAgentV1Schema } from '@happier-dev/protocol/registries';
+import { AcpRegistryAgentV1Schema, createRegistryHostV1, RegistrySourceDescriptorV1Schema } from '@happier-dev/protocol/registries';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { AcpCatalogSettingsV1StoredSchema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -20,9 +23,11 @@ vi.mock('react-native-unistyles', async () => {
   return createUnistylesMock();
 });
 
+// Collect the production graph before Vitest starts the individual behavior deadline.
+await import('./agentAddModalConfig');
+
 afterEach(() => {
   standardCleanup();
-  vi.resetModules();
 });
 
 const ACP = 'builtin:acp-registry';
@@ -110,7 +115,45 @@ function installed(installOn: readonly string[]) {
   };
 }
 
+function createJunieRegistryBoundary() {
+  const source = RegistrySourceDescriptorV1Schema.parse({ id: ACP, title: 'ACP Registry', format: 'acp-registry', kinds: ['agent'],
+    url: 'https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json', enabled: true, addedAt: 1,
+    origin: { kind: 'built_in' }, removable: false });
+  return createRegistryHostV1({ host: 'web', readSources: async () => [source], http: {
+    getJson: async () => ({ ok: true, fetchedAt: 1, value: { version: '1.0.0', agents: [{
+      id: junie.id, name: junie.name, version: junie.version, description: junie.description,
+      distribution: { binary: { 'darwin-aarch64': { archive: junie.distributions.binary!['darwin-arm64']!.archiveUrl, cmd: './junie', args: ['--acp'] },
+        'linux-x86_64': { archive: junie.distributions.binary!['linux-x64']!.archiveUrl, cmd: './junie', args: ['--acp'] } } },
+    }] } }),
+    getText: async () => { throw new Error('Unexpected registry text'); },
+    getBytes: async () => { throw new Error('Unexpected registry bytes'); },
+  } });
+}
+
 describe('addRegistryAgent', () => {
+  it('does not start setup after the reviewed source or Account retires during confirmation', async () => {
+    const { addRegistryAgent } = await import('./agentAddModalConfig');
+    let current = true;
+    const registry = createJunieRegistryBoundary();
+    let writes = 0;
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+      registryActionExecute: ({ actionId, input }) => registry.execute(actionId, input),
+      updateAccountAcpCatalogSettings: async ({ mutate }) => {
+        mutate({ v: 2, backends: [] });
+        return { ok: true, revision: ++writes };
+      },
+    }));
+    const added = await addRegistryAgent({
+      row: { sourceId: ACP, itemId: 'junie' }, agent: junie, machines: [], choice: 'firstUse',
+      execute: (actionId, input, options) => executor.execute(actionId, input,
+        { surface: 'ui', authority: 'present_user', ...options }),
+      isCurrent: () => current,
+      confirm: async () => { current = false; return true; },
+    });
+    expect(added).toBeNull();
+    expect(writes).toBe(0);
+  });
+
   it('confirms once, naming machines installing now and on first use, then adds and installs in one Action and stays', async () => {
     const { addRegistryAgent } = await import('./agentAddModalConfig');
     const confirm = vi.fn(async () => true);
@@ -145,14 +188,14 @@ describe('addRegistryAgent', () => {
         installOn: ['mbp', 'nl2'],
       },
       {
-        presentUserConfirmation: {
-          actionId: 'agents.acp.backends.installFromRegistry',
-        },
+        confirmed: true,
       },
     );
     expect(added).toEqual({
       definitionId: installed([]).result.definition.id,
       installOn: ['mbp', 'nl2'],
+      jobs: installed(['mbp', 'nl2']).result.jobs,
+      failures: [],
     });
   });
 
@@ -184,6 +227,55 @@ describe('addRegistryAgent', () => {
     expect(declined).toBeNull();
     expect(declinedExecute).not.toHaveBeenCalled();
   });
+});
+
+it('keeps the committed definition, accepted job and refused machine in a partial Add', async () => {
+  const { addRegistryAgent } = await import('./agentAddModalConfig');
+  // Registry HTTP, catalog persistence and daemon acquisition are the real system boundaries.
+  const registry = createJunieRegistryBoundary();
+  let catalog: unknown = { v: 2, backends: [] };
+  let catalogWrites = 0;
+  let retrying = false;
+  const startedMachines: string[] = [];
+  const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        // This Protocol-only fixture tests partial results; the real bound UI producer is covered in the composed suite.
+        presentUserActionConfirmation: async () => true,
+        registryActionExecute: ({ actionId, input }) => registry.execute(actionId, input),
+        updateAccountAcpCatalogSettings: async ({ mutate }) => { catalog = mutate(catalog); return { ok: true, revision: ++catalogWrites }; },
+        machinesAgentsList: async ({ definitionId }) => ({ items: [{ agentId: 'custom-acp', definitionId, title: 'Junie', installed: false,
+          version: null, latestVersion: null, update: { supported: true, command: null },
+          signIn: { status: 'unknown', loginSupport: 'unsupported' }, platform: { supported: true },
+          install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [] }] }),
+        machineAgentInstallStart: async ({ machineId }) => {
+          startedMachines.push(machineId);
+          return machineId === 'mbp' || retrying ? { ok: true, jobId: `job-${machineId}` }
+            : { ok: false, errorCode: 'install_unavailable', error: 'Unavailable' };
+        },
+  }));
+  const added = await addRegistryAgent({
+    row: { sourceId: ACP, itemId: 'junie' }, agent: junie, machines, choice: 'now',
+    confirm: async () => true,
+    execute: async (actionId, input) => executor.execute(actionId, input,
+      { surface: 'ui', authority: 'present_user' }),
+  });
+  const definition = AcpCatalogSettingsV1StoredSchema.parse(catalog).backends[0]!;
+  expect(catalogWrites).toBe(1);
+  expect(added).toMatchObject({ definitionId: definition.id, installOn: ['mbp', 'nl2'],
+    jobs: [{ machineId: 'mbp', jobId: 'job-mbp' }], failures: [{ machineId: 'nl2', errorCode: 'install_unavailable' }] });
+  retrying = true;
+  startedMachines.length = 0;
+  const confirmRetry = vi.fn(async () => true);
+  const retried = await addRegistryAgent({
+    row: { sourceId: ACP, itemId: 'junie' }, agent: junie,
+    machines: machines.map(machine => machine.machineId === 'nl2' ? { ...machine, offline: true } : machine),
+    choice: 'now', ...{ retryMachineId: 'nl2' }, confirm: confirmRetry,
+    execute: async (actionId, input) => executor.execute(actionId, input,
+      { surface: 'ui', authority: 'present_user' }),
+  });
+  expect(startedMachines).toEqual(['nl2']);
+  expect(confirmRetry).toHaveBeenCalledWith(expect.objectContaining({ nowMachines: ['nl2'] }));
+  expect(retried).toMatchObject({ definitionId: definition.id, installOn: ['nl2'],
+    jobs: [{ machineId: 'nl2', jobId: 'job-nl2' }], failures: [] });
 });
 
 describe('the Adding details', () => {

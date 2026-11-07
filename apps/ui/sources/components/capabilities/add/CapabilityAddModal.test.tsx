@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 // Load the real UI graph during collection, outside each test's behavior deadline.
-import { CapabilityAddModalBody } from './CapabilityAddModal';
+import { CapabilityAddDetailAction, CapabilityAddModalBody } from './CapabilityAddModal';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
 
 (
@@ -78,7 +78,7 @@ async function renderBody(
       ...catalogOverrides,
     },
     renderDetail: (skill: Skill) => (
-      <React.Fragment>{skill.description}</React.Fragment>
+      <React.Fragment>{skill.description}<CapabilityAddDetailAction /></React.Fragment>
     ),
     detailFooter: (skill: Skill) => ({
       primary: { label: 'Add to library', onPress: () => primary(skill) },
@@ -123,10 +123,113 @@ async function renderBody(
       await button.props.onPress();
     });
   };
-  return { screen, nodes, select, pressPrimary, press, onClose, onAdded, setChrome };
+  const header = () => screen.findAll(node => node.props.testID === 'modal-card-header'
+    && Object.hasOwn(node.props, 'title'))[0]!.props;
+  const updateItems = (items: readonly Skill[], query = '') => screen.update(
+    <CapabilityAddModalBody config={{ ...config, catalog: { ...config.catalog, items, query } } as never}
+      onClose={onClose} setChrome={setChrome} />,
+  );
+  return { screen, nodes, select, pressPrimary, press, onClose, onAdded, header, updateItems };
 }
 
 describe('CapabilityAddModalBody', () => {
+  it('publishes Catalog demand only while its mode is presented outside source management', async () => {
+    const { Pressable } = await import('react-native');
+    const demand = vi.fn();
+    const body = await renderBody(async skill => ({ itemId: skill.name }), {}, {}, {
+      onCatalogDemandChange: demand,
+      modes: [
+        { key: 'browse', label: 'Browse', icon: 'magnifying-glass', kind: 'catalog' },
+        { key: 'write', label: 'Write', icon: 'pencil', kind: 'input', renderBody: () => null },
+      ],
+      sources: {
+        renderSelect: ({ openRegistries }: { openRegistries: (intent: 'manage') => void }) =>
+          <Pressable testID="demand:manage" onPress={() => openRegistries('manage')} />,
+        renderRegistriesView: ({ back }: { back: () => void }) => <Pressable testID="demand:back" onPress={back} />,
+        registriesHeader: { title: 'Registries' },
+      },
+    });
+    expect(demand.mock.calls).toEqual([[true]]);
+    await body.press('add:mode:browse');
+    expect(demand.mock.calls).toEqual([[true]]);
+    await body.press('demand:manage');
+    expect(demand.mock.calls).toEqual([[true], [false]]);
+    await body.press('demand:back');
+    await body.press('add:mode:write');
+    expect(demand.mock.calls).toEqual([[true], [false], [true], [false]]);
+  });
+
+  it('lands on the first displayed group without installing and keeps implicit detail out of a stacked view', async () => {
+    const primary = vi.fn(async (skill: Skill) => ({ itemId: skill.name }));
+    const body = await renderBody(primary, {
+      groups: [{ key: 'recommended', title: 'Recommended', itemKeys: ['pdf'] },
+        { key: 'other', title: 'Other', itemKeys: ['docx'] }],
+    });
+    const measure = async (width: number) => {
+      const stage = body.screen.findAll(node => node.props.testID === 'add:collection:stage'
+        && typeof node.props.onLayout === 'function')[0]!;
+      await act(async () => stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 600 } } }));
+    };
+    await measure(1080);
+    expect(body.nodes('add:detail:pdf').length).toBeGreaterThan(0);
+    expect(body.nodes('add:detail:docx')).toHaveLength(0);
+    expect(primary).not.toHaveBeenCalled();
+    await measure(390);
+    expect(body.nodes('add:detail:pdf')).toHaveLength(0);
+    await body.select('pdf');
+    expect(body.nodes('add:detail:pdf').length).toBeGreaterThan(0);
+    await measure(1080);
+    expect(body.nodes('add:detail:pdf').length).toBeGreaterThan(0);
+  });
+
+  it('keeps a late primary acknowledgement on its item instead of closing a newly selected preview', async () => {
+    let complete: ((result: { itemId: string }) => void) | undefined;
+    const body = await renderBody(() => new Promise(resolve => { complete = resolve; }));
+    await body.select('docx');
+    await body.pressPrimary();
+    await body.select('pdf');
+    await act(async () => { complete?.({ itemId: 'created-docx' }); });
+    expect(body.nodes('add:detail:pdf').length).toBeGreaterThan(0);
+    expect(body.onClose).not.toHaveBeenCalled();
+    expect(body.onAdded).not.toHaveBeenCalled();
+  });
+
+  it.each(['fallback', 'empty'] as const)('completes Add when refresh withdraws its selected result (%s)', async (remaining) => {
+    let complete: ((result: { itemId: string }) => void) | undefined;
+    const body = await renderBody(() => new Promise(resolve => { complete = resolve; }));
+    await body.select('docx');
+    await body.pressPrimary();
+    // Successful Add can remove a Found row before the operation's response settles.
+    await body.updateItems(remaining === 'fallback' ? SKILLS.slice(1) : []);
+    expect(body.nodes('add:detail:docx')).toHaveLength(0);
+    await act(async () => { complete?.({ itemId: 'created-docx' }); });
+    expect(body.onClose).toHaveBeenCalledTimes(1);
+    expect(body.onAdded).toHaveBeenCalledWith({ itemId: 'created-docx' });
+  });
+
+  it('keeps a new search open when the previous result finishes adding', async () => {
+    let complete: ((result: { itemId: string }) => void) | undefined;
+    const body = await renderBody(() => new Promise(resolve => { complete = resolve; }));
+    await body.select('docx');
+    await body.pressPrimary();
+    await body.updateItems(SKILLS.slice(1), 'pdf');
+    await act(async () => { complete?.({ itemId: 'created-docx' }); });
+    expect(body.onClose).not.toHaveBeenCalled();
+    expect(body.onAdded).not.toHaveBeenCalled();
+  });
+
+  it('loads the next catalog page explicitly without running a listing action or losing the selected item', async () => {
+    const loadMore = vi.fn(async () => {});
+    const primary = vi.fn(async (skill: Skill) => ({ itemId: skill.name }));
+    const body = await renderBody(primary, { loadMore: { label: 'More', loading: false, onPress: loadMore } });
+    await body.select('pdf');
+    expect(loadMore).not.toHaveBeenCalled();
+    await body.press('add:load-more');
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(body.nodes('add:detail:pdf').length).toBeGreaterThan(0);
+    expect(primary).not.toHaveBeenCalled();
+  });
+
   it('opens the details for the selected row, adds, then closes onto the new item', async () => {
     const body = await renderBody(async (skill) => ({
       itemId: `skill-${skill.name}`,
@@ -219,26 +322,28 @@ describe('CapabilityAddModalBody', () => {
       renderRegistriesView: ({ back }: { back: () => void }) => <Pressable testID="registries-back" onPress={back} />,
       registriesHeader: { title: 'Registries', subtitle: 'Where Browse looks for skills.' },
     };
-    const { press, setChrome } = await renderBody(async () => ({ itemId: 'x' }), {}, {}, { sources });
+    const { press, header } = await renderBody(async () => ({ itemId: 'x' }), {}, {}, { sources });
     await press('open-registries');
-    expect(setChrome.mock.calls.at(-1)![0]).toMatchObject({ title: 'Registries', subtitle: 'Where Browse looks for skills.' });
+    expect(header()).toMatchObject({ title: 'Registries', subtitle: 'Where Browse looks for skills.' });
     await press('registries-back');
-    // The chrome owner merges patches over what it has; the root frame must say "no back link, no subtitle" itself.
-    expect(setChrome.mock.calls.at(-1)![0]).toMatchObject({ title: 'Add a skill', leading: null, subtitle: null });
+    expect(header()).toMatchObject({ title: 'Add a skill', leading: null });
+    expect(header().subtitle).toBeUndefined();
   });
 
   it('on a phone, open details put only the way back in the header, without the dialog subtitle beside it', async () => {
     viewport.width = 390;
     viewport.height = 844;
     const body = await renderBody(async (skill) => ({ itemId: skill.name }), {}, {}, { subtitle: 'From a registry, a link or your own files.' });
-    expect(body.setChrome.mock.calls.at(-1)![0]).toMatchObject({ title: 'Add a skill', subtitle: 'From a registry, a link or your own files.' });
+    expect(body.header()).toMatchObject({ title: 'Add a skill', subtitle: 'From a registry, a link or your own files.' });
     await body.select('docx');
-    const chrome = body.setChrome.mock.calls.at(-1)![0];
-    expect(chrome).toMatchObject({ title: null, subtitle: null });
+    const chrome = body.header();
+    expect(chrome.title).toBeNull();
+    expect(chrome.subtitle).toBeNull();
     expect(chrome.leading).not.toBeNull();
   });
 
-  it('lets Escape close the details before the dialog, whatever has focus', async () => {
+  it('lets Escape return a phone detail to its list, whatever has focus', async () => {
+    viewport.width = 390;
     const { dispatchEscapeToLayerStack } = await import('@/keyboard/escape');
     const body = await renderBody(async (skill) => ({ itemId: skill.name }));
     await body.select('docx');

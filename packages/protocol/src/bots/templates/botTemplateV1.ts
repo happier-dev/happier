@@ -13,6 +13,7 @@ import { BotTemplateMcpDefinitionV1Schema } from '../../mcp/servers/portableMcpD
 export const BOT_TEMPLATE_ARTIFACT_KIND_V1 = 'bot_template.v1' as const;
 const text = () => z.string().check(z.minLength(1));
 export const BotTemplateSourceSessionRefV1Schema = lazyZodSchema(() => z.strictObject({ serverId: text(), sessionId: text() }));
+export type BotTemplateSourceSessionRefV1 = z.infer<typeof BotTemplateSourceSessionRefV1Schema>;
 export const BotTemplateDraftRefV1Schema = lazyZodSchema(() => z.strictObject({ serverId: text(), artifactId: text() }));
 export const BotTemplateMemoryRuleV1Schema = lazyZodSchema(() => z.strictObject({ key: text(), text: text(), topic: z.optional(z.string()) }));
 export const BotTemplateSkillV1Schema = lazyZodSchema(() => z.strictObject({
@@ -89,16 +90,11 @@ export const BotTemplateArtifactPresentationV1Schema = lazyZodSchema(() => z.str
   ownerDisplayName: z.optional(z.nullable(z.string())), shared: z.optional(z.boolean()),
 }));
 export type BotTemplateArtifactPresentationV1 = z.infer<typeof BotTemplateArtifactPresentationV1Schema>;
-/** Source-transport provenance; portable template content cannot establish its author. */
-export const BotTemplateRequesterAuthorshipV1Schema = z.enum(['requester', 'other']);
-export type BotTemplateRequesterAuthorshipV1 = z.infer<typeof BotTemplateRequesterAuthorshipV1Schema>;
 export const BotTemplatePreviewResultV1Schema = lazyZodSchema(() => z.strictObject({ source: BotTemplateReleaseSourceV1Schema,
   release: BotTemplateReleaseV1Schema, revision: z.optional(ArtifactRevisionV1Schema),
-  requesterAuthorship: z.optional(BotTemplateRequesterAuthorshipV1Schema),
   presentation: z.optional(BotTemplateArtifactPresentationV1Schema) }));
 export type BotTemplatePreviewResultV1 = z.infer<typeof BotTemplatePreviewResultV1Schema>;
-export type ResolvedBotTemplateReleaseV1 = Readonly<{ release: BotTemplateReleaseV1; source: BotTemplateReleaseSourceV1;
-  requesterAuthorship?: BotTemplateRequesterAuthorshipV1 }>;
+export type ResolvedBotTemplateReleaseV1 = Readonly<{ release: BotTemplateReleaseV1; source: BotTemplateReleaseSourceV1 }>;
 
 /** Private candidates can replace, omit or generalize copied items. Only portable fields leave this owner. */
 export function projectBotTemplateContentV1(draft: BotTemplateDraftV1): BotTemplateContentV1 {

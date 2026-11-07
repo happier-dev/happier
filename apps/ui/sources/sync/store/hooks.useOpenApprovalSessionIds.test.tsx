@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as approvalAdmission from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { act } from 'react-test-renderer';
-import { ApprovalRequestV1Schema, ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema, ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -15,6 +16,17 @@ import {
 } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+
+type ApprovalTestState = ReturnType<typeof storage.getState>;
+
+/** Fixtures publish through the real Artifact ingress so its relationship projections stay authoritative. */
+function publishApprovalTestState(update: Partial<ApprovalTestState> | ((state: ApprovalTestState) => Partial<ApprovalTestState>)): void {
+    const before = storage.getState();
+    const next = typeof update === 'function' ? update(before) : update;
+    const { artifacts, ...rest } = next;
+    storage.setState(rest);
+    if (artifacts) storage.getState().applyArtifacts(Object.values(artifacts), before.artifacts);
+}
 
 function artifact(
     id: string,
@@ -100,7 +112,7 @@ describe('useOpenApprovalSessionReferences', () => {
             approvalBody(target.sessionId, 'session.list'));
         const retained = Array.from({ length: 139 }, (_, index) => make(index));
         const presentations = [] as const;
-        storage.setState({ isDataReady: true, artifacts: Object.fromEntries(retained.map(row => [row.id, row])) });
+        publishApprovalTestState({ isDataReady: true, artifacts: Object.fromEntries(retained.map(row => [row.id, row])) });
         const admit = vi.spyOn(approvalAdmission, 'approvalArtifactBodyMatchesHeaderV1');
         try {
             const hook = await renderHook(() => ({ open: useOpenApprovalArtifactsForSession(target),
@@ -110,7 +122,7 @@ describe('useOpenApprovalSessionReferences', () => {
             expect(initial.open).toHaveLength(139);
             const incoming = make(139);
             admit.mockClear();
-            await act(async () => storage.setState(state => ({ artifacts: { ...state.artifacts, [incoming.id]: incoming } })));
+            await act(async () => publishApprovalTestState(state => ({ artifacts: { ...state.artifacts, [incoming.id]: incoming } })));
             const added = hook.getCurrent();
             expect(admit).toHaveBeenCalledTimes(1);
             expect(added.open.slice(0, 139).every((entry, index) => entry === initial.open[index])).toBe(true);
@@ -118,7 +130,7 @@ describe('useOpenApprovalSessionReferences', () => {
             expect(added.transcript.slice(0, 139).every((entry, index) => entry === initial.transcript[index])).toBe(true);
             expect(added.references).toBe(initial.references);
             // Removing the first carrier of a still-present Session fact is not a badge change.
-            await act(async () => storage.setState(state => {
+            await act(async () => publishApprovalTestState(state => {
                 const artifacts = { ...state.artifacts };
                 delete artifacts[retained[0]!.id];
                 return { artifacts };
@@ -137,7 +149,7 @@ describe('useOpenApprovalSessionReferences', () => {
     it('projects only non-draft open approval session ids and ignores unrelated artifact churn', async () => {
         const previousState = storage.getState();
         try {
-            storage.setState((state) => ({
+            publishApprovalTestState((state) => ({
                 ...state,
                 isDataReady: true,
                 ordinarySessionListMembershipByServerId: {
@@ -158,7 +170,7 @@ describe('useOpenApprovalSessionReferences', () => {
                         approvalStatus: 'open',
                         sessionId: 'session-a',
                         sessions: ['session-a'],
-                    }),
+                    }, approvalBody('session-a', 'session.list')),
                     draft: artifact('draft', {
                         v: 1,
                         kind: 'approval_request.v1',
@@ -189,7 +201,7 @@ describe('useOpenApprovalSessionReferences', () => {
             expect(renderCount).toBe(1);
 
             await act(async () => {
-                storage.setState((state) => ({
+                publishApprovalTestState((state) => ({
                     ...state,
                     artifacts: {
                         ...state.artifacts,
@@ -205,7 +217,7 @@ describe('useOpenApprovalSessionReferences', () => {
             expect(renderCount).toBe(1);
 
             await act(async () => {
-                storage.setState((state) => {
+                publishApprovalTestState((state) => {
                     const open = state.artifacts.open;
                     if (!open?.isDecrypted || !open.header) throw new Error('Approval fixture must have a readable header');
                     return {
@@ -228,7 +240,7 @@ describe('useOpenApprovalSessionReferences', () => {
             expect(renderCount).toBe(2);
 
             await act(async () => {
-                storage.setState((state) => {
+                publishApprovalTestState((state) => {
                     const open = state.artifacts.open;
                     if (!open?.isDecrypted || !open.header) throw new Error('Approval fixture must have a readable header');
                     return {
@@ -255,7 +267,7 @@ describe('useOpenApprovalSessionReferences', () => {
     it('projects server-scoped session identities when approval artifacts include a server id', async () => {
         const previousState = storage.getState();
         try {
-            storage.setState((state) => ({
+            publishApprovalTestState((state) => ({
                 ...state,
                 isDataReady: true,
                 artifacts: {
@@ -267,7 +279,7 @@ describe('useOpenApprovalSessionReferences', () => {
                         sessionId: 'session-a',
                         sessions: ['session-a'],
                         serverId: 'server-a',
-                    }),
+                    }, approvalBody('session-a', 'session.list')),
                 },
             }));
 
@@ -288,10 +300,61 @@ describe('useOpenApprovalSessionReferences', () => {
 });
 
 describe('session detail scoped projections', () => {
+    it('does not revisit retained approval headers on an unrelated Artifact arrival at Account scale', async () => {
+        const previousState = storage.getState();
+        const target = { serverId: 'postperf-home', sessionId: 'visible-session' };
+        let retainedHeaderReads = 0;
+        const retained = Array.from({ length: 512 }, (_, index) => {
+            const row = artifact(`postperf-retained-${index}`, { title: 'Approve', serverId: target.serverId },
+                approvalBody(`closed-session-${index}`, 'session.list'));
+            const header = row.header;
+            // Count data examined by the real store and mounted selector; no domain logic is replaced.
+            Object.defineProperty(row, 'header', { enumerable: true, get: () => {
+                retainedHeaderReads += 1;
+                return header;
+            } });
+            return row;
+        });
+        const selected = artifact('postperf-selected', { title: 'Approve', serverId: target.serverId },
+            approvalBody(target.sessionId, 'session.list'));
+        const note = artifact('postperf-note', { kind: 'note', title: 'Unrelated' });
+        let renders = 0;
+        try {
+            publishApprovalTestState({ isDataReady: true });
+            storage.getState().applyArtifacts([...retained, selected, note]);
+            const hook = await renderHook(() => {
+                renders += 1;
+                return useOpenApprovalArtifactsForSession(target);
+            });
+            try {
+                expect(hook.getCurrent().map(entry => entry.artifact.id)).toEqual([selected.id]);
+                const before = hook.getCurrent();
+                renders = 0;
+                retainedHeaderReads = 0;
+                await act(async () => storage.getState().updateArtifact({ ...note, updatedAt: 2 }));
+                const unrelatedHeaderReads = retainedHeaderReads;
+                const unrelatedRenders = renders;
+                expect(hook.getCurrent()).toBe(before);
+
+                // The quiet-path contract must still deliver a real approval settlement.
+                const settled = artifact(selected.id, { title: 'Approve', serverId: target.serverId }, {
+                    ...approvalBody(target.sessionId, 'session.list'), status: 'executed', updatedAtMs: 2,
+                    decision: { kind: 'approve', decidedAtMs: 2 },
+                    execution: { executedAtMs: 2, ok: true, result: {} },
+                });
+                await act(async () => storage.getState().updateArtifact({ ...settled, headerVersion: 2, bodyVersion: 2 }));
+                expect(hook.getCurrent()).toEqual([]);
+                expect(renders).toBe(1);
+                expect(unrelatedRenders).toBe(0);
+                expect(unrelatedHeaderReads).toBe(0);
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previousState); }
+    });
+
     it('reprojects a hydrated legacy approval only for its linked Session when same-Home membership arrives', async () => {
         const previousState = storage.getState();
         try {
-            storage.setState({ isDataReady: true, sessions: {}, ordinarySessionListMembershipByServerId: {}, artifacts: {
+            publishApprovalTestState({ isDataReady: true, sessions: {}, ordinarySessionListMembershipByServerId: {}, artifacts: {
                 open: artifact('open', { v: 1, kind: 'approval_request.v1', title: 'Approve' }, approvalBody('session-a', 'session.list')),
             } });
             const hook = await renderHook(() => ({
@@ -300,7 +363,7 @@ describe('session detail scoped projections', () => {
             }));
             expect(hook.getCurrent()).toEqual({ sessionA: [], sessionB: [] });
             const artifactsBefore = storage.getState().artifacts;
-            await act(async () => { storage.setState({ ordinarySessionListMembershipByServerId: { 'legacy-home': ['session-a', 'session-b'] } }); });
+            await act(async () => { publishApprovalTestState({ ordinarySessionListMembershipByServerId: { 'legacy-home': ['session-a', 'session-b'] } }); });
             expect(storage.getState().artifacts).toBe(artifactsBefore);
             expect(hook.getCurrent().sessionA.map(entry => entry.artifact.id)).toEqual(['open']);
             expect(hook.getCurrent().sessionB).toEqual([]);
@@ -318,7 +381,7 @@ describe('session detail scoped projections', () => {
                 actionId: 'session.title.set', requestId: 'request-1' } });
         const header = buildApprovalRequestArtifactHeaderV1(body);
         try {
-            storage.setState({ isDataReady: true, artifacts: { open: {
+            publishApprovalTestState({ isDataReady: true, artifacts: { open: {
                 ...artifact('open', header), body: JSON.stringify(body), bodyVersion: 1,
             } } });
             const hook = await renderHook(() => useOpenApprovalArtifactsForSession({ serverId: profile.id, sessionId: 'session-a' }));
@@ -334,7 +397,7 @@ describe('session detail scoped projections', () => {
     it('returns only non-draft open approvals for one session without the global artifacts hook', async () => {
         const previousState = storage.getState();
         try {
-            storage.setState((state) => ({
+            publishApprovalTestState((state) => ({
                 ...state,
                 isDataReady: true,
                 ordinarySessionListMembershipByServerId: {
@@ -393,7 +456,7 @@ describe('session detail scoped projections', () => {
             expect(renderCount).toBe(1);
 
             await act(async () => {
-                storage.setState((state) => ({
+                publishApprovalTestState((state) => ({
                     ...state,
                     artifacts: {
                         ...state.artifacts,
@@ -417,7 +480,7 @@ describe('session detail scoped projections', () => {
     it('counts enabled automations for one session without subscribing to the global sorted automation list', async () => {
         const previousState = storage.getState();
         try {
-            storage.setState((state) => ({
+            publishApprovalTestState((state) => ({
                 ...state,
                 isDataReady: true,
                 automations: {
@@ -460,7 +523,7 @@ describe('session detail scoped projections', () => {
             expect(renderCount).toBe(1);
 
             await act(async () => {
-                storage.setState((state) => ({
+                publishApprovalTestState((state) => ({
                     ...state,
                     automations: {
                         ...state.automations,

@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
     NormalizedPluginCollectionUiQueryDescriptorV1,
     PluginCollectionUiQueryRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import {
     ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
-    ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION,
+    ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
     normalizePluginAccountCollectionContractV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit';
 
 const privateProjectionContract = normalizePluginAccountCollectionContractV1({
@@ -569,6 +570,7 @@ describe('queryActivePluginCollectionUiQuery', () => {
         };
         const refreshedPage = {
             ...response,
+            changeCursor: 43,
             rows: [{
                 ...response.rows[0]!,
                 context: { ...response.rows[0]!.context, rowId: 'fresh-page-1', revision: 5 },
@@ -603,7 +605,7 @@ describe('queryActivePluginCollectionUiQuery', () => {
         });
 
         client.publishActivePluginCollectionUiQueryChanges([{
-            cursor: 10,
+            cursor: 43,
             kind: 'pluginDomain',
             entityId: 'pluginDomain/example.tasks/data-collection/tasks',
             changedAt: 10,

@@ -13,6 +13,7 @@
  * families each owning a tone→token table would disagree the first time either
  * changed.
  */
+import type { HappierUiTheme } from '../environment/types.js';
 import type { HappierTypeRole } from './text/typeScale.js';
 export type HappierTextVariant = HappierTypeRole | 'code';
 
@@ -43,3 +44,16 @@ export const HAPPIER_TONE_COLOR_TOKEN = {
   danger: 'danger',
   accent: 'accent',
 } as const satisfies Record<HappierTone, string>;
+
+/**
+ * A colour a person picks for a mark (a label's dot, its swatch in a colour menu): a theme tone, or a named hue
+ * no semantic tone carries — `accent` is the host's control ink and can be black, and `info` can be blue.
+ */
+export type HappierMarkColor = HappierTone | 'blue' | 'purple';
+
+export function resolveHappierMarkColor(theme: Readonly<{ colors: HappierUiTheme['colors'] }>, color: HappierMarkColor): string {
+  // A host that predates the projected hues keeps the earlier ink (blue drew the accent, purple the info tone).
+  if (color === 'blue') return theme.colors.blue ?? theme.colors.accent;
+  if (color === 'purple') return theme.colors.purple ?? theme.colors.info;
+  return theme.colors[HAPPIER_TONE_COLOR_TOKEN[color]];
+}

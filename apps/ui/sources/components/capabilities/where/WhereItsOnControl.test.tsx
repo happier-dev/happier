@@ -83,6 +83,8 @@ async function renderControl(
     projection?: readonly Readonly<ReturnType<typeof projectionFor>[number] & { agentInventoryComplete?: boolean }>[];
     kind?: 'skill' | 'mcp_server';
     presentation?: 'section' | 'pick';
+    status?: 'ready' | 'loading' | 'unavailable';
+    valueAvailable?: boolean;
     defaultEnabled?: boolean;
   }>,
 ) {
@@ -97,8 +99,9 @@ async function renderControl(
     <WhereItsOnControl
       kind={input.kind ?? 'skill'}
       rules={input.rules}
+      status={input.status ?? 'ready'}
+      valueAvailable={input.valueAvailable}
       defaultEnabled={input.defaultEnabled}
-      status="ready"
       projection={input.projection ?? projectionFor(input.rules, input.projectKey ?? null)}
       places={{ agentIds: AGENTS, machines: MACHINES, projects: PROJECTS }}
       onChange={async (change) => {
@@ -169,6 +172,14 @@ describe('WhereItsOnControl', () => {
     await act(async () => { await toggle.props.onChange('off'); });
     expect(control.changes.map(drafts)).toEqual([[`${JSON.stringify({ t: 'allMachines' })}|*|off`]]);
   });
+  it('waits for unread rules without saying Off, then keeps a known Off during refresh', async () => {
+    const unread = await renderControl({ rules: [], status: 'loading', valueAvailable: false });
+    expect(unread.byTestId('where:loading').length).toBeGreaterThan(0);
+    expect(unread.byTestId('where:sentence')).toHaveLength(0);
+    const retained = await renderControl({ rules: [], status: 'loading', valueAvailable: true });
+    expect(retained.byTestId('where:loading')).toHaveLength(0);
+    expect(retained.byTestId('where:sentence').length).toBeGreaterThan(0);
+  });
   it('is a titled section in the compact add-flow form too, and leaves the description to the detail', async () => {
     const group = async (presentation: 'section' | 'pick') => {
       const { screen } = await renderControl({ rules: [], presentation });
@@ -185,7 +196,9 @@ describe('WhereItsOnControl', () => {
     const incomplete = [{ machineId: 'mbp', agents: [], agentInventoryComplete: false }];
     const unknown = await renderControl({ rules, kind, projection: incomplete });
     expect(unknown.byTestId('where:consequence').length).toBeGreaterThan(0);
-    expect(unknown.text()).toContain('—');
+    // Unknown is said in words, never as a bare dash that disagrees with the machines list; and never as "nowhere".
+    expect(unknown.text()).toContain(t('capabilities.control.checking'));
+    expect(unknown.text()).not.toContain('—');
     expect(unknown.text()).not.toContain(t('capabilities.where.availableNowhere'));
     const known = await renderControl({ rules, kind, projection: [{ ...incomplete[0]!,
       agents: [{ agentId: 'codex', enabled: true, decidedBy: null }] }] });

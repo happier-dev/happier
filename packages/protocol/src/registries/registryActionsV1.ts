@@ -4,16 +4,17 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryKindV1Schema, RegistrySourceDescriptorV1Schema, RegistryFormatV1Schema, RegistrySourceTokenV1Schema } from './registrySourcesV1.js';
 import { RegistryItemV1Schema } from './registryItemsV1.js';
-import { RegistryListPageV1Schema } from './registryListV1.js';
+import { RegistryListPageV1Schema, RegistryContributionFamilyV1Schema } from './registryListV1.js';
 import { RegistryUpdateCheckResultV1Schema } from './registryUpstreamV1.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { RegistryAppUpdateDemandV1Schema } from './registryAppUpdateAdmissionV1.js';
+export { RegistryAppUpdateDemandV1Schema, type RegistryAppUpdateDemandV1 } from './registryAppUpdateAdmissionV1.js';
 // Stored rows keep legacy refs for promotion; every new binding uses the
 // incumbent private-resource identity, not an unverified Settings id.
 const RegistryTokenBindingV1Schema=lazyZodSchema(()=>RegistrySourceTokenV1Schema.check(z.superRefine((token,context)=>{
   try{if(parseSavedSecretRefV1(token.secretRef).kind==='shared_resource')return;}catch{}
   context.addIssue({code:'custom',path:['secretRef'],message:'A current private Saved Secret resource reference is required'});
 })));
-
 export type RegistryActionIdV1=typeof REGISTRY_ACTION_IDS_V1[number];
 const id=()=>z.string().check(z.minLength(1));
 export const REGISTRY_ACTION_INPUT_SCHEMAS_V1={
@@ -25,10 +26,14 @@ export const REGISTRY_ACTION_INPUT_SCHEMAS_V1={
   'registries.sources.token.set':lazyZodSchema(()=>z.strictObject({sourceId:id(),token:z.optional(z.nullable(RegistryTokenBindingV1Schema)),
     npmRegistryProfileId:z.optional(z.nullable(id()))})),
   'registries.sources.delete':lazyZodSchema(()=>z.strictObject({sourceId:id()})),
-  'registries.items.list':lazyZodSchema(()=>z.strictObject({kind:RegistryKindV1Schema,sourceIds:z.optional(z.array(id())),query:z.optional(z.string()),cursor:z.optional(z.nullable(z.string())),refresh:z.optional(z.boolean())})),
+  'registries.items.list':lazyZodSchema(()=>z.strictObject({kind:RegistryKindV1Schema,sourceIds:z.optional(z.array(id())),contributionFamily:z.optional(RegistryContributionFamilyV1Schema),query:z.optional(z.string()),cursor:z.optional(z.nullable(z.string())),refresh:z.optional(z.boolean())})),
   'registries.items.read':lazyZodSchema(()=>z.strictObject({kind:RegistryKindV1Schema,sourceId:id(),itemId:z.string(),version:z.optional(id())})),
-  'registries.updates.check':lazyZodSchema(()=>z.strictObject({kind:z.optional(RegistryKindV1Schema),keys:z.optional(z.array(id()))})),
+  'registries.updates.check':lazyZodSchema(()=>z.union([
+    z.strictObject({ kind: z.literal('app'), environments: z.array(RegistryAppUpdateDemandV1Schema) }),
+    z.strictObject({kind:z.optional(z.enum(RegistryKindV1Schema.options.filter(kind => kind !== 'app'))),keys:z.optional(z.array(id()))}),
+  ])),
 };
+export type RegistryUpdateCheckInputV1 = z.infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check']>;
 export const RegistryDetectedSourceV1Schema=lazyZodSchema(()=>z.union([
   z.strictObject({format:RegistryFormatV1Schema,kinds:z.array(RegistryKindV1Schema).check(z.minLength(1)),title:id(),itemCount:z.optional(z.number().check(z.int(), z.nonnegative()))}),
   z.strictObject({unsupported:z.enum(['organisation','unknown_format','needs_token','unreachable'])}),

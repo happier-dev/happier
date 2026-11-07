@@ -1,10 +1,11 @@
 import * as React from 'react';
-import type { RegistryActionIdV1 } from '@happier-dev/protocol/registries';
+import type { RegistryActionIdV1, RegistrySourceStatusV1 } from '@happier-dev/protocol/registries';
 import { readRegistryFailureStatus, type RegistryFailureStatus } from './describeRegistrySourceStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { invalidateUiRegistryItemMemoV1 } from './registryHostDeps';
+import { invalidateUiRegistryItemMemoV1, invalidateUiRegistryUpdateMemoV1, useRegistryCarrierRecovery } from './registryHostDeps';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 class RegistryReadFailure extends Error {
     constructor(message: string, readonly status: RegistryFailureStatus | null) { super(message); }
@@ -12,7 +13,9 @@ class RegistryReadFailure extends Error {
 
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
 export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: unknown,
-    parse: (value: unknown, previous: T | null) => T, revision?: unknown, enabled = true): {
+    parse: (value: unknown, previous: T | null) => T, revision?: unknown, enabled = true,
+    recovery?: Readonly<{ sourceIds?: readonly string[];
+        failures?: (value: T | null) => readonly Readonly<{ sourceId: string; status: RegistrySourceStatusV1 }>[] }>): {
     scopeKey: string;
     inputKey: string;
     revision: unknown;
@@ -25,6 +28,10 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
     execution: ReturnType<typeof useMountedActionExecution>;
     scope: ReturnType<typeof useAccountSettingsScope>;
 } {
+    const presented = useLayoutPresentationActive();
+    enabled = enabled && presented;
+    const demand = React.useRef(enabled);
+    demand.current = enabled;
     const scope = useAccountSettingsScope();
     const execution = useMountedActionExecution(scope);
     const scopeKey = JSON.stringify([scope?.serverId, scope?.accountId]);
@@ -32,17 +39,31 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
     const args = React.useMemo(() => JSON.parse(inputKey) as unknown, [inputKey]);
     const parser = React.useRef(parse);
     parser.current = parse;
+    const recoveryOptions = React.useRef(recovery);
+    recoveryOptions.current = recovery;
     const [state, setState] = React.useState<{ scopeKey: string; inputKey: string; revision: unknown; value: T | null; loading: boolean; error: string | null; status: RegistryFailureStatus | null }>({
         scopeKey, inputKey, revision, value: null, loading: enabled, error: null, status: null,
     });
     const latest = React.useRef(state);
     latest.current = state;
     const generation = React.useRef(0);
+    const pending = React.useRef<AbortController | null>(null);
     const load = React.useCallback(async (force: boolean) => {
+        pending.current?.abort();
         const request = ++generation.current;
-        if (!enabled || !execution.ready) return;
+        if (!demand.current || !execution.ready) return;
+        const controller = new AbortController();
+        pending.current = controller;
         const previous = latest.current;
+        // Reopening a failed read is a natural recovery boundary, just like Try again.
+        // Healthy reads keep their memo; outages do not start an automatic retry loop.
+        if (previous.scopeKey === scopeKey && previous.inputKey === inputKey && Object.is(previous.revision, revision)) {
+            const retryable = (status: RegistrySourceStatusV1 | null) => status?.state === 'needs_machine' || status?.state === 'unreachable';
+            force ||= retryable(previous.status) || Boolean(recoveryOptions.current?.failures?.(previous.value)
+                .some(page => retryable(page.status)));
+        }
         if (force && actionId === 'registries.items.read' && scope) invalidateUiRegistryItemMemoV1(scope, args);
+        if (force && actionId === 'registries.updates.check' && scope) invalidateUiRegistryUpdateMemoV1(scope, args);
         setState(previous => {
             // A source-list revision refreshes descriptors, not their Account authority. Keep this exact
             // list mounted (including mutation receipts); item reads still withdraw on source changes.
@@ -54,7 +75,7 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
         try {
             const value = force && actionId === 'registries.items.list' && args && typeof args === 'object'
                 ? { ...args, refresh: true } : args;
-            const result = await execution.execute(actionId, value);
+            const result = await execution.execute(actionId, value, { signal: controller.signal });
             if (request !== generation.current || !execution.isCurrent()) return;
             if (!result.ok) throw new RegistryReadFailure(result.error, readRegistryFailureStatus(result.details));
             const parsed = parser.current(result.result, previous.scopeKey === scopeKey && previous.inputKey === inputKey
@@ -72,16 +93,19 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
                     error: error instanceof Error ? error.message : 'registry_unavailable',
                     status: error instanceof RegistryReadFailure ? error.status : null };
             });
-        }
+        } finally { if (pending.current === controller) pending.current = null; }
     }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision]);
     const refresh = React.useCallback(() => load(true), [load]);
     React.useEffect(() => {
         void load(false);
-        return () => { generation.current += 1; };
+        return () => { generation.current += 1; pending.current?.abort(); };
     }, [load, revision]);
     const current = state.scopeKey === scopeKey && (Object.is(state.revision, revision)
         || (actionId === 'registries.sources.list' && state.inputKey === inputKey))
         ? state : { scopeKey, inputKey, revision, value: null, loading: enabled, error: null, status: null };
+    const failedSources = recovery?.failures?.(current.value).filter(page => page.status.state === 'needs_machine').map(page => page.sourceId) ?? [];
+    useRegistryCarrierRecovery(execution.ready && (current.status?.state === 'needs_machine' || failedSources.length > 0), refresh, scope,
+        current.status?.state === 'needs_machine' ? recovery?.sourceIds : failedSources, enabled && !current.loading);
     // Credential retirement precedes the Sync store's next Account projection.
     // Never disclose that previous projection through an unbound mounted caller.
     return { ...current, value: execution.ready ? current.value : null, error: execution.ready ? current.error : null,

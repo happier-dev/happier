@@ -9,6 +9,23 @@ afterEach(() => {
 });
 
 describe('daemon web latency request correlation', () => {
+  it('resolves storage diagnostic demand once for the request, including nested phases', async () => {
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
+    vi.stubEnv('HAPPIER_LOG_LEVEL', 'debug');
+    vi.stubEnv('DEBUG', '');
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
+    vi.spyOn(performance, 'now').mockReturnValue(0);
+    await withStorageReadTrace('rpc_diagnostic-demand', async () => {
+      await timeWebLatencyPhase('storage.page.snapshot', () => 1);
+      vi.stubEnv('HAPPIER_LOG_LEVEL', 'info');
+      await timeWebLatencyPhase('storage.page.projection', () => 2);
+    });
+    expect(debug.mock.calls.filter(([, data]) => data && typeof data === 'object' && 'status' in data && data.status === 'started')).toHaveLength(2);
+    debug.mockClear();
+    await withStorageReadTrace('rpc_next-demand', () => timeWebLatencyPhase('storage.page.snapshot', () => 3));
+    expect(debug).not.toHaveBeenCalled();
+  });
   it('keeps fast storage boundaries at debug and preserves pending starts, failures and diagnostic isolation', async () => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
     vi.stubEnv('HAPPIER_LOG_LEVEL', ' DEBUG ');

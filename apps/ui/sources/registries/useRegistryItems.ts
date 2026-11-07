@@ -1,17 +1,62 @@
 import * as React from 'react';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryKindV1, type RegistryListPageV1 } from '@happier-dev/protocol/registries';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useRegistryActionRead } from './useRegistryActionRead';
 import { describeRegistrySourceStatus } from './describeRegistrySourceStatus';
 import { useRegistrySourceRevision } from './useRegistrySourceRevision';
+import { admitRegistrySummaryMark, type RegistryCatalogItemSummary } from './registryBrandMark';
+import type { RegistryContributionFamilyV1 } from '@happier-dev/protocol/registries';
 
-const parse = (value: unknown) => REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(value);
-const EMPTY_PAGES: readonly RegistryListPageV1[] = [];
-export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: readonly string[]; query?: string }, enabled = true) {
-    const revision = useRegistrySourceRevision(enabled);
-    const [more, setMore] = React.useState<{ first: ReturnType<typeof parse> | null; pages: readonly RegistryListPageV1[] } | null>(null);
+type DisplayPage = Omit<RegistryListPageV1, 'items'> & Readonly<{ items: RegistryCatalogItemSummary[] }>;
+type CurationPage = Readonly<{ sourceId: string; discovery: NonNullable<DisplayPage['discovery']> }>;
+const parse = (value: unknown, previous: readonly DisplayPage[] = [], previousCuration: readonly CurationPage[] = []) => {
+    const parsed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(value);
+    const priorPages = new Map(previous.map(page => [page.sourceId, page]));
+    const sources = new Map(previous.map(page => [page.sourceId, new Map(page.items.map(item => [item.itemId, item]))]));
+    const pages = parsed.pages.map(page => ({ ...page,
+        ...(page.status.state !== 'ok' && page.status.state !== 'invalid_source' && priorPages.get(page.sourceId)?.discovery
+            ? { discovery: priorPages.get(page.sourceId)!.discovery } : {}),
+        ...(page.discovery ? { discovery: (() => {
+            const prior = priorPages.get(page.sourceId)?.discovery;
+            if (!prior) return page.discovery;
+            if (sameStrictJsonValue(prior, page.discovery)) return prior;
+            const byId = new Map(prior.items.map(item => [item.id, item]));
+            return { ...page.discovery, items: page.discovery.items.map(item => {
+                const previousItem = byId.get(item.id);
+                return previousItem && sameStrictJsonValue(previousItem, item) ? previousItem : item;
+            }), categories: sameStrictJsonValue(prior.categories, page.discovery.categories) ? prior.categories : page.discovery.categories,
+            jobs: sameStrictJsonValue(prior.jobs, page.discovery.jobs) ? prior.jobs : page.discovery.jobs };
+        })() } : {}),
+        items: page.items.map(item => {
+            const prior = sources.get(page.sourceId)?.get(item.itemId);
+            if (prior) {
+                const { brandMark: _mark, ...summary } = prior;
+                if (sameStrictJsonValue(summary, item)) return prior;
+            }
+            return admitRegistrySummaryMark(item, prior);
+        }) }));
+    const priorCurationBySource = new Map(previousCuration.map(page => [page.sourceId, page]));
+    const curation = pages.flatMap(page => {
+        if (!page.discovery) return [];
+        const prior = priorCurationBySource.get(page.sourceId);
+        return [prior?.discovery === page.discovery ? prior : { sourceId: page.sourceId, discovery: page.discovery }];
+    });
+    return { ...parsed, pages, curation: curation.length === previousCuration.length
+        && curation.every((page, index) => page === previousCuration[index]) ? previousCuration : curation };
+};
+const EMPTY_PAGES: readonly DisplayPage[] = [];
+const EMPTY_CURATION: readonly CurationPage[] = [];
+export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: readonly string[]; query?: string;
+    contributionFamily?: RegistryContributionFamilyV1 }, enabled = true) {
+    const revision = useRegistrySourceRevision(enabled, input.sourceIds);
+    const [more, setMore] = React.useState<{ first: ReturnType<typeof parse> | null; pages: readonly DisplayPage[] } | null>(null);
+    const pagesFor = (value: ReturnType<typeof parse> | null) => value && more?.first === value ? more.pages : value?.pages;
     const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof parse> | null) => {
-        const parsed = parse(value);
-        const previousPages = previous && more?.first === previous ? more.pages : previous?.pages;
+        const previousPages = pagesFor(previous);
+        const parsed = parse(value, previousPages, previous?.curation);
+        // A fresh first page supersedes a failed following page even if its unchanged
+        // payload retains identity. Healthy pagination survives an ordinary reopen.
+        if (more?.first === previous && more.pages.some(page => page.status.state !== 'ok')) setMore(null);
         if (!previousPages) return parsed;
         const bySource = new Map(previousPages.map(page => [page.sourceId, page]));
         return { ...parsed, pages: parsed.pages.map(page => {
@@ -21,8 +66,11 @@ export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: read
             // source items, while the failure remains visible and cannot page.
             return { ...page, items: prior.items, nextCursor: null };
         }) };
-    }, revision, enabled);
-    const pages = more?.first === read.value ? more.pages : read.value?.pages ?? EMPTY_PAGES;
+    }, revision, enabled, { sourceIds: input.sourceIds, failures: value => pagesFor(value) ?? EMPTY_PAGES });
+    const pages = pagesFor(read.value) ?? EMPTY_PAGES;
+    // Loading/error publications do not change catalog content. Keep this
+    // producer's array stable while the same admitted pages remain displayed.
+    const items = React.useMemo(() => pages.flatMap(page => page.items), [pages]);
     const paging = React.useRef(false);
     const nextPage = React.useCallback(async () => {
         if (paging.current) return;
@@ -32,7 +80,7 @@ export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: read
             const following = await Promise.all(pages.filter(page => page.nextCursor !== null).map(async page => {
                 const result = await read.execution.execute('registries.items.list', { ...input, sourceIds: [page.sourceId], cursor: page.nextCursor });
                 if (!result.ok) throw new Error(result.error);
-                return parse(result.result).pages;
+                return parse(result.result, pages).pages;
             }));
             if (!read.execution.isCurrent()) return;
             const bySource = new Map(following.flat().map(page => [page.sourceId, page]));
@@ -44,11 +92,12 @@ export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: read
                 return { ...next, items: [...items.values()] };
             }) });
         } finally { paging.current = false; }
-    }, [input.kind, JSON.stringify(input.sourceIds), input.query, pages, read.execution.execute, read.execution.isCurrent, read.value]);
-    return React.useMemo(() => ({ items: pages.flatMap(page => page.items), pages, loading: read.loading, stale: read.stale,
+    }, [input.kind, JSON.stringify(input.sourceIds), input.query, input.contributionFamily, pages, read.execution.execute, read.execution.isCurrent, read.value]);
+    const curation = read.value?.curation ?? EMPTY_CURATION;
+    return React.useMemo(() => ({ items, pages, curation, loading: read.loading, stale: read.stale,
         sourceRevision: revision,
-        error: read.error, nextPage, hasNextPage: pages.some(page => page.nextCursor !== null), refresh: read.refresh,
-        sourceFailures: pages.filter(page => page.status.state !== 'ok').map(page => ({ sourceId: page.sourceId,
-            message: describeRegistrySourceStatus(page.status), onRetry: read.refresh })),
-    }), [pages, revision, read.loading, read.stale, read.error, nextPage, read.refresh]);
+        error: read.error, status: read.status, nextPage, hasNextPage: pages.some(page => page.nextCursor !== null), refresh: read.refresh,
+        sourceFailures: pages.flatMap(page => page.status.state === 'ok' ? [] : [{ sourceId: page.sourceId,
+            status: page.status, message: describeRegistrySourceStatus(page.status), onRetry: read.refresh }]),
+    }), [items, pages, curation, revision, read.loading, read.stale, read.error, read.status, nextPage, read.refresh]);
 }

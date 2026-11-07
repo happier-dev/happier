@@ -18,14 +18,19 @@ const { RegistrySourceSelect } = await import('./RegistrySourceSelect');
 const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
 const registryChooser = (screen: { findByType: (type: never) => { props: { filter: { renderPopoverContent: (context: { close: () => void; maxHeight: number }) => { props: { rootStep: { sections: ReadonlyArray<{ options: ReadonlyArray<{ id: string; label: string }> }> }; selectedOptionId: string; onSelect: (id: string) => void } } } } } }) =>
     screen.findByType(SelectionListFilterChip as never).props.filter.renderPopoverContent({ close() {}, maxHeight: 400 }).props;
+const { useRegistrySources } = await import('./useRegistrySources');
 
 describe('RegistrySourceSelect through the Account source owner', () => {
     it('leads with available picks and opens Add and Manage with distinct intent without changing selection', async () => {
         const { sourceId } = await createRegistrySourcesUiHome('select-picks', { picks: true });
         const onChange = vi.fn();
         const onOpenRegistries = vi.fn();
-        const screen = await renderScreen(<RegistrySourceSelect kind="skill" value="all" onChange={onChange}
-            onOpenRegistries={onOpenRegistries} testID="registry" />);
+        function Select() {
+            const { sources } = useRegistrySources('skill');
+            return <RegistrySourceSelect sources={sources} value="all" onChange={onChange}
+                onOpenRegistries={onOpenRegistries} testID="registry" />;
+        }
+        const screen = await renderScreen(<Select />);
         await waitForHomeGovernance(() => expect(registryChooser(screen).rootStep.sections[0]!.options.map((item) => item.id))
             .toContain(HAPPIER_PICKS_SOURCE_ID));
         const chooser = registryChooser(screen);

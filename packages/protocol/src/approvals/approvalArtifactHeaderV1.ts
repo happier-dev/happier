@@ -8,6 +8,7 @@ import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest
 import { ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
 import { isApiTokenGrantTargetMemberV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ExternalActionTargetV1 } from '../actions/externalActionApi.js';
+import { isDiscussionActionIdV1 } from '../discussions/actionIds.js';
 export { APPROVAL_ARTIFACT_KINDS_V1 } from './approvalArtifactKindV1.js';
 import {
   StoredExecutionRunHostActionApprovalRequestV1Schema,
@@ -76,6 +77,53 @@ export function managedDeleteApprovalIndexedKindV1(subjectKey: string): string {
   return `${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#${subjectKey}`;
 }
 
+/**
+ * What list readers (Inbox grouping, Discussion attention) need without opening the body. The writer
+ * sets it; body admission rejects a header whose facts contradict the body. A header written before
+ * these facts existed has no `approvalListFacts` and is unclassified (one-time owner backfill).
+ */
+export type ApprovalArtifactListFactsV1 = Readonly<{
+  /** The Automation whose Run asked; its Run is the header's `runId`. */
+  automationId?: string;
+  /** The Discussion a Discussion Action publishes to. */
+  discussionId?: string;
+  discussionDraftReview?: true;
+}>;
+
+export function deriveApprovalArtifactListFactsV1(request: ApprovalRequest): ApprovalArtifactListFactsV1 {
+  if (request.v !== 2) return {};
+  const caller = request.executionOriginV1.caller;
+  const args = request.actionArgs;
+  const discussionId = isDiscussionActionIdV1(request.actionId) && args && typeof args === 'object' && !Array.isArray(args)
+    && 'discussionId' in args && typeof args.discussionId === 'string' && args.discussionId ? args.discussionId : null;
+  return {
+    ...(caller.kind === 'automationRun' ? { automationId: caller.automationId } : {}),
+    ...(discussionId ? { discussionId, ...(request.discussionDraftReview === true ? { discussionDraftReview: true as const } : {}) } : {}),
+  };
+}
+
+function listFactsEqual(actual: unknown, expected: ApprovalArtifactListFactsV1): boolean {
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false;
+  const keys = Object.keys(actual);
+  return keys.length === Object.keys(expected).length
+    && keys.every(key => Reflect.get(actual, key) === Reflect.get(expected, key));
+}
+
+/** Header-only list reader; `null` for a header written before the facts existed. */
+export function readApprovalArtifactHeaderListFactsV1(header: ApprovalArtifactHeaderCandidateV1 | null | undefined):
+  ApprovalArtifactListFactsV1 | null {
+  const facts = header?.kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn ? header.approvalListFacts : undefined;
+  if (!facts || typeof facts !== 'object' || Array.isArray(facts)) return null;
+  const read = (key: string) => {
+    const value = Reflect.get(facts, key);
+    return typeof value === 'string' && value ? value : undefined;
+  };
+  const automationId = read('automationId');
+  const discussionId = read('discussionId');
+  return { ...(automationId ? { automationId } : {}),
+    ...(discussionId ? { discussionId, ...(Reflect.get(facts, 'discussionDraftReview') === true ? { discussionDraftReview: true as const } : {}) } : {}) };
+}
+
 export function buildApprovalRequestArtifactHeaderV1(
   request: ApprovalRequest,
   options: Readonly<{ legacyServerId?: string | null }> = {},
@@ -100,6 +148,7 @@ export function buildApprovalRequestArtifactHeaderV1(
     ...(origin?.machineId ? { machineId: origin.machineId } : {}),
     ...(origin?.runId ? { runId: origin.runId } : {}),
     ...(origin?.runOccurrenceId ? { runOccurrenceId: origin.runOccurrenceId } : {}),
+    approvalListFacts: deriveApprovalArtifactListFactsV1(request),
   };
 }
 
@@ -121,6 +170,7 @@ export function approvalRequestArtifactHeaderMatches(
     && (request.actionId === 'localServices.launcher.start' && header.approvalSubjectKey === undefined
       || optionalExactStringMatches(header.approvalSubjectKey, approvalSubjectKey))
     && sessionBindingMatches(header, sessionId || null)
+    && (header.approvalListFacts === undefined || listFactsEqual(header.approvalListFacts, deriveApprovalArtifactListFactsV1(request)))
     && (request.v === 1 || (
       optionalExactStringMatches(header.serverId, origin?.serverId ?? null)
       && optionalExactStringMatches(header.serverIdentityId, origin?.serverIdentityId ?? null)
@@ -448,8 +498,12 @@ export async function listApprovalArtifactsV1(params: Readonly<{
       if (params.actionId && actionId.data !== params.actionId) continue;
       if (!await isApprovalArtifactObservationGrantedV1(parsed, params.targetGrant, resolveSessionMachineId)) continue;
       const itemSessionId = typeof hydrated.header.sessionId === 'string' ? hydrated.header.sessionId.trim() : '';
+      // The same list facts the UI reads from the header, here from the authoritative body.
+      const listFacts = parsed.family === 'built_in' ? deriveApprovalArtifactListFactsV1(parsed.request) : {};
       items.push({ artifactId: artifact.artifactId, status: request.status, actionId: actionId.data, summary: request.summary,
         ...(itemSessionId ? { sessionId: itemSessionId } : {}), ...(headerServerId ? { serverId: headerServerId } : {}),
+        ...(listFacts.automationId ? { automationId: listFacts.automationId } : {}),
+        ...(listFacts.discussionId ? { discussionId: listFacts.discussionId } : {}),
         updatedAtMs: Number.isFinite(hydrated.updatedAt) ? hydrated.updatedAt : 0 });
     }
     cursor = page.nextCursor;

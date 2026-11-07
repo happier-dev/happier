@@ -49,6 +49,19 @@ export function SkillInLibraryMark(props: Readonly<{ testID?: string }>) {
   );
 }
 
+/** The preview says the library holds a different skill with this name: Add makes a separate copy, never an overwrite. */
+export function SkillSameNameNote(props: Readonly<{ name: string; testID?: string }>) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={styles.sameName} testID={props.testID}>
+      <Icon name="info" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+      <Text variant="meta" style={{ flexShrink: 1, color: theme.colors.text.secondary }}>
+        {t('capabilities.skillAdd.sameName', { name: props.name })}
+      </Text>
+    </View>
+  );
+}
+
 /**
  * What a previewed skill the library already holds shows in place of a tick: the In your library mark and Open on
  * the id the Action returned (`inLibrary`). Spread into a `CapabilityRow`; nothing here decides what is held.
@@ -73,6 +86,11 @@ export function heldSkillRowProps(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  sameName: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s4,
+  },
   inLibrary: {
     flexDirection: 'row',
     alignItems: 'center',

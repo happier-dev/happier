@@ -5,6 +5,7 @@ import { createActionExecutor } from '@happier-dev/protocol';
 import { createRegistryHostV1, RegistryProvenanceV1Schema, RegistryUpstreamV1Schema, RegistryUpstreamCheckV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
   type RegistrySourceDescriptorV1, type RegistryHttpV1 } from '@happier-dev/protocol/registries';
 import { ACP_REGISTRY_V1_FIXTURE } from '../../../../../packages/protocol/src/registries/formats/fixtures/acpRegistryV1Fixture';
+import { normalizeComposeTemplateV1 } from '../../../../../packages/protocol/src/registries/formats/composeTemplateNormalizationV1';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createRegistryHttpV1 } from '../registryHttp';
@@ -35,7 +36,7 @@ async function fixture(stateDir: string) {
   await writeFile(statePath, JSON.stringify({ state: 'current', latest: provenance.ref }));
   const changes: Parameters<RegistryUpdateTrackerV1['record']>[0][] = [];
   // Filesystem is the tracker boundary; all check, comparison, Action and strict consumption logic is real.
-  const tracker: RegistryUpdateTrackerV1 = { kind: 'skill', list: async () => [{ key: 'skill', provenance,
+  const tracker: RegistryUpdateTrackerV1 = { kind: 'skill', list: async keys => keys && !keys.includes('skill') ? [] : [{ key: 'skill', provenance,
     upstream: RegistryUpstreamV1Schema.parse(JSON.parse(await readFile(statePath, 'utf8'))) }],
     record: async updates => { changes.push(updates); await writeFile(statePath, JSON.stringify(updates[0]!.upstream)); } };
   const check = createRegistryUpdateCheck({ trackers: [tracker], ctx: { http }, readSources: async () => [source] });
@@ -82,6 +83,49 @@ describe('registry tracker coordinator through Actions and strict result consump
     expect(await readFile(statePath, 'utf8')).toBe(recorded);
     expect(nativeCalls).toBe(2);
   }));
+  it('checks only the exact Environment app pin without enumerating or mutating installed trackers', async () => withTempDir('happier-registry-app-demand-', async dir => {
+    const f = await fixture(dir);
+    const appSource: RegistrySourceDescriptorV1 = { ...source, id: 'apps', format: 'happier-catalog', kinds: ['app'],
+      url: 'https://apps.example/catalog.json' };
+    const normalized = normalizeComposeTemplateV1({ title: 'Web', document: 'services:\n  web:\n    image: nginx:1\n' });
+    if (normalized.state !== 'ready') throw new Error('Expected ready producer output');
+    const template = normalized.app;
+    const http: RegistryHttpV1 = { ...f.http, getJson: async url => {
+      expect(url).toBe(appSource.url);
+      return { ok: true, fetchedAt: 1, value: { schemaVersion: 1, apps: [{ itemId: 'web', app: template }] } };
+    } };
+    const selectedHost = createRegistryHostV1({ host: 'node', http, readSources: async () => [appSource] });
+    const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await selectedHost.execute('registries.items.read', {
+      kind: 'app', sourceId: appSource.id, itemId: 'web' })).item;
+    if (selected.payload.kind !== 'app') throw new Error('Expected app');
+    const selectedRef = selected.payload.ref;
+    const opened: string[] = [];
+    let sources = [appSource];
+    const check = createRegistryUpdateCheck({ ctx: { http }, readSources: async () => sources,
+      trackers: [{ ...f.tracker, list: async () => { throw new Error('App demand must not enumerate trackers'); },
+        record: async () => { throw new Error('App demand must not persist observations'); },
+        applyAutomaticUpdates: async () => { throw new Error('App updates are never automatic'); } }],
+      readEnvironment: async environmentId => {
+        opened.push(environmentId);
+        return { environment: { id: environmentId, revision: 3 }, content: { template: { templateRef: {
+          sourceId: appSource.id, itemId: 'web', version: selected.summary.version!, ref: selectedRef } } } };
+      },
+    });
+    const host = createRegistryHostV1({ host: 'node', http, readSources: async () => [appSource], updates: check.checkNow });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      registryActionExecute: ({ actionId, input }) => host.execute(actionId, input) });
+    expect(await executor.execute('registries.updates.check', { kind: 'app', environments: [{ environmentId: 'selected', expectedRevision: 3 }] }, { surface: 'ui' }))
+      .toMatchObject({ ok: true, result: { results: [{ kind: 'app', key: 'selected', upstream: { state: 'current' } }] } });
+    expect(opened).toEqual(['selected']);
+    expect(f.changes).toEqual([]);
+    sources = [{ ...appSource, enabled: false }];
+    const failure = await executor.execute('registries.updates.check', {
+      kind: 'app', environments: [{ environmentId: 'selected', expectedRevision: 3 }],
+    }, { surface: 'ui' });
+    expect(failure).toMatchObject({ ok: true, result: { results: [{ kind: 'app', key: 'selected',
+      sourceId: appSource.id, sourceTitle: appSource.title, upstream: { state: 'unchecked', reason: { state: 'invalid_source' } } }] } });
+  }));
+
   it('reports an unavailable check machine as the registry typed refusal', async () => withTempDir('happier-registry-no-machine-', async dir => {
     const f = await fixture(dir);
     const host = createRegistryHostV1({ host: 'web', http: f.http, readSources: async () => [source] });
@@ -154,7 +198,8 @@ describe('registry tracker coordinator through Actions and strict result consump
     const response = await executor.execute('registries.updates.check', { kind: 'skill', keys: ['skill'] }, { surface: 'cli' });
     expect(response.ok).toBe(true); if (!response.ok) throw new Error(response.errorCode);
     const consumed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(JSON.parse(JSON.stringify(response.result)));
-    expect(consumed.results).toEqual([{ kind: 'skill', key: 'skill', upstream: { state: 'unchecked', reason: { state: 'rate_limited' } } }]);
+    expect(consumed.results).toEqual([{ kind: 'skill', key: 'skill', sourceId: source.id, sourceTitle: source.title,
+      upstream: { state: 'unchecked', reason: { state: 'rate_limited' } } }]);
     expect(f.changes).toEqual([]);
     expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].safeParse({ ...response.result as object, unexpected: true }).success).toBe(false);
   }));
@@ -192,6 +237,45 @@ describe('registry tracker coordinator through Actions and strict result consump
     expect((await check.checkNow()).results[0]?.upstream.state).toBe('current');
     expect(responses).toBe(2); expect(f.changes).toEqual([]);
   }));
+
+  it('conditionally revalidates only the selected HTTP app index and body without reusing a denied response', async () => {
+    const appSource: RegistrySourceDescriptorV1 = { ...source, id: 'http-apps', format: 'coolify-templates', kinds: ['app'],
+      url: 'https://apps.example/service-templates.json' };
+    const bodyUrl = 'https://apps.example/compose/web.yaml';
+    let denied = false;
+    const requests: Array<{ url: string; conditional: string | null }> = [];
+    const http = createRegistryHttpV1({ fetch: async (input, init) => {
+      const url = String(input);
+      const conditional = new Headers(init?.headers).get('if-none-match');
+      requests.push({ url, conditional });
+      expect([appSource.url, bodyUrl]).toContain(url);
+      if (denied && url === bodyUrl) return new Response(null, { status: 403 });
+      if (conditional) return new Response(null, { status: 304 });
+      return url === appSource.url
+        ? Response.json({ web: { slogan: 'Web app', compose: 'invalid-base64' } }, { headers: { etag: '"index"' } })
+        : new Response('services:\n  web:\n    image: nginx:1\n', { headers: { etag: '"body"' } });
+    } });
+    const host = createRegistryHostV1({ host: 'node', http, readSources: async () => [appSource] });
+    const selected = await host.fetchRequest({ op: 'read', sourceId: appSource.id, kind: 'app', itemId: 'web' });
+    if (selected.op !== 'read' || selected.item.payload.kind !== 'app' || selected.item.payload.state !== 'ready') throw new Error('Expected admitted HTTP app');
+    const templateRef = { sourceId: appSource.id, itemId: 'web', version: selected.item.summary.version!, ref: selected.item.payload.ref };
+    const check = createRegistryUpdateCheck({ trackers: [], ctx: { http }, readSources: async () => [appSource],
+      readEnvironment: async id => ({ environment: { id, revision: 3 }, content: { template: { templateRef } } }) });
+    const demand = { kind: 'app' as const, environments: [{ environmentId: 'selected', expectedRevision: 3 }] };
+    requests.length = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await check.checkNow(demand)).results).toEqual([
+        { kind: 'app', key: 'selected', upstream: { state: 'current', latest: templateRef.ref } },
+      ]);
+    }
+    expect(requests).toEqual(Array.from({ length: 2 }, () => [
+      { url: appSource.url, conditional: '"index"' }, { url: bodyUrl, conditional: '"body"' },
+    ]).flat());
+    denied = true;
+    expect((await check.checkNow(demand)).results).toMatchObject([
+      { kind: 'app', key: 'selected', upstream: { state: 'unchecked', reason: { state: 'auth_failed' } } },
+    ]);
+  });
 
   it('preserves Account cancellation through the tracker record boundary', async () => withTempDir('happier-registry-cancel-', async dir => {
     const f = await fixture(dir); f.move();

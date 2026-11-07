@@ -1,19 +1,38 @@
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { isProjectSetupTrustRequestV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { isProjectSetupTrustRequestV1, PROJECT_ACTION_INPUT_SCHEMAS_V1, readProjectSetupTrustRequestOperationV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { resolveApprovalRequestApproveAdmission, resolveApprovalVisualPreview,
     readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveApprovalExecutor, type ApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { t } from '@/text';
+import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { isComputerApprovalAction } from './computerApprovalModel';
 import { isConfidentialSecretApprovalAction, readConfidentialActionInputsApproval, readConfidentialSecretApproval } from './confidentialSecretApprovalModel';
 import { readResourceProposalApproval } from './resourceProposal/readResourceProposalApproval';
 import { readPromptDocUpdateApproval } from './promptDocApprovalModel';
 import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
 import { readApprovalFileSource } from './approvalFileSource';
-import { resolveActionConfirmVerb } from '@/text/actionTitles';
+import { readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
+import { readActionApprovalConfirmLabel } from './actionApprovalPresentation';
+import { readPluginInstallApprovalChange } from './pluginInstallApprovalFacts';
+
+/** Review reads protocol admission, executor availability and the retained setup fact used at decision time. */
+export type ActionApprovalReviewAdmission = ReturnType<typeof resolveApprovalRequestApproveAdmission>
+    | Readonly<{ status: 'unavailable'; reason: 'cannot_run'; cause: ApprovalExecutorUnavailableReason;
+        presentation: ReturnType<typeof resolveApprovalRequestApproveAdmission>['presentation'] }>;
+
+type ApprovalExecutorUnavailableReason = Extract<ApprovalExecutor, { kind: 'unavailable' }>['reason'] | 'project_setup_review_unavailable';
+
+/** The reason every review surface shows while the request cannot run. */
+export function readApprovalCannotRunReason(admission: ActionApprovalReviewAdmission | null | undefined): string | null {
+    if (admission?.status !== 'unavailable' || admission.reason !== 'cannot_run') return null;
+    return admission.cause === 'missing_machine' ? t('approvals.cannotRunNoMachine') : t('approvals.cannotRun');
+}
 
 export type ActionApprovalReview = Readonly<{
-    admission: ReturnType<typeof resolveApprovalRequestApproveAdmission> | null;
+    admission: ActionApprovalReviewAdmission | null;
     confidentialAction: boolean;
     confidential: ReturnType<typeof readConfidentialSecretApproval>;
     /** Declared secret inputs the consuming Action is waiting for; chosen privately, never by plain Approve. */
@@ -30,12 +49,40 @@ export type ActionApprovalReview = Readonly<{
     workspaceFileSource: ReturnType<typeof readApprovalFileSource>;
 }>;
 
-/**
- * Presentation facts shared by full review, transcript cards and compact decisions.
- * This never grants authority: the existing approval decide Action re-reads and admits the decision.
- */
-export function readActionApprovalReview(request: ApprovalRequest): ActionApprovalReview {
-    const admission = request.status === 'open' ? resolveApprovalRequestApproveAdmission(request) : null;
+function readRetainedSetupRequest(request: ApprovalRequest | null) {
+    if (!request || request.status !== 'open' || !isProjectSetupTrustRequestV1(request.actionId, request.actionArgs)) return null;
+    const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.prepare'].safeParse(request.actionArgs);
+    return parsed.success ? parsed.data : null;
+}
+
+function resolveReviewApproveAdmission(request: ApprovalRequest, retainedOperation: ActionOperationProjection | null): ActionApprovalReviewAdmission {
+    const admission = resolveApprovalRequestApproveAdmission(request);
+    if (admission.status !== 'available') return admission;
+    const executor = resolveApprovalExecutor(request);
+    if (executor.kind === 'unavailable') return { status: 'unavailable', reason: 'cannot_run', cause: executor.reason, presentation: admission.presentation };
+    const setup = readRetainedSetupRequest(request);
+    if (setup && (!retainedOperation || retainedOperation.isUnavailableProjection
+        || !readProjectSetupTrustRequestOperationV1(setup, { kind: 'found', operation: retainedOperation.snapshot }))) {
+        return { status: 'unavailable', reason: 'cannot_run', cause: 'project_setup_review_unavailable', presentation: admission.presentation };
+    }
+    return admission;
+}
+
+/** Review consumes the existing retained-operation push; it never probes the target again. */
+export function useActionApprovalReview(request: ApprovalRequest): ActionApprovalReview;
+export function useActionApprovalReview(request: ApprovalRequest | null): ActionApprovalReview | null;
+export function useActionApprovalReview(request: ApprovalRequest | null): ActionApprovalReview | null {
+    const setup = readRetainedSetupRequest(request);
+    const retained = useActionOperation({
+        serverId: setup ? resolveServerProfileScopeIdForIdentifier(setup.workspace.serverId) : null,
+        operationId: setup?.heldOperationId ?? '',
+    });
+    return request ? readActionApprovalReview(request, retained) : null;
+}
+
+/** Shared presentation only; the approval decision Action still owns execution admission. */
+export function readActionApprovalReview(request: ApprovalRequest, retainedOperation: ActionOperationProjection | null = null): ActionApprovalReview {
+    const admission = request.status === 'open' ? resolveReviewApproveAdmission(request, retainedOperation) : null;
     const confidentialAction = isConfidentialSecretApprovalAction(request.actionId);
     const confidential = readConfidentialSecretApproval(request);
     const confidentialInputs = readConfidentialActionInputsApproval(request);
@@ -54,11 +101,14 @@ export function readActionApprovalReview(request: ApprovalRequest): ActionApprov
             || spec?.approvalResultCustody === 'live_only')
         || readPluginInstallApprovalPendingReview(request.preview) !== null
         // Remembering a Project's setup is a consequence the person reads on the page before deciding; a one-tap row hides it.
-        || isProjectSetupTrustRequestV1(request.actionId, request.actionArgs);
+        || isProjectSetupTrustRequestV1(request.actionId, request.actionArgs)
+        // A deploy's reviewed effect (Machine, services, risks, rollout) is read on the page before deciding.
+        || readDeploymentReviewApproval(request) !== null;
     const simple = request.v === 2 && request.status === 'open' && admission?.status === 'available'
         && spec !== null && spec.inputSchema.safeParse(request.actionArgs).success && !requiresReview;
     return { admission, confidentialAction, confidential, confidentialInputs, capabilityEnable, promptDocUpdate, resourceProposal,
         visualPreview, simple, workspaceFileSource: readApprovalFileSource(request),
-        approveVerb: spec?.confirmVerb !== undefined ? resolveActionConfirmVerb(spec.confirmVerb) : null,
+        approveVerb: spec?.id === 'plugins.install' && readPluginInstallApprovalChange(request.preview) === 'update'
+            ? t('common.update') : spec ? readActionApprovalConfirmLabel(spec.id) : null,
         irreversible: spec?.irreversible === true };
 }

@@ -1,37 +1,38 @@
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { sameMachineServiceLogsResourceInput, parseMachineServiceLogsResourceResponse } from './machineServiceLogsResource';
-import type { RpcHandlerContext } from '@/api/rpc/types';
-import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
-import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
-import { MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { invokeManagedReviewedChild } from './managedReviewedChild';
-import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
-import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
+import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { RPC_METHODS } from '@happier-dev/protocol';
+import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 
-import { prepareExternalActionResponseEnvelopeV1, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, projectExternalActionExecutionResultV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, projectExternalActionExecutionResultV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionApprovalDecisionAdmissionV1,
+  projectRegistryAppUpdateAdmissionV1, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectDeploymentReadAdmissionV1, projectExternalActionDeploymentLinkEnvironmentIdV1,
+  projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SignedRootActionIdSchema, isPluginProvenanceOnlyActionId } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionResponseEnvelopeV1, ExternalActionTargetV1, PreparedExternalActionResponseEnvelope, ExternalActionEncryptionBindingV2, ExternalActionExecutionAuthorizationV1, ExternalActionServerPrincipalV1, SignedRootActionId } from '@happier-dev/protocol/actions';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { invokeAdmittedReviewedChild } from './managedReviewedChild';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 import { reconcileExternalActionTarget } from './reconcileExternalActionTarget';
-import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionAccountInvocationSurface } from '@/api/externalActionExecutionAuthorization';
-import type { ExternalActionRequesterAccountContextPurposeV1, ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionAccountInvocationSurface,
+  resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
+import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1,
+  type ExternalActionRequesterAccountContextPurposeV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActionAdapter';
 import { deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
@@ -39,10 +40,16 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { isOriginalOwnAccountActionCustody, isOriginalSessionInputAccountActionCustody } from "../sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createExternalActionStartDiagnosticRecorder, refuseExternalActionPhase, runExternalActionPhase, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
-import { timeWebLatencyPhase, withWebLatencyTrace } from './webLatencyTrace';
+import { setApprovalTraceArtifactId, timeApprovalPhase, timeApprovalPhaseSync, timeWebLatencyPhase, withApprovalActionTrace, withWebLatencyTrace } from './webLatencyTrace';
 import { AccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { preparedResponse, beforeEffectResponse } from './response';
+import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { sameMachineServiceLogsResourceInput, parseMachineServiceLogsResourceResponse } from './machineServiceLogsResource';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 type PublicOutputValidationResult =
   | Readonly<{ success: true; data: unknown }>
@@ -111,13 +118,13 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
   /** Private SOURCE admission rechecks the installed controller without impersonating the finite worker. */
   verifyWorkspaceSyncPrepareCurrent?: () => Promise<boolean>;
   verifyServiceMoveChildCurrent?: () => Promise<boolean>;
+  /** Already Home-admitted original child packet; a private continuation, never Action input. */
   deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
-  /** Exact software operand retained by a template's admitted creation recipe. */
-  templateRequesterSetup?: Readonly<{ planInputDigest: string }>;
   signal?: AbortSignal;
 }>) => Promise<Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   executor: ExternalActionExecutor;
+  /** Verified HTTP PAT captured only for this live request and its original waiter. */
   resolveEncryption: ResolveExternalActionEncryption;
   /** Admitted policy from this requester holder for reviewed-child approval replay. */
   actionsSettings?: NonNullable<ActionExecutorContext['actionsSettings']>;
@@ -132,7 +139,7 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
 export type ExecuteExternalActionResult = Readonly<
   | {
     kind: 'invalid_request';
-    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'storage_unavailable';
+    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable';
     requestId?: string;
   }
   | {
@@ -150,7 +157,14 @@ export type ExecuteExternalActionResult = Readonly<
  * narrow the caller only after local runtime admission; it cannot supply Action
  * authority, trusted caller provenance, or execution context.
  */
-export async function executeExternalAction(input: Readonly<{
+export async function executeExternalAction(input: Parameters<typeof executeExternalActionRequest>[0]): Promise<ExecuteExternalActionResult> {
+  if (input.actionId !== 'approval.request.decide') return executeExternalActionRequest(input);
+  return withApprovalActionTrace(input.actionId,
+    () => timeApprovalPhase('approval.external_dispatch', () => executeExternalActionRequest(input)),
+    input.executionAuthorization?.binding.approvalDecisionAdmission?.artifactId, input.transportRequestId);
+}
+
+async function executeExternalActionRequest(input: Readonly<{
   actionId: unknown;
   envelope: unknown;
   principal: ExternalActionPrincipal;
@@ -166,7 +180,6 @@ export async function executeExternalAction(input: Readonly<{
   currentServerId?: string;
   /** Account admitted by the private receiving host; never an envelope field. */
   currentAccountId?: string;
-  machineAdmission?: RpcActionExecutorContext['machineAdmission'];
   /** Produced only by the authenticated installed private-root route. */
   authenticatedLocalRootCustody?: RpcActionExecutorContext['authenticatedLocalRootCustody'];
   /** Stamped by authenticated private terminal ingress, never accepted from an envelope. */
@@ -195,9 +208,13 @@ export async function executeExternalAction(input: Readonly<{
   externalActionMachineRequestPrivateKey?: string | Uint8Array;
   /** Host transport diagnostics only; never authority or Action input. */
   transportRequestId?: string;
+  /** Home-produced Machine facts from the closed receiving transport, never Action input. */
+  machineAdmission?: RpcActionExecutorContext['machineAdmission'];
   /** Exact installed Resource dispatcher; only the verified original logs invocation reaches it. */
   invokeResource?: (method: string, params: unknown, context: RpcHandlerContext) => Promise<unknown>;
   signal?: AbortSignal;
+  /** Receiving host progress sink; never accepted from an Action envelope. */
+  operationOwnerUpdate?: ActionExecutorContext['operationOwnerUpdate'];
 }>): Promise<ExecuteExternalActionResult> {
   // Keep both public HTTP origins deterministic: first accept the bounded path
   // scalar, then validate the transport envelope, and only then ask the
@@ -303,7 +320,8 @@ export async function executeExternalAction(input: Readonly<{
 
   let requesterContext: Awaited<ReturnType<PrepareExternalActionRequesterAccountContext>> = null;
   const managedControllerCodec = executionAuthorization?.success
-    && executionAuthorization.data.binding.accountId !== executionAuthorization.data.binding.custodianAccountId
+    && (executionAuthorization.data.binding.accountId !== executionAuthorization.data.binding.custodianAccountId
+      || isReviewedMachineSetupCodecV1(executionAuthorization.data.binding))
     && isManagedControllerCodecActionV1(executionAuthorization.data.binding);
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
   let controllerInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
@@ -369,19 +387,14 @@ export async function executeExternalAction(input: Readonly<{
       errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     trace('requester_prepare.begin');
-    let requesterHomeUnavailable = false;
-    const preparedRequester = await runExternalActionPhase('requester_prepare', input.currentMachineId, async () => {
-      try {
-        return await input.prepareRequesterAccountContext!({ authorization,
-          ...(input.signal ? { signal: input.signal } : {}) });
-      } catch (error) {
-        requesterHomeUnavailable = isPluginError(error) && error.code === 'project_requester_home_unavailable';
-        throw error;
-      }
-    });
+    const preparedRequester = await runExternalActionPhase('requester_prepare', input.currentMachineId, () =>
+      input.prepareRequesterAccountContext!({ authorization,
+        ...(input.signal ? { signal: input.signal } : {}) }));
     trace('requester_prepare.end');
     requesterContext = preparedRequester.ok ? preparedRequester.value : null;
     if (!requesterContext) {
+      const requesterHomeUnavailable = !preparedRequester.ok
+        && preparedRequester.executionFailure?.errorCode === 'project_requester_home_unavailable';
       diagnoseSessionInput('requester_prepare', requesterHomeUnavailable ? 'home_unavailable' : 'refused');
       if (requesterHomeUnavailable) refuseExternalActionPhase('requester_prepare', input.currentMachineId, undefined, {
         ...readSessionInputAdmissionDiagnostic({ actionId: actionId.data, requestId: envelope.data.requestId,
@@ -389,14 +402,18 @@ export async function executeExternalAction(input: Readonly<{
         refusalBranch: 'requester_home_unavailable',
       });
       return { kind: 'invalid_request',
-        errorCode: requesterHomeUnavailable ? 'storage_unavailable'
+        errorCode: requesterHomeUnavailable ? 'project_requester_home_unavailable'
           : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
         ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     }
     diagnoseSessionInput('requester_prepare', 'prepared');
+    rootAdmittedTarget = authorization.binding.target;
   }
+  let releaseTokenContentAccess: (() => void) | undefined;
+  let releaseTokenAccountProjection: (() => void) | undefined;
   try {
   let decodedInput: unknown;
+  let decodedTokenContentAccess: NonNullable<ReturnType<typeof openExternalActionRequestV2>>['apiTokenContentAccess'];
   let hasProtectedLogsOperands = false;
   let logsOperands: Pick<NonNullable<ReturnType<typeof openExternalActionRequestV2>>, 'resourceContinuation' | 'machineServiceLogsGeneration'> = {};
   let prepare = preparedResponse;
@@ -447,26 +464,34 @@ export async function executeExternalAction(input: Readonly<{
       refuseExternalActionPhase('encryption_receiver', input.currentMachineId);
       return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: request.requestId };
     }
-    const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material: encryption.material,
+    const opened = timeApprovalPhaseSync('approval.external.request_open', () => openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material: encryption.material,
       onFailure: failure => { refuseExternalActionPhase(failure.phase, input.currentMachineId, failure.error, {
         ...readSessionInputAdmissionDiagnostic({ actionId: actionId.data, requestId: request.requestId,
           accountEncryptionMode: executionAuthorization?.success ? executionAuthorization.data.binding.accountEncryptionMode : undefined }),
         envelopeVersion: request.v,
         refusalBranch: 'strict_open',
-      }); } });
+      }); } }));
     diagnoseSessionInput('strict_envelope_open', opened ? 'opened' : 'refused');
     if (!opened) {
       return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: request.requestId };
     }
     decodedInput = opened.input;
+    // Whole-Action transport encryption does not imply Account content custody.
+    decodedTokenContentAccess = doesExternalActionConsumeRequesterAccountContentV1({ actionId: actionId.data,
+      input: opened.input, target: binding.target })
+      ? opened.apiTokenContentAccess : undefined;
+    if (decodedTokenContentAccess && (!apiTokenPrincipal || !executionAuthorization?.success
+      || executionAuthorization.data.binding.accountEncryptionMode !== 'e2ee')) {
+      return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: request.requestId };
+    }
     logsOperands = { ...(opened.resourceContinuation ? { resourceContinuation: opened.resourceContinuation } : {}),
       ...(opened.machineServiceLogsGeneration ? { machineServiceLogsGeneration: opened.machineServiceLogsGeneration } : {}) };
     hasProtectedLogsOperands = opened.resourceContinuation !== undefined || opened.machineServiceLogsGeneration !== undefined;
-    prepare = (response) => {
+    prepare = (response) => timeApprovalPhaseSync('approval.external.response_prepare', () => {
       const prepared = prepareExternalActionResponseV2({ binding, request, execution: response.execution,
         executedMachineId: input.currentMachineId, material: encryption.material, randomBytes });
       return { kind: 'response', response: prepared.response, prepared };
-    };
+    });
   } else {
     diagnoseSessionInput('strict_envelope_open', 'plain_v1');
     decodedInput = envelope.data.input;
@@ -482,17 +507,70 @@ export async function executeExternalAction(input: Readonly<{
     errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
     ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
 
+  let effectMayHaveStarted = false;
+  const prepareResponse = prepare;
+  prepare = response => prepareResponse(effectMayHaveStarted ? response : beforeEffectResponse(response));
+
   // Signed outer admission facts and private opened input must describe the
   // same invocation before approval, native submission or Session birth.
   try {
-    const templatePlan = executionAuthorization?.success ? executionAuthorization.data.binding.templateRequesterSetupPlanAdmission : undefined;
-    if (templatePlan && executionAuthorization?.success) {
-      const plan = MachineSetupPlanInputV1Schema.parse(decodedInput);
-      if (plan.homeId !== executionAuthorization.data.binding.serverIdentityId || plan.machineId !== executionAuthorization.data.binding.machineId
-        || plan.mode !== 'effects' || computeActionInputApprovalDigestV1('machines.setup.plan', plan) !== templatePlan.planInputDigest) {
-        throw new TypeError('Template Setup Plan admission mismatch');
-      }
+    const appAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.registryAppUpdateAdmission : undefined;
+    if (!sameStrictJsonValue(appAdmission, projectRegistryAppUpdateAdmissionV1(actionId.data, decodedInput))
+      || envelope.data.v === 2 && !sameStrictJsonValue(appAdmission, envelope.data.registryAppUpdateAdmission))
+      throw new TypeError('Registry app update admission mismatch');
+    const decisionAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.approvalDecisionAdmission : undefined;
+    const expectedRead = projectDeploymentReadAdmissionV1(actionId.data, decodedInput);
+    const metadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId.data, decodedInput);
+    if (executionAuthorization?.success && metadataEnvironmentId !== undefined
+      && executionAuthorization.data.binding.environmentId !== metadataEnvironmentId) {
+      throw new TypeError('Metadata Environment admission mismatch');
     }
+    if (executionAuthorization?.success && executionAuthorization.data.binding.deploymentLinkAdmission !== undefined
+      && executionAuthorization.data.binding.deploymentLinkAdmission.environmentId
+        !== projectExternalActionDeploymentLinkEnvironmentIdV1(actionId.data, decodedInput)) {
+      throw new TypeError('Link Environment admission mismatch');
+    }
+    const preparationAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.deploymentPreparationAdmission : undefined;
+    const expectedNative = projectDeploymentNativeAdmissionV1(actionId.data, decodedInput);
+    const nativeAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.deploymentNativeAdmission : undefined;
+    if (executionAuthorization?.success && ((nativeAdmission?.environmentId
+      ?? (actionId.data === 'action.operations.get' || actionId.data === 'deployments.teardown'
+        ? executionAuthorization.data.binding.environmentId : executionAuthorization.data.binding.deploymentCandidatePublication?.environmentId))
+      !== expectedNative?.environmentId
+      || isDeploymentBackupNativeAdmissionV1(expectedNative)
+        && (!sameStrictJsonValue(nativeAdmission, expectedNative)
+          || envelope.data.v === 2 && !sameStrictJsonValue(nativeAdmission, envelope.data.deploymentNativeAdmission)))) {
+      throw new TypeError('Native deployment admission mismatch');
+    }
+    if (executionAuthorization?.success
+      && (!sameStrictJsonValue(preparationAdmission, projectDeploymentPreparationAdmissionV1(actionId.data, decodedInput))
+        || envelope.data.v === 2 && !sameStrictJsonValue(preparationAdmission, envelope.data.deploymentPreparationAdmission)))
+      throw new TypeError('Deployment preparation admission mismatch');
+    if (preparationAdmission && executionAuthorization?.success) {
+      const root = decodedInput && typeof decodedInput === 'object' ? decodedInput : null;
+      const workspace = root && 'workspace' in root && root.workspace && typeof root.workspace === 'object' ? root.workspace : null;
+      const home = preparationAdmission.operation === 'setup' ? root && 'homeId' in root ? root.homeId : null
+        : preparationAdmission.operation === 'prepare' ? workspace && 'serverId' in workspace ? workspace.serverId : null
+          : root && 'serverId' in root ? root.serverId : null;
+      if (typeof home !== 'string' || !await isServerProfileHomeIdentity(home, executionAuthorization.data.binding.serverIdentityId))
+        throw new TypeError('Deployment preparation Home mismatch');
+    }
+    const readAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.deploymentReadAdmission : undefined;
+    if (!sameStrictJsonValue(expectedRead, readAdmission)
+      || envelope.data.v === 2 && !sameStrictJsonValue(readAdmission, envelope.data.deploymentReadAdmission))
+      throw new TypeError('Deployment read admission mismatch');
+    if (expectedRead && executionAuthorization?.success) {
+      const home = decodedInput && typeof decodedInput === 'object' && 'serverId' in decodedInput
+        && typeof decodedInput.serverId === 'string' ? decodedInput.serverId : null;
+      if (!home || !await isServerProfileHomeIdentity(home, executionAuthorization.data.binding.serverIdentityId))
+        throw new TypeError('Deployment read Home mismatch');
+    }
+    if (decisionAdmission && (actionId.data !== 'approval.request.decide'
+      || !sameStrictJsonValue(decisionAdmission, projectExternalActionApprovalDecisionAdmissionV1(decodedInput)))
+      || envelope.data.v === 2 && !sameStrictJsonValue(decisionAdmission, envelope.data.approvalDecisionAdmission)) {
+      throw new TypeError('Approval decision admission mismatch');
+    }
+    if (actionId.data === 'approval.request.decide' && decisionAdmission) setApprovalTraceArtifactId(decisionAdmission.artifactId);
     if (projectExternalActionRunNowIdempotencyKeyV1(actionId.data, decodedInput) !== envelope.data.idempotencyKey
       || executionAuthorization?.success && executionAuthorization.data.binding.idempotencyKey !== envelope.data.idempotencyKey) {
       throw new TypeError('Manual retry identity mismatch');
@@ -507,9 +585,26 @@ export async function executeExternalAction(input: Readonly<{
     if (recoveryAdmission && !sameStrictJsonValue(managedAdmission, recoveryAdmission)) {
       throw new TypeError('Managed recovery input mismatch');
     }
-    if (envelope.data.sessionSpawnAdmission && (actionId.data !== 'session.spawn_new'
-      || !sameStrictJsonValue(projectApiTokenSessionSpawnAdmissionV1(decodedInput), envelope.data.sessionSpawnAdmission))) {
-      throw new TypeError('Session admission input mismatch');
+    if (envelope.data.sessionSpawnAdmission || envelope.data.v === 2 && actionId.data === 'session.spawn_new'
+      && decodedInput && typeof decodedInput === 'object' && 'machineSetupPlanInput' in decodedInput
+      && decodedInput.machineSetupPlanInput !== undefined) {
+      const spawnTarget = executionAuthorization?.success
+        ? executionAuthorization.data.binding.target
+        : envelope.data.target;
+      const serverIdentityId = executionAuthorization?.success
+        ? executionAuthorization.data.binding.serverIdentityId
+        : input.currentServerId;
+      const admittedSpawn = actionId.data === 'session.spawn_new' && spawnTarget?.kind === 'machine'
+        && serverIdentityId
+        ? admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse({
+            ...(decodedInput as Readonly<Record<string, unknown>>),
+            executionTarget: { serverId: serverIdentityId, machineId: spawnTarget.machineId },
+          }))
+        : null;
+      if (!admittedSpawn || !sameStrictJsonValue(
+        projectApiTokenSessionSpawnAdmissionV1(admittedSpawn),
+        envelope.data.sessionSpawnAdmission,
+      )) throw new TypeError('Session admission input mismatch');
     }
   } catch (error) {
     refuseExternalActionPhase('opened_input_admission', input.currentMachineId, error);
@@ -538,13 +633,13 @@ export async function executeExternalAction(input: Readonly<{
   let target: ExternalActionTargetV1 | null;
   trace('target_resolution.begin');
   try {
-    target = await (requesterContext?.resolveTarget ?? input.resolveTarget)({
+    target = await timeApprovalPhase('approval.external.target_resolution', () => (requesterContext?.resolveTarget ?? input.resolveTarget)({
       actionId: actionId.data,
       actionInput: decodedInput,
       target: reconciliation.target,
       currentMachineId: input.currentMachineId,
       ...(input.signal ? { signal: input.signal } : {}),
-    });
+    }));
   } catch (error) {
     trace('target_resolution.threw');
     refuseExternalActionPhase('target_resolution', input.currentMachineId, error, {
@@ -568,7 +663,7 @@ export async function executeExternalAction(input: Readonly<{
     });
   }
 
-  if (executionAuthorization?.success && !sameStrictJsonValue(rootAdmittedTarget, target)) {
+  if (executionAuthorization?.success && !(rootAdmittedTarget && externalActionTargetsEqualV1(rootAdmittedTarget, target))) {
     trace('effect_root_currentness.begin');
     const current = await runExternalActionPhase('effect_root_currentness', input.currentMachineId, async () =>
       !input.signal?.aborted && await input.verifyExecutionAuthorization!({
@@ -642,6 +737,7 @@ export async function executeExternalAction(input: Readonly<{
       target,
       installationId: input.currentInstallationId!,
       privateKey: input.externalActionMachineRequestPrivateKey!,
+      rootAdmitted: true,
       isCurrent: input.isInstallationCurrent
         ? async () => input.isInstallationCurrent!()
         : readRequesterAccountActionContext(projectionAuthorization)?.isCustodyCurrent ?? (() => input.verifyExecutionAuthorization!({
@@ -667,7 +763,7 @@ export async function executeExternalAction(input: Readonly<{
         && !apiTokenPrincipal && accountPrincipal?.authentication.kind !== 'terminal'
         && !sessionActionOrigin && !input.signal?.aborted) {
         trace('mounted_runtime_lease.begin');
-        pluginRuntimeLease = await input.acquirePluginRuntimeRegistryLease();
+        pluginRuntimeLease = await timeApprovalPhase('approval.external.plugin_lease_acquire', () => input.acquirePluginRuntimeRegistryLease!());
         trace('mounted_runtime_lease.end');
         trace('mounted_caller.begin');
         mountedCaller = await deriveMountedPluginInvocationCaller({
@@ -685,7 +781,7 @@ export async function executeExternalAction(input: Readonly<{
             if (accountPrincipal?.accountId && accountPrincipal.accountId !== input.currentAccountId) {
               return { kind: 'unavailable', code: 'plugin_account_execution_unavailable' };
             }
-            return await input.resolveAccountPluginExecutionSelection?.(pluginId, pluginRuntimeLease!.registry, input.signal)
+            return await input.resolveAccountPluginExecutionSelection?.(pluginId, input.signal)
               ?? { kind: 'unavailable', code: 'plugin_account_execution_unavailable' };
           },
         });
@@ -735,6 +831,7 @@ export async function executeExternalAction(input: Readonly<{
       }
     : undefined;
   const originalAuthorization = executionAuthorization?.success ? executionAuthorization.data : undefined;
+  const hasProtectedTokenContentAccess = decodedTokenContentAccess !== undefined;
   // Home admitted this exact root above. Finite work keeps the same local port
   // as RPC ingress; withdrawal applies at the next signed request.
   const originalRootCurrentness = originalAuthorization
@@ -746,13 +843,43 @@ export async function executeExternalAction(input: Readonly<{
     admittedAuthorization = Object.defineProperties({ ...admittedAuthorization }, Object.getOwnPropertyDescriptors(admittedAuthorization));
     Object.defineProperty(admittedAuthorization, 'requesterAccountExecutor', { value: requesterContext.executor, enumerable: false });
   }
+  if (admittedAuthorization && 'credentialId' in admittedAuthorization.binding
+    && (hasProtectedTokenContentAccess || admittedAuthorization.binding.actionId === 'deployments.deploy')) {
+    // The signed HTTP projector freezes its carrier. Retain its exact immutable
+    // wire/private descriptors on an extensible invocation before adding custody.
+    admittedAuthorization = Object.defineProperties({ ...admittedAuthorization }, Object.getOwnPropertyDescriptors(admittedAuthorization));
+  }
+  if (decodedTokenContentAccess) {
+    if (!admittedAuthorization || !originalRootCurrentness) return { kind: 'invalid_request',
+      errorCode: 'invalid_encrypted_envelope', requestId: envelope.data.requestId };
+    releaseTokenContentAccess = retainApiTokenDeploymentContentAccess(admittedAuthorization, decodedTokenContentAccess);
+    decodedTokenContentAccess = undefined;
+  }
+  if (admittedAuthorization && 'credentialId' in admittedAuthorization.binding
+    && (hasProtectedTokenContentAccess || admittedAuthorization.binding.actionId === 'deployments.deploy')
+    && !admittedAuthorization.requesterAccountProjection) {
+    const projected = await prepareApiTokenDeploymentAccountProjection(admittedAuthorization, input.signal);
+    if (!projected) return prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
+      execution: { ok: false, errorCode: 'content_unavailable', error: 'api_token_encryption_access_unavailable' } });
+    releaseTokenAccountProjection = projected.dispose;
+  }
   if (admittedAuthorization && originalRootCurrentness) admittedAuthorization = retainVerifiedExternalActionRequester({
     authorization: admittedAuthorization, isCurrent: originalRootCurrentness,
   });
+  // Home has already admitted this exact reduced lifetime effect, or the
+  // signed child of the approved spawn. The marker is never read from Action
+  // input; the verified root and exact managed admission remain effect authority.
+  const nativeAdmission = admittedAuthorization?.binding.managedAdmission;
+  const approvedNativeLifetimeEffect = actionId.data === 'machines.managed.credentials.install'
+    && originalRootCurrentness !== undefined && nativeAdmission?.actionId === actionId.data
+    && sameStrictJsonValue(nativeAdmission.input, decodedInput)
+    && (nativeAdmission.input.operation === 'release'
+      || admittedAuthorization?.binding.nativeCredentialSpawnChild !== undefined);
   const logsReference = logsOperands.resourceContinuation?.params.resource;
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
   const context: RpcActionExecutorContext = {
+    ...(input.operationOwnerUpdate ? { operationOwnerUpdate: input.operationOwnerUpdate } : {}),
     ...(!admittedAuthorization && !input.machineAdmission && !accountPrincipal && !apiTokenPrincipal
       && !pluginCaller
       && target.kind === 'machine' && target.machineId === input.currentMachineId
@@ -762,13 +889,14 @@ export async function executeExternalAction(input: Readonly<{
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
+    ...(approvedNativeLifetimeEffect ? { bypassApprovals: true } : {}),
     ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
     ...(admittedAuthorization && originalRootCurrentness ? {
       verifiedExternalActionRequester: { authorization: admittedAuthorization, isCurrent: originalRootCurrentness },
       verifyMachineAdmissionCurrent: originalRootCurrentness,
     } : {}),
     ...(recordActionStartDiagnostic ? { recordActionStartDiagnostic } : {}),
-    surface: pluginCaller ? 'plugin' : sessionActionOrigin ? 'agent' : apiTokenPrincipal
+    surface: pluginCaller ? 'plugin' : sessionActionOrigin || workflowActionOrigin ? 'agent' : apiTokenPrincipal
       ? 'api'
       : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface),
     authority: unstampedManagedChild || invocation && invocation.authority !== 'present_user'
@@ -780,6 +908,8 @@ export async function executeExternalAction(input: Readonly<{
         : input.principal.authority,
     actionCaller: pluginCaller ?? sessionActionOrigin?.caller ?? invocation?.caller ?? { kind: 'host' },
     ...(invocation ? { callerPermissionMode: invocation.callerPermissionMode,
+      ...(!envelope.data.managedCreationCodec && invocation.presentUserConfirmation
+        ? { presentUserConfirmation: invocation.presentUserConfirmation } : {}),
       ...(invocation.callerInputConstraints ? { callerInputConstraints: invocation.callerInputConstraints } : {}),
       ...(invocation.workspaceWrites ? { workspaceWrites: invocation.workspaceWrites } : {}),
       ...(ownInvocation?.defaultSessionId ? { defaultSessionId: ownInvocation.defaultSessionId } : {}),
@@ -810,7 +940,13 @@ export async function executeExternalAction(input: Readonly<{
     ...(executionAuthorization?.success
       ? {
           externalActionExecutionAuthorization: admittedAuthorization!,
-          ...(hasProtectedLogsOperands || actionId.data === 'projects.open' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
+          ...(hasProtectedTokenContentAccess || hasProtectedLogsOperands || actionId.data === 'session.spawn_new' || actionId.data === 'projects.open'
+            || actionId.data === 'action.operations.cancel' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
+            || isWorkspaceSyncRelationshipWriteActionId(actionId.data)
+            || executionAuthorization.data.binding.deploymentChildRoot === true
+            || actionId.data === 'deployments.teardown'
+            || isMachineSetupPlanRpcChildV1({ rootActionId: actionId.data,
+              effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
             ? { originalActionEnvelope: envelope.data } : {}),
           signExternalActionApprovalInput: ({ actionId: approvalActionId, input: approvalInput, target: approvalTarget, requesterConfirmation, sessionTargetsV1 }) =>
             signExternalActionApprovalInputV1({
@@ -824,13 +960,19 @@ export async function executeExternalAction(input: Readonly<{
             }),
         }
       : {}),
-    externalActionTarget: target,
+    // An unqualified Account operation has no Machine resource restriction.
+    // Keep the resolved relay for transport/currentness above, while explicit
+    // and signed targets retain their exact scope at the Action owner.
+    ...(reconciliation.target !== undefined || executionAuthorization?.success
+      || reconciliation.executionPlacement !== 'account'
+      ? { externalActionTarget: target } : {}),
     // Both requester Account admission and durable approval origins consume
     // this exact receiving daemon fact, including fresh Machine-targeted starts.
     defaultSessionMachineId: input.currentMachineId,
+    ...(admittedAuthorization ? { serverIdentityId: admittedAuthorization.binding.serverIdentityId } : {}),
     ...(input.currentServerId !== undefined ? { serverId: input.currentServerId } : {}),
-    ...(accountPrincipal ? { runtimeAccountId: accountPrincipal.accountId }
-      : !apiTokenPrincipal && input.currentAccountId ? { runtimeAccountId: input.currentAccountId } : {}),
+    ...('accountId' in input.principal ? { runtimeAccountId: input.principal.accountId }
+      : input.currentAccountId ? { runtimeAccountId: input.currentAccountId } : {}),
     ...reconciliation.context,
     ...(reconciliation.executionRunRequiresMachineTarget && target.kind === 'machine'
       ? { executionRunTargetMachineId: target.machineId }
@@ -849,12 +991,14 @@ export async function executeExternalAction(input: Readonly<{
   let internalExecution: ActionExecuteResult;
   try {
     trace('action_execution.begin');
+    effectMayHaveStarted = true;
     internalExecution = await withWebLatencyTrace(envelope.data.requestId, () => timeWebLatencyPhase('daemon.action.execute', async () => {
-        if (!logsOperands.resourceContinuation) {
-      const executor = requesterContext?.executor ?? input.executor;
-        const reviewed = await invokeManagedReviewedChild({ parent: managedReviewedParent ?? requesterContext?.invocation?.reviewedParent,
+      if (!logsOperands.resourceContinuation) {
+        const executor = requesterContext?.executor ?? input.executor;
+        const reviewed = await invokeAdmittedReviewedChild({ parent: managedReviewedParent ?? requesterContext?.invocation?.reviewedParent,
           requesterOwnedReview: !managedReviewedParent && Boolean(requesterContext?.invocation?.reviewedParent),
           context, actionId: actionId.data, actionInput: decodedInput,
+          ...(input.machineAdmission ? { receivingAdmission: input.machineAdmission } : {}),
           execute: (childInput, childContext) => executor.execute(actionId.data, childInput, childContext) });
         if (reviewed) return reviewed;
         return executor.execute(actionId.data, decodedInput, context);
@@ -932,21 +1076,13 @@ export async function executeExternalAction(input: Readonly<{
     execution,
   });
   } finally {
+    releaseTokenAccountProjection?.();
+    releaseTokenContentAccess?.();
     trace('daemon.cleanup.begin');
-    try { await pluginRuntimeLease?.release(); } finally { await requesterContext?.dispose(); }
+    try { await timeApprovalPhase('approval.external.plugin_lease_release', () => pluginRuntimeLease?.release()); }
+    finally { await timeApprovalPhase('approval.external.requester_dispose', () => requesterContext?.dispose()); }
     trace('daemon.cleanup.end');
   }
-}
-
-function preparedResponse(
-  response: ExternalActionResponseEnvelopeV1,
-): ExecuteExternalActionResult {
-  const prepared = prepareExternalActionResponseEnvelopeV1(response);
-  return {
-    kind: 'response',
-    response: prepared.response,
-    prepared,
-  };
 }
 
 function targetNotLocal(phase: 'target_machine_locality' | 'target_session_locality'): ActionExecuteResult {

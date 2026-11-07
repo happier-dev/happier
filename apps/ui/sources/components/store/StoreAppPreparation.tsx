@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DeploymentPartialProgress } from '@/components/projects/deployments/DeploymentPartialProgress';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useUnistyles } from 'react-native-unistyles';
@@ -19,6 +20,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -32,7 +34,7 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, keepHyphenatedNameTogether, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
@@ -42,6 +44,7 @@ import type {
   StoreAppListingState,
   StoreAppPreparationInput,
   StoreAppCreateChoices,
+  StoreAppCreateFailure,
 } from './useStoreAppListing';
 
 type Ready = Extract<StoreAppListingState, { kind: 'ready' }>;
@@ -65,7 +68,7 @@ export function catalogText(value: DeploymentTemplateV1['title'] | undefined): s
 
 /** The App's preparation review (lab publish `addapp/reviewFirstRun`), over the listing that opened it. */
 export function showStoreAppPreparation(
-  props: ReviewProps & Readonly<{ name: string }>,
+  props: Omit<ReviewProps, 'onClose'> & Readonly<{ name: string }>,
 ): string {
   return Modal.show({ component: StoreAppPreparationModal, props });
 }
@@ -90,11 +93,10 @@ export function StoreAppPreparationReview(
     props.name ?? catalogText(ready.app.title) ?? ready.item.summary.title;
   const allMachines = useMachineListForServer(serverId, true);
   // A Machine runs an App through its installation; one without an installation cannot be chosen.
-  const machines = React.useMemo(
-    () =>
-      (allMachines ?? []).filter((machine) => Boolean(machine.installationId)),
-    [allMachines],
-  );
+  const { machines, machineNames } = React.useMemo(() => {
+    const machines = (allMachines ?? []).filter((machine) => Boolean(machine.installationId));
+    return { machines, machineNames: resolveMachineDisplayNames(machines) };
+  }, [allMachines]);
   const projectChoice = useDeploymentProjectChoice({ lifetime });
   const sources = projectChoice.sources;
   const [machineId, setMachineId] = React.useState<string | null>(() =>
@@ -102,11 +104,14 @@ export function StoreAppPreparationReview(
       ? props.initialMachine.machineId : null);
   const [controllerId, setControllerId] = React.useState<string | null>(null);
   const [controllerMenuOpen, setControllerMenuOpen] = React.useState(false);
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
+  const [deployDefaultsOpen, setDeployDefaultsOpen] = React.useState(false);
   const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [prepared, setPrepared] =
     React.useState<DeploymentPublishPrepareResultV1 | null>(null);
-  const [refusal, setRefusal] = React.useState<Readonly<{ code: string; step: 'prepare' | 'create' }> | null>(null);
+  const [refusal, setRefusal] = React.useState<Readonly<{ code: string; step: 'prepare' | 'create'; failure?: StoreAppCreateFailure }> | null>(null);
+  const partialFailure = refusal?.failure?.progress ? refusal.failure : null;
   // The Environment's own choices, with the existing create form's starting values: no name, not production,
   // managers deploy (DeploymentEnvironmentDraft).
   const [environmentName, setEnvironmentName] = React.useState('');
@@ -114,7 +119,7 @@ export function StoreAppPreparationReview(
   const domainChoices = React.useMemo(() => {
     const bindings: NonNullable<StoreAppCreateChoices['domainBindings']> = [];
     let invalid = false;
-    for (const domain of prepared?.template.domains ?? []) {
+    for (const domain of ready.app.domains) {
       const hostname = domainHostnames[domain.key] ?? '';
       if (!hostname) {
         if (domain.required) invalid = true;
@@ -123,7 +128,7 @@ export function StoreAppPreparationReview(
       bindings.push({ templateDomainId: domain.key, hostname });
     }
     return { bindings, invalid };
-  }, [domainHostnames, prepared]);
+  }, [domainHostnames, ready.app.domains]);
   const [production, setProduction] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const router = useRouter();
@@ -155,24 +160,30 @@ export function StoreAppPreparationReview(
         .map((machine) => ({
           id: machine.id,
           testID: `store.app.prepare.machine.${machine.id}`,
-          title: getMachineDisplayName(machine, machines),
+          title: machineNames.get(machine.id)!,
           ...(selectable.has(machine.id)
             ? {}
             : { disabled: true, subtitle: describeMachinePresenceLine(machine, presenceNowMs, undefined, lifetime.scope).label }),
           checked: machine.id === machineId,
         })),
-    [lifetime.scope, machineId, machines, presenceNowMs, selectable],
+    [lifetime.scope, machineId, machineNames, machines, presenceNowMs, selectable],
   );
   const nameOf = React.useCallback(
     (id: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === id);
-      return machine ? getMachineDisplayName(machine, allMachines ?? []) : id;
+      return machine ? keepHyphenatedNameTogether(getMachineDisplayName(machine, allMachines ?? [])) : id;
     },
     [allMachines],
   );
+  // What Review still waits for, in the order the sheet asks; the footer says it. Review only reviews, so nothing
+  // the person must answer is left for after it.
   const missing = !chosen
     ? t('capabilities.store.appPage.chooseMachine')
-    : projectChoice.missing;
+    : !environmentName.trim()
+      ? t('capabilities.store.appPage.nameEnvironment')
+      : domainChoices.invalid
+        ? t('capabilities.store.appPage.domainRequired')
+        : projectChoice.missing;
 
   const review = React.useCallback(async () => {
     if (pending || !chosen?.installationId || missing) return;
@@ -210,9 +221,9 @@ export function StoreAppPreparationReview(
   ]);
 
   const create = React.useCallback(async () => {
-    if (!prepared || creating || !environmentName.trim() || domainChoices.invalid) return;
+    if (!prepared || creating) return;
     setCreating(true);
-    setRefusal(null);
+    if (!partialFailure) setRefusal(null);
     const outcome = await ready.create(prepared, {
       name: environmentName.trim(),
       protection: production ? 'production' : 'nonProduction',
@@ -231,13 +242,17 @@ export function StoreAppPreparationReview(
       approval.requestApproval(outcome.artifactId);
       return;
     }
-    if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'create' });
-  }, [approval, creating, domainChoices, environmentName, onClose, prepared, production, ready, router]);
-  const createMissing = !environmentName.trim()
-    ? t('capabilities.store.appPage.nameEnvironment')
-    : domainChoices.invalid ? t('capabilities.store.appPage.domainRequired') : null;
+    if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'create', failure: outcome });
+  }, [approval, creating, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, router]);
 
-  const footer = prepared ? (
+  const footer = partialFailure ? (
+    <MachineSetupReviewFooter onCancel={onClose} cancelTestID="store.app.prepare.cancel"
+      note={t('projects.deployments.partialProgressBody')}
+      primary={{ label: t(partialFailure.recovery === 'deploy' ? 'projects.deployments.deploy' : 'projects.deployments.openEnvironment'),
+        testID: 'store.app.prepare.recover', loading: creating,
+        disabled: creating || approval.approvalPending || !partialFailure.recovery,
+        onPress: () => { void create(); } }} />
+  ) : prepared ? (
     <MachineSetupReviewFooter
       onCancel={() => {
         setPrepared(null);
@@ -250,8 +265,7 @@ export function StoreAppPreparationReview(
         label: t('capabilities.store.appPage.install'),
         testID: 'store.app.prepare.confirm',
         loading: creating,
-        disabled: creating || createMissing !== null || approval.approvalPending,
-        ...(createMissing ? { accessibilityHint: createMissing } : {}),
+        disabled: creating || approval.approvalPending,
         onPress: () => {
           void create();
         },
@@ -267,7 +281,7 @@ export function StoreAppPreparationReview(
         testID: 'store.app.prepare.review',
         loading: pending,
         disabled: pending || missing !== null || approval.approvalPending,
-        ...(missing ? { accessibilityHint: missing } : {}),
+        ...(missing ? { disabledReason: missing } : {}),
         onPress: () => {
           void review();
         },
@@ -291,77 +305,20 @@ export function StoreAppPreparationReview(
   useModalCardChrome(props.setChrome, chrome);
 
   const domainServiceCounts = new Map<string, number>();
-  for (const domain of prepared?.template.domains ?? []) {
+  for (const domain of ready.app.domains) {
     domainServiceCounts.set(domain.service, (domainServiceCounts.get(domain.service) ?? 0) + 1);
   }
 
-  const environmentChoices = (
-    <ItemGroup title={t('projects.deployments.newEnvironment')}>
-      <Item
-        title={t('projects.deployments.name')}
-        accessoryLayout="stacked"
-        rightElement={
-          <FieldTextInput
-            testID="store.app.prepare.environmentName"
-            value={environmentName}
-            onChangeText={setEnvironmentName}
-            accessibilityLabel={t('projects.deployments.name')}
-            placeholder={t('projects.deployments.namePlaceholder')}
-          />
-        }
-        showChevron={false}
-      />
-      {prepared?.template.domains.map((domain) => {
-        const service = domainServiceCounts.get(domain.service)! > 1
-          ? `${domain.service}:${domain.containerPort}`
-          : domain.service;
-        const label = prepared.template.domains.length === 1
-          ? t('capabilities.store.appPage.domainAddress')
-          : t('capabilities.store.appPage.domainAddressFor', { service });
-        const helper = t('capabilities.store.appPage.domainDnsHint', {
-          route: t('capabilities.store.appPage.addressBody', { service: domain.service, port: domain.containerPort }),
-        });
-        return (
-          <Item
-            key={domain.key}
-            title={label}
-            accessoryLayout="stacked"
-            rightElement={
-              <FieldItem label={null} supportingText={helper}>
-                <FieldTextInput
-                  testID={`store.app.prepare.domain.${domain.key}`}
-                  value={domainHostnames[domain.key] ?? ''}
-                  onChangeText={(hostname) => setDomainHostnames((current) => ({ ...current, [domain.key]: hostname }))}
-                  accessibilityLabel={label}
-                  accessibilityHint={helper}
-                  placeholder={t('capabilities.store.appPage.domainPlaceholder')}
-                  autoCapitalize="none"
-                  keyboardType="url"
-                />
-              </FieldItem>
-            }
-            showChevron={false}
-          />
-        );
-      })}
-      <Item
-        testID="store.app.prepare.who"
-        title={t('projects.deployments.whoTitle')}
-        subtitle={t('projects.deployments.whoManagers')}
-        mode="info"
-      />
-      <Item
-        testID="store.app.prepare.production"
-        title={t('projects.deployments.production')}
-        subtitle={t('projects.deployments.productionHint')}
-        rightElement={<Switch value={production} onValueChange={setProduction} />}
-        onPress={() => setProduction((current) => !current)}
-        showChevron={false}
-      />
-    </ItemGroup>
-  );
+  // Who may deploy has no choice here, so it reads as part of this summary rather than a row without a control.
+  const deploySummary = [
+    controllerId ? nameOf(controllerId) : t('capabilities.store.appPage.controllerDefault'),
+    ...(production ? [t('projects.deployments.production')] : []),
+    t('capabilities.store.appPage.managersDeploy'),
+  ].join(' · ');
 
-  const phase = prepared ? (
+  const phase = partialFailure?.progress ? (
+    <DeploymentPartialProgress testID="store.app.prepare.progress" progress={partialFailure.progress} failure={partialFailure} />
+  ) : prepared ? (
     <>
     <ItemGroup
       testID="store.app.prepare.prepared"
@@ -378,6 +335,7 @@ export function StoreAppPreparationReview(
           />
         }
         title={t('capabilities.store.appPage.createOn', {
+          name: environmentName.trim(),
           machine: nameOf(prepared.machine.machineId),
         })}
         subtitle={
@@ -395,44 +353,52 @@ export function StoreAppPreparationReview(
               })
         }
       />
-      {prepared.template.firstRunSetup ? (
-        <Item
-          mode="info"
-          icon={
-            <Icon
-              name="user-circle"
-              size={ICON_SIZE.md}
-              color={theme.colors.text.secondary}
-            />
-          }
-          title={t('capabilities.store.appPage.firstRunTitle')}
-          subtitle={t('capabilities.store.appPage.firstRunBody')}
-        />
-      ) : null}
-      {prepared.template.domains.map((domain) => (
-        <Item
-          key={domain.key}
-          mode="info"
-          icon={
-            <Icon
-              name="globe"
-              size={ICON_SIZE.md}
-              color={theme.colors.text.secondary}
-            />
-          }
-          title={t('capabilities.store.appPage.addressTitle')}
-          subtitle={t('capabilities.store.appPage.addressBody', {
-            service: domain.service,
-            port: domain.containerPort,
-          })}
-        />
-      ))}
-      {renderDeploymentCreationDefaultsRows({
-        defaults: prepared.creationDefaults,
-        machineName: nameOf,
-        iconColor: theme.colors.text.secondary,
-        testID: 'store.app.prepare.defaults',
+      {prepared.template.domains.flatMap((domain) => {
+        const hostname = domainHostnames[domain.key];
+        return hostname ? [(
+          <Item
+            key={domain.key}
+            mode="info"
+            icon={
+              <Icon
+                name="globe"
+                size={ICON_SIZE.md}
+                color={theme.colors.text.secondary}
+              />
+            }
+            title={hostname}
+            subtitle={t('capabilities.store.appPage.addressBody', {
+              service: domain.service,
+              port: domain.containerPort,
+            })}
+          />
+        )] : [];
       })}
+      <ExpandableItem
+        testID="store.app.prepare.defaults"
+        expanded={deployDefaultsOpen}
+        onExpandedChange={setDeployDefaultsOpen}
+        header={({ headerProps }) => (
+          <Item
+            {...headerProps}
+            icon={
+              <Icon
+                name="rocket"
+                size={ICON_SIZE.md}
+                color={theme.colors.text.secondary}
+              />
+            }
+            title={t('capabilities.store.appPage.defaultsTitle')}
+            subtitle={deploySummary}
+          />
+        )}
+      >
+        {renderDeploymentCreationDefaultsRows({
+          defaults: prepared.creationDefaults,
+          machineName: nameOf,
+          testID: 'store.app.prepare.defaults',
+        })}
+      </ExpandableItem>
     </ItemGroup>
     {prepared.template.firstRunSetup ? (
       <AttentionBanner
@@ -441,7 +407,6 @@ export function StoreAppPreparationReview(
         description={t('capabilities.store.appPage.firstRunWarningBody')}
       />
     ) : null}
-    {environmentChoices}
     </>
   ) : (
     <>
@@ -477,6 +442,57 @@ export function StoreAppPreparationReview(
           />
         ) : null}
       </ItemGroup>
+      <ItemGroup title={ready.app.domains.length > 0
+        ? t('capabilities.store.appPage.nameAndAddressTitle')
+        : t('projects.deployments.newEnvironment')}>
+        <Item
+          title={t('projects.deployments.name')}
+          accessoryLayout="stacked"
+          rightElement={
+            <FieldTextInput
+              testID="store.app.prepare.environmentName"
+              value={environmentName}
+              onChangeText={setEnvironmentName}
+              accessibilityLabel={t('projects.deployments.name')}
+              placeholder={t('projects.deployments.namePlaceholder')}
+            />
+          }
+          showChevron={false}
+        />
+        {ready.app.domains.map((domain) => {
+          const service = domainServiceCounts.get(domain.service)! > 1
+            ? `${domain.service}:${domain.containerPort}`
+            : domain.service;
+          const label = ready.app.domains.length === 1
+            ? t('capabilities.store.appPage.domainAddress')
+            : t('capabilities.store.appPage.domainAddressFor', { service });
+          const helper = t('capabilities.store.appPage.domainDnsHint', {
+            route: t('capabilities.store.appPage.addressBody', { service: domain.service, port: domain.containerPort }),
+          });
+          return (
+            <Item
+              key={domain.key}
+              title={label}
+              accessoryLayout="stacked"
+              rightElement={
+                <FieldItem label={null} supportingText={helper}>
+                  <FieldTextInput
+                    testID={`store.app.prepare.domain.${domain.key}`}
+                    value={domainHostnames[domain.key] ?? ''}
+                    onChangeText={(hostname) => setDomainHostnames((current) => ({ ...current, [domain.key]: hostname }))}
+                    accessibilityLabel={label}
+                    accessibilityHint={helper}
+                    placeholder={t('capabilities.store.appPage.domainPlaceholder')}
+                    autoCapitalize="none"
+                    keyboardType="url"
+                  />
+                </FieldItem>
+              }
+              showChevron={false}
+            />
+          );
+        })}
+      </ItemGroup>
       <DeploymentProjectChoiceGroups
         model={projectChoice}
         testIDPrefix="store.app.prepare.project"
@@ -484,36 +500,54 @@ export function StoreAppPreparationReview(
         newProjectHint={t('capabilities.store.appPage.projectNewHint')}
       />
       {machines.length > 0 ? (
-        <ItemGroup
-          title={t('capabilities.store.appPage.deploysTitle')}
-          description={t('capabilities.store.appPage.deploysDescription')}
-        >
-          <DropdownMenu
-            testID="store.app.prepare.controller"
-            open={controllerMenuOpen}
-            onOpenChange={setControllerMenuOpen}
-            items={[
-              {
-                id: CONTROLLER_DEFAULT,
-                title: t('capabilities.store.appPage.controllerDefault'),
-                checked: controllerId === null,
-              },
-              ...machines.map((machine): DropdownMenuItem => ({
-                id: machine.id,
-                title: getMachineDisplayName(machine, machines),
-                checked: machine.id === controllerId,
-              })),
-            ]}
-            selectedId={controllerId ?? CONTROLLER_DEFAULT}
-            onSelect={(id) => {
-              setControllerMenuOpen(false);
-              setControllerId(id && id !== CONTROLLER_DEFAULT ? id : null);
-            }}
-            itemTrigger={{
-              title: t('capabilities.store.appPage.controllerLabel'),
-              showSelectedSubtitle: false,
-            }}
-          />
+        <ItemGroup>
+          <ExpandableItem
+            testID="store.app.prepare.options"
+            expanded={optionsOpen}
+            onExpandedChange={setOptionsOpen}
+            header={({ headerProps }) => (
+              <Item
+                {...headerProps}
+                title={t('capabilities.store.appPage.defaultsTitle')}
+                subtitle={deploySummary}
+              />
+            )}
+          >
+            <DropdownMenu
+              testID="store.app.prepare.controller"
+              open={controllerMenuOpen}
+              onOpenChange={setControllerMenuOpen}
+              items={[
+                {
+                  id: CONTROLLER_DEFAULT,
+                  title: t('capabilities.store.appPage.controllerDefault'),
+                  checked: controllerId === null,
+                },
+                ...machines.map((machine): DropdownMenuItem => ({
+                  id: machine.id,
+                  title: machineNames.get(machine.id)!,
+                  checked: machine.id === controllerId,
+                })),
+              ]}
+              selectedId={controllerId ?? CONTROLLER_DEFAULT}
+              onSelect={(id) => {
+                setControllerMenuOpen(false);
+                setControllerId(id && id !== CONTROLLER_DEFAULT ? id : null);
+              }}
+              itemTrigger={{
+                title: t('capabilities.store.appPage.controllerLabel'),
+                showSelectedSubtitle: false,
+              }}
+            />
+            <Item
+              testID="store.app.prepare.production"
+              title={t('projects.deployments.production')}
+              subtitle={t('projects.deployments.productionHint')}
+              rightElement={<Switch value={production} onValueChange={setProduction} />}
+              onPress={() => setProduction((current) => !current)}
+              showChevron={false}
+            />
+          </ExpandableItem>
         </ItemGroup>
       ) : null}
     </>
@@ -530,7 +564,7 @@ export function StoreAppPreparationReview(
           onOpenApproval={approvalReview.reopen}
         />
       ) : null}
-      {refusal ? (
+      {refusal && !partialFailure ? (
         <SurfaceStateCard
           testID="store.app.prepare.refused"
           kind="error"

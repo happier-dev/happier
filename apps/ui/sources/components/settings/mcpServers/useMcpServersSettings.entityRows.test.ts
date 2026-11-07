@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getStorage } from '@/sync/domains/state/storage';
-import { renderHook } from '@/dev/testkit';
+import { createDeferred, renderHook } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -14,10 +14,12 @@ import { useMcpServerCatalogForServer, useMcpServersSettings } from './useMcpSer
 import { refreshMcpServerCatalog, resetMcpServerCatalogEngineForTests } from '@/sync/engine/settings/mcpServerCatalogEngine';
 import { resetMcpServerCatalogSnapshotsForTests } from '@/sync/store/settings/mcpServerCatalogSnapshot';
 import type { McpServerRuleV1, McpServerCatalogEntryV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { mutateMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 let disposeActionExecutorModuleLoader: (() => void) | undefined;
 beforeEach(async () => { disposeActionExecutorModuleLoader = await installRealActionExecutorModuleLoader(); });
@@ -32,6 +34,89 @@ afterEach(() => {
 });
 
 describe('MCP destination-backed settings hook', () => {
+    it('refuses a requested Account mismatch before reading the selected Home catalog', async () => {
+        const home = await upsertServerProfileOnly({ serverUrl: 'https://mcp-account-mismatch.test', name: 'MCP' });
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'replacement-account' })).toString('base64url')}.signature`,
+        });
+        let reads = 0;
+        setRuntimeFetch(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/entity-rows/mcp') reads += 1;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
+            if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+            if (path === '/v1/account/entity-rows/mcp') return Response.json({ status: 'present', revision: 1,
+                content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } } });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const hook = await renderHook(() => useMcpServerCatalogForServer(home.id, true, { serverId: home.id, accountId: 'requested-account' }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', reason: 'scope-retired', value: null }));
+            expect(reads).toBe(0);
+        } finally { await hook.unmount(); }
+    });
+    it('shows an admitted first catalog as stale while a wake requires its trailing read', async () => {
+        const accountId = 'mcp-inflight-wake-account';
+        const home = await upsertServerProfileOnly({ serverUrl: 'https://mcp-inflight-wake.example.test', name: 'MCP' });
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+            token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+        });
+        const scope = { serverId: home.id, accountId };
+        getStorage().setState({ profileScope: scope, settingsScope: scope, settings: settingsParse({}), settingsVersion: 7 });
+        const entered = createDeferred<void>();
+        const trailingEntered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const releaseTrailing = createDeferred<void>();
+        const releaseMaintenance = createDeferred<void>();
+        let rowReads = 0;
+        // Only HTTP is replaced: the real wake, loader, Account admission and hook consume each response.
+        setRuntimeFetch(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
+            if (path === '/v2/account/settings') {
+                await releaseMaintenance.promise;
+                return Response.json({ version: 7, content: { t: 'plain', v: {} } });
+            }
+            if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
+            if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+            if (path === '/v1/account/entity-rows/mcp') {
+                rowReads += 1;
+                if (rowReads === 1) { entered.resolve(); await release.promise; }
+                else { trailingEntered.resolve(); await releaseTrailing.promise; }
+                return Response.json({ status: 'present', revision: 3, content: { t: 'plain', v: { v: 1,
+                    servers: [{ id: 'admitted-server', name: 'server', transport: 'stdio',
+                        stdio: { command: 'mcp-server', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] } } });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const hook = await renderHook(useMcpServersSettings);
+        try {
+            await entered.promise;
+            await act(async () => { publishHomeAccountChange(home.id, [MCP_SERVER_CATALOG_ACCOUNT_KEY_V1]); });
+            await act(async () => { release.resolve(); });
+            await trailingEntered.promise;
+            await vi.waitFor(() => expect(hook.getCurrent().settings.servers.map(server => server.id)).toEqual(['admitted-server']));
+            expect(hook.getCurrent().snapshot).toMatchObject({ status: 'loading', stale: true, revision: 3 });
+            expect(hook.getCurrent().writable).toBeNull();
+            // One wake joins the first read and requires exactly one later observation, with no polling.
+            expect(rowReads).toBe(2);
+            await act(async () => { releaseTrailing.resolve(); });
+            await vi.waitFor(() => expect(hook.getCurrent().snapshot).toMatchObject({ status: 'ready', stale: false }));
+            expect(hook.getCurrent().writable?.servers.map(server => server.id)).toEqual(['admitted-server']);
+            await flushHookEffects();
+            expect(rowReads).toBe(2);
+        } finally {
+            release.resolve();
+            releaseTrailing.resolve();
+            releaseMaintenance.resolve();
+            await hook.unmount();
+        }
+    });
+
     it('withdraws previously plain definitions when the Account becomes E2EE without credential material', async () => {
         const accountId = 'mcp-mode-account';
         const home = await upsertServerProfileOnly({ serverUrl: 'https://mcp-mode.example.test', name: 'Mode' });

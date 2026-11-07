@@ -1,4 +1,4 @@
-import type { PromptFoldersV1 } from '@happier-dev/protocol';
+import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 import { isReadOnlySkillProvenanceV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { resolveSkillPlanKindV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
 import { getAgentCore, isBundledAgentId } from '@happier-dev/agents';
@@ -13,11 +13,24 @@ import { t } from '@/text';
 import { groupRowsByFolder } from '@/components/settings/prompts/collection/promptCollectionModel';
 
 import { isSkillOff } from './status/skillStatus';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 export const SKILLS_COLLECTION_ROUTE = '/settings/skills';
 export const SKILLS_NEW_ROUTE = '/settings/skills/new';
 export const skillHref = (skillId: string) =>
-  `${SKILLS_COLLECTION_ROUTE}/${encodeURIComponent(skillId)}`;
+  `${SKILLS_COLLECTION_ROUTE}/${encodeURIComponent(skillId)}` as const;
+
+/** Settings currently opens the active Account. Keep an exact Session's destination unavailable elsewhere. */
+export function useSkillsDestination(requestedScope: AccountSettingsScope | null | undefined): Readonly<{
+  available: boolean;
+  unavailableLabel: string | null;
+}> {
+  const activeScope = useAccountSettingsScope();
+  const available = requestedScope != null && activeScope != null
+    && areAccountSettingsScopesEqual(requestedScope, activeScope);
+  return { available, unavailableLabel: available ? null : t('common.unavailable') };
+}
 
 /**
  * A skill is shown by its name. A skill whose content could not be read carries its id where the name
@@ -59,6 +72,9 @@ export function groupSkillsByUse(
   return { inUse, off };
 }
 
+/** The one section for filed rows whose folder names have not been read. */
+const UNNAMED_FOLDER_ID = 'unnamed-folders';
+
 /**
  * Folder groups (IR-83): when any skill is filed in a folder the personal folder tree knows, the list
  * groups by folder through the library's one grouping rule (shared with the prompt collection), and
@@ -76,7 +92,8 @@ export function groupSkillsByFolder(
   return groupRowsByFolder(
     items.map((item) => {
       const id = filed(item);
-      return { folder: id === null ? null : { id, title: names.get(id) ?? t('common.unavailable') }, row: item };
+      // Names not read (`folders == null`): every filed row shares one unnamed section instead of one "Unavailable" each.
+      return { folder: id === null ? null : names.has(id) ? { id, title: names.get(id) ?? null } : { id: UNNAMED_FOLDER_ID, title: t('common.unavailable') }, row: item };
     }),
   );
 }
@@ -90,22 +107,6 @@ export function skillReachesMachine(
     projectReachOnMachines(item.rules, [machine], undefined, [], { skillId: item.skillId, isFeatureEnabled: () => true })[0]?.agents.some(
       (agent) => agent.enabled && skillPlanOnMachine(machine, agent.agentId) !== 'none',
     ) ?? false
-  );
-}
-
-export function filterSkills(
-  items: readonly SkillListItemV1[],
-  input: Readonly<{ query: string; machine: ReachMachine | null }>,
-): readonly SkillListItemV1[] {
-  const query = input.query.trim().toLowerCase();
-  if (!query && !input.machine) return items;
-  return items.filter(
-    (item) =>
-      (!query ||
-        `${item.name} ${item.description ?? ''}`
-          .toLowerCase()
-          .includes(query)) &&
-      (!input.machine || skillReachesMachine(item, input.machine)),
   );
 }
 

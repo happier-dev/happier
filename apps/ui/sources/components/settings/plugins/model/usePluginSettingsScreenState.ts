@@ -3,12 +3,11 @@ import { useActivePluginAccountAvailabilityReader, usePluginAccountAvailabilityR
 
 import {
     getMachineCapabilitiesCacheState,
-    prefetchMachineCapabilities,
 } from '@/hooks/server/useMachineCapabilitiesCache';
 import { useMachineCapabilityInvokeWithAlerts } from '@/hooks/machine/useMachineCapabilityInvokeWithAlerts';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { MARKETPLACE_CAPABILITY_REQUEST, usePluginsAdministrationTarget } from './usePluginsAdministrationTarget';
+import type { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { usePluginsAdministrationTarget } from './usePluginsAdministrationTarget';
 import {
     resolveMachineAdministrationTargetLabel,
 } from '@/sync/domains/machines/administration/targetSelection';
@@ -23,16 +22,19 @@ import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugin
 import type { ScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilities';
-import type { PluginDevLoopActionIdV1 } from '@happier-dev/protocol';
+import type { PluginDevLoopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
-import { useRegistryItems } from '@/registries/useRegistryItems';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
-import { type PluginProjectionV2, type PluginScaffoldUiMode } from '@happier-dev/protocol';
+import { usePluginCatalog } from './usePluginCatalog';
+import { usePluginInstallReviewSet } from './usePluginInstallReviewSet';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { PluginListingRouteParams } from './pluginsSurfaceRoutes';
+import { type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type PluginScaffoldUiMode } from '@happier-dev/protocol/actions';
 import {
     type PluginUpdatePolicyV1,
 } from '@happier-dev/protocol/marketplace';
@@ -41,10 +43,6 @@ import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurn
 import { Modal } from '@/modal';
 
 import {
-    mergeDiscoverEntries,
-    mergeDiscoverNonInstallableListings,
-    projectRegistryMarketplacePage,
-    registryPluginSourceKind,
     type PluginMarketplaceCatalogEntry,
     type PluginMarketplaceCatalogSourceKind,
     type PluginMarketplaceDiscoverDiagnostic,
@@ -53,18 +51,10 @@ import {
 } from '../readPluginMarketplaceCatalog';
 import { showPluginRegistryProfileSelectionDialog } from '../PluginRegistryProfileSelectionDialog';
 import {
-    usePluginRegistrySourceAdministration,
-    type PluginRegistrySourceAdministrationV1,
-    type MarketplaceSourceRegistryPresentationV1,
-} from './usePluginRegistrySourceAdministration';
-import {
     MARKETPLACE_CAPABILITY_ID,
     readDevelopmentCreateAvailable,
     readDevelopmentSourceInstallAvailable,
-    readDevelopmentPlugins,
-    readInstalledPlugins,
     projectAccountInstalledPlugins,
-    isPluginMutationVisibleAfterRefresh,
     projectPluginMutationResult,
     type PluginMutationResult,
     readPluginCreateResult,
@@ -99,21 +89,14 @@ export type InstalledPluginActionId =
     | 'uninstall'
     | 'forgetTrust';
 
-type ConfirmedPluginChangeAction = 'update' | 'rollback' | 'uninstall' | 'forgetTrust';
-type CommitIntendedPluginChangeAction = 'install' | 'disable' | ConfirmedPluginChangeAction;
-type PluginActionCountsByAuthority = Readonly<Record<string, Readonly<Record<string, number>>>>;
-type DiscoverQueryIntent = Readonly<{
-    text: string;
-    sourceId: string | null;
-    /** A listing page resolves exactly this source-qualified listing through the same query. */
-    pluginId?: string | null;
-}>;
-const EMPTY_DISCOVER_VALUES: readonly never[] = [];
+function pluginActionKey(scopeKey: string, pluginId: string): string { return JSON.stringify([scopeKey, pluginId]); }
 
 export type PluginRoutineOperationSettlement = Readonly<{
     scope: 'installed' | 'discover' | 'pending' | 'development';
     message: string;
     detail?: string;
+    /** The change did not happen (its approval was declined or withdrawn); success is the default. */
+    outcome?: 'withdrawn';
 }>;
 
 export type DevelopmentCreateSettlement =
@@ -146,6 +129,12 @@ function resolvePluginChangeActionLabel(action: PluginMarketplaceActionRequest['
     return t('settingsPlugins.forgetTrust');
 }
 
+function describeDeclinedPluginChange(action: PluginMarketplaceActionRequest['method'], rejected: boolean): string {
+    if (action === 'install') return t(rejected ? 'settingsPlugins.installDeclined' : 'settingsPlugins.installCanceled');
+    if (action === 'update') return t(rejected ? 'settingsPlugins.updateDeclined' : 'settingsPlugins.updateCanceled');
+    return t(rejected ? 'approvals.status.rejected' : 'approvals.status.canceled');
+}
+
 export type PluginSettingsScreenState = Readonly<{
     activeView: PluginSettingsViewId;
     administrationTargetSelection: MachineAdministrationTargetSelectionV1;
@@ -165,6 +154,8 @@ export type PluginSettingsScreenState = Readonly<{
     /** Rejects renderer-originated writes once this exact daemon target retires. */
     isDaemonSettingsTargetCurrent: (target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => boolean;
     discoverError: string | null;
+    discoverFailureStatus?: ReturnType<typeof usePluginCatalog>['discoverFailureStatus'];
+    unresolvedListing: boolean;
     /** Draft search text for the aggregate Discover query. */
     discoverSearchText: string;
     /** The query the shown results answer; null until a query returns, not an empty result. */
@@ -184,11 +175,11 @@ export type PluginSettingsScreenState = Readonly<{
     discoverNextCursor: string | null;
     /** Selectable source chips beside All: enabled configured sources plus community npm. */
     discoverSources: readonly Readonly<{ id: string; title: string; kind: PluginMarketplaceCatalogSourceKind }>[];
-    /** Per-source freshness the daemon actually had when it served the shown page. */
+    /** Freshness from the Account Registry acquisition that supplied the shown page. */
     discoverSourceStatuses: readonly PluginMarketplaceDiscoverSourceStatus[];
     /** Index-wide diagnostics for the shown page; never collapsed into one failure. */
     discoverDiagnostics: readonly PluginMarketplaceDiscoverDiagnostic[];
-    /** Listings the daemon returned that this machine cannot install right now. */
+    /** Registry-policy exclusions, separate from installable metadata. */
     discoverNonInstallable: readonly PluginMarketplaceNonInstallableListing[];
     /** The shown list answers an earlier query than the controls now describe. */
     discoverStale: boolean;
@@ -197,26 +188,19 @@ export type PluginSettingsScreenState = Readonly<{
     /** `null` is aggregate All: the query carries no source filter at all. */
     selectedDiscoverSourceId: string | null;
     loadingMoreDiscover: boolean;
-    /** Daemon-held changes — including ones an Agent prepared — awaiting this user. */
+    /** Daemon applying facts; ordinary approval Artifacts supply the separate Review rows. */
     pendingPluginChanges: readonly PendingPluginChangeListing[];
+    /** The invoking surface presents this same evaluated approval and decision owner. */
+    pluginActionApproval: ReturnType<typeof useMountedActionExecution>['approval'];
+    /** Exact per-Machine approval carriers; the in-place approval owner supplies facts and decisions. */
+    pluginInstallReview: ReturnType<typeof usePluginInstallReviewSet>['review'];
+    runCatalogInstallOnMachines: ReturnType<typeof usePluginInstallReviewSet>['run'];
     routineOperationSettlement: PluginRoutineOperationSettlement | null;
-    decidePendingPluginChange: (pendingChangeId: string, decision: 'approve' | 'reject') => void;
     readOnlySnapshotNotice: PluginReadOnlySnapshotNoticeState | null;
     refreshPluginTruth: () => void;
     isPluginActionInFlight: (pluginId: string) => boolean;
     refreshDiscover: () => void;
     loadingDiscover: boolean;
-    marketplaceSourceRegistry: MarketplaceSourceRegistryPresentationV1 | null;
-    marketplaceSourceRegistryAvailable: boolean;
-    marketplaceSourceRegistryScopeKey: string | null;
-    marketplaceSourceRegistryLoading: boolean;
-    marketplaceSourceRegistryLoadError: boolean;
-    marketplaceSourceRegistryMutationInFlight: boolean;
-    marketplaceSourceRegistryMutationOutcomeUnknown: boolean;
-    refreshMarketplaceSourceRegistry: () => void;
-    upsertMarketplaceSource: PluginRegistrySourceAdministrationV1['upsertSource'];
-    setMarketplaceSourceEnabled: PluginRegistrySourceAdministrationV1['setSourceEnabled'];
-    removeMarketplaceSource: PluginRegistrySourceAdministrationV1['removeSource'];
     pluginProjectionById: ReturnType<typeof useDaemonMergedProjectionInputs>['inputs'] extends infer TInputs
         ? TInputs extends { pluginProjectionById: infer TProjectionById }
             ? TProjectionById
@@ -253,22 +237,22 @@ export type PluginSettingsScreenState = Readonly<{
     setDiscoverSearchText: (value: string) => void;
     setSelectedDiscoverSourceId: (sourceId: string | null) => void;
     /**
-     * Acquires one exact source-qualified listing (a listing page, a deep link) through the one
-     * Discover query, so its Install acts under the same authority as a Browse card's.
+     * Acquires one exact source-qualified listing through the canonical catalog owner.
+     * The selected administration target, not catalog acquisition, owns install execution.
      */
-    openDiscoverListing: (listing: Readonly<{ sourceId: string; pluginId: string }>) => void;
+    openDiscoverListing: (listing: PluginListingRouteParams) => void;
     loadMoreDiscover: () => void;
-    setMarketplaceSourceProfile: PluginRegistrySourceAdministrationV1['setSourceRegistryProfile'];
 }>;
 
-export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean }> = {}): PluginSettingsScreenState {
+export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean; management?: boolean; initialView?: PluginSettingsViewId; listing?: PluginListingRouteParams; initialCatalogSourceId?: string }> = {}): PluginSettingsScreenState {
+    const layoutPresented = useLayoutPresentationActive();
+    const presented = params.focused !== false && layoutPresented;
+    const [activeView, setActiveView] = React.useState<PluginSettingsViewId>(params.initialView ?? 'installed');
+    const managementDemanded = presented && (params.management ?? (activeView === 'installed' || params.listing !== undefined));
     const activeServer = useActiveServerSnapshot();
-    const discoverExecution = useMountedActionExecution(activeServer.serverId);
-    const discoverAccountKey = discoverExecution.binding ? JSON.stringify([
-        discoverExecution.binding.scope.serverId, discoverExecution.binding.scope.accountId,
-    ]) : null;
     const availabilityReader = useActivePluginAccountAvailabilityReader();
     const accountInstalledAdmission = React.useMemo(() => availabilityReader?.readInstalledPlugins() ?? null, [availabilityReader]);
+    const [projectionRefreshKey, setProjectionRefreshKey] = React.useState(0);
     // The one administration-target owner. It supplies the selection, the exact
     // Settings/Secrets record target, and the single currentness fence every
     // asynchronous write re-checks — shared with the deep-linked Settings page
@@ -279,8 +263,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         daemonTransportOnline,
         daemonCacheFreshnessKey,
         machineCapabilities,
-    } = usePluginsAdministrationTarget();
-    const capabilityRequest = MARKETPLACE_CAPABILITY_REQUEST;
+        capabilitiesAccountId,
+        hasCapabilitySnapshot,
+        installedPlugins: administeredInstalledPlugins,
+        developmentPlugins,
+        daemonMergedProjection,
+        projectionInputs,
+    } = usePluginsAdministrationTarget({ enabled: managementDemanded, projectionRefreshKey });
     const administrationTargetSelection = administration.selection;
     const accountServerIdentityId = React.useMemo(
         () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
@@ -289,7 +278,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const executionTarget = administration.executionTarget;
     // Installed controls belong to the selected Machine's Home, which may
     // differ from the Account currently supplying Discover's registry reads.
-    const installedExecution = useMountedActionExecution(executionTarget?.serverId);
+    const installedExecution = useMountedActionExecution(administration.selectedServerIdentityId);
     const selectedServerIdentityId = administration.selectedServerIdentityId;
     const installedAvailabilityReader = usePluginAccountAvailabilityReader(installedExecution.binding?.scope ?? null);
     const executionMachineId = executionTarget?.machine.id ?? null;
@@ -306,95 +295,21 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const resolveCurrentExecutionTarget = administration.resolveCurrentExecutionTarget;
     const isDaemonSettingsTargetCurrent = administration.isTargetCurrent;
 
-    const [activeView, setActiveView] = React.useState<PluginSettingsViewId>('installed');
-    /**
-     * The Discover controls, split into the draft the user is editing and the
-     * query the shown list actually answers.
-     *
-     * They are separate on purpose: typing must not re-query, and the list on
-     * screen must be able to say honestly which text and which source it came
-     * from even after the user has changed the controls again.
-     */
-    const [discoverSearchText, setDiscoverSearchText] = React.useState('');
-    // `null` is aggregate All. Discover opens on All and stays there until the
-    // user picks a chip; no configured "preferred" source silently narrows it.
-    const [selectedDiscoverSourceId, setSelectedDiscoverSourceIdState] = React.useState<string | null>(null);
-    const [desiredDiscoverQuery, setDesiredDiscoverQuery] = React.useState<DiscoverQueryIntent | null>(null);
-    const registryBrowse = useRegistryItems({ kind: 'plugin',
-        ...(desiredDiscoverQuery?.sourceId ? { sourceIds: [desiredDiscoverQuery.sourceId] } : {}),
-        query: desiredDiscoverQuery?.text.trim() ?? '',
-    }, desiredDiscoverQuery !== null && discoverExecution.ready);
-    // Rich cards are a projection of one Account/source snapshot, not authority
-    // to keep a removed or retired source actionable while its replacement fails.
-    const discoverDataKey = discoverAccountKey === null ? null
-        : JSON.stringify([discoverAccountKey, registryBrowse.sourceRevision]);
-    const [acquiredDiscoverQuery, setAcquiredDiscoverQuery] = React.useState<Readonly<{
-        text: string;
-        sourceId: string | null;
-    }> | null>(null);
-    const [discoverEntries, setDiscoverEntries] = React.useState<readonly PluginMarketplaceCatalogEntry[]>([]);
-    const [discoverNextCursor, setDiscoverNextCursor] = React.useState<string | null>(null);
-    const [discoverSourceStatuses, setDiscoverSourceStatuses] = React.useState<
-        readonly PluginMarketplaceDiscoverSourceStatus[]
-    >([]);
-    const [discoverDiagnostics, setDiscoverDiagnostics] = React.useState<
-        readonly PluginMarketplaceDiscoverDiagnostic[]
-    >([]);
-    const [discoverNonInstallable, setDiscoverNonInstallable] = React.useState<
-        readonly PluginMarketplaceNonInstallableListing[]
-    >([]);
-    const [discoverAuthorityKey, setDiscoverAuthorityKey] = React.useState<string | null>(null);
-    const [loadingDiscover, setLoadingDiscover] = React.useState(false);
-    const [loadingMoreDiscover, setLoadingMoreDiscover] = React.useState(false);
-    const [discoverError, setDiscoverError] = React.useState<string | null>(null);
-    const [hasLoadedDiscoverForScope, setHasLoadedDiscoverForScope] = React.useState<string | null>(null);
-    const [projectionRefreshKey, setProjectionRefreshKey] = React.useState(0);
-    const [pluginActionCountByAuthority, setPluginActionCountByAuthority] = React.useState<PluginActionCountsByAuthority>({});
+    const catalog = usePluginCatalog({ enabled: presented && (activeView === 'discover' || params.listing !== undefined), browse: activeView === 'discover',
+        selection: params.listing, initialSourceId: params.initialCatalogSourceId });
+    const { discoverEntries } = catalog;
+    const installReviewSet = usePluginInstallReviewSet({ resolveInstallEntry: catalog.resolveInstallEntry,
+        candidates: administrationTargetSelection.candidates, getSignal: installedExecution.getSignal });
+    const [pluginActionsInFlight, setPluginActionsInFlight] = React.useState<ReadonlySet<string>>(() => new Set());
     const [routineOperationSettlement, setRoutineOperationSettlement] = React.useState<PluginRoutineOperationSettlement | null>(null);
-    const pluginActionCountByAuthorityRef = React.useRef<PluginActionCountsByAuthority>(
-        pluginActionCountByAuthority,
-    );
-
-    const discoverRequestIdRef = React.useRef(0);
+    const pluginActionsInFlightRef = React.useRef(pluginActionsInFlight);
+    const selectedMachineScopeKeyRef = React.useRef(selectedMachineScopeKey);
+    selectedMachineScopeKeyRef.current = selectedMachineScopeKey;
 
     React.useEffect(() => {
         setRoutineOperationSettlement(null);
     }, [selectedMachineScopeKey]);
 
-    const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        machineId: executionMachineId,
-        serverId: executionServerId,
-        enabled: executionTarget !== null,
-        refreshKey: `${projectionRefreshKey}:${daemonCacheFreshnessKey}`,
-    });
-
-    const hasCapabilitySnapshot = (
-        machineCapabilities.state.status === 'loaded'
-        || machineCapabilities.state.status === 'loading'
-        || machineCapabilities.state.status === 'error'
-    ) && machineCapabilities.state.snapshot !== undefined;
-    const currentInstalledPlugins = React.useMemo(
-        () => readInstalledPlugins(machineCapabilities.state),
-        [machineCapabilities.state],
-    );
-    const lastKnownInstalledPluginsRef = React.useRef<Readonly<{
-        scopeKey: string | null;
-        installedPlugins: readonly InstalledPluginEntry[];
-    }>>({ scopeKey: selectedMachineScopeKey, installedPlugins: currentInstalledPlugins });
-    if (lastKnownInstalledPluginsRef.current.scopeKey !== selectedMachineScopeKey) {
-        lastKnownInstalledPluginsRef.current = {
-            scopeKey: selectedMachineScopeKey,
-            installedPlugins: hasCapabilitySnapshot ? currentInstalledPlugins : [],
-        };
-    } else if (hasCapabilitySnapshot) {
-        lastKnownInstalledPluginsRef.current = {
-            scopeKey: selectedMachineScopeKey,
-            installedPlugins: currentInstalledPlugins,
-        };
-    }
-    const administeredInstalledPlugins = hasCapabilitySnapshot
-        ? currentInstalledPlugins
-        : lastKnownInstalledPluginsRef.current.installedPlugins;
     const scopedInstalledPlugins = React.useMemo(() => administeredInstalledPlugins.map(entry => {
         if (entry.machineEnabled === undefined) return entry;
         const accountEnabled = installedAvailabilityReader?.readCurrentAccountEnablement(entry.pluginId) ?? undefined;
@@ -424,28 +339,6 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     // daemon finally asks. The inventory still owns the naming.
     const administrationCandidatesRef = React.useRef(administrationTargetSelection.candidates);
     administrationCandidatesRef.current = administrationTargetSelection.candidates;
-    const currentDevelopmentPlugins = React.useMemo(
-        () => readDevelopmentPlugins(machineCapabilities.state, administeredInstalledPlugins),
-        [administeredInstalledPlugins, machineCapabilities.state],
-    );
-    const lastKnownDevelopmentPluginsRef = React.useRef<Readonly<{
-        scopeKey: string | null;
-        developmentPlugins: readonly DevelopmentPluginEntry[];
-    }>>({ scopeKey: selectedMachineScopeKey, developmentPlugins: currentDevelopmentPlugins });
-    if (lastKnownDevelopmentPluginsRef.current.scopeKey !== selectedMachineScopeKey) {
-        lastKnownDevelopmentPluginsRef.current = {
-            scopeKey: selectedMachineScopeKey,
-            developmentPlugins: hasCapabilitySnapshot ? currentDevelopmentPlugins : [],
-        };
-    } else if (hasCapabilitySnapshot) {
-        lastKnownDevelopmentPluginsRef.current = {
-            scopeKey: selectedMachineScopeKey,
-            developmentPlugins: currentDevelopmentPlugins,
-        };
-    }
-    const developmentPlugins = hasCapabilitySnapshot
-        ? currentDevelopmentPlugins
-        : lastKnownDevelopmentPluginsRef.current.developmentPlugins;
     /**
      * Deliberately not retained across machines like the installed list is: a
      * pending decision belongs to exactly one daemon lifetime, and offering a
@@ -462,6 +355,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             executionMachineId,
             executionServerId,
             daemonCacheFreshnessKey,
+            capabilitiesAccountId,
         )
         : null;
     const daemonOperationAvailability = resolvePluginDaemonOperationsAvailability({
@@ -475,56 +369,6 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const daemonOperationsAvailable = daemonOperationAvailability.projection;
     const daemonOperationsAvailableRef = React.useRef(daemonOperationsAvailable);
     daemonOperationsAvailableRef.current = daemonOperationsAvailable;
-    // Readiness admits a new operation; refreshing its projection does not
-    // retire an issued operation on the same selected daemon.
-    const mutationAuthorityKey = executionTarget && selectedMachineScopeKey
-        ? JSON.stringify([selectedMachineScopeKey, daemonCacheFreshnessKey,
-            executionTarget.machine.installationId, executionTarget.selectionRevision])
-        : null;
-    const mutationAuthorityKeyRef = React.useRef(mutationAuthorityKey);
-    mutationAuthorityKeyRef.current = mutationAuthorityKey;
-    const installLifetime = React.useMemo(() => ({ controller: new AbortController() }), [mutationAuthorityKey]);
-    React.useEffect(() => {
-        if (installLifetime.controller.signal.aborted) installLifetime.controller = new AbortController();
-        const controller = installLifetime.controller;
-        return () => controller.abort();
-    }, [installLifetime]);
-    const reconciliationLifetime = React.useMemo(() => ({ controller: new AbortController() }), [installLifetime, params.focused]);
-    React.useEffect(() => {
-        if (params.focused === false) { reconciliationLifetime.controller.abort(); return; }
-        if (reconciliationLifetime.controller.signal.aborted) reconciliationLifetime.controller = new AbortController();
-        const controller = reconciliationLifetime.controller;
-        return () => controller.abort();
-    }, [params.focused, reconciliationLifetime]);
-    /**
-     * The machine's configured marketplace sources, read through the one
-     * registry owner this screen shares with the Sources & registries
-     * administration screen. Discover only reads it; every write to it is
-     * issued through the same owner — from that screen, or from the registry
-     * selection an install owes, which binds the listing's source there.
-     */
-    const marketplaceSourceRegistryAdministration = usePluginRegistrySourceAdministration({
-        scopeKey: selectedMachineScopeKey,
-        enabled: discoverExecution.ready,
-        focused: params.focused ?? true,
-        executionTarget,
-        resolveCurrentExecutionTarget,
-    });
-    const marketplaceSourceRegistry = marketplaceSourceRegistryAdministration.registry;
-    const setMarketplaceSourceProfile = marketplaceSourceRegistryAdministration.setSourceRegistryProfile;
-    const lastKnownProjectionInputsRef = React.useRef<Readonly<{
-        scopeKey: string | null;
-        inputs: typeof daemonMergedProjection.inputs;
-    }>>({ scopeKey: selectedMachineScopeKey, inputs: daemonMergedProjection.inputs });
-    if (lastKnownProjectionInputsRef.current.scopeKey !== selectedMachineScopeKey) {
-        lastKnownProjectionInputsRef.current = { scopeKey: selectedMachineScopeKey, inputs: null };
-    } else if (daemonMergedProjection.inputs) {
-        lastKnownProjectionInputsRef.current = {
-            scopeKey: selectedMachineScopeKey,
-            inputs: daemonMergedProjection.inputs,
-        };
-    }
-    const projectionInputs = daemonMergedProjection.inputs ?? lastKnownProjectionInputsRef.current.inputs;
     const pluginProjectionById = projectionInputs?.pluginProjectionById ?? {};
     // Account release selection may use an exact Account-hosted source while
     // offline. A daemon execution path, however, is valid only from the live
@@ -547,16 +391,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         ...Object.values(pluginProjectionById).flatMap((plugin) => plugin.diagnostics),
     ], [pluginProjectionById, registryDiagnostics]);
     const readOnlySnapshotNotice = resolvePluginReadOnlySnapshotNotice({
+        hasSelectedTarget: administrationTargetSelection.selectedTarget !== null,
         daemonOperationsAvailable,
         daemonTransportOnline,
         projectionPhase: daemonMergedProjection.phase,
         hasCapabilitySnapshot,
         installedPluginCount: installedPlugins.length,
         developmentPluginCount: developmentPlugins.length,
-        // Account registry reads are current independently of the selected daemon.
-        hasCatalog: false,
-        hasMarketplaceSourceRegistry: false,
-        hasProjectionInputs: projectionInputs !== null,
         targetResolving,
         capabilityReadFailed: machineCapabilities.state.status === 'error'
             || machineCapabilities.state.status === 'not-supported'
@@ -570,185 +411,64 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
      * projection-failure notice's retry go through this one owner.
      */
     const refreshPluginTruth = React.useCallback(() => {
+        if (!managementDemanded) return;
+        const target = administrationTargetSelection.selectedTarget;
+        if (!target) return;
         setProjectionRefreshKey((prev) => prev + 1);
-        const currentTarget = resolveCurrentExecutionTarget(executionTarget);
-        if (!currentTarget) return;
-        if (readOnlySnapshotNotice?.reason === 'installationUnavailable') {
-            machineCapabilities.refresh({ bypassCache: true });
-        }
+        machineCapabilities.refresh({ bypassCache: true });
         publishMachineContributionRegistryProjectionInvalidation({
-            machineId: currentTarget.machine.id,
-            serverId: currentTarget.serverId,
-        });
-    }, [executionTarget, machineCapabilities.refresh, readOnlySnapshotNotice?.reason, resolveCurrentExecutionTarget]);
-    /**
-     * Reconciles one commit-intended mutation whose outcome the daemon could
-     * not confirm, against the exact original target only.
-     *
-     * The refresh re-reads the ORIGINAL target the user acted on — never
-     * another machine, so an ambiguous install cannot be answered by whatever
-     * a different machine happens to have. When the refresh proves the change
-     * landed the user gets the success answer; otherwise they get the truthful
-     * unresolved copy naming the exact machine and server, never a false
-     * failure and never an invitation to retry a change that may have
-     * committed. `probe` is null when no caller-known installed identity
-     * exists (a project-source trust), so the refresh itself is all the
-     * reconciliation that can be offered.
-     */
-    const reconcileCommitIntendedMutation = React.useCallback(async (params: Readonly<{
+            machineId: target.machineId,
+            serverId: target.serverIdentityId,
+        }, 'refresh');
+    }, [managementDemanded, administrationTargetSelection.selectedTarget, machineCapabilities.refresh]);
+    /** An uncertain receipt stays uncertain; refreshed inventory never substitutes for its outcome. */
+    const reportUnknownMutation = React.useCallback((params: Readonly<{
         target: FreshMachineAdministrationExecutionTargetV1;
-        isAuthorityCurrent: () => boolean;
-        settlementScope: PluginRoutineOperationSettlement['scope'];
-        successMessage: string;
         actionLabel: string;
         name: string;
-        probe: Readonly<{
-            method: 'install' | 'update' | 'rollback' | 'uninstall' | 'forgetTrust' | 'disable';
-            pluginId: string;
-            before: InstalledPluginEntry | null;
-            targetVersion: string | null;
-        }> | null;
-    }>): Promise<void> => {
-        const showUnresolvedOutcome = () => {
-            const label = resolveMachineAdministrationTargetLabel({
-                target: params.target.target,
-                candidates: administrationCandidatesRef.current,
-            }) ?? { machine: params.target.machine.id, server: params.target.serverId };
-            Modal.alert(
-                t('settingsPlugins.pluginChangeOutcomeUnknownTitle'),
-                t('settingsPlugins.pluginChangeOutcomeUnknownBody', {
-                    action: params.actionLabel,
-                    name: params.name,
-                    machine: label.machine,
-                    server: label.server,
-                }),
-            );
-        };
-        try {
-            await prefetchMachineCapabilities({
-                machineId: params.target.machine.id,
-                serverId: params.target.serverId,
-                cacheKeySalt: daemonCacheFreshnessKey,
-                signal: reconciliationLifetime.controller.signal,
-                request: {
-                    ...capabilityRequest,
-                    bypassCache: true,
-                },
-            });
-        } catch {
-            if (!reconciliationLifetime.controller.signal.aborted && params.isAuthorityCurrent()) {
-                refreshPluginTruth();
-                showUnresolvedOutcome();
-            }
-            return;
-        }
-        if (reconciliationLifetime.controller.signal.aborted || !params.isAuthorityCurrent()) return;
-
-        const refreshedState = getMachineCapabilitiesCacheState(
-            params.target.machine.id,
-            params.target.serverId,
-            daemonCacheFreshnessKey,
-        );
+    }>): void => {
         refreshPluginTruth();
-        const probe = params.probe;
-        if (refreshedState?.status !== 'loaded' || probe === null) {
-            showUnresolvedOutcome();
-            return;
-        }
-        const installedAfter = readInstalledPlugins(refreshedState)
-            .find((entry) => entry.pluginId === probe.pluginId) ?? null;
-        if (isPluginMutationVisibleAfterRefresh({
-            method: probe.method,
-            pluginId: probe.pluginId,
-            before: probe.before,
-            after: installedAfter,
-            targetVersion: probe.targetVersion,
-        })) {
-            setRoutineOperationSettlement({
-                scope: params.settlementScope,
-                message: params.successMessage,
-            });
-        } else {
-            showUnresolvedOutcome();
-        }
-    }, [capabilityRequest, daemonCacheFreshnessKey, reconciliationLifetime, refreshPluginTruth]);
-    /** Source chips are the enabled Account union, including built-ins. */
-    const discoverSources = React.useMemo(() => marketplaceSourceRegistryAdministration.sources
-        .filter(source => source.enabled)
-        .map(source => ({ id: source.id, title: source.title, kind: registryPluginSourceKind(source) })),
-        [marketplaceSourceRegistryAdministration.sources]);
+        const label = resolveMachineAdministrationTargetLabel({
+            target: params.target.target, candidates: administrationCandidatesRef.current,
+        }) ?? { machine: params.target.machine.id, server: params.target.serverId };
+        Modal.alert(t('settingsPlugins.pluginChangeOutcomeUnknownTitle'),
+            t('settingsPlugins.pluginChangeOutcomeUnknownBody', {
+                action: params.actionLabel, name: params.name, machine: label.machine, server: label.server,
+            }));
+    }, [refreshPluginTruth]);
     const canRefreshInstalledPlugins = daemonOperationsAvailable;
-    const canRunDiscoverActions = canRefreshInstalledPlugins && discoverAuthorityKey !== null
-        && discoverAuthorityKey === discoverDataKey;
-    const canRefreshDiscover = discoverExecution.ready && !loadingDiscover && !registryBrowse.loading && !loadingMoreDiscover;
-    const discoverStale = registryBrowse.stale || acquiredDiscoverQuery !== null
-        && (acquiredDiscoverQuery.text !== discoverSearchText.trim()
-            || acquiredDiscoverQuery.sourceId !== selectedDiscoverSourceId);
+    const canRunDiscoverActions = canRefreshInstalledPlugins && catalog.current;
 
-    // Discovery is Account-owned and survives a selected install-machine change.
-    React.useEffect(() => {
-        discoverRequestIdRef.current += 1;
-        setLoadingDiscover(false); setLoadingMoreDiscover(false);
-        setDiscoverEntries([]); setDiscoverNextCursor(null); setDiscoverSourceStatuses([]);
-        setDiscoverDiagnostics([]); setDiscoverNonInstallable([]); setAcquiredDiscoverQuery(null);
-        setSelectedDiscoverSourceIdState(null); setDesiredDiscoverQuery(null);
-        setDiscoverAuthorityKey(null); setDiscoverError(null); setHasLoadedDiscoverForScope(null);
-    }, [discoverAccountKey]);
-
-    const markPluginActionStarted = React.useCallback((authorityKey: string, pluginId: string) => {
+    const markPluginActionStarted = React.useCallback((scopeKey: string, pluginId: string) => {
         setRoutineOperationSettlement(null);
-        const authorityCounts = pluginActionCountByAuthorityRef.current[authorityKey] ?? {};
-        const next = {
-            ...pluginActionCountByAuthorityRef.current,
-            [authorityKey]: {
-                ...authorityCounts,
-                [pluginId]: (authorityCounts[pluginId] ?? 0) + 1,
-            },
-        };
-        pluginActionCountByAuthorityRef.current = next;
-        setPluginActionCountByAuthority(next);
+        const next = new Set(pluginActionsInFlightRef.current).add(pluginActionKey(scopeKey, pluginId));
+        pluginActionsInFlightRef.current = next;
+        setPluginActionsInFlight(next);
     }, []);
 
-    const markPluginActionFinished = React.useCallback((authorityKey: string, pluginId: string) => {
-        const authorityCounts = pluginActionCountByAuthorityRef.current[authorityKey];
-        if (!authorityCounts) return;
-        const nextCount = (authorityCounts[pluginId] ?? 0) - 1;
-        if (nextCount > 0) {
-            const next = {
-                ...pluginActionCountByAuthorityRef.current,
-                [authorityKey]: {
-                    ...authorityCounts,
-                    [pluginId]: nextCount,
-                },
-            };
-            pluginActionCountByAuthorityRef.current = next;
-            setPluginActionCountByAuthority(next);
-            return;
-        }
-        const nextAuthorityCounts = { ...authorityCounts };
-        delete nextAuthorityCounts[pluginId];
-        const nextCountsByAuthority = { ...pluginActionCountByAuthorityRef.current };
-        if (Object.keys(nextAuthorityCounts).length === 0) {
-            delete nextCountsByAuthority[authorityKey];
-        } else {
-            nextCountsByAuthority[authorityKey] = nextAuthorityCounts;
-        }
-        pluginActionCountByAuthorityRef.current = nextCountsByAuthority;
-        setPluginActionCountByAuthority(nextCountsByAuthority);
+    const markPluginActionFinished = React.useCallback((scopeKey: string, pluginId: string) => {
+        const next = new Set(pluginActionsInFlightRef.current);
+        next.delete(pluginActionKey(scopeKey, pluginId));
+        pluginActionsInFlightRef.current = next;
+        setPluginActionsInFlight(next);
     }, []);
 
     const isPluginActionInFlight = React.useCallback((pluginId: string) => {
-        if (!mutationAuthorityKey) return false;
-        return (pluginActionCountByAuthorityRef.current[mutationAuthorityKey]?.[pluginId] ?? 0) > 0;
-    }, [mutationAuthorityKey, pluginActionCountByAuthority]);
+        return selectedMachineScopeKey !== null && pluginActionsInFlightRef.current.has(pluginActionKey(selectedMachineScopeKey, pluginId));
+    }, [selectedMachineScopeKey, pluginActionsInFlight]);
+    // Withdrawal hides a receipt from a different Account/view; it never aborts admitted daemon work.
+    const captureMutationPublication = React.useCallback(() => {
+        const account = captureActiveServerAccountScopeCurrentness();
+        return () => account.isCurrent() && installedExecution.isCurrent()
+            && selectedMachineScopeKeyRef.current === selectedMachineScopeKey;
+    }, [installedExecution.isCurrent, selectedMachineScopeKey]);
 
     const runCatalogAction = React.useCallback((params: PluginMarketplaceActionRequest) => {
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
-        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
+        const isAuthorityCurrent = captureMutationPublication();
         if (
             !daemonOperationsAvailableRef.current
-            || !mutationAuthorityKey
-            || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !selectedMachineScopeKey
             || !initialTarget
             || isPluginActionInFlight(params.pluginId)
         ) {
@@ -758,11 +478,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         // Only an exact catalog install is answerable from a listing. An update is
         // answered by the installed record at its canonical owner, so the listing
         // never becomes that action's authority or its success target.
-        const exactInstallEntry = params.method === 'install'
-            ? discoverEntries.find((entry) => (
-                entry.id === params.pluginId && entry.sourceId === params.sourceId
-            )) ?? null
-            : null;
+        const exactInstallEntry = params.method === 'install' ? catalog.resolveInstallEntry(params) : null;
         if (
             params.method === 'rollback'
             && installedBefore?.rollbackAvailability !== 'available'
@@ -771,9 +487,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
         if (params.method === 'install') {
             if (
-                discoverAuthorityKey !== discoverDataKey
-                || exactInstallEntry?.installable !== true
-                || !exactInstallEntry.version
+                !exactInstallEntry
                 || installedBefore !== null
             ) {
                 return;
@@ -794,21 +508,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
 
         void (async () => {
-            markPluginActionStarted(mutationAuthorityKey, params.pluginId);
+            markPluginActionStarted(selectedMachineScopeKey, params.pluginId);
             try {
-                const isAuthorityCurrent = () => (
-                    accountCurrentness.isCurrent()
-                    && mutationAuthorityKeyRef.current === mutationAuthorityKey
-                    && resolveCurrentExecutionTarget(initialTarget) !== null
-                );
-                const commitAction: CommitIntendedPluginChangeAction | null = params.method === 'install'
-                    || params.method === 'update'
-                    || params.method === 'rollback'
-                    || params.method === 'uninstall'
-                    || params.method === 'disable'
-                    || params.method === 'forgetTrust'
-                    ? params.method
-                    : null;
                 const showMutationFailure = (outcome: string, reason: string | null) => {
                     const action = resolvePluginChangeActionLabel(params.method);
                     Modal.alert(
@@ -822,29 +523,12 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                                 : t('settingsPlugins.marketplaceChangeDecisionFailed', { action, outcome }),
                     );
                 };
-                const isMutationOutcomeUnknown = (code: string | undefined) => code === 'outcomeUnknown' || code === 'outcome_uncertain';
-                /**
-                 * Reconciliation could not establish whether the change landed.
-                 * That is not the same fact as "it failed": the daemon may have
-                 * committed it. The shared reconciler re-reads only the exact
-                 * original target and answers with success or the truthful
-                 * unresolved copy — never a false failure, never an invitation
-                 * to retry a change that may have committed.
-                 */
-                const reconcileAmbiguousMutation = async (targetVersion: string | null) => {
-                    await reconcileCommitIntendedMutation({
+                const isMutationOutcomeUnknown = (code: string | undefined) => code === 'outcomeUnknown' || isActionOutcomeUnknownErrorCodeV1(code);
+                const reportAmbiguousMutation = () => {
+                    reportUnknownMutation({
                         target: initialTarget,
-                        isAuthorityCurrent,
-                        settlementScope: params.method === 'install' ? 'discover' : 'installed',
-                        successMessage: t('common.done'),
                         actionLabel: resolvePluginChangeActionLabel(params.method),
                         name: installedBefore?.title ?? exactInstallEntry?.title ?? params.pluginId,
-                        probe: commitAction ? {
-                            method: commitAction,
-                            pluginId: params.pluginId,
-                            before: installedBefore,
-                            targetVersion,
-                        } : null,
                     });
                 };
                 const requestChange = async (managedResourceDispositions?: readonly ManagedResourceDispositionV1[]): Promise<
@@ -853,7 +537,16 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                         | Readonly<{ ok: true; result: PluginMutationResult }> }
                 > => {
                     const actionFailure = (execution: ActionExecuteFailure, actionId: PluginDevLoopActionIdV1) => {
-                        if (isActionApprovalDeclinedErrorCode(execution.errorCode) || !isAuthorityCurrent()) {
+                        if (!isAuthorityCurrent()) {
+                            return { supported: false as const, reason: 'cancelled' as const };
+                        }
+                        if (isActionApprovalDeclinedErrorCode(execution.errorCode)) {
+                            setRoutineOperationSettlement({
+                                scope: params.method === 'install' ? 'discover' : 'installed',
+                                // The settlement names what did not happen, not only the approval's status.
+                                message: describeDeclinedPluginChange(params.method, execution.errorCode === 'approval_rejected'),
+                                outcome: 'withdrawn',
+                            });
                             return { supported: false as const, reason: 'cancelled' as const };
                         }
                         if (!presentActionTurnedOffNoticeIfOff(execution, actionId)
@@ -876,9 +569,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             if (!actionInput) return { supported: true as const, response: {
                                 ok: false as const, error: { code: 'install_unavailable', message: t('common.unavailable') },
                             } };
-                            const execute = params.method === 'install' ? discoverExecution.execute : installedExecution.execute;
-                            const execution = await execute('plugins.install', actionInput,
-                                { signal: installLifetime.controller.signal });
+                            const execution = await installedExecution.execute('plugins.install', actionInput);
                             if (!execution.ok) return actionFailure(execution, 'plugins.install');
                             // `plugins.install` resumes only after its ordinary
                             // approval Artifact settles. Project that terminal
@@ -898,16 +589,15 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             ...(params.scope ? { scope: params.scope } : {}),
                             ...(params.policy ? { policy: params.policy } : {}),
                             ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
-                        }, { signal: installLifetime.controller.signal });
+                        });
                         if (!execution.ok) return actionFailure(execution, actionId[params.method]);
                         return { supported: true as const, response: { ok: true as const,
                             result: projectPluginMutationResult(execution.result, params.method, params.pluginId) } };
                     } catch {
-                        if (installLifetime.controller.signal.aborted || !isAuthorityCurrent()) {
+                        if (!isAuthorityCurrent()) {
                             return { supported: false, reason: 'cancelled' };
                         }
-                        // A lost response may follow an issued mutation. Reuse
-                        // exact-target reconciliation; never replay the effect.
+                        // A lost response may follow a commit. Report uncertainty without replaying the effect.
                         return { supported: true as const, response: { ok: false as const,
                             error: { code: 'outcomeUnknown', message: t('common.requestFailed') } } };
                     }
@@ -949,15 +639,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                         },
                         daemonOperationsAvailable: daemonAdministrationAvailable,
                         targetSelection: administrationTargetSelection,
-                        sourceRegistry: {
-                            scopeKey: selectedMachineScopeKey,
-                            executionTarget: initialTarget,
-                            resolveCurrentExecutionTarget,
-                        },
                     });
-                    // The selection may have rebound this machine's source; the
-                    // screen's own registry read is refreshed either way.
-                    marketplaceSourceRegistryAdministration.refresh();
+                    // The profile dialog owns source mutation and its existing revision publication.
                     if (!proceed || !isAuthorityCurrent()) return;
                     response = await requestChange();
                     if (!isAuthorityCurrent()) return;
@@ -968,24 +651,24 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 }
                 if (!response.response.ok) {
                     if (isMutationOutcomeUnknown(response.response.error.code)) {
-                        await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
+                        reportAmbiguousMutation();
                     }
                     return;
                 }
 
                 const changeKind = response.response.result.kind;
                 if (changeKind === 'cancelled') return;
-                const disabledNoop = response.response.result.disabledNoop;
+                const disabledNoop = params.method === 'disable'
+                    && response.response.result.disabledNoop;
                 if (changeKind !== 'committed' && !disabledNoop) {
                     if (changeKind === 'outcomeUnknown') {
-                        await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
+                        reportAmbiguousMutation();
                     } else {
                         showMutationFailure(
                             changeKind ?? 'invalid-response',
                             response.response.result.failureReason,
                         );
                         if (changeKind === 'dataRemovalPartial') {
-                            machineCapabilities.refresh({ bypassCache: true });
                             refreshPluginTruth();
                         }
                     }
@@ -995,13 +678,12 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     scope: params.method === 'install' ? 'discover' : 'installed',
                     message: t('common.done'),
                 });
-                machineCapabilities.refresh({ bypassCache: true });
                 refreshPluginTruth();
             } finally {
-                markPluginActionFinished(mutationAuthorityKey, params.pluginId);
+                markPluginActionFinished(selectedMachineScopeKey, params.pluginId);
             }
         })();
-    }, [administrationTargetSelection, daemonAdministrationAvailable, discoverDataKey, discoverAuthorityKey, discoverEntries, discoverExecution.execute, executionTarget, installedExecution.execute, installLifetime, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, marketplaceSourceRegistryAdministration.refresh, mutationAuthorityKey, reconcileCommitIntendedMutation, refreshPluginTruth, resolveCurrentExecutionTarget, selectedMachineScopeKey]);
+    }, [administrationTargetSelection, daemonAdministrationAvailable, catalog.resolveInstallEntry, executionTarget, installedExecution.execute, captureMutationPublication, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, reportUnknownMutation, refreshPluginTruth, resolveCurrentExecutionTarget, selectedMachineScopeKey]);
 
     const runInstalledPluginAction = React.useCallback((
         action: InstalledPluginActionId,
@@ -1011,8 +693,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         const installed = installedPluginByIdRef.current.get(pluginId) ?? null;
         if (
             !installed
-            || !mutationAuthorityKey
-            || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !selectedMachineScopeKey
             || isPluginActionInFlight(pluginId)
         ) {
             return;
@@ -1031,7 +712,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         // Action policy owns confirmation. Retained-resource responsibility is
         // a distinct daemon-issued review handled by the mutation loop above.
         runCatalogAction({ method: action, pluginId, ...(scope ? { scope } : {}) });
-    }, [isPluginActionInFlight, mutationAuthorityKey, runCatalogAction]);
+    }, [isPluginActionInFlight, selectedMachineScopeKey, runCatalogAction]);
 
     const setInstalledPluginUpdatePolicy = React.useCallback((
         pluginId: string,
@@ -1087,10 +768,10 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const runDevelopmentAction = React.useCallback((action: 'test' | 'pack' | 'unregister', sourceRootPath: string) => {
         const development = developmentPlugins.find((entry) => entry.sourceRootPath === sourceRootPath) ?? null;
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
+        const isAuthorityCurrent = captureMutationPublication();
         if (
             !daemonOperationsAvailableRef.current
-            || !mutationAuthorityKey
-            || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !selectedMachineScopeKey
             || !initialTarget
             || !development
             || development.actions[action] !== true
@@ -1100,14 +781,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
 
         void (async () => {
-            markPluginActionStarted(mutationAuthorityKey, sourceRootPath);
+            markPluginActionStarted(selectedMachineScopeKey, sourceRootPath);
             try {
                 const succeeded = await invokeDevelopmentAction(
                     action === 'pack' ? 'plugins.pack' : action === 'test' ? 'plugins.dev.test' : 'plugins.dev.unregister',
                     action === 'pack' ? { locator: development.sourceRootPath } : { projectRoot: development.sourceRootPath },
                     initialTarget,
-                    () => mutationAuthorityKeyRef.current === mutationAuthorityKey
-                        && resolveCurrentExecutionTarget(initialTarget) !== null,
+                    isAuthorityCurrent,
                 );
                 if (succeeded) {
                     setRoutineOperationSettlement({
@@ -1123,23 +803,22 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     action === 'unregister'
                     && succeeded
                 ) {
-                    machineCapabilities.refresh({ bypassCache: true });
                     refreshPluginTruth();
                 }
             } finally {
-                markPluginActionFinished(mutationAuthorityKey, sourceRootPath);
+                markPluginActionFinished(selectedMachineScopeKey, sourceRootPath);
             }
         })();
-    }, [developmentPlugins, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, refreshPluginTruth, resolveCurrentExecutionTarget]);
+    }, [developmentPlugins, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, selectedMachineScopeKey, captureMutationPublication, refreshPluginTruth, resolveCurrentExecutionTarget]);
 
     const resolveDevelopmentEditTarget = React.useCallback((
         pluginId: string,
     ): Promise<DevelopmentEditTargetSettlement> => {
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
+        const isAuthorityCurrent = captureMutationPublication();
         if (
             !daemonOperationsAvailableRef.current
-            || !mutationAuthorityKey
-            || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !selectedMachineScopeKey
             || !initialTarget
             || !developmentPlugins.some((entry) => entry.installed?.pluginId === pluginId)
         ) {
@@ -1147,10 +826,6 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
 
         return (async (): Promise<DevelopmentEditTargetSettlement> => {
-            const isAuthorityCurrent = () => (
-                mutationAuthorityKeyRef.current === mutationAuthorityKey
-                && resolveCurrentExecutionTarget(initialTarget) !== null
-            );
             const response = await invokeWithAlerts({
                 machineId: initialTarget.machine.id,
                 serverId: initialTarget.serverId,
@@ -1182,7 +857,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             }
             return { status: 'success', target };
         })();
-    }, [developmentPlugins, executionTarget, invokeWithAlerts, mutationAuthorityKey, resolveCurrentExecutionTarget]);
+    }, [developmentPlugins, executionTarget, invokeWithAlerts, selectedMachineScopeKey, captureMutationPublication, resolveCurrentExecutionTarget]);
 
     const runDevelopmentCreate = React.useCallback((params: Readonly<{
         targetDir: string;
@@ -1191,10 +866,10 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         ui?: PluginScaffoldUiMode;
     }>): Promise<DevelopmentCreateSettlement> => {
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
+        const isAuthorityCurrent = captureMutationPublication();
         if (
             !daemonOperationsAvailableRef.current
-            || !mutationAuthorityKey
-            || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !selectedMachineScopeKey
             || !developmentCreateAvailable
             || !initialTarget
             || isPluginActionInFlight(params.pluginId)
@@ -1203,19 +878,15 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
 
         return (async (): Promise<DevelopmentCreateSettlement> => {
-            markPluginActionStarted(mutationAuthorityKey, params.pluginId);
+            markPluginActionStarted(selectedMachineScopeKey, params.pluginId);
             try {
-                const isAuthorityCurrent = () => (
-                    mutationAuthorityKeyRef.current === mutationAuthorityKey
-                    && resolveCurrentExecutionTarget(initialTarget) !== null
-                );
                 const execution = await installedExecution.execute('plugins.scaffold', {
                     machineId: initialTarget.machine.id,
                     targetDir: params.targetDir,
                     name: params.displayName,
                     id: params.pluginId,
                     ...(params.ui ? { ui: params.ui } : {}),
-                }, { signal: installLifetime.controller.signal });
+                });
                 if (!isAuthorityCurrent()) {
                     return { status: 'unavailable', reason: 'authorityChanged' };
                 }
@@ -1240,19 +911,19 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 }
                 return { status: 'success', created };
             } finally {
-                markPluginActionFinished(mutationAuthorityKey, params.pluginId);
+                markPluginActionFinished(selectedMachineScopeKey, params.pluginId);
             }
         })();
-    }, [developmentCreateAvailable, executionTarget, installedExecution.execute, installLifetime, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, resolveCurrentExecutionTarget]);
+    }, [developmentCreateAvailable, executionTarget, installedExecution.execute, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, selectedMachineScopeKey, captureMutationPublication, resolveCurrentExecutionTarget]);
 
     /** Adopts an explicit source through the same development Action used by the CLI and Agents. */
     const runDevelopmentSourceInstall = React.useCallback((sourceRootPath: string) => {
         const trimmedSourceRootPath = sourceRootPath.trim();
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
+        const isAuthorityCurrent = captureMutationPublication();
         if (
             !daemonOperationsAvailableRef.current
-            || !mutationAuthorityKey
-            || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !selectedMachineScopeKey
             || !initialTarget
             || !trimmedSourceRootPath
             || !developmentSourceInstallAvailable
@@ -1260,14 +931,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         ) return;
 
         void (async () => {
-            markPluginActionStarted(mutationAuthorityKey, trimmedSourceRootPath);
+            markPluginActionStarted(selectedMachineScopeKey, trimmedSourceRootPath);
             try {
                 const succeeded = await invokeDevelopmentAction(
                     'plugins.dev.submit',
                     { projectRoot: trimmedSourceRootPath },
                     initialTarget,
-                    () => mutationAuthorityKeyRef.current === mutationAuthorityKey
-                        && resolveCurrentExecutionTarget(initialTarget) !== null,
+                    isAuthorityCurrent,
                 );
                 if (!succeeded) return;
                 setRoutineOperationSettlement({
@@ -1275,109 +945,12 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     message: t('settingsPlugins.developmentSourceInstallSucceeded'),
                     detail: trimmedSourceRootPath,
                 });
-                machineCapabilities.refresh({ bypassCache: true });
                 refreshPluginTruth();
             } finally {
-                markPluginActionFinished(mutationAuthorityKey, trimmedSourceRootPath);
+                markPluginActionFinished(selectedMachineScopeKey, trimmedSourceRootPath);
             }
         })();
-    }, [developmentSourceInstallAvailable, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, refreshPluginTruth, resolveCurrentExecutionTarget]);
-    // Pending trust questions are approval Artifacts in Inbox. This screen only
-    // projects daemon-owned applying rows, so it intentionally has no decision
-    // transport of its own.
-    const decidePendingPluginChange = React.useCallback(() => {}, []);
-
-    // Registry pages own source cursors and placement. This effect obtains the
-    // published detail needed by the retained cards; install admission stays on
-    // the currently selected machine's existing review pipeline.
-    React.useEffect(() => {
-        const requestId = ++discoverRequestIdRef.current;
-        if (!desiredDiscoverQuery || !discoverAccountKey || !discoverExecution.ready
-            || registryBrowse.loading || registryBrowse.stale) return;
-        const query = desiredDiscoverQuery;
-        setLoadingDiscover(true);
-        void (async () => {
-            try {
-                if (registryBrowse.error) throw new Error(registryBrowse.error);
-                const outcomes = await Promise.allSettled(registryBrowse.items.map(async summary => {
-                    const result = await discoverExecution.execute('registries.items.read', {
-                        kind: 'plugin', sourceId: summary.sourceId, itemId: summary.itemId,
-                        ...(summary.version ? { version: summary.version } : {}),
-                    });
-                    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                    return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(result.result).item;
-                }));
-                if (requestId !== discoverRequestIdRef.current || !discoverExecution.isCurrent()) return;
-                const items = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []);
-                const readFailures: PluginMarketplaceDiscoverDiagnostic[] = outcomes.flatMap((outcome, index) => {
-                    if (outcome.status === 'fulfilled') return [];
-                    const summary = registryBrowse.items[index]!;
-                    const source = marketplaceSourceRegistryAdministration.sources.find(source => source.id === summary.sourceId);
-                    return [{ id: 'read:' + summary.sourceId + ':' + summary.itemId, sourceId: summary.sourceId,
-                        sourceTitle: source?.title ?? null, code: 'registry_item_unavailable',
-                        message: t('settingsPlugins.discover.diagnostic.recovery') }];
-                });
-                const page = projectRegistryMarketplacePage({ items, pages: registryBrowse.pages,
-                    sources: marketplaceSourceRegistryAdministration.sources });
-                setDiscoverDiagnostics([...page.diagnostics, ...readFailures]);
-                setDiscoverSourceStatuses(page.sources);
-                if (items.length === 0 && registryBrowse.items.length > 0) throw new Error('registry_item_unavailable');
-                setDiscoverAuthorityKey(discoverDataKey);
-                setDiscoverNextCursor(page.nextCursor);
-                setAcquiredDiscoverQuery({ text: query.text.trim(), sourceId: query.sourceId });
-                setDiscoverEntries(mergeDiscoverEntries([], query.pluginId
-                    ? page.entries.filter(entry => entry.id === query.pluginId) : page.entries));
-                setDiscoverNonInstallable(mergeDiscoverNonInstallableListings([], query.pluginId
-                    ? page.nonInstallable.filter(entry => entry.pluginId === query.pluginId) : page.nonInstallable));
-                setDiscoverError(null);
-            } catch {
-                if (requestId === discoverRequestIdRef.current && discoverExecution.isCurrent()) {
-                    setDiscoverError(t('settingsPlugins.discover.diagnostic.recovery'));
-                }
-            } finally {
-                if (requestId === discoverRequestIdRef.current && discoverExecution.isCurrent()) setLoadingDiscover(false);
-            }
-        })();
-        return () => { discoverRequestIdRef.current += 1; };
-    }, [desiredDiscoverQuery, discoverAccountKey, discoverDataKey, discoverExecution.execute, discoverExecution.isCurrent, discoverExecution.ready,
-        registryBrowse.items, registryBrowse.pages, registryBrowse.loading, registryBrowse.stale, registryBrowse.error,
-        marketplaceSourceRegistryAdministration.sources]);
-
-    const requestDiscoverQuery = React.useCallback((query: DiscoverQueryIntent) => {
-        setDiscoverNextCursor(null);
-        setDesiredDiscoverQuery(query);
-        if (desiredDiscoverQuery?.text === query.text && desiredDiscoverQuery.sourceId === query.sourceId
-            && desiredDiscoverQuery.pluginId === query.pluginId) void registryBrowse.refresh();
-    }, [desiredDiscoverQuery, registryBrowse.refresh]);
-    const refreshDiscover = React.useCallback(() => {
-        requestDiscoverQuery({ text: discoverSearchText, sourceId: selectedDiscoverSourceId });
-    }, [discoverSearchText, selectedDiscoverSourceId, requestDiscoverQuery]);
-    const setSelectedDiscoverSourceId = React.useCallback((sourceId: string | null) => {
-        setSelectedDiscoverSourceIdState(sourceId);
-        requestDiscoverQuery({ text: discoverSearchText, sourceId });
-    }, [discoverSearchText, requestDiscoverQuery]);
-    const clearDiscoverSearch = React.useCallback(() => {
-        setDiscoverSearchText('');
-        requestDiscoverQuery({ text: '', sourceId: selectedDiscoverSourceId });
-    }, [requestDiscoverQuery, selectedDiscoverSourceId]);
-    const openDiscoverListing = React.useCallback((listing: Readonly<{ sourceId: string; pluginId: string }>) => {
-        setSelectedDiscoverSourceIdState(listing.sourceId);
-        requestDiscoverQuery({ text: '', sourceId: listing.sourceId, pluginId: listing.pluginId });
-    }, [requestDiscoverQuery]);
-    const loadMoreDiscover = React.useCallback(() => {
-        if (!registryBrowse.hasNextPage || registryBrowse.loading || loadingMoreDiscover) return;
-        setLoadingMoreDiscover(true);
-        void registryBrowse.nextPage().catch(() => {
-            if (discoverExecution.isCurrent()) setDiscoverError(t('settingsPlugins.discover.diagnostic.recovery'));
-        }).finally(() => { if (discoverExecution.isCurrent()) setLoadingMoreDiscover(false); });
-    }, [registryBrowse.hasNextPage, registryBrowse.loading, registryBrowse.nextPage, loadingMoreDiscover, discoverExecution.isCurrent]);
-    React.useEffect(() => {
-        if (activeView !== 'discover' || !discoverExecution.ready || !discoverAccountKey) return;
-        if (hasLoadedDiscoverForScope === discoverAccountKey) return;
-        setHasLoadedDiscoverForScope(discoverAccountKey);
-        refreshDiscover();
-    }, [activeView, discoverExecution.ready, discoverAccountKey, hasLoadedDiscoverForScope, refreshDiscover]);
-
+    }, [developmentSourceInstallAvailable, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, selectedMachineScopeKey, captureMutationPublication, refreshPluginTruth, resolveCurrentExecutionTarget]);
     return {
         activeView,
         administrationTargetSelection,
@@ -1390,20 +963,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         executionMachineId,
         executionMachineHomeDir,
         isDaemonSettingsTargetCurrent,
-        discoverEntries: discoverExecution.ready && discoverAuthorityKey === discoverDataKey ? discoverEntries : EMPTY_DISCOVER_VALUES,
-        discoverNextCursor: discoverExecution.ready && discoverAuthorityKey === discoverDataKey ? discoverNextCursor : null,
-        discoverSources,
-        discoverSourceStatuses: discoverExecution.ready && discoverAuthorityKey === discoverDataKey ? discoverSourceStatuses : EMPTY_DISCOVER_VALUES,
-        discoverDiagnostics: discoverExecution.ready && discoverAuthorityKey === discoverDataKey ? discoverDiagnostics : EMPTY_DISCOVER_VALUES,
-        discoverNonInstallable: discoverExecution.ready && discoverAuthorityKey === discoverDataKey ? discoverNonInstallable : EMPTY_DISCOVER_VALUES,
-        discoverStale,
-        selectedDiscoverSourceId,
-        loadingMoreDiscover,
-        discoverError,
-        discoverSearchText,
-        discoverResultsSearchText: acquiredDiscoverQuery?.text ?? null,
-        clearDiscoverSearch,
-        canRefreshDiscover,
+        ...catalog,
         canRunDiscoverActions,
         canRefreshInstalledPlugins,
         daemonOperationsAvailable,
@@ -1414,22 +974,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         installedPluginById,
         installedPlugins,
         pendingPluginChanges,
+        pluginActionApproval: installedExecution.approval,
+        pluginInstallReview: installReviewSet.review,
+        runCatalogInstallOnMachines: installReviewSet.run,
         routineOperationSettlement,
-        decidePendingPluginChange,
         readOnlySnapshotNotice,
         refreshPluginTruth,
         isPluginActionInFlight,
-        refreshDiscover,
-        loadMoreDiscover,
-        openDiscoverListing,
-        loadingDiscover: loadingDiscover || registryBrowse.loading,
-        marketplaceSourceRegistry,
-        marketplaceSourceRegistryAvailable: marketplaceSourceRegistryAdministration.available,
-        marketplaceSourceRegistryScopeKey: discoverAccountKey,
-        marketplaceSourceRegistryLoading: marketplaceSourceRegistryAdministration.loading,
-        marketplaceSourceRegistryLoadError: marketplaceSourceRegistryAdministration.loadError,
-        marketplaceSourceRegistryMutationInFlight: marketplaceSourceRegistryAdministration.mutationInFlight,
-        marketplaceSourceRegistryMutationOutcomeUnknown: marketplaceSourceRegistryAdministration.mutationOutcomeUnknown,
         pluginProjectionById,
         pluginProjectionV2,
         pluginTruthSettled,
@@ -1443,12 +994,5 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         runInstalledPluginAction,
         setInstalledPluginUpdatePolicy,
         setActiveView,
-        setDiscoverSearchText,
-        setSelectedDiscoverSourceId,
-        setMarketplaceSourceProfile,
-        refreshMarketplaceSourceRegistry: marketplaceSourceRegistryAdministration.refresh,
-        upsertMarketplaceSource: marketplaceSourceRegistryAdministration.upsertSource,
-        setMarketplaceSourceEnabled: marketplaceSourceRegistryAdministration.setSourceEnabled,
-        removeMarketplaceSource: marketplaceSourceRegistryAdministration.removeSource,
     };
 }

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { expect, it, vi, onTestFailed, onTestFinished } from 'vitest';
-import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainPromptLibraryCatalogHomeFixture, createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -11,21 +11,22 @@ import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@h
 import { SkillLockV1Schema, encodeSkillRevisionV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { listRegistrySourcesV1, projectPluginRegistrySourceDeclarationV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, RegistryFetchRequestV1Schema, type RegistryFetchRequestV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
+import { listRegistrySourcesV1, projectPluginRegistrySourceDeclarationV1, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, RegistryFetchErrorV1, RegistryFetchRequestV1Schema, type RegistryFetchRequestV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineBootstrapV1Schema,
-    ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionResponseEnvelopeV1Schema, projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { checkRegistryUpstreamV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { checkRegistryAppUpdatesV1, checkRegistryUpstreamV1, createRegistryHostV1, type RegistryRemoteSourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createUiRegistryHttpV1 } from './registryHttpV1';
 
-const transport = vi.hoisted(() => ({ calls: [] as ServerScopedMachineRpcParams<RegistryFetchRequestV1>[], platform: 'web' }));
+const transport = vi.hoisted(() => ({ calls: [] as ServerScopedMachineRpcParams<RegistryFetchRequestV1>[], platform: 'web', unreachableList: false }));
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 // Machine RPC leaves this process; source ownership, supplier selection and REACH stay real.
@@ -33,7 +34,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: async (request: ServerScopedMachineRpcParams<RegistryFetchRequestV1>) => {
         transport.calls.push(request);
         const input = RegistryFetchRequestV1Schema.parse(request.payload);
+        if (input.op === 'link') return { op: 'error', status: { state: 'unreachable' } };
         if (input.op !== 'list') throw new Error('Fixture serves registry lists');
+        if (transport.unreachableList) return { op: 'error', status: { state: 'unreachable' } };
         return { op: 'list', page: { sourceId: input.sourceId, status: { state: 'ok', fetchedAt: 1 }, items: [], nextCursor: null } };
     },
 }));
@@ -48,6 +51,7 @@ installDisconnectedServerSocketBoundary();
 // interaction budget, as the canonical Home/Action composed harnesses do.
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -55,16 +59,79 @@ const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/
 const { unionPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { createConnectedAccountDescriptorProjectionLoadingState } = await import('@/sync/domains/connectedServices/connectedAccountDescriptorProjection');
-const { createUiRegistryHostV1 } = await import('./registryHostDeps');
+const { createUiRegistryHostV1, createUiRegistryActionExecuteV1, invalidateUiRegistryUpdateMemoV1 } = await import('./registryHostDeps');
 const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { readCurrentAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { useRegistrySuggestions } = await import('./useRegistrySuggestions');
+const { useRegistryItems } = await import('./useRegistryItems');
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { useSkillsLibrary } = await import('@/sync/domains/skills/useSkillsLibrary');
 const { useSkillsUpdates } = await import('@/components/settings/skills/updates/useSkillsUpdates');
 const { useSkillDetail } = await import('@/components/settings/skills/detail/useSkillDetail');
 const { useRegistrySources } = await import('./useRegistrySources');
+
+it('Link preview skips active Machines without usable content and retains its typed registry refusal', async () => {
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-link-carrier.test', {
+        key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+    });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_link_carrier');
+    const older = createMachineFixture({ id: 'older-carrier', createdAt: 1, activeAt: Date.now() });
+    const newer = createMachineFixture({ id: 'newer-carrier', createdAt: 2, activeAt: Date.now() });
+    const unopened = createMachineFixture({ id: 'newest-unopened-carrier', createdAt: 4, activeAt: Date.now(), metadata: null });
+    const presenceOnly = Array.from({ length: 128 }, (_, index) => createMachineFixture({
+        id: `presence-only-${index}`, createdAt: 5 + index, activeAt: Date.now(), metadata: null,
+    }));
+    const locked = createMachineFixture({ id: 'locked-carrier', createdAt: 3, activeAt: Date.now(),
+        availability: { kind: 'locked', reason: 'encryption_material_unavailable' } });
+    const inventory = [older, newer, unopened, locked, ...presenceOnly];
+    storage.setState({ machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])),
+        machineListByServerId: { [fixture.home.id]: inventory },
+        machineListStatusByServerId: { [fixture.home.id]: 'idle' } });
+    transport.calls.length = 0;
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { previewSkillInstall } = await import('@/components/settings/skills/add/skillInstall');
+    const executor = createDefaultActionExecutor();
+    const actionRequestId = '3aba615b-3b79-4caf-a79f-7cef156c9db0';
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: fixture.home.id, actionRequestId };
+    const source = { kind: 'link' as const, url: 'https://git.example.test/skills.git' };
+    expect(await previewSkillInstall((actionId, input) => executor.execute(actionId, input, context), source))
+        .toMatchObject({ ok: false, status: { state: 'unreachable' } });
+    expect(transport.calls.map(call => ({ machineId: call.machineId, method: call.method, op: call.payload.op })))
+        .toEqual([{ machineId: newer.id, method: 'daemon.registries.fetch', op: 'link' }]);
+    expect(await previewSkillInstall((actionId, input) => executor.execute(actionId, input, {
+        ...context, externalActionTarget: { kind: 'machine', machineId: older.id },
+    }), source)).toMatchObject({ ok: false, status: { state: 'unreachable' } });
+    expect(transport.calls.at(-1)?.machineId).toBe(older.id);
+    // Raw RPCs need their own cancellation/correlation identity: one parent Action can fan out.
+    expect(transport.calls.map(call => call.requestId)).not.toContain(actionRequestId);
+    const retryAccount = await captureLazyActionAccountContext(fixture.home.id);
+    recordMachineRequestFailed({ serverId: fixture.home.id, accountId: retryAccount.accountId, machineId: newer.id });
+    onTestFinished(() => { retryAccount.dispose(); clearMachineRequestReachabilityForTest(); });
+    const retryPort = createUiPromptLibraryArtifactStore(retryAccount.workflowArtifacts, retryAccount).organization!;
+    const retryDefault = await createUiRegistryHostV1(retryAccount, retryPort, {}, { explicitRefresh: true });
+    expect(await retryDefault.fetchRequest({ op: 'link', url: source.url })).toMatchObject({ op: 'error', status: { state: 'unreachable' } });
+    expect(transport.calls.at(-1)?.machineId).toBe(older.id);
+    const retryExplicit = await createUiRegistryHostV1(retryAccount, retryPort, {
+        externalActionTarget: { kind: 'machine', machineId: newer.id },
+    }, { explicitRefresh: true });
+    expect(await retryExplicit.fetchRequest({ op: 'link', url: source.url })).toMatchObject({ op: 'error', status: { state: 'unreachable' } });
+    expect(transport.calls.at(-1)?.machineId).toBe(newer.id);
+    const beforeUnavailable = transport.calls.length;
+    expect(await previewSkillInstall((actionId, input) => executor.execute(actionId, input, {
+        ...context, externalActionTarget: { kind: 'machine', machineId: unopened.id },
+    }), source)).toMatchObject({ ok: false, status: { state: 'needs_machine' } });
+    expect(transport.calls).toHaveLength(beforeUnavailable);
+    storage.setState({ machines: { [unopened.id]: unopened, [locked.id]: locked },
+        machineListByServerId: { [fixture.home.id]: [unopened, locked] } });
+    expect(await previewSkillInstall((actionId, input) => executor.execute(actionId, input, context), source))
+        .toMatchObject({ ok: false, status: { state: 'needs_machine' } });
+    expect(transport.calls).toHaveLength(beforeUnavailable);
+    expect(await retryDefault.fetchRequest({ op: 'link', url: source.url }))
+        .toMatchObject({ op: 'error', status: { state: 'needs_machine' } });
+    expect(transport.calls).toHaveLength(beforeUnavailable);
+});
 
 it.each([false, true])('previews a multi-plugin skill link with one repository read (manifest absent: %s)', async absentManifest => {
     const requests: string[] = [];
@@ -157,7 +224,7 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     onTestFinished(() => confirmation.mockRestore());
     let upstreamFails = false;
     let allUpstreamsFail = false;
-    const checkedSources: RegistrySourceDescriptorV1[] = ['healthy', '403', '429', 'unreachable'].map(id => ({
+    const checkedSources: RegistryRemoteSourceDescriptorV1[] = ['healthy', '403', '429', 'unreachable'].map(id => ({
         id, title: id, format: 'git', kinds: ['skill'], url: `https://github.com/fixture/${id}`,
         enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true,
     }));
@@ -175,10 +242,13 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
                 ref: { kind: 'gitTree' as const, repo: source.url, path: 'review', commit: '1'.repeat(40), treeSha: '2'.repeat(40) } },
         })) });
         return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse({ checkedAt: upstreamFails ? 20 : 10,
-            results: checkedSources.map(source => ({ kind: 'skill', key: source.id, upstream: upstream.get(source.id) })) });
+            results: checkedSources.map(source => ({ kind: 'skill', key: source.id, upstream: upstream.get(source.id),
+                ...(upstream.get(source.id)?.state === 'unchecked' ? { sourceId: source.id, sourceTitle: source.title } : {}) })) });
     };
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
     const machineId = 'shared-registry-machine';
+    const packagePluginId = 'com.acme.requester-apps';
+    const packageSourceId = `${packagePluginId}/apps`;
     const installationId = 'shared-registry-installation';
     const homeIdentityId = 'srv_registry_requester_home';
     const machineRow = { ...ExternalActionMachineBootstrapV1Schema.parse({ id: machineId, kind: 'persistent', active: true,
@@ -190,20 +260,52 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         token: { secretRef: 'happier:shared-secret:v1:requester-secret' } };
     const addedSource: RegistrySourceV1 = { ...source, id: 'daemon-created-source', title: 'New private source',
         url: 'https://github.com/requester/new-private' };
+    const botSource: RegistrySourceV1 = { id: 'requester-bots', title: 'Requester Bots', format: 'happier-npm', kinds: ['plugin'],
+        url: 'https://registry.example.test', enabled: true, addedAt: 0 };
+    const botPointer = { sourceId: botSource.id, itemId: '@requester/helper', version: '1.0.0' };
+    const botRelease = { v: 1, version: '2.0.0', releasedAtMs: 1, changelog: '', content: {
+        v: 1, identity: { name: 'Requester helper', description: '' }, instructions: { markdown: 'Help privately.' },
+        memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] },
+    } };
     const actionCalls: string[] = [];
+    let appRevision = 3, appReadable = true, appUpstreamReads = 0, appAdmissionReads = 0;
+    const appEnvironment = createDeploymentEnvironmentHeaderV1({ id: 'template-environment', serverId: homeIdentityId });
+    let appContentBodyVersion = appEnvironment.contentBodyVersion;
+    let appMetadataReads = 0;
+    const appSource = listRegistrySourcesV1({ record: { v: 2, sources: [], disabledSourceIds: [] }, pluginSources: [] })
+        .find(source => source.format === 'happier-catalog' && source.kinds.includes('app'))!;
+    const appHttp = createUiRegistryHttpV1(async () => {
+        appUpstreamReads++;
+        return Response.json({ schemaVersion: 1, apps: [{ itemId: 'web', app: { schemaVersion: 1, title: 'Web',
+            compose: { document: 'services:\n  web:\n    image: nginx:1\n', services: ['web'], profiles: [] },
+            variables: [], generatedSecrets: [], domains: [], volumes: [] } }] });
+    });
+    const appItem = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await createRegistryHostV1({
+        host: 'node', http: appHttp, readSources: async () => [appSource],
+    }).execute('registries.items.read', { kind: 'app', sourceId: appSource.id, itemId: 'web' })).item;
+    if (appItem.payload.kind !== 'app') throw new Error('Expected selected app');
+    const appRef = { sourceId: appSource.id, itemId: 'web', version: appItem.summary.version!, ref: appItem.payload.ref };
+    let currentAppRef = appRef;
+    appUpstreamReads = 0;
     let remoteExecution: ActionExecuteResult | null = null;
     let afterRemoteAck: (() => void) | undefined;
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'registry-requester', encryptionMode: 'plain' });
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources',
-        value: { v: 2, sources: [source], disabledSourceIds: [] } }] });
+        value: { v: 2, sources: [source, botSource], disabledSourceIds: [] } }] });
     const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-requester.example.test',
-        accountId: 'registry-requester', currentAccount: true }], route: async request => {
+        accountId: 'registry-requester', serverIdentityId: homeIdentityId, currentAccount: true }], route: async request => {
         const artifactResponse = artifacts.handle(request.path, { method: request.method,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
         if (artifactResponse) return await artifactResponse;
         const catalogResponse = await catalog.handle(request.path, { method: request.method, headers: request.headers,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
         if (catalogResponse) return catalogResponse;
+        if (request.path === `/v1/deployments/environments/${appEnvironment.id}`) {
+            appMetadataReads++;
+            return Response.json(appReadable
+                ? { ok: true, environment: { ...appEnvironment, revision: appRevision, contentBodyVersion: appContentBodyVersion }, targetLinks: [] }
+                : { ok: false, error: 'deployment_access_denied' });
+        }
         if (request.path === '/v1/machines') return Response.json([machineRow]);
         if (request.path === '/v1/machines/read-batch' && request.method === 'POST') {
             // The batched read publishes the stored row; its bootstrap fields keep the installation identity.
@@ -219,12 +321,20 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         if (request.path.endsWith('/execution-authorization')) return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({
             v: 1, token: 'home-signed-requester', binding: { accountId: request.accountId, authentication: { kind: 'account', tokenEpoch: 0 },
                 serverIdentityId: homeIdentityId, machineId, installationId, custodianAccountId: 'registry-custodian', accountEncryptionMode: 'plain',
-                actionId, requestId: envelope.requestId, target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                actionId, requestId: envelope.requestId, target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1({ actionId, envelope })
+                    ? { registryAppUpdateAdmission: projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1({ actionId, envelope }) } : {}) },
         }));
         expect(openExternalActionRequesterAccountContextV1({ authorization: body.executionAuthorization,
             purpose: { kind: 'external_action' }, machineId, installationId, serverIdentityId: homeIdentityId,
             installationPrivateKey: installation.secretKey })).toMatchObject({ token: expect.any(String) });
         actionCalls.push(actionId);
+        if (actionId === 'template.preview') {
+            expect(envelope.input).toEqual({ source: { kind: 'plugin', registryItem: botPointer, contributionId: 'helper' } });
+            return Response.json({ v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result: {
+                source: { kind: 'plugin', registryItem: botPointer, contributionId: 'helper' }, release: botRelease,
+            } } });
+        }
         if (actionId === 'registries.sources.create') {
             // The remote process is the boundary: commit its row through the same Home CAS protocol,
             // without sending a socket echo. The UI must revalidate on the acknowledged Action alone.
@@ -246,8 +356,20 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
             afterRemoteAck?.();
             return Response.json(response);
         }
-        const result = actionId === 'registries.updates.check' ? await produceCheck()
-            : actionId === 'registries.items.list' ? { pages: [{ sourceId: source.id, status: { state: 'ok', fetchedAt: 1 }, items: [], nextCursor: null }] }
+        const appDemand = actionId === 'registries.updates.check' && envelope.input !== null
+            && typeof envelope.input === 'object' && 'kind' in envelope.input && envelope.input.kind === 'app';
+        const appInput = appDemand ? REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'].parse(envelope.input) : null;
+        const result = appInput?.kind === 'app' ? await checkRegistryAppUpdatesV1({ http: appHttp }, {
+            environments: appInput.environments,
+            readEnvironment: async id => {
+                appAdmissionReads++;
+                if (!appReadable) throw new RegistryFetchErrorV1({ state: 'auth_failed' });
+                return { environment: { id, revision: appRevision }, content: { template: { templateRef: currentAppRef } } };
+            },
+            readSources: async () => [appSource],
+        }) : actionId === 'registries.updates.check' ? await produceCheck()
+            : actionId === 'registries.items.list' ? { pages: [source.id, packageSourceId].map(sourceId => ({ sourceId,
+                status: { state: 'ok', fetchedAt: 1 }, items: [], nextCursor: null })) }
             : { item: { summary: { sourceId: source.id, kind: 'skill', itemId: 'private-skill', title: 'Requester skill', version: '1'.repeat(40) },
                 payload: { kind: 'skill', skill: { ref: { kind: 'gitTree', repo: source.url, path: '', commit: '1'.repeat(40), treeSha: '2'.repeat(40) },
                     skillMarkdown: '---\nname: requester-skill\n---\nPrivate content', files: [] } }, fetchedAt: 1 } };
@@ -299,6 +421,14 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     await waitForHomeGovernance(() => expect(sourceList.getCurrent().sources.some(candidate => candidate.id === addedSource.id)).toBe(true));
     expect(actionCalls).toEqual(['registries.sources.create']);
     actionCalls.length = 0;
+    const { createUiBotTemplateAction } = await import('@/sync/ops/actions/botTemplateActionDeps');
+    const botPreview = await createUiBotTemplateAction(account, () => {}, port)({ actionId: 'template.preview',
+        input: { source: { kind: 'plugin', registryItem: botPointer, contributionId: 'helper' } },
+        context: { surface: 'ui', authority: 'present_user', serverId: account.serverId },
+    });
+    expect(botPreview).toEqual({ source: { kind: 'plugin', registryItem: botPointer, contributionId: 'helper' }, release: botRelease });
+    expect(actionCalls.splice(0)).toEqual(['template.preview']);
+    expect(transport.calls).toEqual([]);
     phase = 'existing requester private-read corridor';
     expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list',
         { kind: 'skill', sourceIds: [source.id], refresh: true })).pages[0]).toMatchObject({ sourceId: source.id, machineId });
@@ -308,6 +438,41 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         { kind: 'skill', sourceId: source.id, itemId: 'private-skill', version: '1'.repeat(40) })).item.summary.title).toBe('Requester skill');
     expect(actionCalls).toEqual(['registries.items.list', 'registries.items.read']);
     expect(transport.calls).toEqual([]);
+    phase = 'packaged app requester read through the exact supplier';
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Requester Account lifetime must be applied');
+    const packageOccurrenceId = 'requester-apps:1';
+    const packageOrigin = { serverIdentityId: homeIdentityId, materializationRef: {
+        machineId, pluginId: packagePluginId, materializationId: 'requester-apps',
+    } };
+    const packageEntry = projectPluginRegistrySourceDeclarationV1({ pluginId: packagePluginId, pluginVersion: '1.0.0', definition: {
+        id: 'apps', title: 'Requester apps', format: 'happier-catalog', kinds: ['app'], packageContent: { path: 'resources/apps.json' },
+    } });
+    const packageModel = normalizePluginInstalledUiDeclarations({}, undefined, { id: packagePluginId, displayName: 'Requester apps',
+        version: '1.0.0', enabled: true, occurrenceId: packageOccurrenceId, source: { kind: 'path', locator: '/plugins/requester-apps' } },
+    [{ ...packageEntry, occurrenceId: packageOccurrenceId, executionOrigin: packageOrigin }]);
+    const packageProjection = unionPluginUiProjections([{ machineId, serverId: account.serverId, phase: 'current',
+        interactionEnabled: true, selectableExecutionOrigins: [packageOrigin], projection: packageModel }],
+    new Map([[packagePluginId, packageOrigin]])).pluginUiProjection;
+    expect(packageProjection?.registrySourcesById[packageSourceId]).toMatchObject({ occurrenceId: packageOccurrenceId });
+    const packageScreen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+        pluginUiProjection: packageProjection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+        machineId, serverId: account.serverId, platform: 'web', accountLifetime: lifetime,
+        reloadConnectedAccountProjection: () => {}, connectedAccountProjectionState: createConnectedAccountDescriptorProjectionLoadingState('package-fixture'),
+        clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+    }, children: null }));
+    expect(lifetime.isCurrent()).toBe(true);
+    expect(lifetime.scope).toEqual({ serverId: account.serverId, accountId: account.accountId });
+    expect(readCurrentAppShellPluginUiProjection()).toBe(packageProjection);
+    expect(readCurrentAppShellPluginUiProjection({ scope: account, declarationsOnly: true })?.registrySourcesById[packageSourceId])
+        .toMatchObject({ occurrenceId: packageOccurrenceId });
+    const packagedPage = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list', {
+        kind: 'app', sourceIds: [packageSourceId], refresh: true,
+    })).pages[0];
+    expect(packagedPage).toMatchObject({ sourceId: packageSourceId, machineId, status: { state: 'ok' } });
+    expect(actionCalls.at(-1)).toBe('registries.items.list');
+    expect(transport.calls).toEqual([]);
+    await packageScreen.unmount();
     const checked = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(await host.execute('registries.updates.check', {
         kind: 'skill', keys: ['tracked-private-skill'],
     }));
@@ -315,6 +480,125 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     expect(checked.results.every(item => item.upstream.state === 'current')).toBe(true);
     expect(actionCalls.at(-1)).toBe('registries.updates.check');
     expect(transport.calls).toEqual([]);
+    phase = 'same-session app memo hits add no Environment GET or daemon admission';
+    const appDemand = { kind: 'app', environments: [{ environmentId: appEnvironment.id, expectedRevision: appRevision }] };
+    // Passthrough instrumentation counts schema traversals; every real parser and transport remains active.
+    const inputParses = vi.spyOn(REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'], 'parse');
+    const outputParses = vi.spyOn(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'], 'parse');
+    onTestFinished(() => { inputParses.mockRestore(); outputParses.mockRestore(); });
+    const firstApp = await host.execute('registries.updates.check', appDemand);
+    expect(firstApp).toMatchObject({ results: [{ kind: 'app', key: appEnvironment.id, upstream: { state: 'current', latest: appRef.ref } }] });
+    expect.soft({ metadata: appMetadataReads, admissions: appAdmissionReads, upstream: appUpstreamReads })
+        .toEqual({ metadata: 0, admissions: 1, upstream: 1 });
+    // One UI ingress, two existing protocol-owner parses, and one remote test transport ingress.
+    expect.soft(inputParses).toHaveBeenCalledTimes(4);
+    // The remote result, protocol result, and UI result are separate existing owner boundaries.
+    expect.soft(outputParses).toHaveBeenCalledTimes(3);
+    const reopened = await createUiRegistryHostV1(account, port, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    for (let open = 0; open < 3; open++) expect(await reopened.execute('registries.updates.check', appDemand)).toEqual(firstApp);
+    expect.soft({ metadata: appMetadataReads, admissions: appAdmissionReads, upstream: appUpstreamReads })
+        .toEqual({ metadata: 0, admissions: 1, upstream: 1 });
+    phase = 'the UI Action adapter parses one ingress and reuses its typed memo result';
+    inputParses.mockClear(); outputParses.mockClear();
+    expect(await createUiRegistryActionExecuteV1(account, port)({ actionId: 'registries.updates.check', input: appDemand,
+        context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } })).toEqual(firstApp);
+    expect.soft(inputParses).toHaveBeenCalledTimes(1);
+    expect.soft(outputParses).toHaveBeenCalledTimes(0);
+    inputParses.mockRestore(); outputParses.mockRestore();
+    phase = 'a real requested revision change admits a new finite observation';
+    appRevision++;
+    const currentAppDemand = { ...appDemand, environments: [{ environmentId: appEnvironment.id, expectedRevision: appRevision }] };
+    expect(await reopened.execute('registries.updates.check', currentAppDemand)).toMatchObject({ results: [{ upstream: { state: 'current' } }] });
+    expect.soft({ metadata: appMetadataReads, admissions: appAdmissionReads, upstream: appUpstreamReads })
+        .toEqual({ metadata: 0, admissions: 2, upstream: 2 });
+    phase = 'daemon admission rejects a stale requested revision on the next finite check';
+    invalidateUiRegistryUpdateMemoV1(account, appDemand);
+    expect(await reopened.execute('registries.updates.check', appDemand)).toMatchObject({
+        results: [{ upstream: { state: 'unchecked', reason: { state: 'invalid_source' } } }],
+    });
+    expect(appUpstreamReads).toBe(2);
+    phase = 'explicit refresh delegates withdrawn access to daemon admission';
+    appReadable = false;
+    invalidateUiRegistryUpdateMemoV1(account, currentAppDemand);
+    expect(await reopened.execute('registries.updates.check', currentAppDemand)).toMatchObject({
+        results: [{ upstream: { state: 'unchecked', reason: { state: 'auth_failed' } } }],
+    });
+    expect(appUpstreamReads).toBe(2);
+    appReadable = true;
+    phase = 'restored Source authority requires a new finite observation';
+    expect(await reopened.execute('registries.updates.check', currentAppDemand)).toMatchObject({
+        results: [{ kind: 'app', key: appEnvironment.id, upstream: { state: 'current', latest: appRef.ref } }],
+    });
+    expect(appUpstreamReads).toBe(3);
+    phase = 'open Environment consumes the finite registry observation without another content reader';
+    const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { useDeploymentEnvironment } = await import('@/components/projects/deployments/useDeploymentReads');
+    const baseDetail = createDeploymentEnvironmentDetailV1();
+    let appDetail = createDeploymentEnvironmentDetailV1({ environment: { ...appEnvironment, revision: appRevision }, targetLinks: [],
+        content: { ...baseDetail.content, template: { templateRef: appRef, services: ['web'],
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` } } } });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId: appEnvironment.serverId, accountId: account.accountId,
+        projectSourceId: appEnvironment.projectSourceId }, transport: {
+        readEnvironment: async () => ({ ok: true, value: appDetail }),
+        listEnvironments: async () => { throw new Error('An app observation cannot list Environments'); },
+        listHistory: async () => { throw new Error('An app observation cannot load History'); },
+        readReceipt: async () => { throw new Error('An app observation cannot load receipts'); },
+    } });
+    let appPage = await renderHook(() => useDeploymentEnvironment(controller, appEnvironment.id,
+        { mounted: true, visible: true, focused: true }));
+    onTestFinished(() => controller.retire());
+    await waitForHomeGovernance(() => expect(appPage.getCurrent()).toMatchObject({
+        catalogUpdate: { upstream: { state: 'current', latest: appRef.ref }, loading: false, error: null },
+    }));
+    expect(appUpstreamReads).toBe(3);
+    phase = 'closing and reopening the Environment retains only the registry session observation';
+    await appPage.unmount();
+    const hiddenAppPage = await renderHook(() => useDeploymentEnvironment(controller, appEnvironment.id,
+        { mounted: true, visible: false, focused: false }));
+    expect(hiddenAppPage.getCurrent().catalogUpdate.upstream).toBeNull();
+    expect(appUpstreamReads).toBe(3);
+    await hiddenAppPage.unmount();
+    appPage = await renderHook(() => useDeploymentEnvironment(controller, appEnvironment.id,
+        { mounted: true, visible: true, focused: true }));
+    await waitForHomeGovernance(() => expect(appPage.getCurrent()).toMatchObject({
+        catalogUpdate: { upstream: { state: 'current', latest: appRef.ref }, loading: false, error: null },
+    }));
+    expect(appUpstreamReads).toBe(3);
+    phase = 'private content revision acquires one new admitted observation';
+    const metadataBeforeRewrite = appMetadataReads;
+    appRevision++;
+    appContentBodyVersion++;
+    appDetail = { ...appDetail, environment: { ...appDetail.environment, revision: appRevision, contentBodyVersion: appContentBodyVersion },
+        content: { ...appDetail.content, name: 'A renamed Environment with the same template' } };
+    await act(async () => { await appPage.getCurrent().refresh(); });
+    await waitForHomeGovernance(() => {
+        expect(appUpstreamReads).toBe(4);
+        expect(appPage.getCurrent().catalogUpdate.loading).toBe(false);
+    });
+    expect(appMetadataReads).toBe(metadataBeforeRewrite);
+    phase = 'a changed template reference cannot retain the previous observation';
+    currentAppRef = { ...appRef, ref: { kind: 'content', digest: `sha256:${'b'.repeat(64)}` } };
+    appRevision++;
+    appContentBodyVersion++;
+    appDetail = { ...appDetail, environment: { ...appDetail.environment, revision: appRevision, contentBodyVersion: appContentBodyVersion },
+        content: { ...appDetail.content, template: { ...appDetail.content.template!, templateRef: currentAppRef } } };
+    await act(async () => { await appPage.getCurrent().refresh(); });
+    await waitForHomeGovernance(() => expect(appPage.getCurrent().catalogUpdate.upstream?.state).toBe('update_available'));
+    expect(appUpstreamReads).toBe(5);
+    phase = 'only an explicit catalog refresh repeats the unchanged upstream observation';
+    await act(async () => { await appPage.getCurrent().catalogUpdate.refresh(); });
+    expect(appUpstreamReads).toBe(6);
+    phase = 'a revoked Source cannot retain a successful catalog observation';
+    appReadable = false;
+    await act(async () => { await appPage.getCurrent().catalogUpdate.refresh(); });
+    expect(appPage.getCurrent().catalogUpdate.upstream).toMatchObject({ state: 'unchecked', reason: { state: 'auth_failed' } });
+    expect(appUpstreamReads).toBe(6);
+    appReadable = true;
+    phase = 'restored access is admitted on the next requested check';
+    const pendingDemand = { kind: 'app', environments: [{ environmentId: appEnvironment.id, expectedRevision: appRevision }] };
+    await reopened.execute('registries.updates.check', pendingDemand);
+    expect(appUpstreamReads).toBe(7);
     const fixture = createPromptRegistrySkillFixture({ sourceId: source.id, itemId: 'private-skill', title: 'Requester skill',
         files: [{ path: 'SKILL.md', content: '---\nname: requester-skill\n---\nPrivate content' }] });
     const store = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account);
@@ -375,9 +659,9 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     await act(async () => { await updates.getCurrent().checkNow(); });
     expect(updates.getCurrent().check).toMatchObject({ failed: true, checkedAt: 10, results: [
         { key: 'healthy', upstream: { state: 'current' } },
-        { key: '403', upstream: { state: 'unchecked', reason: { state: 'auth_failed' } } },
-        { key: '429', upstream: { state: 'unchecked', reason: { state: 'rate_limited' } } },
-        { key: 'unreachable', upstream: { state: 'unchecked', reason: { state: 'unreachable' } } },
+        { key: '403', sourceId: '403', sourceTitle: '403', upstream: { state: 'unchecked', reason: { state: 'auth_failed' } } },
+        { key: '429', sourceId: '429', sourceTitle: '429', upstream: { state: 'unchecked', reason: { state: 'rate_limited' } } },
+        { key: 'unreachable', sourceId: 'unreachable', sourceTitle: 'unreachable', upstream: { state: 'unchecked', reason: { state: 'unreachable' } } },
     ] });
     expect(artifacts.readPlainBody(skillId)).toBe(JSON.stringify(PromptBundleBodyV1Schema.parse({ v: 1, createdAtMs: 0, updatedAtMs: 0,
         entries: fixture.files.map(file => ({ ...file, contentKind: 'utf8' })) })));
@@ -406,7 +690,7 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
         { id: 'native-github', title: 'GitHub', format: 'git', kinds: ['skill'], url: 'https://github.com/a/b', enabled: true, addedAt: 0 },
     ];
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2, sources, disabledSourceIds: [] } }] });
-    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-native.example.test', accountId: 'native-registry-account' }],
+    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-native.example.test', accountId: 'native-registry-account', serverIdentityId: 'srv_registry_native' }],
         route: async request => await catalog.handle(request.path, { method: request.method, headers: request.headers,
             body: request.body === undefined ? undefined : JSON.stringify(request.body) }) ?? undefined });
     onTestFinished(async () => { try { await homes.dispose(); } finally { transport.platform = 'web'; } });
@@ -416,8 +700,10 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
     onTestFinished(() => account.dispose());
     const previousMachines = storage.getState().machineListByServerId;
     const previousActiveMachines = storage.getState().machines;
+    const previousStatuses = storage.getState().machineListStatusByServerId;
     const machine = createMachineFixture({ id: 'native-git-machine', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { ...previousMachines, [account.serverId]: [machine] } });
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { ...previousMachines, [account.serverId]: [machine] },
+        machineListStatusByServerId: { ...previousStatuses, [account.serverId]: 'idle' } });
     const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
     transport.calls.length = 0;
     setRuntimeFetch(async (url, init) => new URL(String(url)).origin === new URL(homes.homes.home!.serverUrl).origin
@@ -457,16 +743,46 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
         expect(offline.pages.map(page => ({ sourceId: page.sourceId, state: page.status.state })))
             .toEqual([{ sourceId: 'native-other-git', state: 'needs_machine' }, { sourceId: 'native-github', state: 'ok' }]);
     } finally {
-        storage.setState({ machines: previousActiveMachines, machineListByServerId: previousMachines });
+        storage.setState({ machines: previousActiveMachines, machineListByServerId: previousMachines, machineListStatusByServerId: previousStatuses });
         clearMachineRequestReachabilityForTest();
     }
+});
+
+it('reads a Machine-carried catalog again once a Machine arrives, without the person pressing Try again', async () => {
+    transport.platform = 'ios';
+    const sources: RegistrySourceV1[] = [
+        { id: 'carried-git', title: 'Carried Git', format: 'git', kinds: ['skill'], url: 'https://git.example.test/a/b.git', enabled: true, addedAt: 0 },
+    ];
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2, sources, disabledSourceIds: [] } }] });
+    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-carrier-arrives.example.test', accountId: 'carrier-arrives-account', serverIdentityId: 'srv_registry_carrier_arrives' }],
+        route: async request => await catalog.handle(request.path, { method: request.method, headers: request.headers,
+            body: request.body === undefined ? undefined : JSON.stringify(request.body) }) ?? undefined });
+    onTestFinished(async () => { try { await homes.dispose(); } finally { transport.platform = 'web'; } });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const serverId = homes.homes.home!.id;
+    const previous = storage.getState();
+    onTestFinished(() => storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+        machineListStatusByServerId: previous.machineListStatusByServerId }));
+    storage.setState({ machines: {}, machineListByServerId: { ...previous.machineListByServerId, [serverId]: [] },
+        machineListStatusByServerId: { ...previous.machineListStatusByServerId, [serverId]: 'idle' } });
+    transport.calls.length = 0;
+    const input = { kind: 'skill' as const, sourceIds: ['carried-git'] };
+    const hook = await renderHook(() => useRegistryItems(input));
+    await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures.map(failure => failure.status.state)).toEqual(['needs_machine']));
+    expect(transport.calls).toHaveLength(0);
+    const machine = createMachineFixture({ id: 'carrier-arrives-machine', activeAt: Date.now() });
+    await act(async () => { storage.setState({ machines: { [machine.id]: machine },
+        machineListByServerId: { ...storage.getState().machineListByServerId, [serverId]: [machine] } }); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
+    expect(transport.calls.map(call => call.machineId)).toEqual([machine.id]);
+    await hook.unmount();
 });
 
 it('reads same-Account offline declarations, routes only to suppliers, retries unreachable suppliers, and retires sources and cached pages', async () => {
     let phase = 'Home credential fixture';
     onTestFailed(() => { console.error(`Registry source composed failure phase: ${phase}`); });
     const catalog = createPromptLibraryCatalogBoundary();
-    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-suppliers.example.test', accountId: 'registry-account' }],
+    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://registry-suppliers.example.test', accountId: 'registry-account', serverIdentityId: 'srv_registry_suppliers' }],
         route: async request => await catalog.handle(request.path, { method: request.method, headers: request.headers,
             body: request.body === undefined ? undefined : JSON.stringify(request.body) }) ?? undefined });
     setRuntimeFetch(async (url, init) => String(url) === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL
@@ -502,11 +818,13 @@ it('reads same-Account offline declarations, routes only to suppliers, retries u
     expect(readCurrentAppShellPluginUiProjection({ scope: { serverId: account.serverId, accountId: 'another-account' }, declarationsOnly: true })).toBeNull();
     const previousMachines = storage.getState().machineListByServerId;
     const previousActiveMachines = storage.getState().machines;
+    const previousStatuses = storage.getState().machineListStatusByServerId;
     const machines = [
         createMachineFixture({ id: 'supplier-a', activeAt: Date.now() }), createMachineFixture({ id: 'general-b', activeAt: Date.now(), createdAt: 10 }),
     ];
     storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { ...previousMachines, [account.serverId]: machines } });
+        machineListByServerId: { ...previousMachines, [account.serverId]: machines },
+        machineListStatusByServerId: { ...previousStatuses, [account.serverId]: 'idle' } });
     const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
     transport.calls.length = 0;
     try {
@@ -524,8 +842,12 @@ it('reads same-Account offline declarations, routes only to suppliers, retries u
         expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list', input)).pages[0]?.status)
             .toEqual({ state: 'needs_machine' });
         const retry = await createUiRegistryHostV1(account, port, {}, { explicitRefresh: true });
-        expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await retry.execute('registries.items.list', input)).pages[0]?.status.state).toBe('ok');
+        transport.unreachableList = true;
+        const callsBeforeRetry = transport.calls.length;
+        expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await retry.execute('registries.items.list', input)).pages[0]?.status.state).toBe('unreachable');
+        expect(transport.calls).toHaveLength(callsBeforeRetry + 1);
         expect(transport.calls.at(-1)?.machineId).toBe('supplier-a');
+        transport.unreachableList = false;
         const publicModel = normalizePluginInstalledUiDeclarations({}, undefined, model.installedPackagesById[pluginId], [
             projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
                 ...entry.definition, url: 'https://github.com/acme/skills',
@@ -553,8 +875,9 @@ it('reads same-Account offline declarations, routes only to suppliers, retries u
         expect(readCurrentAppShellPluginUiProjection({ scope: account, declarationsOnly: true })).toBeNull();
         await expect(host.execute('registries.sources.list', {})).rejects.toThrow();
     } finally {
+        transport.unreachableList = false;
         clearMachineRequestReachabilityForTest();
-        storage.setState({ machines: previousActiveMachines, machineListByServerId: previousMachines });
+        storage.setState({ machines: previousActiveMachines, machineListByServerId: previousMachines, machineListStatusByServerId: previousStatuses });
         await act(async () => { screen.tree.unmount(); });
     }
 });

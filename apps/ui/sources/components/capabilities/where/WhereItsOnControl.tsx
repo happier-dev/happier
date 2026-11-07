@@ -26,7 +26,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -35,6 +35,7 @@ import { SectionLeadingColumnProvider } from '@/components/ui/lists/sectionLeadi
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 import { useWhereItsOnNames } from './useWhereItsOnNames';
 import { sayWhereItsOn, whereItsOnControlLabels, whereItsOnReach } from './whereItsOnPresentation';
 
@@ -52,6 +53,8 @@ export type WhereItsOnControlProps = Omit<
 > &
   Readonly<{
     rules: ReachRulesV1;
+    /** An unread row has no On/Off fact. A retained value stays visible during refresh. */
+    valueAvailable?: boolean;
     /** Read-only default decided by the capability owner; never becomes a stored rule. */
     defaultEnabled?: boolean;
     projection: NonNullable<HappierWhereItsOnControlProps['projection']> | null;
@@ -133,16 +136,14 @@ const Disclosure: Host['Disclosure'] = ({ testID, rowTestID, expanded, onExpande
           {...(headerProps as Readonly<Record<string, unknown>>)}
           testID={rowTestID}
           title={title}
+          // A closed add flow names its change in place of the caret; otherwise the row draws its disclosure caret.
           rightElement={
             changeLabel !== undefined && !open ? (
               <Text variant="label" style={{ color: theme.colors.text.link ?? theme.colors.text.secondary }}>
                 {changeLabel}
               </Text>
-            ) : (
-              <ExpandableItemCaret expanded={open} />
-            )
+            ) : undefined
           }
-          showChevron={false}
         />
       )}
     >
@@ -302,6 +303,7 @@ export const WhereItsOnControl = React.memo(function WhereItsOnControl({
   onUndo: _onUndo,
   rules: storedRules,
   onChange,
+  valueAvailable = true,
   defaultEnabled = false,
   ...props
 }: WhereItsOnControlProps) {
@@ -342,15 +344,24 @@ export const WhereItsOnControl = React.memo(function WhereItsOnControl({
   );
   return (
     <WhereIdentityContext.Provider value={identityById}>
-      <HappierWhereItsOnControl
-        {...props}
-        state={state}
-        onIntent={onIntent}
-        names={names}
-        labels={whereItsOnControlLabels}
-        host={host}
-        space={theme.space}
-      />
+      {!valueAvailable ? (
+        <ItemGroup testID={props.testID} title={whereItsOnControlLabels.control.title()}
+          {...(props.presentation === 'section' ? { description: whereItsOnControlLabels.control.description() } : {})}>
+          <SurfaceStateCard testID={`${props.testID}:${props.status === 'loading' ? 'loading' : 'unavailable'}`}
+            kind={props.status === 'loading' ? 'loading' : 'error'} size="line"
+            title={t(props.status === 'loading' ? 'common.loading' : 'common.unavailable')} />
+        </ItemGroup>
+      ) : (
+        <HappierWhereItsOnControl
+          {...props}
+          state={state}
+          onIntent={onIntent}
+          names={names}
+          labels={whereItsOnControlLabels}
+          host={host}
+          space={theme.space}
+        />
+      )}
     </WhereIdentityContext.Provider>
   );
 });
@@ -359,13 +370,16 @@ export const WhereItsOnControl = React.memo(function WhereItsOnControl({
  * Add flows before the item exists: a local draft that starts from the protocol's create-time default and the
  * create Action's `where` (undefined until the person changes the pick, then the last `replace`).
  */
-export function useDraftReachRules(kind: 'skill' | 'mcp_server'): Readonly<{
+export function useDraftReachRules(kind: 'skill' | 'mcp_server', initialWhere?: ReachRulesChangeV1): Readonly<{
   rules: ReachRulesV1;
   where: ReachRulesChangeV1 | undefined;
   onChange: WhereItsOnControlProps['onChange'];
 }> {
   const [state, setState] = React.useState<Readonly<{ rules: ReachRulesV1; where: ReachRulesChangeV1 | undefined }>>(
-    () => ({ rules: whereItsOnReach.createDefault(kind), where: undefined }),
+    () => {
+      const rules = whereItsOnReach.createDefault(kind);
+      return { rules: initialWhere ? whereItsOnReach.apply(rules, initialWhere) : rules, where: initialWhere };
+    },
   );
   const onChange = React.useCallback<WhereItsOnControlProps['onChange']>(async (change) => {
     setState((current) => ({ rules: whereItsOnReach.apply(current.rules, change), where: change }));

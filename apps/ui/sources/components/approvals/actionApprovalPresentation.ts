@@ -9,23 +9,27 @@ import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { WidgetLayoutFragmentActionIdV1Schema, readWidgetApprovalPresentationV1 } from '@happier-dev/protocol/widgets';
 import { presentLocalServiceControlApproval, readLocalServiceControlSubject } from './localServiceControlApprovalPresentation';
+import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 export type ActionApprovalPresentationInput = Readonly<{
     actionId: string;
     actionArgs?: unknown;
+    status?: ApprovalRequest['status'];
     preview?: unknown;
     authoredTitle?: string | null;
     authoredSummary?: string | null;
     subject?: string | null;
+    executionOriginV1?: ApprovalRequestV2['executionOriginV1'];
     role?: RoleCatalogEntry | null;
     /** The target Machine's readable path form (home-relative), when the presenting app knows its home. */
     formatPath?: ((path: string) => string) | null;
 }>;
 
-export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown }>;
+export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown;
+    executionOriginV1?: ApprovalRequestV2['executionOriginV1'] }>;
 
 /** A supplied request summary reads through its domain owner; absent previews remain absent. */
-export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput): string | null {
+export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null): string | null {
     if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
     const storedSummary = typeof (preview as { summary?: unknown }).summary === 'string'
         ? (preview as { summary: string }).summary.trim()
@@ -44,7 +48,7 @@ export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalS
             || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
             ? spec.approvalPresentation?.summary(request?.actionArgs) : null;
         return presentActionApproval({ actionId: actionId.data, actionArgs: request?.actionArgs,
-            authoredSummary: summary || storedSummary }).summary;
+            authoredSummary: summary || storedSummary, subject }).summary;
     }
     return storedSummary;
 }
@@ -65,8 +69,20 @@ export function readActionApprovalSubject(input: ActionApprovalPresentationInput
         : []);
     // A workspace-sync request is titled by its Action; its controller machine and linked folders read in Details.
     if (input.actionId.startsWith('workspace.sync.')) return undefined;
+    if (input.actionId === 'scm.diffSummary.result.clear' && input.executionOriginV1?.machineId) {
+        return { kind: 'machine', id: input.executionOriginV1.machineId };
+    }
     // The Home only routes the request: the thing acted on (a Machine, a Session) is the subject when there is one.
     return references.find(reference => reference.kind !== 'home') ?? references[0];
+}
+
+/** Shared by immediate confirmation and retained decisions without rebuilding the consequence body. */
+export function readActionApprovalConfirmLabel(actionId: string): string | null {
+    const parsed = ActionIdSchema.safeParse(actionId);
+    if (!parsed.success) return null;
+    if (parsed.data === 'scm.diffSummary.result.clear') return t('walkthroughSettings.clear');
+    const verb = getActionSpec(parsed.data).confirmVerb;
+    return verb === undefined ? null : resolveActionConfirmVerb(verb);
 }
 
 /** One UI copy boundary for confirmation, Inbox, page and preview; authored plugin copy stays authored. */
@@ -75,7 +91,21 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const parsed = ActionIdSchema.safeParse(input.actionId);
     if (!parsed.success) return { title: input.authoredTitle?.trim() || null, summary: input.authoredSummary?.trim() || null, confirmLabel: null };
     const spec = getActionSpec(parsed.data);
-    if (serviceControl) return { ...serviceControl, confirmLabel: resolveActionConfirmVerb(spec.confirmVerb), destructive: spec.irreversible === true };
+    // Create names a new machine, not its routing Home. The review owner projects the same name for pending and retained asks.
+    const createdMachineName = spec.id === 'machines.managed.acquire'
+        ? describeApprovalActionFields({ actionId: spec.id, actionArgs: input.actionArgs, status: input.status }).rows
+            .find(row => row.kind === 'value' && row.path === 'name') : undefined;
+    const subject = createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
+    const confirmLabel = readActionApprovalConfirmLabel(spec.id) ?? resolveActionConfirmVerb(undefined);
+    if (spec.id === 'scm.diffSummary.result.clear' && spec.inputSchema.safeParse(input.actionArgs).success) {
+        return {
+            title: t('walkthroughSettings.clearTitle'),
+            summary: t('walkthroughSettings.clearDescription', { machine: input.subject?.trim() || t('machine.thisMachineInSentence') }),
+            confirmLabel,
+            ...(spec.irreversible ? { destructive: true } : {}),
+        };
+    }
+    if (serviceControl) return { ...serviceControl, confirmLabel, destructive: spec.irreversible === true };
     const role = input.role?.roleId === readActionApprovalRoleId(input) ? input.role : null;
     const roleKind = role ? role.source === 'built_in' ? t('roles.settings.sourceBuiltIn')
         : role.source === 'user' ? t('roles.settings.sourceYours')
@@ -92,14 +122,13 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const summary = distinctAuthoredSummary ? distinctAuthoredSummary
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`
-                : english ? summarySource : resolveActionSummary(spec.id, summarySource), subject: input.subject, role: roleIdentity });
+                : english ? summarySource : resolveActionSummary(spec.id, summarySource), subject, role: roleIdentity });
     const visibleSummary = !distinctAuthoredSummary && summarySource === `${spec.title}.`
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;
     const title = t('actionPresentation.title', { actionId: spec.id, source: titleSource,
-        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : input.subject });
-    const confirmLabel = resolveActionConfirmVerb(spec.confirmVerb);
+        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : subject });
     return {
         confirmLabel,
         title,

@@ -1,4 +1,5 @@
 import type { DeploymentTargetLinksListInputV1, DeploymentTargetLinksListResultV1 } from '@happier-dev/protocol';
+import type { Prisma } from '@prisma/client';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
@@ -12,6 +13,18 @@ import { projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { projectDeploymentListRow } from './deploymentListProjection';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+
+/** Inventory headers and their private content use the same persisted owner and live-Link scope. */
+export function deploymentTargetLinkInventoryWhere(input: Pick<DeploymentTargetLinksListInputV1, 'scope' | 'selection'>): Prisma.DeploymentTargetLinkWhereInput {
+    const { scope, selection } = input;
+    return { deletedAt: null, detachedAt: null,
+        ...(selection ? { targetKind: selection.targetKind, sourceKind: selection.source.kind,
+            ...(selection.source.kind === 'plugin'
+                ? { pluginId: selection.source.contribution.pluginId, contributionLocalId: selection.source.contribution.localId }
+                : { hostTargetId: selection.source.id }) } : {}),
+        environment: { deletedAt: null, projectSource: { OR: [{ owner: { equals: scope } },
+            ...(scope.kind === 'account' ? [{ owner: { equals: getActivePrismaRuntime().DbNull }, createdByAccountId: scope.accountId }] : [])] } } };
+}
 
 /** A finite preparation demand lists only admitted headers; private identity comparison belongs to the linking client. */
 export async function listDeploymentTargetLinksInTx(tx: Tx, actorAccountId: string, input: DeploymentTargetLinksListInputV1,
@@ -34,14 +47,8 @@ export async function listDeploymentTargetLinksInTx(tx: Tx, actorAccountId: stri
     try { cursor = openDeploymentReadCursor(actorAccountId, input); }
     catch { return deploymentFailure('deployment_invalid'); }
     const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
-    const rows = await tx.deploymentTargetLink.findMany({ where: { deletedAt: null, detachedAt: null,
-        ...(selection ? { targetKind: selection.targetKind, sourceKind: selection.source.kind,
-            ...(selection.source.kind === 'plugin'
-                ? { pluginId: selection.source.contribution.pluginId, contributionLocalId: selection.source.contribution.localId }
-                : { hostTargetId: selection.source.id }) } : {}),
+    const rows = await tx.deploymentTargetLink.findMany({ where: { ...deploymentTargetLinkInventoryWhere({ scope, selection }),
         ...(cursor ? { id: { gt: cursor } } : {}),
-        environment: { deletedAt: null, projectSource: { OR: [{ owner: { equals: scope } },
-            ...(scope.kind === 'account' ? [{ owner: { equals: getActivePrismaRuntime().DbNull }, createdByAccountId: scope.accountId }] : [])] } },
     }, orderBy: { id: 'asc' }, take: limit + 1,
     include: { environment: { include: { deployers: { select: { principalKind: true, principalId: true } } } }, machines: { orderBy: { position: 'asc' } } } });
     const sources = new Map<string, Awaited<ReturnType<typeof resolveDeploymentEnvironmentAdmissionInTx>>>();

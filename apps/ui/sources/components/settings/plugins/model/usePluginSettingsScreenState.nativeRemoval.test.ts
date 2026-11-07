@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -19,11 +20,22 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
+import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 
 const boundary = vi.hoisted(() => ({
     rpc: vi.fn<(request: Readonly<{ machineId: string; serverId?: string | null; method: string; payload: unknown }>) => Promise<unknown>>(),
     confirm: vi.fn<IModal['confirm']>(),
     alert: vi.fn<IModal['alert']>(),
+    push: vi.fn(),
 }));
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -32,14 +44,40 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: boundary.rpc,
 }));
 installApprovalCommonModuleMocks({
+    reactNative: async () => {
+        const [{ createReactNativeWebMock }, { createCapturingFlatListMock }] = await Promise.all([
+            import('@/dev/testkit/mocks/reactNative'), import('@/dev/testkit/mocks/virtualizedList'),
+        ]);
+        // Host strings do not invoke RN's virtualized cell renderers. Preserve
+        // the platform boundary while rendering the real Collection row props.
+        return createReactNativeWebMock({ ...createCapturingFlatListMock().module, SectionList: renderNativeSectionList });
+    },
+    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        pathname: '/settings/plugins', router: { push: boundary.push },
+    }).module,
     // Keep translation parameters visible so the test can see which reason reached the user.
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     modal: async () =>
-        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: {
+        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true, spies: {
             confirm: boundary.confirm, alert: boundary.alert,
         } }).module,
 });
+
+type NativeSection = Readonly<{ key: string; data: readonly unknown[] }>;
+function renderNativeSectionList(props: Readonly<{
+    sections: readonly NativeSection[];
+    renderItem?: (info: Readonly<{ item: unknown; index: number; section: NativeSection }>) => React.ReactNode;
+    renderSectionHeader?: (info: Readonly<{ section: NativeSection }>) => React.ReactNode;
+    ListFooterComponent?: React.ReactNode;
+}>) {
+    return React.createElement('SectionList', props, props.sections.map(section => React.createElement(React.Fragment,
+        { key: section.key }, props.renderSectionHeader?.({ section }), section.data.map((item, index) =>
+            React.createElement(React.Fragment, { key: index }, props.renderItem?.({ item, index, section }))))), props.ListFooterComponent);
+}
 installDisconnectedServerSocketBoundary();
+// Install native/modal boundary options before collecting the app-shell/runtime graph.
+const { renderSettingsView } = await import('@/dev/testkit/harness/settingsViewHarness');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 beforeAll(loadSyncSingletonForTests);
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let scenario = 0;
@@ -51,11 +89,18 @@ async function renderRemovalOwner(
     options: Readonly<{ initiallyEnabled?: boolean; readbackEnabled?: boolean; development?: boolean;
         developmentRoot?: string; actionFailure?: boolean;
         beforeActionResponse?: (signal: AbortSignal | null | undefined) => Promise<void>;
-        actionError?: string; bundled?: boolean; bundledAccountEnabled?: boolean }> = {},
+        actionError?: string; catalog?: boolean; browse?: boolean; focused?: boolean; installOutcomeUnknown?: boolean; declineInstall?: boolean; noTarget?: boolean;
+        deferredInstall?: boolean; installErrorsByMachine?: Readonly<Record<string, string>>;
+        /** A second online Machine beside the selected one. */
+        secondMachine?: boolean; bundled?: boolean; bundledAccountEnabled?: boolean;
+        /** Machines whose daemon returns its approval without an evaluated review. */
+        unevaluatedMachineIds?: readonly string[] }> = {},
 ) {
+    const twoMachines = options.noTarget || options.secondMachine;
     boundary.rpc.mockReset();
     boundary.confirm.mockReset().mockResolvedValue(true);
     boundary.alert.mockReset();
+    boundary.push.mockReset();
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.confirm).mockImplementation(boundary.confirm);
     vi.mocked(Modal.alert).mockImplementation(boundary.alert);
@@ -67,11 +112,11 @@ async function renderRemovalOwner(
         // These cases isolate retained-resource consent from the ordinary
         // uninstall Action prompt, which is covered by the policy suites.
         'plugins.uninstall': ['ui'],
-        'plugins.install': ['ui'],
+        ...(options.declineInstall || options.deferredInstall ? {} : { 'plugins.install': ['ui' as const] }),
         'plugins.dev.submit': ['ui'], 'plugins.dev.unregister': ['ui'], 'plugins.dev.test': ['ui'], 'plugins.pack': ['ui'],
     } });
     let serverContent: unknown = { t: 'plain', v: {
-        machineAdministrationTargetsLocalV1: { 'plugins.home': selectedTarget },
+        machineAdministrationTargetsLocalV1: options.noTarget ? {} : { 'plugins.home': selectedTarget },
         actionsSettingsV1: developmentActionsSettings,
     } };
     let serverVersion = 1;
@@ -85,8 +130,82 @@ async function renderRemovalOwner(
         install: { mode: 'managed', manifestVersion: '2' },
         compatibility: { status: 'compatible', diagnostics: [] }, diagnostics: [],
     };
+    const catalog = createRegistryPluginCatalogFixture({ sourceUrl: `https://plugin-removal-${scenario}.test/catalog.json`,
+        entries: [{ pluginId, title: 'Example compute', version: '1.2.3' }] });
+    const catalogRows = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: {
+        v: 2, disabledSourceIds: [], sources: [{ id: catalog.source.id, title: 'Catalog',
+            format: 'happier-catalog', kinds: ['plugin', 'agent'], url: catalog.source.sourceUrl, enabled: true, addedAt: 1 }],
+    } }], settingsVersion: 1 });
     const requests: Array<Readonly<{ machineId: string; serverId?: string | null; payload: CapabilitiesInvokeRequest }>> = [];
+    const censusReads: Array<Readonly<{ machineId: string; installed: readonly Readonly<{ pluginId: string; version: string }>[] }>> = [];
     const actionRequests: Array<Readonly<{ actionId: string; envelope: ReturnType<typeof ExternalActionRequestEnvelopeV1Schema.parse> }>> = [];
+    let catalogInstalled = false;
+    let nativeInstallCommits = 0;
+    const nativeExecutions: unknown[] = [];
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-owner', encryptionMode: 'plain' });
+    // This is the receiving daemon behind the HTTP boundary. Policy, approval
+    // creation/CAS, decision and mounted observation all use their real owners.
+    const nativeExecutor = createActionExecutor(createActionExecutorBoundaryFixture({
+        isActionApprovalRequired: (actionId, context) =>
+            isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1 }), context),
+        buildApprovalPreview: async ({ defaultPreview, input }) => options.unevaluatedMachineIds?.includes(
+            input && typeof input === 'object' && 'machineId' in input ? String(input.machineId) : 'controller-1')
+            ? defaultPreview : ({ ...defaultPreview, pluginInstall: {
+            permissionsDisclosure: 'daemonEvaluated',
+            pendingReview: { kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: `candidate-${scenario}-${
+                input && typeof input === 'object' && 'machineId' in input ? String(input.machineId) : 'controller-1'}`,
+                reason: options.catalog ? 'firstInstall' : 'authorityExpansion',
+                currentVersion: options.catalog ? null : '1.0.0',
+                authorityExpansion: options.catalog ? [] : ['requiredHostAccess'],
+                review: createPluginInstallationReviewFixture({ pluginId, version: '1.2.3',
+                    requiredHostAccess: [{ id: 'account-storage', capability: 'storage.account', reason: 'Plugin data',
+                        authorizationClass: 'cooperativeDisclosure', normalizedScope: { enabled: true } }],
+                }),
+            },
+        } }),
+        approvalsCreate: async ({ request }) => {
+            const [{ captureActionAccountContext }, { createApprovalArtifact }] = await Promise.all([
+                import('@/sync/ops/actions/actionAccountContext'), import('@/sync/ops/actions/approvalArtifactWriter'),
+            ]);
+            const account = await captureActionAccountContext(serverIdentityId);
+            try {
+                return await createApprovalArtifact({ request, accountId: account.accountId,
+                    read: artifactId => account.readArtifact(artifactId, { fresh: true, ownerOnly: true }),
+                    create: async (artifactId, header, body, idScope) =>
+                        (await account.createArtifactDocument({ artifactId, header, body, idScope })).artifact });
+            } finally { account.dispose(); }
+        },
+        approvalsGet: async ({ artifactId }) => {
+            const body = artifacts.readPlainBody(artifactId);
+            return body ? ApprovalRequestV2Schema.parse(JSON.parse(body)) : null;
+        },
+        approvalsUpdate: async ({ artifactId, request, expectedStatus }) => {
+            const [{ captureActionAccountContext }, { writeApprovalRequestArtifact }] = await Promise.all([
+                import('@/sync/ops/actions/actionAccountContext'), import('@/sync/ops/actions/approvalArtifactWriter'),
+            ]);
+            const account = await captureActionAccountContext(serverIdentityId);
+            try {
+                return await writeApprovalRequestArtifact({ artifactId, request, expectedStatus,
+                    read: artifactId => account.readArtifact(artifactId, { fresh: true, ownerOnly: true }),
+                    write: (basis, header, body) => account.updateArtifact(artifactId, header, body, basis) });
+            } finally { account.dispose(); }
+        },
+        isApprovalExecutionOriginCurrent: async ({ origin }) => {
+            const [{ captureActionAccountContext }, { isApprovalExecutionOriginCurrentForAccountContext }] = await Promise.all([
+                import('@/sync/ops/actions/actionAccountContext'), import('@/sync/ops/actions/defaultActionExecutor'),
+            ]);
+            const account = await captureActionAccountContext(serverIdentityId);
+            try { return isApprovalExecutionOriginCurrentForAccountContext({ origin,
+                accountServerId: account.serverId, accountId: account.accountId }); }
+            finally { account.dispose(); }
+        },
+        // Plugin application runs in the other process, beyond this UI test.
+        pluginsDevLoopAction: async () => {
+            catalogInstalled = true;
+            nativeInstallCommits += 1;
+            return { ok: true, kind: 'plugins_install', outcome: 'applied', change: committed };
+        },
+    }));
     const developmentStatus = PluginDevelopmentStatusV1Schema.parse({
         roots: [{ kind: 'explicit', rootPath: sourceRootPath, trusted: true, persisted: true }],
         plugins: [{ pluginId, sourceRootPath, phase: 'active' }],
@@ -96,15 +215,20 @@ async function renderRemovalOwner(
         installationId: 'installation-1', runnerContentKeyBinding: null,
     };
     boundary.rpc.mockImplementation(async request => {
-        if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return {
-            protocolVersion: 1, results: { 'tool.plugins': { ok: true, checkedAt: 1, data: { installedPlugins: [{
+        if (request.method === RPC_METHODS.CAPABILITIES_DETECT) {
+            const installedPlugins = options.catalog
+                ? catalogInstalled ? [{ ...installed, version: '1.2.3' }] : [] : [{
                 ...installed, enabled: requests.length + actionRequests.length > 0 ? options.readbackEnabled ?? installed.enabled : installed.enabled,
-            }], ...(options.development ? { developmentActions: { create: true }, developmentStatus } : {}) } } },
-        };
+            }];
+            censusReads.push({ machineId: request.machineId, installed: installedPlugins });
+            return { protocolVersion: 1, results: { 'tool.plugins': { ok: true, checkedAt: 1, data: {
+                installedPlugins, ...(options.development ? { developmentActions: { create: true }, developmentStatus } : {}),
+            } } } };
+        }
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
             protocolVersion: 1,
-            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},
-                 resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
+            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, 
+                resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
         };
         if (request.method === RPC_METHODS.CAPABILITIES_INVOKE) {
             const payload = request.payload as CapabilitiesInvokeRequest;
@@ -117,10 +241,12 @@ async function renderRemovalOwner(
     });
     connection = await restoreServerAccountForTest({
         serverUrl: `https://plugin-removal-${scenario}.test`, serverIdentityId, accountId: 'account-owner',
+        additionalRequestOrigins: [new URL(DEFAULT_CURATED_MARKETPLACE_SOURCE_URL).origin, 'https://registry.npmjs.org'],
         credentials: { token: createAccountTokenForTests('account-owner', { currentAccount: true }) },
         request: async (rawUrl, init) => {
             const path = new URL(String(rawUrl)).pathname;
             if (path === '/health') return Response.json({});
+            if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-owner' }));
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
                 capabilities: { serverIdentity: { serverIdentityId } },
             }));
@@ -135,18 +261,58 @@ async function renderRemovalOwner(
                 }
                 return Response.json({ content: serverContent, version: serverVersion });
             }
+            if (options.deferredInstall) {
+                const artifactResponse = artifacts.handle(`${path}${new URL(String(rawUrl)).search}`, init);
+                if (artifactResponse) return await artifactResponse;
+            }
             if (path === '/v1/artifacts') return Response.json([]);
-            if (path === '/v1/machines') return Response.json([machineCensus]);
+            if (options.catalog && path.startsWith('/v1/account/entity-rows/prompt-library')) return catalogRows.handle(path, init);
+            if (options.catalog && String(rawUrl) === catalog.source.sourceUrl) return Response.json(catalog);
+            if (String(rawUrl) === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return Response.json(createRegistryPluginCatalogFixture({
+                sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, kind: 'curated', entries: [],
+            }));
+            if (String(rawUrl).startsWith('https://registry.npmjs.org/-/v1/search')) return Response.json({ total: 0, objects: [] });
+            if (path === '/v1/machines') return Response.json(twoMachines ? [machineCensus, { ...machineCensus, id: 'controller-2' }] : [machineCensus]);
             if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                id => id === machineCensus.id ? machineCensus : null);
+                id => id === machineCensus.id ? machineCensus
+                    : twoMachines && id === 'controller-2' ? { ...machineCensus, id: 'controller-2' } : null);
             if (path.startsWith('/v1/actions/')) {
                 const actionId = path.slice('/v1/actions/'.length);
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
                 actionRequests.push({ actionId, envelope });
                 await options.beforeActionResponse?.(init?.signal);
+                const installError = actionId === 'plugins.install' && envelope.target.kind === 'machine'
+                    ? options.installErrorsByMachine?.[envelope.target.machineId] : undefined;
+                if (installError) return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
+                    requestId: envelope.requestId, execution: { ok: false, errorCode: installError, error: installError } }));
+                if (options.deferredInstall && actionId === 'plugins.install') {
+                    const execution = await nativeExecutor.execute('plugins.install', envelope.input,
+                    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                        serverId: serverIdentityId, serverIdentityId, runtimeAccountId: 'account-owner',
+                        actionRequestId: envelope.requestId, externalActionTarget: envelope.target });
+                    nativeExecutions.push(execution);
+                    return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
+                        requestId: envelope.requestId, execution }));
+                }
+                const declined = options.declineInstall && actionId === 'plugins.install'
+                    && actionRequests.filter(request => request.actionId === actionId).length === 1;
+                if (options.catalog && actionId === 'plugins.install' && !declined && !options.actionError) {
+                    // A lost acknowledgement may follow the daemon's commit;
+                    // an explicit consent decline never changes its inventory.
+                    catalogInstalled = true;
+                    nativeInstallCommits += 1;
+                }
                 const lifecycleChange = actionId === `plugins.${method}` ? changes[actionRequests.filter(request => request.actionId === actionId).length - 1] : undefined;
                 return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
-                    execution: options.actionError ? { ok: false, errorCode: options.actionError, error: options.actionError } : { ok: true, result: { ok: options.actionFailure !== true, kind: actionId.replaceAll('.', '_'),
+                    execution: declined
+                        // The receiving daemon owns ordinary consent; this is
+                        // its terminal HTTP decision, not a second UI prompt.
+                        ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' }
+                    : options.actionError ? { ok: false, errorCode: options.actionError, error: options.actionError }
+                    : options.catalog && actionId === 'plugins.install' ? { ok: true, result: {
+                        ok: !options.installOutcomeUnknown, kind: 'plugins_install', outcome: options.installOutcomeUnknown ? 'failed' : 'applied',
+                        change: options.installOutcomeUnknown ? { kind: 'outcomeUnknown', pluginId } : { ...committed, pluginId },
+                    } } : { ok: true, result: { ok: options.actionFailure !== true, kind: actionId.replaceAll('.', '_'),
                         ...(actionId === `plugins.${method}` ? { action: method, pluginId, change: lifecycleChange ?? committed } : {}),
                         ...(options.actionFailure ? { diagnostics: [{ code: 'plugin_author_test_failed', message: 'Plugin tests failed' }] } : {}),
                         ...(actionId === 'plugins.dev.submit' || actionId === 'plugins.dev.unregister' ? { status: developmentStatus } : {}) } },
@@ -155,16 +321,23 @@ async function renderRemovalOwner(
             return Response.json({ error: 'not_found' }, { status: 404 });
         },
     });
+    // Finish the restored Home's initial settings response before installing
+    // scenario facts, as in the canonical Settings boundary harness.
+    const { sync } = await import('@/sync/sync');
+    const settingsQueue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
+    await settingsQueue.awaitQueue();
     const { storage } = await import('@/sync/domains/state/storage');
+    // Content and credential bindings share the portable Home identity. home.id is
+    // only this device's profile lookup alias and would retire scoped registry reads.
     const scope = { serverId: connection.home.serverIdentityId!, accountId: 'account-owner' };
     storage.getState().activateProfileScope(scope);
     await storage.getState().activateSettingsScope(scope);
     storage.getState().applySettings({ ...storage.getState().settings,
-        machineAdministrationTargetsLocalV1: { 'plugins.home': selectedTarget },
+        machineAdministrationTargetsLocalV1: options.noTarget ? {} : { 'plugins.home': selectedTarget },
         actionsSettingsV1: developmentActionsSettings,
     }, serverVersion);
     const machine = createMachineFixture({ id: 'controller-1', installationId: 'installation-1', activeAt: Date.now() });
-    storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId });
+    storage.getState().applyMachines(twoMachines ? [machine, { ...machine, id: 'controller-2' }] : [machine], true, { sourceServerId: scope.serverId });
     storage.setState({ isDataReady: true,
         machineListStatusByServerId: { [scope.serverId]: 'idle' },
     });
@@ -182,8 +355,10 @@ async function renderRemovalOwner(
     const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     clearDaemonMergedProjectionCacheForTests();
     const { usePluginSettingsScreenState } = await import('./usePluginSettingsScreenState');
-    const hook = await renderHook(() => usePluginSettingsScreenState());
-    await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(true));
+    const hook = await renderHook(({ focused }: { focused: boolean }) => usePluginSettingsScreenState({ focused,
+        ...(options.browse ? { initialView: 'discover', management: true } : {}) }),
+        { initialProps: { focused: options.focused ?? true } });
+    if (options.focused !== false && !options.noTarget) await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(true));
     if (options.development) await vi.waitFor(() => expect(hook.getCurrent().developmentPlugins.map(plugin => plugin.sourceRootPath)).toEqual([sourceRootPath]));
     const publishMachine = (changes: Partial<typeof machine>) => {
         const next = { ...machine, seq: machine.seq + 1, updatedAt: Date.now(), ...changes };
@@ -193,7 +368,463 @@ async function renderRemovalOwner(
         };
         storage.getState().applyMachines([next], true, { sourceServerId: scope.serverId });
     };
-    return { hook, requests, actionRequests, storage, scope, machine, publishMachine, publishAccountEnabled };
+    const decideInstall = async (artifactId: string, decision: 'approve' | 'reject' | 'cancel',
+        authority: 'present_user' | 'account_automation' = 'present_user') => {
+        const result = await nativeExecutor.execute('approval.request.decide', { artifactId, decision }, {
+            surface: 'ui', authority, actionCaller: { kind: 'host' },
+            serverId: scope.serverId, serverIdentityId, runtimeAccountId: 'account-owner',
+        });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        publishHomeAccountChange(scope.serverId, [artifactId], { changeKinds: ['artifact'] });
+        return result;
+    };
+    return { hook, requests, actionRequests, storage, scope, machine, publishMachine, publishAccountEnabled, catalog, censusReads, artifacts, decideInstall, nativeExecutions,
+        nativeInstallCommitCount: () => nativeInstallCommits };
+}
+
+describe('Plugin install/update originating approval state', () => {
+    it('collects the exact per-Machine pending approvals without installing or lending confirmation to another target', async () => {
+        const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, scope } =
+            await renderRemovalOwner('disable', [], { catalog: true, browse: true, noTarget: true, deferredInstall: true });
+        await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
+            itemId: 'example.compute', version: '1.2.3' }));
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.id === 'example.compute')).toBe(true));
+        expect(hook.getCurrent().pluginInstallReview).toBeNull();
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(0);
+        expect(hook.getCurrent().runCatalogInstallOnMachines).toBeTypeOf('function');
+        const expectedTargets = ['controller-1', 'controller-2'].map(machineId => ({ serverIdentityId: scope.serverId, machineId }));
+        const targets = expectedTargets.map(target => ({ ...target }));
+        await act(async () => {
+            const pending = hook.getCurrent().runCatalogInstallOnMachines({ pluginId: 'example.compute', sourceId: catalog.source.id }, targets);
+            targets[0]!.machineId = 'different-machine';
+            await pending;
+        });
+        const review = hook.getCurrent().pluginInstallReview;
+        expect(review).toMatchObject({ pluginId: 'example.compute', rows: expectedTargets.map(target => ({ kind: 'approval', target })) });
+        expect(artifacts.list()).toHaveLength(2);
+        expect(nativeInstallCommitCount()).toBe(0);
+        for (const row of review!.rows) {
+            if (row.kind !== 'approval') throw new Error('Expected an exact daemon approval');
+            const request = ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(row.artifactId)!));
+            expect(request.status).toBe('open');
+            expect(request.actionArgs).toMatchObject({ machineId: row.target.machineId });
+            expect(request.executionOriginV1.target).toEqual({ kind: 'machine', machineId: row.target.machineId });
+            expect(request.preview).toMatchObject({ pluginInstall: { pendingReview: { pendingChangeId: expect.any(String) } } });
+        }
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install').map(request => request.envelope.target))
+            .toEqual(expectedTargets.map(target => ({ kind: 'machine', machineId: target.machineId })));
+        expect(hook.getCurrent().pluginActionApproval.approvalId).toBeNull();
+    });
+
+    it('keeps one Machine refusal beside the other exact pending approval without retrying either install', async () => {
+        const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, scope } =
+            await renderRemovalOwner('disable', [], { catalog: true, browse: true, noTarget: true, deferredInstall: true,
+                installErrorsByMachine: { 'controller-2': 'plugin_change_daemon_unavailable' } });
+        await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
+            itemId: 'example.compute', version: '1.2.3' }));
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.id === 'example.compute')).toBe(true));
+        await act(async () => {
+            await hook.getCurrent().runCatalogInstallOnMachines({ pluginId: 'example.compute', sourceId: catalog.source.id },
+                ['controller-1', 'controller-2'].map(machineId => ({ serverIdentityId: scope.serverId, machineId })));
+        });
+        expect(hook.getCurrent().pluginInstallReview).toMatchObject({ rows: [
+            { kind: 'approval', target: { machineId: 'controller-1' } },
+            { kind: 'settled', target: { machineId: 'controller-2' }, result: { ok: false, errorCode: 'plugin_change_daemon_unavailable' } },
+        ] });
+        expect(artifacts.list()).toHaveLength(1);
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(2);
+    });
+
+    it('does not dispatch a retained batch install callback after its catalog Account retires', async () => {
+        const { hook, catalog, storage, actionRequests, scope } =
+            await renderRemovalOwner('disable', [], { catalog: true, browse: true, noTarget: true, deferredInstall: true });
+        await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
+            itemId: 'example.compute', version: '1.2.3' }));
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.id === 'example.compute')).toBe(true));
+        const retainedRun = hook.getCurrent().runCatalogInstallOnMachines;
+        await act(async () => storage.getState().activateProfileScope({ ...scope, accountId: 'another-account' }));
+        await act(async () => retainedRun({ pluginId: 'example.compute', sourceId: catalog.source.id },
+            [{ serverIdentityId: scope.serverId, machineId: 'controller-1' }]));
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(0);
+        expect(hook.getCurrent().pluginInstallReview).toBeNull();
+    });
+
+    it.each([
+        { method: 'install', decision: 'approve' }, { method: 'install', decision: 'reject' },
+        { method: 'install', decision: 'cancel' }, { method: 'update', decision: 'approve' },
+    ] as const)('exposes the same pending $method and settles $decision without another install request', async ({ method, decision }) => {
+        const { hook, catalog, artifacts, decideInstall, nativeInstallCommitCount, actionRequests, nativeExecutions } =
+            await renderRemovalOwner('disable', [], { catalog: method === 'install', browse: method === 'install', deferredInstall: true });
+        if (method === 'install') {
+            await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
+                itemId: 'example.compute', version: '1.2.3' }));
+            await vi.waitFor(() => expect(hook.getCurrent().canRunDiscoverActions).toBe(true));
+            await act(async () => hook.getCurrent().runCatalogAction({ method, pluginId: 'example.compute', sourceId: catalog.source.id }));
+        } else {
+            await act(async () => hook.getCurrent().runInstalledPluginAction('update', 'example.compute'));
+        }
+        await vi.waitFor(() => expect(artifacts.list(), JSON.stringify({ nativeExecutions, alerts: boundary.alert.mock.calls,
+            actionRequestCount: actionRequests.length })).toHaveLength(1));
+        const artifactId = artifacts.list()[0]!.id;
+        await vi.waitFor(() => expect(hook.getCurrent().pluginActionApproval).toMatchObject({
+            approvalId: artifactId, approvalPending: true, serverId: connection!.home.id, artifact: { id: artifactId },
+        }));
+        expect(hook.getCurrent().pluginActionApproval.artifact?.body).toBe(artifacts.readPlainBody(artifactId));
+        expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
+            preview: { pluginInstall: { pendingReview: { review: {
+                requiredHostAccess: [{ capability: 'storage.account', normalizedScope: { enabled: true } }],
+            } } } },
+        });
+        expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(true);
+        expect(nativeInstallCommitCount()).toBe(0);
+        if (method === 'install' && decision === 'approve') {
+            await act(async () => expect(await decideInstall(artifactId, 'approve', 'account_automation'))
+                .toMatchObject({ ok: false, errorCode: 'present_user_required' }));
+            expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)).status).toBe('open');
+            expect(nativeInstallCommitCount()).toBe(0);
+        }
+        await act(async () => {
+            const result = await decideInstall(artifactId, decision);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        });
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
+        expect(hook.getCurrent().pluginActionApproval.approvalId).toBeNull();
+        expect(hook.getCurrent().routineOperationSettlement).toMatchObject({ scope: method === 'install' ? 'discover' : 'installed',
+            // A declined change says what did not happen: "Install declined", not a bare status.
+            message: decision === 'approve' ? 'common.done' : decision === 'reject' ? `settingsPlugins.${method}Declined` : `settingsPlugins.${method}Canceled` });
+        expect(nativeInstallCommitCount()).toBe(decision === 'approve' ? 1 : 0);
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(1);
+        expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)).status)
+            .toBe(decision === 'approve' ? 'executed' : decision === 'reject' ? 'rejected' : 'canceled');
+    });
+
+    it('presents the created review where Install was pressed, reopens it after a close and withdraws it on the decision', async () => {
+        const { catalog, artifacts, decideInstall, actionRequests } = await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true });
+        const { Modal, ModalProvider } = await import('@/modal');
+        const { PluginListingPane } = await import('../listing/PluginListingScreen');
+        const screen = await renderSettingsView(React.createElement(ModalProvider, null, React.createElement(PluginListingPane, {
+            sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' })));
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.install')?.props.disabled).toBe(false));
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.install'); });
+        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
+        // The evaluated review and its one decision open in place, without a trip to the Inbox.
+        await waitForControl(screen, 'approvals.in-place');
+        expect(screen.findByTestId('approvals.reject')).not.toBeNull();
+        expect(boundary.push).not.toHaveBeenCalled();
+        const presented = vi.mocked(Modal.show).mock.calls.filter(([config]) => config.chrome?.testID === 'approvals.in-place.modal');
+        expect(presented).toHaveLength(1);
+        // Closing it without an answer keeps the request open and offers it again where it was asked.
+        await act(async () => {
+            presented[0]![0].onRequestClose?.();
+            Modal.hide(vi.mocked(Modal.show).mock.results.at(-1)!.value as string);
+        });
+        expect(screen.findByTestId('approvals.in-place')).toBeNull();
+        await waitForControl(screen, 'settings.plugins.listing.approvalWaiting.open');
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.approvalWaiting.open'); });
+        await waitForControl(screen, 'approvals.in-place');
+        // The person's decision settles the request: the review withdraws and the outcome stays on the listing.
+        await act(async () => { expect(await decideInstall(artifacts.list()[0]!.id, 'reject')).toMatchObject({ ok: true }); });
+        await vi.waitFor(() => expect(screen.findByTestId('approvals.in-place')).toBeNull());
+        await waitForControl(screen, 'settings.plugins.discover.operationSettlement');
+        expect(screen.findByTestId('settings.plugins.listing.approvalWaiting')).toBeNull();
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(1);
+    });
+
+    it('confirms several Machines once by deciding each shown open approval through its own review, and nothing else', async () => {
+        const { catalog, artifacts, decideInstall, actionRequests, nativeInstallCommitCount, scope, storage } =
+            await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true, secondMachine: true });
+        // The Home answers (this harness stubs its socket): a decision needs a reachable Home, as in the app.
+        storage.setState({ socketStatus: 'connected', endpointStatus: 'online', syncError: null });
+        const { ModalProvider } = await import('@/modal');
+        const { PluginListingPane } = await import('../listing/PluginListingScreen');
+        const screen = await renderSettingsView(React.createElement(ModalProvider, null, React.createElement(PluginListingPane, {
+            sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' })));
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.installOnMachines')?.props.disabled).toBe(false));
+        // An approval this operation did not create (an Inbox request) is never part of the press.
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        await act(async () => { await createFrontDoorActionExecute()('plugins.install', { machineId: 'controller-1', source: {
+            kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } }, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: scope.serverId,
+            executionRunTargetMachineId: 'controller-1', externalActionTarget: { kind: 'machine', machineId: 'controller-1' } }); });
+        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
+        const inboxApprovalId = artifacts.list()[0]!.id;
+
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.installOnMachines'); });
+        await waitForControl(screen, 'settings.plugins.installOnMachines.target.controller-2');
+        await act(async () => { screen.findByTestId('settings.plugins.installOnMachines.target.controller-2.switch')!
+            .props.onValueChange(true); });
+        await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.continue'); });
+        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(3));
+        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.controller-1');
+        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.controller-2');
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.install')?.props.disabled).toBe(false));
+        const operationIds = artifacts.list().map(artifact => artifact.id).filter(id => id !== inboxApprovalId);
+        const statusOf = (artifactId: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)).status;
+        const machineOf = (artifactId: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))
+            .executionOriginV1.target;
+        const [first, second] = ['controller-1', 'controller-2'].map(machineId =>
+            operationIds.find(id => JSON.stringify(machineOf(id)) === JSON.stringify({ kind: 'machine', machineId }))!);
+        // Declined elsewhere before the press: that row is no longer open and leaves the set.
+        await act(async () => { expect(await decideInstall(second!, 'reject')).toMatchObject({ ok: true }); });
+        await waitForControl(screen, 'settings.plugins.installOnMachines.outcome.controller-2');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsPlugins.installDeclined'));
+
+        await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.install'); });
+        await vi.waitFor(() => expect(statusOf(first!)).not.toBe('open'));
+        // One decision, for the one shown open row, through that row's own review (its exact-daemon replay);
+        // the declined row and the Inbox request are left alone. This harness has no daemon replay behind the
+        // Machine RPC boundary, so the install's own outcome is the live recipe's to show.
+        const decisions = boundary.rpc.mock.calls.map(([request]) => request).filter(request =>
+            request.method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED || request.method === RPC_METHODS.APPROVAL_REQUEST_DECIDE);
+        expect(decisions.map(request => (request.payload as { artifactId?: string }).artifactId)).toEqual([first]);
+        expect(statusOf(second!)).toBe('rejected');
+        expect(statusOf(inboxApprovalId)).toBe('open');
+        expect(nativeInstallCommitCount()).toBe(0);
+        // The install itself is never re-run or confirmed.
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(3);
+        expect(actionRequests.some(request => request.actionId.endsWith('.confirmed'))).toBe(false);
+    });
+
+    async function openCombinedReview(options: Parameters<typeof renderRemovalOwner>[2]) {
+        const owner = await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true, secondMachine: true, ...options });
+        owner.storage.setState({ socketStatus: 'connected', endpointStatus: 'online', syncError: null });
+        const { ModalProvider } = await import('@/modal');
+        const { PluginListingPane } = await import('../listing/PluginListingScreen');
+        const screen = await renderSettingsView(React.createElement(ModalProvider, null, React.createElement(PluginListingPane, {
+            sourceId: owner.catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' })));
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.installOnMachines')?.props.disabled).toBe(false));
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.installOnMachines'); });
+        await waitForControl(screen, 'settings.plugins.installOnMachines.target.controller-2');
+        await act(async () => { screen.findByTestId('settings.plugins.installOnMachines.target.controller-2.switch')!
+            .props.onValueChange(true); });
+        await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.continue'); });
+        await vi.waitFor(() => expect(owner.artifacts.list()).toHaveLength(2));
+        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.controller-1');
+        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.controller-2');
+        const decisions = () => boundary.rpc.mock.calls.map(([request]) => request).filter(request =>
+            request.method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED || request.method === RPC_METHODS.APPROVAL_REQUEST_DECIDE);
+        return { ...owner, screen, decisions,
+            machineText: (machineId: string) => textWithin(screen.findByTestId(`settings.plugins.installOnMachines.machine.${machineId}`)) };
+    }
+
+    it('reads a row whose Home this device cannot name to one sign-in as unavailable, with nothing to confirm', async () => {
+        // The review set keeps the portable identity when no single profile here names that Home (missing, or
+        // several sign-ins on it); the row's review must then read as unavailable and never count toward the press.
+        await renderRemovalOwner('disable', [], { catalog: true });
+        const { ModalProvider } = await import('@/modal');
+        const { PluginInstallOnMachinesSheet } = await import('../listing/PluginInstallOnMachines');
+        const target = { serverIdentityId: 'srv_not_on_this_device', machineId: 'studio-mac' };
+        const label = { machine: 'Studio Mac', server: 'Other Home' };
+        function Host() {
+            const [review, setReview] = React.useState<import('./usePluginInstallReviewSet').PluginInstallReviewSet | null>(null);
+            return React.createElement(PluginInstallOnMachinesSheet, { name: 'Example compute', initialTarget: target,
+                candidates: [{ target, displayName: label.machine, serverLabel: label.server, availability: 'online', observation: 'live', observedAt: 1 }],
+                review, onClosed: () => {}, onClose: () => {},
+                run: async () => { setReview({ pluginId: 'example.compute', rows: [{ kind: 'approval', target, targetLabel: label,
+                    artifactId: 'approval-other-home', serverId: target.serverIdentityId }] }); } });
+        }
+        const screen = await renderSettingsView(React.createElement(ModalProvider, null, React.createElement(Host)));
+        await waitForControl(screen, 'settings.plugins.installOnMachines.continue');
+        await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.continue'); });
+        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.studio-mac');
+        await vi.waitFor(() => expect(textWithin(screen.findByTestId('settings.plugins.installOnMachines.machine.studio-mac')))
+            .toContain('actionConfirmations.homeUnavailable'));
+        // Nothing here waits on this person: no Install control is offered, only Close.
+        expect(screen.findByTestId('settings.plugins.installOnMachines.install')).toBeNull();
+        await waitForControl(screen, 'settings.plugins.installOnMachines.close');
+        expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED
+            || request.method === RPC_METHODS.APPROVAL_REQUEST_DECIDE)).toEqual([]);
+    });
+
+    it('keeps a Machine whose approval carries no evaluated review out of the press and says why', async () => {
+        const { screen, decisions, machineText, artifacts } = await openCombinedReview({ unevaluatedMachineIds: ['controller-2'] });
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.install')?.props.disabled).toBe(false));
+        // The evaluated row offers its facts; the other shows no facts, only why it cannot be approved here.
+        expect(machineText('controller-1')).toContain('settingsPlugins.installReviewSections.identity');
+        await vi.waitFor(() => expect(machineText('controller-2')).toContain('approvals.approveUnavailableHint'));
+        expect(machineText('controller-2')).not.toContain('settingsPlugins.installReviewSections.identity');
+        await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.install'); });
+        await vi.waitFor(() => expect(decisions()).toHaveLength(1));
+        const machineOf = (artifactId: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))
+            .executionOriginV1.target;
+        const decided = (decisions()[0]!.payload as { artifactId?: string }).artifactId!;
+        expect(machineOf(decided)).toEqual({ kind: 'machine', machineId: 'controller-1' });
+    });
+});
+
+function textWithin(node: import('react-test-renderer').ReactTestInstance | null | undefined): string {
+    if (!node) return '';
+    return node.children.map(child => typeof child === 'string' ? child : textWithin(child)).join(' ');
+}
+
+describe('My plugins presented demand and shared Add continuation', () => {
+    it('keeps no selected Machine distinct from disconnected through the real settings hook', async () => {
+        const { hook, storage, scope } = await renderRemovalOwner('disable', [], { noTarget: true });
+        await vi.waitFor(() => expect(hook.getCurrent().administrationTargetSelection.state.kind).toBe('unselected'));
+        expect(hook.getCurrent().readOnlySnapshotNotice).toEqual({ reason: 'noTarget' });
+        expect(boundary.rpc.mock.calls).toHaveLength(0);
+        await act(async () => { storage.getState().applySettings({ ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: { 'plugins.home': { serverIdentityId: scope.serverId, machineId: 'controller-1' } },
+        }, 2); });
+        await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(true));
+        expect(hook.getCurrent().readOnlySnapshotNotice).toBeNull();
+    });
+
+    it('renders the Store column without native management acquisition for its badge', async () => {
+        const { requests } = await renderRemovalOwner('disable', [], { focused: false });
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { PluginsNavigationColumn } = await import('../PluginsNavigationColumn');
+        const screen = await renderSettingsView(React.createElement(DestinationInstanceHost, {
+            tabId: 'store', ref: { kind: 'plugins', params: {} }, pathname: '/plugins', focused: true, visible: true,
+            navigation: { push: boundary.push, pushRetainingCurrent: boundary.push, replace: boundary.push,
+                back: () => {}, setParams: () => {} },
+            children: React.createElement(PluginsNavigationColumn),
+        }));
+        expect(screen.findByTestId('plugins-column')).not.toBeNull();
+        await act(async () => { await Promise.resolve(); });
+        expect(requests).toEqual([]);
+        expect(boundary.rpc.mock.calls).toEqual([]);
+    });
+    it('keeps an admitted mutation alive on blur and reports an honest unknown without replay', async () => {
+        let release!: () => void;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        let issuedSignal: AbortSignal | null | undefined;
+        const { hook, actionRequests } = await renderRemovalOwner('disable', [{ kind: 'outcomeUnknown', pluginId: 'example.compute' }], {
+            readbackEnabled: false, beforeActionResponse: async signal => { issuedSignal = signal; await pending; },
+        });
+        try {
+            await act(async () => { hook.getCurrent().runInstalledPluginAction('disable', 'example.compute'); });
+            await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+            await hook.rerender({ focused: false });
+            expect(issuedSignal?.aborted).toBe(false);
+        } finally { release(); }
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
+        expect(hook.getCurrent().routineOperationSettlement).toBeNull();
+        expect(boundary.alert).toHaveBeenCalledWith('settingsPlugins.pluginChangeOutcomeUnknownTitle',
+            expect.stringContaining('settingsPlugins.pluginChangeOutcomeUnknownBody'));
+        await hook.rerender({ focused: true });
+        await vi.waitFor(() => expect(hook.getCurrent().installedPlugins[0]?.enabled).toBe(false));
+        expect(actionRequests).toHaveLength(1);
+    });
+
+    it('hands an Agent plugin payload to the same exact listing continuation without installing from the Agent picker', async () => {
+        const { actionRequests, catalog } = await renderRemovalOwner('disable', [], { catalog: true });
+        const { AgentAddModal } = await import('../../agents/add/agentAddModalConfig');
+        const screen = await renderSettingsView(React.createElement(AgentAddModal, { onClose: () => {}, onAddedStay: () => {},
+            params: { sourceId: catalog.source.id, onCommand: () => {}, onOpenDefinition: () => {}, onOpenAgent: () => {} } }));
+        await measureAddCollection(screen, 'agents.add');
+        await waitForControl(screen, 'agents.add.row.example.compute');
+        await act(async () => { screen.pressByTestId('agents.add.row.example.compute'); });
+        await waitForControl(screen, 'agents.add:primary');
+        await vi.waitFor(() => expect(screen.findByTestId('agents.add:primary')?.props.disabled).toBe(false));
+        await act(async () => { screen.pressByTestId('agents.add:primary'); });
+        await vi.waitFor(() => expect(boundary.push).toHaveBeenCalledWith(expect.objectContaining({ params: {
+            sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3',
+        } })));
+        expect(actionRequests).toEqual([]);
+    });
+
+    it('installs from a cold exact listing pane without requiring a parent Browse row', async () => {
+        const { catalog, actionRequests, nativeInstallCommitCount } = await renderRemovalOwner('disable', [], { catalog: true });
+        const { PluginListingPane } = await import('../listing/PluginListingScreen');
+        const listing = { sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' };
+        const screen = await renderSettingsView(React.createElement(PluginListingPane, listing));
+        await waitForControl(screen, 'settings.plugins.listing.install');
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.install')?.props.disabled).toBe(false));
+        expect(actionRequests).toHaveLength(0);
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.install'); });
+        await waitForControl(screen, 'settings.plugins.listing.manage');
+        expect(actionRequests).toHaveLength(1);
+        expect(actionRequests[0]).toMatchObject({ actionId: 'plugins.install', envelope: {
+            target: { kind: 'machine', machineId: 'controller-1' }, input: { source: { kind: 'marketplace',
+                sourceId: catalog.source.id, pluginId: 'example.compute', packageName: 'example-compute', version: '1.2.3' } },
+        } });
+        expect(nativeInstallCommitCount()).toBe(1);
+    });
+
+    it('withdraws capability, projection and source acquisition while hidden, retaining the exact selection', async () => {
+        const { hook } = await renderRemovalOwner('disable', [], { focused: false });
+        expect(hook.getCurrent().executionMachineId).toBe('controller-1');
+        await act(async () => {});
+        expect(boundary.rpc.mock.calls).toHaveLength(0);
+        await hook.rerender({ focused: true });
+        await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(true));
+        expect(boundary.rpc.mock.calls.every(([request]) => request.machineId === 'controller-1')).toBe(true);
+        const held = hook.getCurrent().installedPlugins;
+        await hook.rerender({ focused: false });
+        boundary.rpc.mockClear();
+        await act(async () => { hook.getCurrent().refreshPluginTruth(); });
+        expect(boundary.rpc.mock.calls).toHaveLength(0);
+        expect(hook.getCurrent().installedPlugins).toBe(held);
+    });
+
+    it.each(['committed', 'unknown', 'declined'] as const)('My plugins Add preserves the selected native pin through daemon consent (%s)', async outcome => {
+        const { actionRequests, catalog, requests, censusReads, nativeInstallCommitCount } = await renderRemovalOwner('disable', [], {
+            catalog: true, installOutcomeUnknown: outcome === 'unknown', declineInstall: outcome === 'declined',
+        });
+        const { ModalProvider } = await import('@/modal');
+        const { PluginSettingsHomeScreen } = await import('../PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(ModalProvider, null,
+            React.createElement(AppPaneProvider, null, React.createElement(PluginSettingsHomeScreen))));
+        await act(async () => { screen.pressByTestId('settings.plugins.add'); });
+        await waitForControl(screen, 'plugins.add:collection');
+        await measureAddCollection(screen, 'plugins.add');
+        await waitForControl(screen, `plugins.add.row.${catalog.source.id}.example.compute`);
+        await act(async () => { screen.pressByTestId(`plugins.add.row.${catalog.source.id}.example.compute`); });
+        await vi.waitFor(() => expect(screen.findByTestId('plugins.add:primary')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('plugins.add:primary')?.props.disabled).toBe(false));
+        await act(async () => { screen.pressByTestId('plugins.add:primary'); });
+        await vi.waitFor(() => expect(boundary.push).toHaveBeenCalledWith(expect.objectContaining({ params: {
+            sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3',
+        } })));
+        const { PluginListingScreen } = await import('../listing/PluginListingScreen');
+        await screen.update(React.createElement(AppPaneProvider, null, React.createElement(PluginListingScreen, {
+            sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3',
+        })));
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.install')?.props.disabled).toBe(false));
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.install'); });
+        await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        if (outcome === 'declined') {
+            await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.install')?.props.disabled).toBe(false));
+            expect(screen.findByTestId('settings.plugins.listing.manage')).toBeNull();
+            expect(boundary.alert).not.toHaveBeenCalled();
+            expect(boundary.confirm).not.toHaveBeenCalled();
+            expect(requests).toEqual([]);
+            expect(censusReads.every(read => read.installed.length === 0)).toBe(true);
+            expect(nativeInstallCommitCount()).toBe(0);
+            const readsAfterDecline = censusReads.length;
+            await act(async () => {});
+            expect(actionRequests).toHaveLength(1);
+            expect(censusReads).toHaveLength(readsAfterDecline);
+            // Only a new deliberate Install intent may request another change.
+            await act(async () => { screen.pressByTestId('settings.plugins.listing.install'); });
+            await vi.waitFor(() => expect(actionRequests).toHaveLength(2));
+        }
+        expect(actionRequests[0]).toMatchObject({ actionId: 'plugins.install', envelope: {
+            target: { kind: 'machine', machineId: 'controller-1' }, input: { machineId: 'controller-1',
+                source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute',
+                    packageName: 'example-compute', version: '1.2.3' } },
+        } });
+        await waitForControl(screen, 'settings.plugins.listing.manage');
+        expect(censusReads.every(read => read.machineId === 'controller-1')).toBe(true);
+        expect(censusReads.at(-1)?.installed).toContainEqual(expect.objectContaining({ pluginId: 'example.compute', version: '1.2.3' }));
+        expect(nativeInstallCommitCount()).toBe(1);
+        expect(actionRequests).toHaveLength(outcome === 'declined' ? 2 : 1);
+        if (outcome === 'declined') expect(actionRequests[1]?.envelope.input).toEqual(actionRequests[0]?.envelope.input);
+        expect(requests).toEqual([]);
+    });
+});
+
+async function waitForControl(screen: Awaited<ReturnType<typeof renderSettingsView>>, testID: string) {
+    await vi.waitFor(() => expect(screen.findByTestId(testID), `Missing control: ${testID}`).not.toBeNull());
+}
+
+async function measureAddCollection(screen: Awaited<ReturnType<typeof renderSettingsView>>, testID: string) {
+    const stage = screen.findAll(node => node.props.testID === `${testID}:collection:stage`
+        && typeof node.props.onLayout === 'function')[0];
+    expect(stage, `Missing measured stage: ${testID}`).toBeDefined();
+    await act(async () => stage!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } } }));
 }
 
 describe('development Settings through the real UI Action wiring', () => {
@@ -225,23 +856,54 @@ describe('development Settings through the real UI Action wiring', () => {
         expect(hook.getCurrent().routineOperationSettlement).toBeNull();
     });
 
-    it.each(['daemon generation', 'installation', 'unmount'] as const)('retires an issued install on real authority retirement (%s)', async retirement => {
+    it.each(['daemon generation', 'installation', 'reconnect'] as const)('settles an admitted exact install once across %s', async change => {
         let releaseResponse!: () => void;
         const response = new Promise<void>(resolve => { releaseResponse = resolve; });
         let actionSignal: AbortSignal | null | undefined;
-        const { hook, actionRequests, publishMachine } = await renderRemovalOwner('disable', [], {
+        const { hook, actionRequests, publishMachine, catalog, nativeInstallCommitCount } = await renderRemovalOwner('disable', [], {
+            catalog: true, browse: true,
             beforeActionResponse: async signal => { actionSignal = signal; await response; },
+        });
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.sourceId === catalog.source.id)).toBe(true));
+        try {
+            await act(async () => { hook.getCurrent().runCatalogAction({ method: 'install', pluginId: 'example.compute', sourceId: catalog.source.id }); });
+            await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+            if (change === 'reconnect') {
+                await act(async () => { publishMachine({ active: false }); });
+                await vi.waitFor(() => expect(hook.getCurrent().daemonOperationsAvailable).toBe(false));
+                expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(true);
+                await act(async () => { publishMachine({ active: true }); });
+            } else await act(async () => { publishMachine(change === 'installation'
+                ? { installationId: 'installation-next' } : { daemonStateVersion: 2 }); });
+            expect(actionSignal?.aborted).toBe(false);
+            expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(true);
+            expect(boundary.alert).not.toHaveBeenCalled();
+            expect(hook.getCurrent().routineOperationSettlement).toBeNull();
+        } finally { releaseResponse(); }
+        await vi.waitFor(() => expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done'));
+        expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false);
+        expect(actionRequests).toHaveLength(1);
+        expect(nativeInstallCommitCount()).toBe(1);
+        await vi.waitFor(() => expect(hook.getCurrent().installedPlugins[0]?.version).toBe('1.2.3'));
+        expect(actionRequests[0]?.envelope.input).toMatchObject({ machineId: 'controller-1',
+            source: { sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } });
+    });
+
+    it.each(['account', 'unmount'] as const)('withdraws admitted install feedback on %s retirement', async retirement => {
+        let releaseResponse!: () => void;
+        const response = new Promise<void>(resolve => { releaseResponse = resolve; });
+        const { hook, actionRequests, storage, scope } = await renderRemovalOwner('disable', [], {
+            beforeActionResponse: async () => { await response; },
         });
         try {
             await act(async () => { hook.getCurrent().runCatalogAction({ method: 'update', pluginId: 'example.compute' }); });
             await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
             if (retirement === 'unmount') await hook.unmount();
-            else await act(async () => { publishMachine(retirement === 'installation'
-                ? { installationId: 'installation-next' } : { daemonStateVersion: 2 }); });
-            await vi.waitFor(() => expect(actionSignal?.aborted).toBe(true));
-            expect(boundary.alert).not.toHaveBeenCalled();
-            expect(hook.getCurrent().routineOperationSettlement).toBeNull();
-        } finally { releaseResponse(); }
+            else await act(async () => { storage.getState().activateProfileScope({ ...scope, accountId: 'account-next' }); });
+        } finally { await act(async () => { releaseResponse(); }); }
+        expect(boundary.alert).not.toHaveBeenCalled();
+        expect(hook.getCurrent().routineOperationSettlement).toBeNull();
+        expect(actionRequests).toHaveLength(1);
     });
 
     it('keeps an issued install pending across a projection refresh on the same daemon', async () => {
@@ -301,7 +963,7 @@ describe('development Settings through the real UI Action wiring', () => {
             { actionId: 'plugins.dev.unregister', target: { kind: 'machine', machineId: 'controller-1' }, input: { projectRoot: sourceRootPath } },
         ]);
         expect(requests).toEqual([]);
-        expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done');
+        await vi.waitFor(() => expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done'));
     });
 
     it('settles a failed development Action without publishing success', async () => {
@@ -359,7 +1021,7 @@ describe('local plugin removal at the actual settings hook and machine RPC bound
         ]);
         expect(requests).toEqual([]);
         expect(boundary.confirm).not.toHaveBeenCalled();
-        expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done');
+        await vi.waitFor(() => expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done'));
     });
 
     it.each(['disable', 'uninstall'] as const)('reviews exact native responsibility and a renewed census before %s can commit', async method => {
@@ -387,16 +1049,14 @@ describe('local plugin removal at the actual settings hook and machine RPC bound
         ]);
         expect(actionRequests.every(request => request.envelope.target?.kind === 'machine' && request.envelope.target.machineId === 'controller-1')).toBe(true);
         expect(requests).toEqual([]);
-        expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done');
+        await vi.waitFor(() => expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done'));
     });
 
-    it.each(['cancel', 'daemon generation', 'installation', 'account'] as const)('does not retry or report success after consent retires (%s)', async retirement => {
-        const { hook, requests, actionRequests, storage, scope, publishMachine } = await renderRemovalOwner('disable', [
+    it.each(['cancel', 'account'] as const)('does not retry or report success after consent retires (%s)', async retirement => {
+        const { hook, requests, actionRequests, storage, scope } = await renderRemovalOwner('disable', [
             { kind: 'managedResourcesReviewRequired', pluginId: 'example.compute', resources: [createManagedResourceDependencyFixture()] }, committed,
         ]);
         boundary.confirm.mockImplementation(async () => {
-            if (retirement === 'daemon generation') publishMachine({ daemonStateVersion: 2 });
-            if (retirement === 'installation') publishMachine({ installationId: 'installation-2' });
             if (retirement === 'account') storage.getState().activateProfileScope({ ...scope, accountId: 'account-next' });
             return retirement !== 'cancel';
         });
@@ -427,22 +1087,21 @@ describe('local plugin removal at the actual settings hook and machine RPC bound
         expect(hook.getCurrent().routineOperationSettlement?.message).not.toBe('common.done');
     });
 
-    it('tells the author which plugin field a refused change names, and keeps the generic outcome when the daemon gave no reason', async () => {
-        const reason = 'Plugin example.compute Settings group "general" field "enabled" declares a default that is not a boolean.';
-        const refused = await renderRemovalOwner('disable', [{ kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID', message: reason }]);
-        await act(async () => { refused.hook.getCurrent().runCatalogAction({ method: 'disable', pluginId: 'example.compute' }); });
-        await vi.waitFor(() => expect(refused.hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
-        expect(boundary.alert).toHaveBeenCalledWith('common.error', expect.stringContaining(reason));
-        expect(refused.hook.getCurrent().routineOperationSettlement?.message).not.toBe('common.done');
-        await refused.hook.unmount();
-
-        const generic = await renderRemovalOwner('disable', [{ kind: 'failed', code: 'plugin_change_failed' }]);
-        await act(async () => { generic.hook.getCurrent().runCatalogAction({ method: 'disable', pluginId: 'example.compute' }); });
-        await vi.waitFor(() => expect(generic.hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
-        expect(boundary.alert).toHaveBeenCalledWith('common.error', expect.stringContaining('settingsPlugins.marketplaceChangeDecisionFailed'));
+    it.each([
+        { detail: 'named field', change: { kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
+            message: 'Plugin example.compute Settings group "general" field "enabled" declares a default that is not a boolean.' },
+            expected: 'Plugin example.compute Settings group "general" field "enabled" declares a default that is not a boolean.' },
+        { detail: 'generic refusal', change: { kind: 'failed', code: 'plugin_change_failed' },
+            expected: 'settingsPlugins.marketplaceChangeDecisionFailed' },
+    ])('tells the author why a change was refused without inventing a daemon reason ($detail)', async ({ change, expected }) => {
+        const { hook } = await renderRemovalOwner('disable', [change]);
+        await act(async () => { hook.getCurrent().runCatalogAction({ method: 'disable', pluginId: 'example.compute' }); });
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
+        expect(boundary.alert).toHaveBeenCalledWith('common.error', expect.stringContaining(expected));
+        expect(hook.getCurrent().routineOperationSettlement?.message).not.toBe('common.done');
     });
 
-    it('reconciles an actual unknown disable from the original daemon readback and preserves disabled inventory', async () => {
+    it('refreshes unknown disable inventory without promoting readback to a confirmed outcome or replaying', async () => {
         const { hook, requests, actionRequests } = await renderRemovalOwner('disable', [
             { kind: 'outcomeUnknown', pluginId: 'example.compute' },
         ], { readbackEnabled: false });
@@ -451,9 +1110,10 @@ describe('local plugin removal at the actual settings hook and machine RPC bound
         expect(actionRequests).toHaveLength(1);
         expect(requests).toEqual([]);
         expect(boundary.confirm).not.toHaveBeenCalled();
-        expect(boundary.alert).not.toHaveBeenCalled();
-        expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done');
-        expect(hook.getCurrent().installedPlugins.find(entry => entry.pluginId === 'example.compute')?.enabled).toBe(false);
+        expect(boundary.alert).toHaveBeenCalledWith('settingsPlugins.pluginChangeOutcomeUnknownTitle',
+            expect.stringContaining('settingsPlugins.pluginChangeOutcomeUnknownBody'));
+        expect(hook.getCurrent().routineOperationSettlement).toBeNull();
+        await vi.waitFor(() => expect(hook.getCurrent().installedPlugins.find(entry => entry.pluginId === 'example.compute')?.enabled).toBe(false));
     });
 
     it('preserves the daemon confirmed disabled no-op without a native responsibility review', async () => {
@@ -463,6 +1123,6 @@ describe('local plugin removal at the actual settings hook and machine RPC bound
         expect(actionRequests).toHaveLength(1);
         expect(requests).toEqual([]);
         expect(boundary.confirm).not.toHaveBeenCalled();
-        expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done');
+        await vi.waitFor(() => expect(hook.getCurrent().routineOperationSettlement?.message).toBe('common.done'));
     });
 });

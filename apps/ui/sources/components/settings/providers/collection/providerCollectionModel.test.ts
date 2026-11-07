@@ -11,7 +11,6 @@ import {
   buildProviderCollection,
   buildProviderGatewayCollection,
   providerConnectionDetailRoute,
-  resolveProviderCollectionLandingId,
   resolveProviderConnectionIcon,
 } from './providerCollectionModel';
 
@@ -152,6 +151,24 @@ describe('buildProviderCollection', () => {
       ['pc_direct', false, { shown: 2, total: 2 }],
     ]);
   });
+  it('says a gateway needs an account only from the typed missing-bindings cause', () => {
+    const missing = { v: 1, code: 'provider_connection_invalid', retryable: false, action: 'review_connection',
+      connectionId: 'pc_gateway', reason: 'managed_purpose_bindings_missing' } as const;
+    const gatewayView = (connectionId: string, authorizationError: unknown) => createProviderConnectionViewFixture({
+      connectionId, contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+      deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null }, managedLocalOption: null,
+      authorizationError: authorizationError as never,
+    });
+    const data = createProviderConnectionsDescribeFixture({
+      connections: [gatewayView('pc_gateway', missing), gatewayView('pc_bound', null), createProviderConnectionViewFixture({ connectionId: 'pc_direct' })],
+    });
+    const rows = buildProviderCollection({ declarationContext: { kind: 'account' }, data: data as never, query: '',
+      localDiscoveryEnabled: false, catalogCounts: {} }).connections;
+    expect(rows.map((row) => [row.connectionId, row.needsAccount])).toEqual([
+      ['pc_gateway', true], ['pc_bound', false], ['pc_direct', false],
+    ]);
+  });
+
   it('draws a found local server with its bundled source mark', () => {
     const data = createProviderConnectionsDescribeFixture({
       discoveryCandidates: [
@@ -359,14 +376,5 @@ describe('buildProviderCollection', () => {
       'pc_b',
     ]);
     expect(collection.total).toBe(2);
-  });
-});
-
-describe('resolveProviderCollectionLandingId', () => {
-  it('prefers the last visited connection that still exists, else the first, else none', () => {
-    const rows = [{ connectionId: 'pc_a' }, { connectionId: 'pc_b' }];
-    expect(resolveProviderCollectionLandingId(rows, 'pc_b')).toBe('pc_b');
-    expect(resolveProviderCollectionLandingId(rows, 'pc_gone')).toBe('pc_a');
-    expect(resolveProviderCollectionLandingId([], 'pc_a')).toBeNull();
   });
 });

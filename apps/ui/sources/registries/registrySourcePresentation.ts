@@ -28,6 +28,9 @@ export function registryFormatIcon(
       return 'sparkle';
     case 'happier-npm':
       return 'cube';
+    case 'coolify-templates':
+    case 'dokploy-templates':
+      return 'stack';
   }
 }
 
@@ -47,6 +50,10 @@ export function registryFormatLabel(format: RegistryFormatV1): string {
       return t('capabilities.registries.format.happierCatalog');
     case 'happier-npm':
       return t('capabilities.registries.format.happierNpm');
+    case 'coolify-templates':
+      return t('capabilities.registries.format.composeCatalog');
+    case 'dokploy-templates':
+      return t('capabilities.registries.format.composeTomlCatalog');
   }
 }
 
@@ -67,8 +74,10 @@ export function registrySourceKindLabel(
 
 /** The link without its scheme ("github.com/acme/agent-plugins"), the row's second line. */
 export function registrySourceLocation(
-  source: Pick<RegistrySourceDescriptorV1, 'url' | 'path'>,
+  source: Pick<Extract<RegistrySourceDescriptorV1, { url: string }>, 'url' | 'path'>
+    | Pick<Extract<RegistrySourceDescriptorV1, { packageContent: unknown }>, 'packageContent'>,
 ): string {
+  if ('packageContent' in source) return `${source.packageContent.pluginId}/${source.packageContent.path}`;
   const bare = source.url
     .replace(/^https?:\/\//, '')
     .replace(/\/$/, '')

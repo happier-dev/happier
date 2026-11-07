@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
+import { readDeploymentPartialResult, deploymentPartialRecoveryTab, type DeploymentPartialResult } from '@/components/projects/deployments/deploymentActionOutcome';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentPublishPrepareInputV1, type DeploymentPublishPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
 import { type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
@@ -20,9 +22,12 @@ export type StoreAppListingSelection = Readonly<{ sourceId: string; itemId: stri
 /** Placement and Project intent come from the person; the selected Registry item supplies the pin. */
 export type StoreAppPreparationInput = Omit<DeploymentPublishPrepareInputV1, 'serverId' | 'templateRef'>;
 export type StoreAppPreparationOutcome = Awaited<ReturnType<ReturnType<typeof useCatalogAppPreparation>>>;
-export type StoreAppCreateChoices = Readonly<Pick<DeploymentEnvironmentCreateIntentInputV1, 'name' | 'protection' | 'deployerMode' | 'domainBindings'>>;
-export type StoreAppCreatedIdentity = Readonly<{ projectSourceId: string; environmentId: string }>;
-export type StoreAppCreateOutcome = StoreAppCreatedIdentity | ActionExecuteFailure | ActionApprovalRequestCreatedResult;
+type StoreAppCreateEnvironment = Extract<DeploymentTemplateInstantiateInputV1['environment'], { kind: 'create' }>;
+export type StoreAppCreateChoices = Readonly<Pick<StoreAppCreateEnvironment, 'name' | 'protection' | 'deployerMode'>
+    & Pick<DeploymentTemplateInstantiateInputV1, 'domainBindings'>>;
+export type StoreAppCreatedIdentity = Readonly<{ projectSourceId: string; environmentId: string; tab?: DeploymentEnvironmentTabV1 }>;
+export type StoreAppCreateFailure = ActionExecuteFailure & Readonly<{ progress?: DeploymentPartialResult; recovery?: DeploymentEnvironmentTabV1 | 'deploy' }>;
+export type StoreAppCreateOutcome = StoreAppCreatedIdentity | StoreAppCreateFailure | ActionApprovalRequestCreatedResult;
 type NativeRead = ReturnType<typeof useRegistryItem>;
 type ReadFacts = Pick<NativeRead, 'loading' | 'stale' | 'error' | 'status' | 'refresh'>;
 type ReviewPayload = Extract<RegistryItemPayloadV1, { kind: 'app'; state: 'needs_review' }>;
@@ -51,7 +56,7 @@ export function useStoreAppListing(input: Readonly<{
     // Equal choices on the same prepared review retry the latest attempt, including after a read refresh.
     // A new preparation or changed choices starts another attempt; nothing is persisted.
     const attempt = React.useRef<{ prepared: DeploymentPublishPrepareResultV1;
-        input: DeploymentEnvironmentCreateIntentInputV1;
+        input: DeploymentTemplateInstantiateInputV1 & { environment: StoreAppCreateEnvironment };
         partial?: ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse> } | undefined>(undefined);
     // The native reader marks an old selection stale while the next exact read is pending.
     const item = read.stale ? null : read.item;
@@ -80,26 +85,55 @@ export function useStoreAppListing(input: Readonly<{
                 const { projectSourceId, newProject } = prepared.project;
                 const project = projectSourceId !== undefined ? { projectSourceId } : newProject ? { newProject } : null;
                 if (!project) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                const controllerMachineId = prepared.creationDefaults.values.controllerMachineId;
+                if (!controllerMachineId) return { ok: false, errorCode: 'client_required', error: 'client_required' };
                 let currentAttempt = attempt.current;
-                if (!currentAttempt || currentAttempt.prepared !== prepared || currentAttempt.input.name !== choices.name
-                    || currentAttempt.input.protection !== choices.protection || currentAttempt.input.deployerMode !== choices.deployerMode
+                if (!currentAttempt || currentAttempt.prepared !== prepared || currentAttempt.input.environment.name !== choices.name
+                    || currentAttempt.input.environment.protection !== choices.protection || currentAttempt.input.environment.deployerMode !== choices.deployerMode
                     || !sameStrictJsonValue(currentAttempt.input.domainBindings, choices.domainBindings)) {
                     currentAttempt = { prepared, input: {
-                        serverId: input.lifetime.scope.serverId, ...project, requestKey: randomUUID(),
-                        name: choices.name, protection: choices.protection, deployerMode: choices.deployerMode,
+                        mode: 'apply', serverId: input.lifetime.scope.serverId, ...project, machineId: prepared.machine.machineId,
+                        templateRef: prepared.templateRef,
+                        environment: { kind: 'create', requestKey: randomUUID(), name: choices.name,
+                            protection: choices.protection, deployerMode: choices.deployerMode, purpose: 'standard',
+                            ...prepared.creationDefaults.values, controllerMachineId },
                         ...(choices.domainBindings ? { domainBindings: choices.domainBindings } : {}),
-                        purpose: 'standard', definition: { from: 'catalogApp', templateRef: prepared.templateRef },
-                        firstTargetLink: { machines: [prepared.machine] }, ...prepared.creationDefaults.values,
+                        target: { kind: 'new', installationId: prepared.machine.installationId },
+                        destination: { kind: 'stored' }, bindings: [],
                     } };
                     attempt.current = currentAttempt;
                 }
                 const selectedAttempt = currentAttempt;
-                const retainFailure = (failure: ActionExecuteFailure): ActionExecuteFailure => {
-                    const partial = DeploymentTemplateInstantiationPartialV1Schema.safeParse(failure.details);
-                    if (partial.success && partial.data.phase === 'deploy') selectedAttempt.partial = partial.data;
-                    return failure;
+                const retainFailure = (failure: ActionExecuteFailure): StoreAppCreateFailure => {
+                    const progress = readDeploymentPartialResult(failure);
+                    if (!progress) return failure;
+                    selectedAttempt.partial = progress;
+                    return { ...failure, progress, ...(progress.environmentId ? {
+                        recovery: progress.phase === 'deploy' ? 'deploy' : deploymentPartialRecoveryTab(progress),
+                    } : {}) };
                 };
                 const partial = selectedAttempt.partial;
+                let installInput: DeploymentTemplateInstantiateInputV1 = selectedAttempt.input;
+                let installedProjectSourceId = projectSourceId;
+                if (partial && partial.phase !== 'deploy') {
+                    const failure = { ok: false as const, errorCode: partial.errorCode, error: partial.errorCode, details: partial };
+                    if (!partial.environmentId) return retainFailure(failure);
+                    // The deployment owner named the failed step. Its existing editor owns recovery.
+                    if (projectSourceId) return { projectSourceId, environmentId: partial.environmentId,
+                        tab: deploymentPartialRecoveryTab(partial) };
+                    const read = await execute('deployments.environments.get', {
+                        serverId: input.lifetime.scope.serverId, environmentId: partial.environmentId,
+                    }, { surface: 'ui', serverId: input.lifetime.scope.serverId,
+                        expectedAccountId: input.lifetime.scope.accountId, signal });
+                    if (!read.ok) return { ...read, progress: partial, recovery: deploymentPartialRecoveryTab(partial) };
+                    const detail = DeploymentEnvironmentGetResultV1Schema.safeParse(read.result).data;
+                    if (!detail?.ok || detail.environment.id !== partial.environmentId) return {
+                        ok: false, errorCode: 'invalid_response', error: 'invalid_response', progress: partial,
+                        recovery: deploymentPartialRecoveryTab(partial),
+                    };
+                    return { projectSourceId: detail.environment.projectSourceId, environmentId: partial.environmentId,
+                        tab: deploymentPartialRecoveryTab(partial) };
+                }
                 if (partial) {
                     if (!partial.environmentId || !partial.targetLinkId || !partial.definition) return {
                         ok: false, errorCode: 'invalid_response', error: 'invalid_response',
@@ -114,7 +148,8 @@ export function useStoreAppListing(input: Readonly<{
                     const detail = DeploymentEnvironmentGetResultV1Schema.safeParse(read.result).data;
                     const target = detail?.ok ? detail.targetLinks.find(link => link.id === partial.targetLinkId) : undefined;
                     if (!detail?.ok || !target) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
-                    const retry: DeploymentTemplateInstantiateInputV1 = {
+                    installedProjectSourceId = detail.environment.projectSourceId;
+                    installInput = {
                         mode: 'apply', serverId: input.lifetime.scope.serverId, machineId: prepared.machine.machineId,
                         projectSourceId: detail.environment.projectSourceId, templateRef: prepared.templateRef,
                         environment: { kind: 'existing', environmentId: partial.environmentId, expectedRevision: detail.environment.revision },
@@ -123,42 +158,32 @@ export function useStoreAppListing(input: Readonly<{
                         bindings: [], ...(choices.domainBindings ? { domainBindings: choices.domainBindings } : {}),
                         deploy: { requestKey: randomUUID() },
                     };
-                    const result = await execute('deployments.templates.instantiate', retry, {
-                        surface: 'ui', serverId: input.lifetime.scope.serverId,
-                        expectedAccountId: input.lifetime.scope.accountId, signal,
-                    });
-                    if (!result.ok) return retainFailure(result);
-                    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-                    if (approval.success) return approval.data;
-                    const applied = DeploymentTemplateInstantiateResultV1Schema.safeParse(result.result);
-                    if (!applied.success || applied.data.kind === 'preview') return {
-                        ok: false, errorCode: 'invalid_response', error: 'invalid_response',
-                    };
-                    if (applied.data.kind === 'partial') return retainFailure({ ok: false,
-                        errorCode: applied.data.errorCode, error: applied.data.errorCode, details: applied.data });
-                    return { projectSourceId: detail.environment.projectSourceId, environmentId: applied.data.environmentId };
                 }
-                const result = await execute('deployments.environments.create', currentAttempt.input, {
+                const result = await execute('deployments.templates.instantiate', installInput, {
                     surface: 'ui', serverId: input.lifetime.scope.serverId,
                     expectedAccountId: input.lifetime.scope.accountId, signal,
                 });
                 if (!result.ok) return retainFailure(result);
                 const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (approval.success) return approval.data;
-                // The Action executor already settles domain refusals as ActionExecuteFailure.
-                const created = DeploymentEnvironmentCreateResultV1Schema.def.options[0].parse(result.result);
-                if (projectSourceId !== undefined) return { projectSourceId, environmentId: created.environmentId };
-                // The create result names only the Environment; its new Source is read back from the Environment.
+                const applied = DeploymentTemplateInstantiateResultV1Schema.safeParse(result.result);
+                if (!applied.success || applied.data.kind === 'preview') return {
+                    ok: false, errorCode: 'invalid_response', error: 'invalid_response',
+                };
+                if (applied.data.kind === 'partial') return retainFailure({ ok: false,
+                    errorCode: applied.data.errorCode, error: applied.data.errorCode, details: applied.data });
+                if (installedProjectSourceId !== undefined) return { projectSourceId: installedProjectSourceId, environmentId: applied.data.environmentId };
+                // A new Project's Source is read back from the acknowledged Environment.
                 const read = await execute('deployments.environments.get', {
-                    serverId: input.lifetime.scope.serverId, environmentId: created.environmentId,
+                    serverId: input.lifetime.scope.serverId, environmentId: applied.data.environmentId,
                 }, { surface: 'ui', serverId: input.lifetime.scope.serverId,
                     expectedAccountId: input.lifetime.scope.accountId, signal });
                 if (!read.ok) return read;
                 const detail = DeploymentEnvironmentGetResultV1Schema.safeParse(read.result).data;
-                if (!detail?.ok || detail.environment.id !== created.environmentId) return {
+                if (!detail?.ok || detail.environment.id !== applied.data.environmentId) return {
                     ok: false, errorCode: 'invalid_response', error: 'invalid_response',
                 };
-                return { projectSourceId: detail.environment.projectSourceId, environmentId: created.environmentId };
+                return { projectSourceId: detail.environment.projectSourceId, environmentId: applied.data.environmentId };
             },
             environmentHref: (identity: StoreAppCreatedIdentity) =>
                 buildDeploymentEnvironmentHref({ ...identity, serverId: input.lifetime.scope.serverId }),

@@ -6,12 +6,12 @@ import {
 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
 import type { ReachMachine } from '@/sync/domains/capabilities/reach/useReachProjection';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 
 import {
   buildSkillsReach,
-  filterSkills,
+  skillReachesMachine,
   foldReachMachines,
   groupSkillsByFolder,
   groupSkillsByUse,
@@ -99,7 +99,7 @@ describe('Skills collection model', () => {
     expect(reach.onlineReachedMachineCount).toBe(1);
     expect(reach.machines.find(row => row.machine.machineId === 'review-only')?.skillIds).toEqual([]);
     expect(reach.machines.find(row => row.machine.machineId === 'different')?.skillIds).toEqual([]);
-    expect(filterSkills([skill('every')], { query: '', machine: reviewOnly })).toEqual([]);
+    expect(skillReachesMachine(skill('every'), reviewOnly)).toBe(false);
   });
   it('the present sentence: a plan-none-only roster reads as unsupported delivery, never as waiting for inventory', () => {
     const agentsById = PluginProjectionV2Schema.shape.agentsById.parse({
@@ -155,19 +155,24 @@ describe('Skills collection model', () => {
     expect(groupSkillsByFolder(items, folders)?.map((group) => [group.title, group.rows.map((row) => row.skillId)]))
       .toEqual([['Client work', ['off', 'd']], ['Writing', ['b']], [null, ['a', 'lost']]]);
     expect(groupSkillsByFolder([skill('a'), skill('lost', { folderId: 'gone' })], folders)).toBeNull();
-    expect(groupSkillsByFolder(items, null)?.map((group) => [group.id, group.rows.map((row) => row.skillId)]))
-      .toEqual([['c', ['off', 'd']], ['gone', ['lost']], ['w', ['b']], [null, ['a']]]);
+    // Names not read yet: the filed rows share ONE unnamed section, never one "Unavailable" header per folder.
+    const unread = groupSkillsByFolder(items, null);
+    expect(unread?.map((group) => [group.title, group.rows.map((row) => row.skillId)]))
+      .toEqual([['Unavailable', ['b', 'off', 'lost', 'd']], [null, ['a']]]);
+    expect(new Set(unread?.map((group) => group.id)).size).toBe(unread?.length);
     expect(groupSkillsByFolder(items, { v: 1, folders: [] })).toBeNull();
   });
 
-  it('keeps section order through unavailable names and recovery, independently of row cohort or title order', () => {
+  it('keeps named sections in id order through recovery, independently of row cohort or title order', () => {
     const folders = { v: 1 as const, folders: [
       { id: 'a', name: 'Writing', parentId: null }, { id: 'z', name: 'Client work', parentId: null },
     ] };
     const items = [skill('z-first', { folderId: 'z' }), skill('a-second', { folderId: 'a' }), skill('unfiled')];
     const order = (names: typeof folders | null) => groupSkillsByFolder(items, names)?.map(group => group.id);
     expect(order(folders)).toEqual(['a', 'z', null]);
-    expect(order(null)).toEqual(order(folders));
+    // Unread names hold every filed row in one unnamed section (above the unfiled rows), then each named folder returns.
+    expect(order(null)?.length).toBe(2);
+    expect(order(null)?.at(-1)).toBeNull();
     expect(order(folders)).toEqual(['a', 'z', null]);
   });
 
@@ -181,7 +186,7 @@ describe('Skills collection model', () => {
     expect(groups.off.map((item) => item.skillId)).toEqual(['b']);
   });
 
-  it('?machine= keeps only skills reaching an Agent on that machine', () => {
+  it('a skill reaches a machine only through an Agent that takes it there', () => {
     const nl2 = machine('nl2', ['codex']);
     const onlyMbp = skill('only-mbp', {
       rules: [
@@ -195,11 +200,8 @@ describe('Skills collection model', () => {
         },
       ],
     });
-    expect(
-      filterSkills([skill('every'), onlyMbp], { query: '', machine: nl2 }).map(
-        (item) => item.skillId,
-      ),
-    ).toEqual(['every']);
+    expect([skill('every'), onlyMbp].filter((item) => skillReachesMachine(item, nl2)).map((item) => item.skillId))
+      .toEqual(['every']);
   });
 
   it('counts updates and source choices as needing a look, never Off or local modification alone', () => {

@@ -2,6 +2,14 @@ import { ArtifactActionInputSchemasV1, ArtifactSignedInLinkCreateRequestV1Schema
     ArtifactSignedInLinkJoinCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
+export function isArtifactSignedInLinkCreateHttpPurpose(
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+): boolean {
+    const create = ArtifactSignedInLinkCreateRequestV1Schema.safeParse(proof.body);
+    return proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifact-signed-in-links'
+        && create.success && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, create.data));
+}
+
 /** The installed Action host signs derived operands; the existing routes own resource admission. */
 export function readExternalActionArtifactSignedInLinkPurpose(actionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>): boolean | null {
@@ -14,8 +22,7 @@ export function readExternalActionArtifactSignedInLinkPurpose(actionId: string,
     const collection = '/v1/artifact-signed-in-links';
     const matchesInput = (input: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, input);
     if (actionId === 'artifact.public_link.create') {
-        const create = ArtifactSignedInLinkCreateRequestV1Schema.safeParse(proof.body);
-        return method === 'POST' && proof.path === collection && create.success && matchesInput(create.data);
+        return isArtifactSignedInLinkCreateHttpPurpose(proof);
     }
     if ((actionId === 'artifact.public_link.list' || actionId === 'artifact.public_link.revoke')
         && method === 'GET' && proof.body === undefined) {

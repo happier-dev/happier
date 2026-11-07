@@ -1,7 +1,6 @@
-import type { RegistryPackagedSourceDescriptorV1 } from '../registrySourcesV1.js';
-import type { RegistrySourceV1, RegistryFormatV1, RegistryKindV1, RegistryAppTemplateHintsV1 } from '../registrySourcesV1.js';
-import type { RegistryItemV1, RegistrySkillItemV1, RegistryContentRefV1, RegistryProvenanceV1 } from '../registryItemsV1.js';
-import type { RegistryListPageV1, RegistrySourceStatusV1 } from '../registryListV1.js';
+import type { RegistrySourceV1, RegistryFormatV1, RegistryKindV1, RegistryPackagedSourceDescriptorV1, RegistryAppTemplateHintsV1 } from '../registrySourcesV1.js';
+import type { RegistryItemV1, RegistrySkillItemV1, RegistryContentRefV1, RegistryRemoteProvenanceV1 } from '../registryItemsV1.js';
+import type { RegistryListPageV1, RegistrySourceStatusV1, RegistryContributionFamilyV1 } from '../registryListV1.js';
 export type RegistryHttpResultV1<T> = Readonly<{ ok: true; value: T; fetchedAt: number }> | Readonly<{ ok: false; status: Exclude<RegistrySourceStatusV1, {state:'ok'}> }>;
 export type RegistryHttpV1 = Readonly<{
   getJson(url: string, opts?: { source?: RegistrySourceV1 }): Promise<RegistryHttpResultV1<unknown>>;
@@ -10,17 +9,16 @@ export type RegistryHttpV1 = Readonly<{
 }>;
 export type RegistryDetectedSourceV1 = Readonly<{ format: RegistryFormatV1; kinds: readonly RegistryKindV1[]; title: string; itemCount?: number }>
   | Readonly<{ unsupported: 'organisation' | 'unknown_format' | 'needs_token' | 'unreachable' }>;
-export type RegistryFetchContextV1 = Readonly<{
-packageContent?: Readonly<{ read(source: RegistryPackagedSourceDescriptorV1): Promise<Readonly<{ text: string; fetchedAt: number }>> }>;
- http: RegistryHttpV1; signal?: AbortSignal;
+export type RegistryFetchContextV1 = Readonly<{ http: RegistryHttpV1; signal?: AbortSignal;
   /** Already resolved by the source owner; normalization consumes authored probes before admission. */
   appTemplateHints?: RegistryAppTemplateHintsV1;
   /** Node owner retains immutable catalog resources across finite reads; mutable currentness stays with the adapter. */
   withAppCatalog?: <T>(input: Readonly<{ source: RegistrySourceV1; commit: string; current: boolean; http: RegistryHttpV1 }>,
     consume: (http: RegistryHttpV1) => Promise<T>) => Promise<T>;
-  /** The host applies target placement while retaining the original catalog
-   * pointer on daemon requests. Null defers a daemon-only target during browse. */
-  readTargetItem?: (request: Readonly<{ source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string }>) => Promise<RegistryItemV1 | null>;
+  /** Host-owned filesystem transport, admitted against the current installed plugin occurrence. */
+  packageContent?: Readonly<{ read(source: RegistryPackagedSourceDescriptorV1): Promise<Readonly<{ text: string; fetchedAt: number }>> }>;
+  /** Selected reads apply target placement while retaining the original catalog pointer on daemon requests. */
+  readTargetItem?: (request: Readonly<{ source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string }>) => Promise<RegistryItemV1>;
   /** Non-HTTP git transports are supplied by the Node SCM owner. */
   git?: Readonly<Pick<RegistrySkillFormatAdapterV1, 'list' | 'read' | 'latest'> & {
     /** One request shares temporary acquisitions; the transport retires them when consumption settles. */
@@ -35,8 +33,9 @@ export type RegistrySkillFormatAdapterV1=Omit<RegistryFormatAdapterV1,'read'> & 
 export type RegistryFormatAdapterV1 = Readonly<{
   format: RegistryFormatV1; kinds: readonly RegistryKindV1[];
   browserFetchable: (source: RegistrySourceV1) => boolean; supportsQuery: boolean;
+  supportsContributionFamily?: boolean;
   detect?: (ctx: RegistryFetchContextV1, url: string) => Promise<RegistryDetectedSourceV1 | null>;
-  list: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; query?: string; cursor?: string | null }) => Promise<RegistryListPageV1>;
+  list: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; contributionFamily?: RegistryContributionFamilyV1; query?: string; cursor?: string | null }) => Promise<RegistryListPageV1>;
   read: (ctx: RegistryFetchContextV1, req: { source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string }) => Promise<RegistryItemV1>;
-  latest: (ctx: RegistryFetchContextV1, items: readonly RegistryProvenanceV1[], options?: Readonly<{ source: RegistrySourceV1 }>) => Promise<ReadonlyMap<string, RegistryContentRefV1 | 'removed'>>;
+  latest: (ctx: RegistryFetchContextV1, items: readonly RegistryRemoteProvenanceV1[], options?: Readonly<{ source: RegistrySourceV1 }>) => Promise<ReadonlyMap<string, RegistryContentRefV1 | 'removed'>>;
 }>;

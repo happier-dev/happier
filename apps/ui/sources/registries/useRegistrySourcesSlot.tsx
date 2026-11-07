@@ -9,10 +9,11 @@ import {
   type RegistrySourceSelection,
 } from './RegistrySourceSelect';
 import {
-  RegistrySourcesView,
+  RegistrySourcesViewWithSources,
   type RegistrySourcesViewItemFromSource,
 } from './RegistrySourcesView';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { useRegistrySources } from './useRegistrySources';
 
 export type RegistrySourcesSlot = Readonly<{
   sources: NonNullable<CapabilityAddModalConfig<unknown>['sources']>;
@@ -34,19 +35,46 @@ export function useRegistrySourcesSlot(
       sourceId: string,
     ) => readonly RegistrySourcesViewItemFromSource[];
     initialSelection?: RegistrySourceSelection;
+    /** Deliberate selection, distinct from withdrawal of a removed source. */
+    onSelectionChange?: (next: RegistrySourceSelection) => void;
     testID?: string;
   }>,
 ): RegistrySourcesSlot {
-  const [selection, setSelection] = React.useState<RegistrySourceSelection>(
-    opts?.initialSelection ?? 'all',
-  );
+  const registry = useRegistrySources(kind);
+  return useRegistrySourcesSlotWithSources(kind, registry, opts);
+}
+
+/** Share the opener's source read without mounting another descriptor acquisition. */
+export function useRegistrySourcesSlotWithSources(
+  kind: RegistryKindV1,
+  registry: ReturnType<typeof useRegistrySources>,
+  opts?: Parameters<typeof useRegistrySourcesSlot>[1],
+): RegistrySourcesSlot {
+  const [choice, setChoice] = React.useState(() => ({
+    sources: registry.sources,
+    selection: opts?.initialSelection ?? 'all',
+  }));
+  const sourcesChanged = registry.hasValue && choice.sources !== registry.sources;
+  const selection = sourcesChanged && choice.selection !== 'all'
+    && !registry.sources.some(source => source.id === choice.selection && source.enabled)
+    ? 'all' : choice.selection;
+  if (sourcesChanged) {
+    // Adjust before consumers commit a query. Only a new source list can retire a choice:
+    // an acknowledged Add may select its new id before the list refresh reaches this hook.
+    setChoice({ sources: registry.sources, selection });
+  }
+  const onSelectionChange = opts?.onSelectionChange;
+  const setSelection = React.useCallback((next: RegistrySourceSelection) => {
+    setChoice(previous => previous.selection === next ? previous : { ...previous, selection: next });
+    onSelectionChange?.(next);
+  }, [onSelectionChange]);
   const itemsFromSource = opts?.itemsFromSource;
   const testID = opts?.testID ?? `registries.${kind}`;
   const sources = React.useMemo<RegistrySourcesSlot['sources']>(
     () => ({
       renderSelect: ({ openRegistries }) => (
         <RegistrySourceSelect
-          kind={kind}
+          sources={registry.sources}
           value={selection}
           onChange={setSelection}
           onOpenRegistries={openRegistries}
@@ -56,8 +84,9 @@ export function useRegistrySourcesSlot(
       // The modal's registries are a configuration body like the details: section descriptions read above their rows.
       renderRegistriesView: ({ intent, back }) => (
         <ListPresentationProvider value="page" pageInsets="contained">
-          <RegistrySourcesView
+          <RegistrySourcesViewWithSources
             kind={kind}
+            registry={registry}
             initialIntent={intent}
             {...(itemsFromSource ? { itemsFromSource } : {})}
             onSourceAdded={(sourceId) => {
@@ -74,7 +103,8 @@ export function useRegistrySourcesSlot(
         subtitle: t('capabilities.registries.view.purpose', { kind }),
       },
     }),
-    [itemsFromSource, kind, selection, testID],
+    [itemsFromSource, kind, registry.sources, registry.hasValue, registry.loading, registry.error,
+      registry.failureStatus, registry.status, registry.refresh, selection, setSelection, testID],
   );
   const sourceIds = React.useMemo(
     () => (selection === 'all' ? undefined : [selection]),
@@ -82,6 +112,6 @@ export function useRegistrySourcesSlot(
   );
   return React.useMemo(
     () => ({ sources, selection, sourceIds, setSelection }),
-    [selection, sourceIds, sources],
+    [selection, setSelection, sourceIds, sources],
   );
 }

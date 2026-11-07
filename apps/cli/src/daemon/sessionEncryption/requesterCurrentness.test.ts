@@ -5,9 +5,8 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { resolveOfflineReconnectionBackoffDelayMs } from '@/api/offline/serverConnectionErrors';
-import { readRequesterHomeWithinActionLifetime, runWithRequesterSessionCurrentnessCheckpoint } from './requesterCurrentness';
+import { readRequesterHomeWithinActionLifetime } from './requesterCurrentness';
 import { prepareRequesterSessionBootstrap } from './requesterSessionCredentials';
 import { createActiveAccountSettingsConnectedAccountPurposeBindingStore } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
@@ -63,6 +62,7 @@ it('preserves requester custody across unavailable observations and recovers saf
   let profileStatus = 200;
   let settingsUnavailable = false;
   let settingsVersion = 2;
+  let accountSequence = 1;
   let profileReads = 0;
   let profileGate: (() => Promise<void>) | undefined;
   let releasePendingProfile: (() => void) | undefined;
@@ -77,7 +77,7 @@ it('preserves requester custody across unavailable observations and recovers saf
       await profileGate?.();
       return reply.code(status).send(status === 200 ? { id: 'bob' } : { error: 'unavailable' });
     }
-    if (path.endsWith('/currentness')) return { mode: 'plain', version: 1,
+    if (path.endsWith('/currentness')) return { mode: 'plain', version: accountSequence,
       updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null };
     if (path.endsWith('/account/encryption')) return { mode: 'plain', updatedAt: 1 };
     if (path.endsWith('/entity-rows/connected-accounts/purposes')) return {
@@ -89,11 +89,12 @@ it('preserves requester custody across unavailable observations and recovers saf
     }
     throw new Error(`Unexpected requester read ${path}`);
   });
-  await home.ready();
-  const restoreHttp = installAxiosFastifyAdapter({ app: home, origin: 'https://requester-currentness.test' });
+  // Real TCP is required here: Fastify's inject adapter does not interrupt a
+  // held response when Axios aborts the next admission's profile request.
+  const serverOrigin = await home.listen({ host: '127.0.0.1', port: 0 });
   const prepare = (signal?: AbortSignal) => prepareRequesterSessionBootstrap({ credentials: { token, encryption: null },
     attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine', installationId: 'installation' },
-    boundary: { serverId: 'home', serverHttpBaseUrl: 'https://requester-currentness.test', happyHomeDir: directory },
+    boundary: { serverId: 'home', serverHttpBaseUrl: serverOrigin, happyHomeDir: directory },
     // Machine admission is the external authority boundary; Account reads,
     // socket observation, Settings publication and private custody remain real.
     verifyMachineAdmissionCurrent: async () => current, signal });
@@ -117,29 +118,32 @@ it('preserves requester custody across unavailable observations and recovers saf
     settingsUnavailable = false;
     expect(await bootstrap.ensureAccountSettingsCurrent()).toBe(true);
 
+    // Team/Connected-account readers use requester encryption identity, not
+    // the Account-wide cursor that also advances on unrelated writes.
+    accountSequence += 1;
+    expect(await custody.isCurrent()).toBe(true);
+
     const signal = new AbortController().signal;
-    await runWithRequesterSessionCurrentnessCheckpoint(async () => {
-      profileStatus = 503;
-      await expect(custody.isCurrent()).rejects.toMatchObject({ response: { status: 503 } });
-      expect(await custody.isCurrent()).toBe(true);
-    });
+    const beforeAdmittedReads = profileReads;
     profileStatus = 503;
-    expect(await readRequesterHomeWithinActionLifetime(() => custody.isCurrent(), signal)).toBe(true);
+    expect(await custody.isCurrent()).toBe(true);
     expect(await custody.commitConnectedAccountCatalog({ key: 'purposes', catalog: { status: 'ready', record: purposes, revision: 1 } })).toBe(true);
     const store = createActiveAccountSettingsConnectedAccountPurposeBindingStore({ operationContext: custody });
-    profileStatus = 503;
     expect(await readRequesterHomeWithinActionLifetime(() => store.read(signal), signal)).toEqual(purposes.value);
     const scopeKey = custody.readSnapshot()?.scopeKey;
     if (!scopeKey) throw new Error('Missing requester Account scope');
     const secrets = createAccountSettingsConnectedAccountSecrets({ expectedScopeKey: scopeKey, operationContext: custody });
-    profileStatus = 503;
     expect(await readRequesterHomeWithinActionLifetime(() => secrets.readMaterial!('missing-secret', { signal }), signal)).toBeNull();
+    expect(profileReads).toBe(beforeAdmittedReads);
+    // Unavailable authority is observed by the next admission, while work
+    // already admitted keeps its captured custody and encryption identity.
+    await expect(prepare()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
     let enteredProfile!: () => void;
     const entered = new Promise<void>(resolve => { enteredProfile = resolve; });
     const held = new Promise<void>(resolve => { releasePendingProfile = resolve; });
     profileGate = async () => { profileGate = undefined; enteredProfile(); await held; };
     const reader = new AbortController();
-    const cancelledRead = expect(store.read(reader.signal)).rejects.toBeDefined();
+    const cancelledRead = expect(prepare(reader.signal)).rejects.toBeDefined();
     await entered;
     reader.abort();
     await cancelledRead;
@@ -148,7 +152,7 @@ it('preserves requester custody across unavailable observations and recovers saf
     expect(await custody.isCurrent()).toBe(true);
     profileStatus = 403;
     const beforeRefusal = profileReads;
-    await expect(readRequesterHomeWithinActionLifetime(() => custody.isCurrent(), signal)).rejects.toMatchObject({ response: { status: 403 } });
+    await expect(readRequesterHomeWithinActionLifetime(() => prepare(signal), signal)).rejects.toMatchObject({ response: { status: 403 } });
     expect(profileReads - beforeRefusal).toBe(1);
     const cancelled = new AbortController();
     cancelled.abort();
@@ -170,13 +174,15 @@ it('preserves requester custody across unavailable observations and recovers saf
     expect(cold).not.toBeNull();
     await cold?.cleanupOnFailure();
     current = false;
+    expect(await custody.isCurrent()).toBe(true);
+    expect(await prepare()).toBeNull();
+    await bootstrap.dispose();
     expect(await custody.isCurrent()).toBe(false);
     expect(custody.readSnapshot()).toBeNull();
   } finally {
     retryJitter.mockRestore();
     releasePendingProfile?.();
     await prepared?.cleanupOnFailure();
-    restoreHttp();
     await home.close();
     await channel.close();
     await rm(directory, { recursive: true, force: true });

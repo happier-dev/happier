@@ -18,6 +18,63 @@ const CREDENTIAL_ID = '2c67deea-5ae7-4706-9ad6-b5b992df1cba';
 const PAT = `hap_v1_${CREDENTIAL_ID}_${'A'.repeat(43)}`;
 
 describe('API token encryption credentials', () => {
+  it('admits deployment Automatic or Ask intent without accepting caller-authored consent', () => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1,
+      actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: ['staging'] },
+    };
+    const deployment = { serverId: 'srv_home', environmentId: 'staging', deployApproval: 'automatic' };
+    const create = { tokenId: CREDENTIAL_ID, label: 'Staging CI', grant, deployment };
+    expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse(create).success).toBe(true);
+    expect(tokens.AccountApiTokensUpdateActionInputV1Schema.safeParse({ tokenId: CREDENTIAL_ID,
+      deployment: { ...deployment, deployApproval: 'ask' },
+    }).success).toBe(true);
+    for (const invalid of [
+      { ...create, deployment: { ...deployment, approvedBy: { accountId: 'person' } } },
+      { ...create, deployment: { ...deployment, approval: { steps: [] } } },
+      { ...create, deployment: { ...deployment, sha: 'a'.repeat(40) } },
+      { ...create, deploymentApproval: { input: { serverId: 'srv_home', environmentId: 'staging' } } },
+      { ...create, grant: { ...grant, deploymentApproval: {
+        input: { serverId: 'srv_home', environmentId: 'staging' },
+      } } },
+    ]) expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse(invalid).success).toBe(false);
+  });
+  it('carries Automatic only in a narrow Environment grant, with no private consent transport', () => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1,
+      actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+      targets: { sessions: [], machines: [], environments: ['staging'] },
+      deployApproval: 'automatic',
+    };
+    const create = { tokenId: CREDENTIAL_ID, label: 'Staging CI', grant };
+    expect(tokens.AccountApiTokensCreateActionInputV1Schema.parse(create).grant).toEqual(grant);
+    for (const changed of [
+      { ...grant, actions: null }, { ...grant, approve: true },
+      { ...grant, targets: null },
+      { ...grant, targets: { ...grant.targets, environments: ['staging', 'production'] } },
+      { ...grant, targets: { ...grant.targets, machines: ['machine'] } },
+    ]) expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse({ ...create, grant: changed }).success).toBe(false);
+    expect(tokens.AccountApiTokensCreateHttpInputV1Schema.safeParse({ ...create, deploymentConsent: null }).success).toBe(false);
+    expect(tokens.AccountApiTokensUpdateHttpInputV1Schema.safeParse({ tokenId: CREDENTIAL_ID,
+      deployment: { serverId: 'srv_home', environmentId: 'staging', deployApproval: 'ask' },
+      deploymentConsent: null,
+    }).success).toBe(false);
+  });
+  it('requests delegated summaries explicitly without accepting an Account selector or false completeness', () => {
+    expect(tokens.AccountApiTokensListActionInputV1Schema.parse({})).toEqual({});
+    expect(tokens.AccountApiTokensListActionInputV1Schema.parse({ includeChildren: true })).toEqual({ includeChildren: true });
+    for (const input of [{ includeChildren: false }, { includeChildren: true, accountId: 'foreign' }]) {
+      expect(tokens.AccountApiTokensListActionInputV1Schema.safeParse(input).success).toBe(false);
+    }
+  });
+  it('admits deliberate unattended Team reapproval without caller-authored evidence or bearer disclosure', () => {
+    const input = { tokenId: CREDENTIAL_ID, authorizeUnattendedTeamAccess: true };
+    expect(tokens.AccountApiTokensUpdateActionInputV1Schema.parse(input)).toEqual(input);
+    expect(tokens.AccountApiTokensUpdateActionInputV1Schema.safeParse({ tokenId: CREDENTIAL_ID }).success).toBe(false);
+    expect(tokens.AccountApiTokensUpdateActionInputV1Schema.safeParse({ ...input, authorizeUnattendedTeamAccess: false }).success).toBe(false);
+    expect(tokens.AccountApiTokensUpdateActionInputV1Schema.safeParse({
+      ...input, authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }],
+    }).success).toBe(false);
+  });
   it('requires persisted Account mode on scoped self without inferring it from credential material', () => {
     const self = { accountId: 'a', credentialId: CREDENTIAL_ID, parentTokenId: null,
       expiresAt: null, grant: API_TOKEN_FULL_GRANT_V1, embedConfig: null };
@@ -113,6 +170,7 @@ describe('API token encryption credentials', () => {
     for (const error of [
       'database_transaction_conflict_exhausted',
       'database_connection_unavailable',
+      'database_transaction_timeout',
     ]) {
       expect(tokens.AccountApiTokensServerErrorV1Schema.parse({ error, statusCode: 503 }))
         .toEqual({ error, statusCode: 503 });

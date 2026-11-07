@@ -2,6 +2,7 @@ import * as React from 'react';
 import { BUNDLED_PLUGIN_UI_APP_DECLARATIONS } from './generatedBundledPluginUiArtifacts';
 
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability';
+import type { PluginAvailabilityResponseFailure } from './responseFailure';
 
 import {
     getInstalledPluginReactNativeBundleCache,
@@ -18,6 +19,7 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import {
     forgetPluginUiProjectionAdmissionSnapshots,
 } from '@/sync/domains/plugins/ui/projectionWarmCache';
+import type { PluginAccountAvailabilityInitialFailure } from './initialReadiness';
 
 import {
     createPluginAccountAvailabilityReaderStore,
@@ -57,6 +59,12 @@ function currentProjectionLifetime(scope: ServerAccountScope): ActiveServerAccou
     return lifetime;
 }
 
+/** Failed acquisition is observable readiness, never a fabricated empty Account snapshot. */
+export function failPluginAccountAvailabilityProjection(failure: PluginAccountAvailabilityInitialFailure): void {
+    if (!currentProjectionLifetime(failure.scope)) return;
+    readerStore.fail(failure);
+}
+
 /**
  * The sole UI projection writer. The Account Availability HTTP/change owner
  * replaces one complete verified snapshot; consumers only read Account
@@ -68,6 +76,7 @@ export function replacePluginAccountAvailabilityProjection(input: Readonly<{
     snapshot: PluginAccountAvailabilitySnapshot;
     failedPluginIds?: readonly string[];
     intentCensusIncomplete?: boolean;
+    initialFailure?: PluginAccountAvailabilityInitialFailure;
 }>): void {
     readerStore.replace(input);
     const lifetime = currentProjectionLifetime(input.scope);
@@ -92,8 +101,10 @@ export function applyPluginAccountAvailabilityProjectionRefresh(input: Readonly<
     snapshot: PluginAccountAvailabilitySnapshot;
     failedPluginIds: readonly string[];
     intentCensusIncomplete?: boolean;
+    terminalFailure?: PluginAvailabilityResponseFailure;
 }>): void {
-    replacePluginAccountAvailabilityProjection(input);
+    replacePluginAccountAvailabilityProjection({ ...input, initialFailure: input.terminalFailure });
+    if (input.terminalFailure) throw input.terminalFailure;
     if (input.failedPluginIds.length > 0) {
         throw new Error(`Plugin Availability refresh failed for: ${input.failedPluginIds.join(', ')}`);
     }

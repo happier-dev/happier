@@ -74,14 +74,10 @@ export async function installSkills(
     if (effects.success && effects.data.skillIds.length > 0) {
       const preview = await previewSkillInstall(execute, input.source).catch(() => null);
       return {
+        ...acknowledgeSkillCreation(effects.data),
         ...failure(result),
         request: input,
         ...(preview?.ok ? { previews: preview.items } : {}),
-        skillIds: effects.data.skillIds,
-        incomplete: effects.data.incomplete,
-        rulesMissing: effects.data.incomplete
-          .filter((entry) => entry.step === 'rules')
-          .map((entry) => entry.skillId),
       };
     }
     return { ...failure(result), request: input, skillIds: [], rulesMissing: [], incomplete: [] };
@@ -96,14 +92,7 @@ export async function installSkills(
   ) {
     return { ok: false, error: 'skill_install_failed', request: input, skillIds: [], rulesMissing: [], incomplete: [] };
   }
-  return {
-    ok: true,
-    skillIds: parsed.data.skillIds,
-    incomplete: parsed.data.incomplete ?? [],
-    rulesMissing: (parsed.data.incomplete ?? [])
-      .filter((entry) => entry.step === 'rules')
-      .map((entry) => entry.skillId),
-  };
+  return acknowledgeSkillCreation(parsed.data);
 }
 
 /** The dry run behind From a link, Upload and a Browse detail's siblings: what would be added, pinned, before anything is written. */
@@ -152,8 +141,38 @@ export async function retrySkillRules(
 }
 
 export type SkillInstallAcknowledgment = SkillInstallOutcome;
+export type SkillCreationAcknowledgment = Extract<SkillInstallAcknowledgment, { ok: true }>;
+
+/** All create entry points keep the same content identities and independently missing effects. */
+export function acknowledgeSkillCreation(receipt:
+  | Readonly<{ skillId: string; incomplete?: 'rules' | 'session_include' }>
+  | Readonly<{ skillIds: readonly string[]; incomplete?: SkillInstallEffects['incomplete'] }>,
+): SkillCreationAcknowledgment {
+  const skillIds = 'skillId' in receipt ? [receipt.skillId] : receipt.skillIds;
+  const incomplete = 'skillId' in receipt
+    ? receipt.incomplete ? [{ skillId: receipt.skillId, step: receipt.incomplete }] : []
+    : receipt.incomplete ?? [];
+  return { ok: true, skillIds, incomplete, rulesMissing: incomplete.filter(step => step.step === 'rules').map(step => step.skillId) };
+}
+
+/** A later Add must not replace an earlier content acknowledgment that still needs rules. */
+export function mergeSkillCreationAcknowledgments(previous: SkillCreationAcknowledgment | null, next: SkillCreationAcknowledgment): SkillCreationAcknowledgment {
+  if (!previous) return next;
+  const steps = new Map([...previous.incomplete, ...next.incomplete].map(step => [JSON.stringify([step.skillId, step.step]), step]));
+  return acknowledgeSkillCreation({ skillIds: [...new Set([...previous.skillIds, ...next.skillIds])], incomplete: [...steps.values()] });
+}
 
 /** Keep every content acknowledgment; a subsequent retry only visits rules still missing. */
+export function retrySkillInstallRules(
+  execute: MountedAuthoringActionExecute,
+  outcome: SkillCreationAcknowledgment,
+  change?: ReachRulesChangeV1,
+): Promise<SkillCreationAcknowledgment>;
+export function retrySkillInstallRules(
+  execute: MountedAuthoringActionExecute,
+  outcome: SkillInstallAcknowledgment,
+  change?: ReachRulesChangeV1,
+): Promise<SkillInstallAcknowledgment>;
 export async function retrySkillInstallRules(
   execute: MountedAuthoringActionExecute,
   outcome: SkillInstallAcknowledgment,

@@ -1,5 +1,11 @@
 export { projectWidgetGroupCellContent, resolveWidgetGroupCells, resolveWidgetGroupColumns, packWidgetGroupBands } from '../data/widgetGroupLayout.js';
+export { formatUsageDurationCompact } from '@happier-dev/plugin-sdk/ui';
 export * from './Action.js';
+export { BotFace, type BotFaceProps, type BotFaceValue } from './BotFace.js';
+export {
+  PageAsideColumns, PagePinnedBar, KeyboardStickyFooter,
+  type PageAsideColumnsProps, type PagePinnedBarProps, type KeyboardStickyFooterProps,
+} from './PageLayout.js';
 export { HappierRequesterDisclosureContent, type HappierRequesterDisclosureModel,
   type HappierRequesterDisclosureHost, type HappierRequesterDisclosureContentProps } from './RequesterDisclosureContent.js';
 export * from './UsageCharts.js';
@@ -13,12 +19,22 @@ export { countUsageChartCalendarDates, projectUsageRiverWeekRange } from '../dat
 export type { UsageCalendarArtModel, UsageNinetyPlanetsModel, UsageStreakThreadModel, UsageDaysOnSurfaceModel,
   UsageRingedStreaksModel, UsageAroundPeriodModel, UsageWeeksSkylineModel, UsageMoonsModel, UsageMachinesModel,
   UsageProjectsModel, UsageAtmosphereModel, UsageGalaxyModel } from '../presentation/usage/charts/publicUsageChartModels.js';
+export { ApprovalFields, type ApprovalFieldRow, type ApprovalFieldsProps } from './ApprovalFields.js';
 export { ApprovalPendingNotice, type ApprovalPendingNoticeProps } from './ApprovalPendingNotice.js';
 export { ApprovalPrompt, type ApprovalPromptProps } from './ApprovalPrompt.js';
-export * from './Button.js';
+export {
+  Button,
+  IconButton,
+  type ButtonProps,
+  type ButtonSize,
+  type ButtonVariant,
+  type IconButtonProps,
+} from './Button.js';
 export * from './Collection.js';
 export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
   type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';
+export * from './CollectionSavedViewsStrip.js';
+export { CollectionAddMenu, type CollectionAddMenuItem, type CollectionAddMenuProps } from './CollectionAddMenu.js';
 export {
   useCollectionSavedViewsControl,
   useCollectionSavedViewsSelection,
@@ -65,6 +81,9 @@ export { DetailsPaneOpenAsPageButton, type DetailsPaneOpenAsPageButtonProps } fr
 export { DiffStat, type DiffStatProps } from './DiffStat.js';
 export { InlineCode, type InlineCodeProps } from './InlineCode.js';
 export { TaskStatusGlyph, type TaskStatusCategory, type TaskStatusGlyphProps } from './TaskStatusGlyph.js';
+export { ProgressRing, type ProgressRingProps } from './ProgressRing.js';
+export { PropertyList, type PropertyChoice, type PropertyEditor, type PropertyListItem, type PropertyListProps, type PropertyNameTones } from './PropertyList.js';
+export { RelationList, type RelationListEntry, type RelationListProps } from './RelationList.js';
 export { CheckStatusGlyph, type CheckStatusGlyphProps, type CheckStatusKind } from './CheckStatusGlyph.js';
 export { AnsiText, type AnsiTextProps } from './AnsiText.js';
 export { PaneHeaderContent, type PaneHeaderContentProps, type PaneHeaderContentLineSegment } from './PaneHeaderContent.js';
@@ -81,6 +100,11 @@ export {
   type FollowPolicyEditorDelivery, type FollowPolicyEditorEvent, type FollowPolicyEditorProps,
   type FollowPolicyEditorReceiver,
 } from './FollowPolicyEditor.js';
+export {
+  EndpointHeadersEditor,
+  type EndpointHeadersEditorCopy, type EndpointHeadersEditorProps, type EndpointHeadersLayer,
+} from './EndpointHeadersEditor.js';
+export { Checkbox, type CheckboxProps, type CheckboxSize } from './Checkbox.js';
 export { Icon, type IconName, type IconProps } from './Icon.js';
 export * from './Image.js';
 export { MotionFeedback, type MotionFeedbackProps } from './MotionFeedback.js';
@@ -99,6 +123,7 @@ export {
   type ItemProps, type ListItemProps, type ListAccessibilityPattern, type ItemGroupProps,
 } from './List.js';
 export { CountedDisclosureItem, type CountedDisclosureItemProps } from './CountedDisclosureItem.js';
+export { WorkflowRunFoldHeader, type WorkflowRunFoldHeaderProps } from './WorkflowRunFoldHeader.js';
 export {
   TechnicalDetailsDisclosure, type TechnicalDetailsDisclosureProps, type TechnicalDetailsLine,
 } from './TechnicalDetailsDisclosure.js';
@@ -134,6 +159,7 @@ export {
   type ExecutableParticipantPickerProps,
 } from './ExecutableParticipantPicker.js';
 export * from './Session.js';
+export { SessionCard, type SessionCardProps, type SessionCardStatus } from './SessionCard.js';
 export * from './Spinner.js';
 export * from './State.js';
 export * from './Status.js';
@@ -145,6 +171,13 @@ export * from './Tabs.js';
 export { Timeline, type TimelineProps, type TimelineItemContent } from './Timeline.js';
 export { ThreadMessage, type ThreadMessageProps } from './ThreadMessage.js';
 export { ReplyQuote, type ReplyQuoteProps } from './ReplyQuote.js';
+export { AccountByline, useAccountActorName, type AccountActorLabel, type AccountBylineProps } from './AccountByline.js';
+export {
+  HappierAccountByline,
+  type HappierAccountActorLabel,
+  type HappierAccountBylineProps,
+  type HappierAccountBylineTextProps,
+} from '../presentation/account/AccountByline.js';
 export { HappierReplyQuote, type HappierReplyQuoteProps, type HappierReplyQuoteSource, type HappierReplyQuoteTextProps } from '../presentation/content/ReplyQuote.js';
 export { ReturnedAnswerQuote, type ReturnedAnswerOutcome, type ReturnedAnswerQuestion, type ReturnedAnswerQuoteProps } from './ReturnedAnswerQuote.js';
 export { ContentPreview, type ContentPreviewProps } from './ContentPreview.js';
@@ -283,6 +316,10 @@ export {
   type HappierArtifactPreviewCardProps,
 } from '../presentation/artifacts/ArtifactPreviewCard.js';
 export {
+  HappierSavedSkillCard,
+  type HappierSavedSkillCardProps,
+} from '../presentation/artifacts/SavedSkillCard.js';
+export {
   HappierArtifactRevisionList,
   type HappierArtifactRevisionListProps,
   type HappierArtifactRevisionRow,
@@ -309,6 +346,7 @@ export {
   type HappierCollectionListProps,
   type HappierCollectionListSearch,
   type HappierCollectionListTextRole,
+  type HappierCollectionRowRole,
   useHappierCollectionDraftRowTitle,
 } from '../presentation/collection/CollectionList.js';
 export {
@@ -585,6 +623,13 @@ export {
   type HappierPresenceCapsuleProps,
   type HappierPresenceTakeControlResult,
 } from '../presentation/copresence/PresenceCapsule.js';
+// Live viewer input (browser, Computer and simulator viewers) and the disclosure caret authors compose.
+export { HappierLiveStreamInputLayer } from '../presentation/media/LiveStreamInputLayer.js';
+export {
+  HappierDisclosureToggle,
+  type HappierDisclosureCaretDensity,
+  type HappierDisclosureToggleProps,
+} from '../presentation/collection/DisclosureToggle.js';
 export {
   type BurnUpChartProps,
 } from '../presentation/data/BurnUpChart.js';
@@ -737,6 +782,15 @@ export {
   type HappierFindBarNote,
   type HappierFindBarProps,
 } from '../presentation/find/FindBar.js';
+export {
+  HAPPIER_PROMPT_PICKER_METRICS,
+  HappierPromptPickerMetaLine,
+  HappierPromptPickerPreview,
+  HappierPromptPickerRow,
+  type HappierPromptPickerColors,
+  type HappierPromptPickerHost,
+  type HappierPromptPickerMetaPart,
+} from '../presentation/prompts/PromptPicker.js';
 export {
   HappierFindHighlightedText,
   sliceFindRanges,
@@ -947,6 +1001,7 @@ export {
   resolveHappierMenuContent,
   resolveHappierMenuKeyAction,
   resolveHappierMenuRadioGroups,
+  resolveHappierMenuRowNavigation,
   resolveHappierMenuSelection,
   resolveHappierMenuTypeahead,
   resolveHappierPopoverPlacement,
@@ -1266,9 +1321,12 @@ export {
   type HappierLiveStreamProps,
 } from '../presentation/media/LiveStream.js';
 export {
+  HAPPIER_GESTURE_TIMING,
   type HappierLiveStreamGestureGeometry,
   type HappierLiveStreamInputControlKind,
   type HappierLiveStreamInputGesture,
+  type HappierLiveStreamInputMode,
+  type HappierLiveStreamViewTransform,
   type HappierLiveStreamOrientation,
   type HappierLiveStreamPoint,
   type HappierLiveStreamRect,
@@ -1605,6 +1663,7 @@ export {
 } from './Capabilities.js';
 export {
   CapabilityAddBody,
+  CapabilityAddDetailAction,
   type CapabilityAddBodyProps,
   type CapabilityAddConfig,
   type CapabilityAddDetailFooter,
@@ -1612,6 +1671,11 @@ export {
   type CapabilityAddLevel,
   type CapabilityAddMode,
 } from './CapabilityAddBody.js';
+export {
+  CapabilityListingSections,
+  type CapabilityListingFacts,
+  type CapabilityListingSectionsProps,
+} from './CapabilityListingSections.js';
 /** The most blocking capability status that speaks at a placement; null when none does (healthy is quiet). */
 export { pickMostBlockingHappierCapabilityStatus as pickMostBlockingCapabilityStatus } from '../presentation/capabilities/capabilityStatus.js';
 export {
@@ -1625,7 +1689,6 @@ export {
   type HappierCollectionRowDensity,
   type HappierCollectionRowTextMetrics,
 } from '../presentation/collection/CollectionRowContent.js';
-export { Checkbox, type CheckboxProps, type CheckboxSize } from './Checkbox.js';
 
 export {
   RemoteViewerControlBar,
@@ -1645,10 +1708,10 @@ export {
   type RemoteViewerModifier,
   type RemoteViewerModifierState,
 } from '../presentation/media/useRemoteViewerActions.js';
-export { CollectionTitleButton, CollectionTitleNaturalWidthContext, type CollectionTitleButtonProps } from './CollectionTitleButton.js';
-export { CollectionSpaceIcon, type CollectionSpaceIconProps } from './CollectionSpaceIcon.js';
-export { RegistryShelf, RegistryShelfAddControl, RegistrySourcesUnavailable, type RegistryShelfProps, type RegistryShelfProjection, type RegistryShelfUnavailable, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistrySourceFailure, type RegistrySourcesUnavailableProps } from './RegistryShelf.js';
 export { AvatarStack, type AvatarStackEntry, type AvatarStackProps } from './AvatarStack.js';
 export { PageLoadingRows, type PageLoadingRowsProps } from './PageLoadingRows.js';
 export { ModalCardFooterActions, type ModalCardFooterActionsProps } from './ModalCardFooterActions.js';
 export { HorizontalScrollEdgeMask, type HorizontalScrollEdgeMaskProps } from './HorizontalScrollEdgeMask.js';
+export { RegistryShelf, RegistryShelfAddControl, RegistrySourcesUnavailable, type RegistryShelfProps, type RegistryShelfProjection, type RegistryShelfUnavailable, type RegistryShelfAddControlProps, type RegistryShelfAddState, type RegistrySourceFailure, type RegistrySourcesUnavailableProps } from './RegistryShelf.js';
+export { CollectionTitleButton, CollectionTitleNaturalWidthContext, type CollectionTitleButtonProps } from './CollectionTitleButton.js';
+export { CollectionSpaceIcon, type CollectionSpaceIconProps } from './CollectionSpaceIcon.js';

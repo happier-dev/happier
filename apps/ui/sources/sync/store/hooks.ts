@@ -1,10 +1,11 @@
-import { shallow } from 'zustand/shallow';
-import { carryMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { readSessionArchivePending, readSessionArchiveOperationsForServers, projectSessionArchiveRow, projectSessionArchiveRowsByServerId } from '../domains/session/listing/sessionArchiveState';
+import { resolveSessionRpcAvailabilityState } from '../domains/session/sessionRpcAvailability';
 import React from 'react';
+import { retainAutomationRunHistoryDemand } from '../domains/automations/automationRunHistoryDemand';
 import type { MachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import { subscribeMachineField } from './machineFieldSubscription';
+import { subscribeMachineField, subscribeMachineFields } from './machineFieldSubscription';
 import { useSetting, useLocalSetting } from './settingsReadHooks';
+import { projectAtmospherePreviewKey, settingsPreviewScopeMatches, useSettingsPreviewStore } from './settingsPreview';
 export {
   useSettings,
   useSettingsSelector,
@@ -17,6 +18,7 @@ export {
 import { actionOperationStore, isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { readTranscriptBrowserActionIdentity } from '@/components/sessions/transcript/references/transcriptBrowserActionReference';
 import { useAiLaunchProfiles } from './useAiLaunchProfiles';
+export { useThemeProfiles, useThemeProfilesSnapshot } from './useThemeProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { sync } from '@/sync/sync';
 import { log } from '@/log';
@@ -27,6 +29,10 @@ import { readSavedSecretCatalog } from '@/sync/api/account/apiSavedSecretCatalog
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { useShallow } from 'zustand/react/shallow';
+import type { ReturnedAnswerEntry } from './sessionReturnedAnswers';
+import { EMPTY_SESSION_USER_MESSAGE_HISTORY, EMPTY_USER_MESSAGE_HISTORY, type SessionUserMessageHistory } from './sessionUserMessageHistory';
+import { hasExecutionRunSignals } from '../domains/session/participants/deriveExecutionRunPollingRefreshKey';
+import { shallow } from 'zustand/shallow';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -52,27 +58,36 @@ import type {
   DiscardedPendingMessage,
   ScmStatus,
   ScmWorkingSnapshot,
-  ScmCommitSelectionPatch,
   Machine,
   PendingMessage,
   Session,
 } from '../domains/state/storageTypes';
 import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
+import { isArtifactInventoryReady, type ArtifactInventorySelection } from '../domains/artifacts/artifactInventory';
+import type { ArtifactInventoryView } from '../domains/artifacts/artifactInventory';
+import { listInboxArtifactBodyHydrationRequests } from '../domains/artifacts/inboxArtifacts';
+import type { DiscussionApprovalAttentionFact } from '@/activity/attention/buildDiscussionListAttention';
 import {
-  collectOpenApprovalSessionReferences,
+  collectOpenApprovalSessionReferenceFacts,
+  listComposerApprovalArtifactsForSession,
+  listOpenApprovalArtifactsForSession,
   listApprovalArtifactIdsNeedingHydrationForSession,
-  listDiscussionRequesterApprovals,
   listOpenApprovalInboxArtifactHydrationRequests,
+  listDiscussionRequesterApprovals,
   listTranscriptApprovalArtifactsForSession,
   type ApprovalSettledPresentation,
   type DiscussionRequesterApproval,
+  type OpenApprovalAttentionArtifactForSession,
   type OpenApprovalArtifactForSession,
   type OpenApprovalSessionReference,
 } from '../domains/artifacts/approvalArtifacts';
 import { countEnabledAutomationDefinitionsLinkedToSession } from '../domains/automations/automationSessionLink';
 import type { LocalSettings } from '../domains/settings/localSettings';
+import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import type { ProjectRememberedSelectionId } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { sessionLastMobileSurfaceState, projectLastMobileSurfaceState } from '../domains/state/navigationUiState';
+import { usePersistentUiStateValue } from '../domains/state/persistentUiState';
 import {
-    readRealmQualifiedMobileSurface,
     readSessionMobileSurfaceWithPredecessor,
     resolveProjectMobileSurfaceStorageKey,
     resolveSessionMobileSurfacePersistenceKeys,
@@ -109,7 +124,6 @@ import type { SessionForkSupportSource } from '../domains/sessionFork/forkUiSupp
 import { agentTextLooksLikeExecutionRunSignal, shouldIncludeSubagentSourceMessage } from '../domains/session/subagents/subagentSourceMessageDetection';
 import { readExecutionRunResultStatus } from '../domains/session/subagents/executionRuns/executionRunSubagentStatus';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
-import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { UserProfile } from '../domains/social/friendTypes';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from "@happier-dev/session-core/messages";
 import {
@@ -188,7 +202,7 @@ import { registerSessionTranscriptDerivedCacheClear } from '@/sync/runtime/sessi
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '../domains/session/attention/runtimePresentation';
 import {
-  compareTranscriptMessagesOldestFirst,
+  sortTranscriptMessagesOldestFirst,
   normalizeTranscriptSeq,
 } from "@happier-dev/session-core/messages";
 
@@ -212,8 +226,10 @@ import {
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
 import { areMachineLaunchInputsEqual } from './domains/areStoredMachinesEqual';
 import { machineInventoryPresentation } from './machineInventoryPresentation';
+import { carryMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { isMachineVisibleForSelection, isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import type { SessionsDomainSlice, StorageState } from './types';
+import { retainDeep } from '../domains/state/structuralSharing';
 import { createFriendRequestCountSelector } from './friendRequestCount';
 import {
   readProjectWorkspaceRefs,
@@ -233,7 +249,11 @@ export function useProjectOrganizations() {
 }
 
 export function useProjectAtmosphere(project?: Readonly<{ serverId: string; projectKey: string }>) {
-  return getStorage()(state => project ? readProjectAtmosphere(state, project) : undefined);
+  const scope = getStorage()(state => state.settingsScope);
+  const key = project ? projectAtmospherePreviewKey(project) : null;
+  const preview = useSettingsPreviewStore(state => key && settingsPreviewScopeMatches(scope, state.scope) ? state.projects[key]?.value : undefined);
+  const value = getStorage()(state => project ? readProjectAtmosphere(state, project) : undefined);
+  return preview ?? value;
 }
 
 export function useWorkspaceSyncRelationships() {
@@ -242,6 +262,12 @@ export function useWorkspaceSyncRelationships() {
 
 export function usePinnedWorkspaceRefIds() {
   return getStorage()((state) => readCurrentProjectAccountRows(state) ? state.pinnedWorkspaceRefIds : EMPTY_PINNED_WORKSPACE_REF_IDS);
+}
+
+/** One workspace ref's pin bit: a boolean selection, so only the row whose pin state changed re-renders. */
+export function useIsWorkspaceRefPinned(workspaceRefId: string | undefined): boolean {
+  return getStorage()((state) => workspaceRefId !== undefined && readCurrentProjectAccountRows(state) !== null
+    && state.pinnedWorkspaceRefIds.includes(workspaceRefId));
 }
 
 export { useAccountSettingsScope } from './settingsWriters';
@@ -534,12 +560,6 @@ export function useSessionMetadata(sessionId: string, serverId?: string | null):
  * reference-compared subscriber for every unrelated field it carries. A string compares by value, so
  * the subscription fires exactly when the answer changes.
  *
- * V-2 (2026-08-11): the transcript reached this through `useExecutionRunsBackendsForSession`, which
- * held `useSession(id)` purely to read `metadata` and hand it to `resolveSessionMachineId`. With an
- * `action-draft` row present that put a whole-session subscription in the transcript producer, so
- * every unrelated session-field write re-ran the option hook — MEASURED at 1 render per write, and 0
- * once it reads this instead.
- *
  * V-3 (2026-08-18): it resolves the OWNER view, not raw `metadata`. `machineId` is an owner key, so
  * a layout-v1 session's shared `metadata` cannot carry it and the raw read answered `null` for every
  * such session. `readSessionOwnerMetadataView` is the layout owner and returns `metadata` unchanged
@@ -705,7 +725,6 @@ function buildProjectedSessionListRowRenderable(renderable: SessionListRenderabl
   return {
     ...renderable,
     updatedAt: isActiveStreaming ? 0 : renderable.updatedAt,
-    activeAt: renderable.presence === 'online' ? 0 : renderable.activeAt,
     thinkingAt: 0,
     pendingVersion: undefined,
     metadataVersion: 0,
@@ -791,6 +810,19 @@ export function useSessionListRenderableWithServerScope(
   return projectSessionArchiveRow(row, pending);
 }
 
+/** One fact of a Home-qualified list row; a reader subscribes to that fact, not to the whole row. */
+export function useSessionListRowSelector<T>(
+  serverId: string | null | undefined,
+  sessionId: string,
+  select: (row: SessionListRenderableSession | null) => T,
+): T {
+  useServerProfilesGeneration();
+  const resolveScopeId = captureServerProfileScopeResolver();
+  return getStorage()((state) => select(
+    readSessionListRowForServerId(state.sessionListRowsByServerId, serverId, sessionId, resolveScopeId),
+  ));
+}
+
 const EMPTY_SESSION_LIST_RENDERABLES_BY_ID: Record<string, SessionListRenderableSession> = {};
 
 export function useSessionListRenderablesById(): Record<string, SessionListRenderableSession> {
@@ -808,23 +840,32 @@ export type SessionListAttentionRow = Readonly<{
 const EMPTY_SESSION_LIST_ROWS_BY_SERVER_ID: SessionsDomainSlice['sessionListRowsByServerId'] = Object.freeze({});
 
 /**
+ * The Session ids whose rows can differ from `previousRows`, taken from the store's row delta.
+ * `null` means unknown (first read, a revision gap, an archive overlay change): read every row.
+ */
+export type SessionListRowChanges = Readonly<{
+  previousRows: SessionsDomainSlice['sessionListRowsByServerId'];
+  sessionIds: ReadonlySet<string>;
+}>;
+
+/**
  * Session rows, keyed by Home. Pass `serverIds` to subscribe to those Homes only: a row write on any
  * other Home then re-renders nothing, and an empty selection (a disabled consumer) never re-renders.
- * Without it the consumer follows every Home's rows.
+ * Without it the consumer follows every Home's rows. `select` also receives the row changes since its
+ * previous call, so a projection can re-read only those rows.
  */
 export function useSessionListRowsByServerId<T>(
   serverIds: ReadonlyArray<string> | undefined,
-  select: (rows: SessionsDomainSlice['sessionListRowsByServerId']) => T,
+  select: (rows: SessionsDomainSlice['sessionListRowsByServerId'], changes: SessionListRowChanges | null) => T,
 ): T;
 export function useSessionListRowsByServerId(
   serverIds?: ReadonlyArray<string>,
 ): SessionsDomainSlice['sessionListRowsByServerId'];
 export function useSessionListRowsByServerId<T>(
   serverIds?: ReadonlyArray<string>,
-  select?: (rows: SessionsDomainSlice['sessionListRowsByServerId']) => T,
+  select?: (rows: SessionsDomainSlice['sessionListRowsByServerId'], changes: SessionListRowChanges | null) => T,
 ) {
-  useServerProfilesGeneration();
-  const resolveScopeId = captureServerProfileScopeResolver();
+  const serverProfilesGeneration = useServerProfilesGeneration();
   const serverIdsKey = serverIds ? serverIds.join('\u0001') : null;
   const selectedServerIds = React.useMemo(
     () => (serverIds
@@ -833,23 +874,46 @@ export function useSessionListRowsByServerId<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the key is the selection's identity
     [serverIdsKey],
   );
-  return getStorage()(useShallow((state) => {
-    if (selectedServerIds?.length === 0) {
-      return select ? select(EMPTY_SESSION_LIST_ROWS_BY_SERVER_ID) : EMPTY_SESSION_LIST_ROWS_BY_SERVER_ID;
-    }
-    let rows = state.sessionListRowsByServerId;
-    if (selectedServerIds) {
-      const selected: Record<string, SessionsDomainSlice['sessionListRowsByServerId'][string]> = {};
-      for (const serverId of selectedServerIds) {
-        const bucket = readSessionListRowsForServerId(rows, serverId, resolveScopeId);
-        if (bucket) selected[serverId] = bucket;
+  const selector = React.useMemo(() => {
+    const resolveScopeId = captureServerProfileScopeResolver();
+    let previous: Readonly<{ rows: SessionsDomainSlice['sessionListRowsByServerId']; value: T | SessionsDomainSlice['sessionListRowsByServerId'] }> | undefined;
+    // The row delta revision at which `previous.rows` was still current, and the archive overlay it saw.
+    let previousRevision: number | null = null;
+    let previousArchiveOperations: StorageState['sessionArchiveOperations'];
+    return (state: StorageState) => {
+      const revision = state.sessionListRenderableDelta?.revision ?? null;
+      let rows = selectedServerIds?.length === 0 ? EMPTY_SESSION_LIST_ROWS_BY_SERVER_ID : state.sessionListRowsByServerId;
+      if (selectedServerIds?.length) {
+        const selected: Record<string, SessionsDomainSlice['sessionListRowsByServerId'][string]> = {};
+        for (const serverId of selectedServerIds) {
+          const bucket = readSessionListRowsForServerId(rows, serverId, resolveScopeId);
+          if (bucket) selected[serverId] = bucket;
+        }
+        rows = selected;
       }
-      rows = selected;
-    }
-    const projected = projectSessionArchiveRowsByServerId(rows,
-      readSessionArchiveOperationsForServers(state, selectedServerIds, resolveScopeId));
-    return select ? select(projected) : projected;
-  }));
+      const projected = projectSessionArchiveRowsByServerId(rows,
+        readSessionArchiveOperationsForServers(state, selectedServerIds, resolveScopeId));
+      // A caller may allocate nested results. Produce that snapshot only when its admitted row buckets change.
+      const archiveOperations = state.sessionArchiveOperations;
+      if (previous && shallow(previous.rows, projected)) {
+        previousRevision = revision;
+        previousArchiveOperations = archiveOperations;
+        return previous.value;
+      }
+      // Exactly the next revision with the same archive overlay: its row lists name every changed row.
+      const delta = state.sessionListRenderableDelta;
+      const changes = previous && delta && previousRevision !== null && delta.revision === previousRevision + 1
+        && archiveOperations === previousArchiveOperations
+        ? { previousRows: previous.rows, sessionIds: new Set([...delta.changedSessionIds, ...delta.removedSessionIds]) }
+        : null;
+      const value = select ? select(projected, changes) : projected;
+      previous = { rows: projected, value };
+      previousRevision = revision;
+      previousArchiveOperations = archiveOperations;
+      return value;
+    };
+  }, [selectedServerIds, select, serverProfilesGeneration]);
+  return getStorage()(useShallow(selector));
 }
 
 export function useOrdinarySessionListMembershipByServerId(): SessionsDomainSlice['ordinarySessionListMembershipByServerId'] {
@@ -980,7 +1044,6 @@ type SessionListReachabilityItemKey = Readonly<{
 
 const emptySessionListReachabilityRenderablesByKey =
   new Map<string, SessionListReachabilityRenderable>() as ReadonlyMap<string, SessionListReachabilityRenderable>;
-const sessionListReachabilityRenderableCache = new Map<string, SessionListReachabilityRenderable>();
 
 export function buildSessionListReachabilityRenderableKey(
   serverId: string | null | undefined,
@@ -991,10 +1054,9 @@ export function buildSessionListReachabilityRenderableKey(
 }
 
 function projectSessionListReachabilityRenderable(
-  cacheKey: string,
   renderable: SessionListRenderableSession,
+  cached: SessionListReachabilityRenderable | undefined,
 ): SessionListReachabilityRenderable {
-  const cached = sessionListReachabilityRenderableCache.get(cacheKey);
   if (cached?.id === renderable.id && (cached.metadata === renderable.metadata
     || (Boolean(cached.metadata) === Boolean(renderable.metadata)
       && SESSION_LIST_REACHABILITY_METADATA_FIELDS.every(field =>
@@ -1013,7 +1075,6 @@ function projectSessionListReachabilityRenderable(
       externalSessionV1: renderable.metadata.externalSessionV1,
     } : null,
   };
-  sessionListReachabilityRenderableCache.set(cacheKey, value);
   return value;
 }
 
@@ -1038,10 +1099,11 @@ export function useSessionListReachabilityRenderablesForItems(
     return next.length === 0 ? (emptyArray as SessionListReachabilityItemKey[]) : next;
   }, [items]);
 
+  const previousMap = React.useRef(emptySessionListReachabilityRenderablesByKey);
   const selector = React.useMemo(() => {
     let previousRows: StorageState['sessionListRowsByServerId'] | undefined;
-    let previous = emptySessionListReachabilityRenderablesByKey;
     return (state: StorageState) => {
+      const previous = previousMap.current;
       // Machine/profile-independent notifications do not change this input owner.
       if (previousRows === state.sessionListRowsByServerId) return previous;
       previousRows = state.sessionListRowsByServerId;
@@ -1049,12 +1111,12 @@ export function useSessionListReachabilityRenderablesForItems(
       for (const itemKey of itemKeys) {
         const row = readSessionListRowForServerId(state.sessionListRowsByServerId,
           itemKey.serverId, itemKey.sessionId, resolveScopeId);
-        if (row) next.set(itemKey.key, projectSessionListReachabilityRenderable(itemKey.key, row));
+        if (row) next.set(itemKey.key, projectSessionListReachabilityRenderable(row, previous.get(itemKey.key)));
       }
       if (next.size !== previous.size || [...next].some(([key, row]) => previous.get(key) !== row)) {
-        previous = next.size === 0 ? emptySessionListReachabilityRenderablesByKey : next;
+        previousMap.current = next.size === 0 ? emptySessionListReachabilityRenderablesByKey : next;
       }
-      return previous;
+      return previousMap.current;
     };
   }, [itemKeys, resolveScopeId]);
   return getStorage()(selector);
@@ -1426,8 +1488,12 @@ export function useSessionServerId(sessionId: string, enabled = true): string | 
         concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
       }, normalizedSessionId)?.serverId ?? null;
     }, [normalizedSessionId, store]);
+    const subscribe = React.useCallback((listener: () => void) => store.subscribe(listener, {
+      sessions: true, sessionListIndexByServerId: true, sessionListRowsByServerId: true,
+      ordinarySessionListMembershipByServerId: true, concurrentSessionListCacheByServerId: true,
+    }), [store]);
     return React.useSyncExternalStore(
-      enabled ? store.subscribe : noopSessionServerIdSubscribe,
+      enabled ? subscribe : noopSessionServerIdSubscribe,
       enabled ? getSnapshot : readNullSessionServerId,
       enabled ? getSnapshot : readNullSessionServerId,
     );
@@ -1458,16 +1524,6 @@ function resolveSessionLastMobileSurfacePersistenceKeysFromState(
   });
 }
 
-function readSessionLastMobileSurfaceFromMap(
-  persistedBySessionId: LocalSettings['sessionLastMobileSurfaceBySessionId'] | null | undefined,
-  persistenceKeys: SessionMobileSurfacePersistenceKeys | null,
-): Readonly<{
-  surface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null;
-  predecessorSurface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null;
-}> {
-  return readSessionMobileSurfaceWithPredecessor(persistedBySessionId, persistenceKeys);
-}
-
 function resolveProjectLastMobileSurfaceStorageKeyFromState(
   state: Pick<StorageState, 'profileScope' | 'projectAccountRows'>,
   workspaceRefId: string,
@@ -1483,35 +1539,19 @@ function resolveProjectLastMobileSurfaceStorageKeyFromState(
   });
 }
 
-function selectProjectLastMobileSurfacesByWorkspaceRefId(
-  state: Pick<StorageState, 'localSettings' | 'profileScope' | 'projectAccountRows'>,
-  activeServerId: string | null | undefined,
-): Readonly<Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]>> {
-  const persisted = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId;
-  const result: Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]> = {};
-  for (const workspaceRef of readProjectWorkspaceRefs(state)) {
-    const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
-      state,
-      workspaceRef.id,
-      activeServerId,
-    );
-    const surface = readRealmQualifiedMobileSurface(persisted, storageKey);
-    if (surface) {
-      result[workspaceRef.id] = surface;
-    }
-  }
-  return result;
-}
-
 const emptyArray: unknown[] = emptySessionMessagesSnapshot;
 const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
-const emptyActionDrafts: SessionActionDraft[] = [];
 const emptyOpenApprovalSessionReferences: ReadonlyArray<OpenApprovalSessionReference> = Object.freeze([]);
-const emptyOpenApprovalArtifactsForSession: ReadonlyArray<OpenApprovalArtifactForSession> = Object.freeze([]);
+const emptyOpenApprovalArtifactsForSession: ReadonlyArray<OpenApprovalAttentionArtifactForSession> = Object.freeze([]);
 
 type UseSessionMessagesOptions = Readonly<{
   enabled?: boolean;
+  /**
+   * False for readers that never present streamed agent text (tool/user/structure facts): they then
+   * follow `transcriptStructureVersion` and skip text-only deltas, exactly like `useSessionMessagesById`.
+   */
+  textUpdates?: boolean;
 }>;
 
 type SessionSubagentSourceMessagesCacheEntry = Readonly<{
@@ -1625,7 +1665,7 @@ export function useSessionSubagentSourceMessages(sessionId: string): readonly Me
     const ids = session.messageIdsOldestFirst;
     const orderedMessages = Array.isArray(ids) && ids.length > 0
       ? ids.map((id) => session.messagesById[id]).filter((message): message is Message => message != null)
-      : Object.values(session.messagesById ?? {}).sort(compareTranscriptMessagesOldestFirst);
+      : sortTranscriptMessagesOldestFirst(Object.values(session.messagesById ?? {}));
 
     for (const message of orderedMessages) {
       if (!shouldIncludeSubagentSourceMessage(message)) continue;
@@ -1650,7 +1690,7 @@ export function useSessionSubagentSourceMessages(sessionId: string): readonly Me
     sessionSubagentSourceMessagesCache.set(normalizedSessionId, next);
     trimSessionSubagentSourceMessagesCache();
     return next.messages;
-  });
+  }, { sessionMessages: [normalizedSessionId] });
 }
 
 const sortedValuesByUpdatedAtDescendingCache = new WeakMap<object, readonly { updatedAt: number }[]>();
@@ -1676,9 +1716,10 @@ export function useSessionMessages(
   // - "Maximum update depth exceeded"
   //
   // Subscribe to stable primitives instead (ids + version), then derive via useMemo.
+  const textUpdates = options?.textUpdates !== false;
   const { ids, isLoaded } = useSessionTranscriptIds(normalizedSessionId, enabled);
-  const messagesById = useSessionMessagesById(normalizedSessionId, enabled);
-  const version = useSessionMessagesVersion(normalizedSessionId, enabled);
+  const messagesById = useSessionMessagesById(normalizedSessionId, enabled, { textUpdates });
+  const version = useSessionMessagesVersion(normalizedSessionId, enabled, { textUpdates });
 
   const messages = React.useMemo(() => enabled
     ? readSessionMessagesSnapshot(normalizedSessionId, ids, messagesById, version, isLoaded)
@@ -1706,7 +1747,7 @@ export function useSessionCompletedBrowserActionKey(sessionId: string, options?:
       && message.tool.state === 'completed' && readTranscriptBrowserActionIdentity({
         toolName: message.tool.name, input: message.tool.input,
       }) !== null).map(message => message.id).join('\n');
-  });
+  }, { sessionMessages: [normalizedSessionId] });
   const serverId = options?.operationScope?.serverId;
   const accountId = options?.operationScope?.accountId;
   const machineId = options?.operationScope?.machineId;
@@ -1732,7 +1773,7 @@ export function useSessionCompletedBrowserActionKey(sessionId: string, options?:
 /** Whether the Session's transcript has been read at least once; a boolean subscription, no ids. */
 export function useSessionTranscriptLoaded(sessionId: string): boolean {
   const normalizedSessionId = normalizeSessionId(sessionId);
-  return getStorage()((state) => state.sessionMessages[normalizedSessionId]?.isLoaded ?? false);
+  return getStorage()((state) => state.sessionMessages[normalizedSessionId]?.isLoaded ?? false, { sessionMessages: [normalizedSessionId] });
 }
 
 export function useSessionTranscriptIds(sessionId: string, enabled: boolean = true): { ids: string[]; isLoaded: boolean } {
@@ -1750,7 +1791,7 @@ export function useSessionTranscriptIds(sessionId: string, enabled: boolean = tr
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         isLoaded: session?.isLoaded ?? false,
       };
-    })
+    }), { sessionMessages: enabled ? [normalizedSessionId] : [] }
   );
   return React.useMemo(
     () => ({ ids: snapshot.committedIds as string[], isLoaded: snapshot.isLoaded }),
@@ -1787,6 +1828,67 @@ export function useSessionTailContiguousBoundary(sessionId: string): SessionMess
   return getStorage()((state) => state.sessionTailContiguousBoundary[sessionId] ?? null);
 }
 
+/** Key-scoped presentation facts; unrelated transcript arrivals retain the selected array's identity. */
+export function useSessionReturnedAnswers(sessionId: string, requestKeys: readonly string[]): readonly ReturnedAnswerEntry[] {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  return getStorage()(useShallow((state) => {
+    const index = state.sessionMessages[normalizedSessionId]?.returnedAnswersByRequest;
+    return requestKeys.flatMap(key => index?.[key] ?? []);
+  }), { sessionMessages: [normalizedSessionId] });
+}
+
+/** Shell support is one fact, not a subscription to the transcript's token-wide snapshot. */
+export function useSessionHasExecutionRunSignals(sessionId: string, enabled = true): boolean {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  return getStorage()((state) => {
+    const transcript = enabled ? state.sessionMessages[normalizedSessionId] : undefined;
+    if (!transcript) return false;
+    return transcript.executionRunSignalMessageIds !== undefined
+      ? transcript.executionRunSignalMessageIds.size > 0
+      // Retained development snapshots are admitted by the next message/load write.
+      : hasExecutionRunSignals(readSessionMessagesSnapshot(normalizedSessionId,
+        transcript.messageIdsOldestFirst, transcript.messagesById,
+        transcript.messagesVersion, transcript.isLoaded));
+  }, { sessionMessages: enabled ? [normalizedSessionId] : [] });
+}
+
+/** Only inventory membership/order facts enter history; message seq/runtime changes do not. */
+export function useUserMessageHistorySessionIds(serverId: string | null, enabled: boolean): readonly string[] {
+  return getStorage()(useShallow((state) => {
+    if (!enabled || !serverId) return emptyArray as readonly string[];
+    const rows = readSessionListRowsForServerId(state.sessionListRowsByServerId, serverId) ?? {};
+    const sessions = new Map(Object.entries(rows));
+    for (const session of Object.values(state.sessions)) {
+      if (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, serverId)) continue;
+      if (!sessions.has(session.id)) sessions.set(session.id, session);
+    }
+    const activityAt = (id: string) => {
+      const session = sessions.get(id);
+      return deriveSessionListMeaningfulActivityAt({ sessionMeaningfulActivityAt: session?.meaningfulActivityAt,
+        sessionCreatedAt: session?.createdAt, latestCommittedMessageCreatedAt: undefined,
+        latestPendingMessageCreatedAt: undefined }) ?? 0;
+    };
+    return [...sessions.keys()].sort((a, b) => activityAt(b) - activityAt(a) || a.localeCompare(b));
+  }));
+}
+
+export function useUserMessageHistorySessionServerIds(enabled: boolean): Readonly<Record<string, string | undefined>> {
+  return getStorage()(useShallow((state) => enabled
+    ? Object.fromEntries(Object.values(state.sessions).map(session => [session.id, session.serverId])) : {}));
+}
+
+/** User-only producer facts; null selects the applied Account's loaded corpus. */
+export function useSessionUserMessageHistory(sessionId: string | null, enabled = true): SessionUserMessageHistory {
+  const normalizedSessionId = sessionId === null ? null : normalizeSessionId(sessionId);
+  const local = getStorage()((state) => enabled && normalizedSessionId !== null
+    ? state.sessionUserMessageHistory?.[normalizedSessionId] ?? EMPTY_USER_MESSAGE_HISTORY : EMPTY_USER_MESSAGE_HISTORY);
+  const global = getStorage()(useShallow((state) => enabled && normalizedSessionId === null
+    ? Object.fromEntries(Object.entries(state.sessionUserMessageHistory ?? EMPTY_SESSION_USER_MESSAGE_HISTORY)
+      .filter(([, rows]) => rows !== EMPTY_USER_MESSAGE_HISTORY)) : EMPTY_SESSION_USER_MESSAGE_HISTORY));
+  return React.useMemo(() => normalizedSessionId === null ? global
+    : { [normalizedSessionId]: local }, [global, local, normalizedSessionId]);
+}
+
 export function useSessionMessagesById(sessionId: string, enabled: boolean = true, options?: Readonly<{ textUpdates?: boolean }>): Record<string, Message> {
   const normalizedSessionId = normalizeSessionId(sessionId);
   const textUpdates = options?.textUpdates !== false;
@@ -1809,17 +1911,19 @@ export function useSessionMessagesById(sessionId: string, enabled: boolean = tru
       return current;
     };
   }, [enabled, normalizedSessionId, textUpdates]);
-  return getStorage()(selector).messagesById;
+  return getStorage()(selector, { sessionMessages: enabled ? [normalizedSessionId] : [] }).messagesById;
 }
 
-export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
+export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true, options?: Readonly<{ textUpdates?: boolean }>): number {
   const normalizedSessionId = normalizeSessionId(sessionId);
+  const textUpdates = options?.textUpdates !== false;
   return getStorage()(
     useShallow((state) => {
       if (!enabled) return 0;
       const session = state.sessionMessages[normalizedSessionId];
-      return session?.messagesVersion ?? 0;
-    })
+      return textUpdates ? session?.messagesVersion ?? 0
+        : session?.transcriptStructureVersion ?? session?.messagesVersion ?? 0;
+    }), { sessionMessages: enabled ? [normalizedSessionId] : [] }
   );
 }
 
@@ -1830,13 +1934,12 @@ export function useSessionMessagesVersion(sessionId: string, enabled: boolean = 
  * A Run whose profile does not materialize a parent tool marker still commits
  * its transcript under the Run's sidechain id, so a surface that has the Run
  * but no marker reads the rows here instead of re-deriving a transcript of its
- * own. The reducer state mutates in place, so the projection is keyed by the
- * same version counter the other transcript readers subscribe to.
+ * own. The reducer state mutates in place, so the projection follows its
+ * revision even when a sidechain-only update leaves the main rows unchanged.
  */
 export function useSessionSidechainMessages(sessionId: string, sidechainId: string | null): readonly Message[] {
   const normalizedSessionId = normalizeSessionId(sessionId);
-  const reducerState = useSessionMessagesReducerState(normalizedSessionId);
-  const version = useSessionMessagesVersion(normalizedSessionId, true);
+  const { reducerState, reducerVersion } = useSessionMessagesReducerSnapshot(normalizedSessionId);
   const normalizedSidechainId = typeof sidechainId === 'string' && sidechainId.trim().length > 0
     ? sidechainId.trim()
     : null;
@@ -1845,14 +1948,18 @@ export function useSessionSidechainMessages(sessionId: string, sidechainId: stri
     if (!reducerState || !normalizedSidechainId) return emptyArray as any as readonly Message[];
     const projected = projectSidechainMessages(reducerState, normalizedSidechainId);
     return projected.length > 0 ? projected : (emptyArray as any as readonly Message[]);
-    // `version` participates because the reducer state object is mutated in place.
+    // The reducer state object is mutated in place.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedSidechainId, reducerState, version]);
+  }, [normalizedSidechainId, reducerState, reducerVersion]);
 }
 
 export function useSessionMessagesReducerState(sessionId: string, options?: Readonly<{ textUpdates?: boolean }>) {
+  return useSessionMessagesReducerSnapshot(sessionId, options).reducerState;
+}
+
+function useSessionMessagesReducerSnapshot(sessionId: string, options?: Readonly<{ textUpdates?: boolean }>) {
   const normalizedSessionId = normalizeSessionId(sessionId);
-  const snapshot = getStorage()(
+  return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[normalizedSessionId];
       return {
@@ -1861,10 +1968,8 @@ export function useSessionMessagesReducerState(sessionId: string, options?: Read
           ? session?.transcriptStructureVersion ?? session?.messagesVersion ?? 0
           : session?.reducerVersion ?? 0,
       };
-    })
+    }), { sessionMessages: [normalizedSessionId] }
   );
-
-  return snapshot.reducerState;
 }
 
 export function useSessionLatestThinkingMessageId(sessionId: string): string | null {
@@ -1873,18 +1978,22 @@ export function useSessionLatestThinkingMessageId(sessionId: string): string | n
     useShallow((state) => {
       const session = state.sessionMessages[normalizedSessionId];
       return session?.latestThinkingMessageId ?? null;
-    })
+    }), { sessionMessages: [normalizedSessionId] }
   );
 }
 
-export function useSessionLatestThinkingMessageActivityAtMs(sessionId: string): number | null {
+export function readSessionLatestThinkingMessageActivityAtMs(sessionId: string): number | null {
+  return getStorage().getState().sessionMessages[normalizeSessionId(sessionId)]?.latestThinkingMessageActivityAtMs ?? null;
+}
+
+/**
+ * A projection of the latest thinking activity stamp. Every thinking delta restamps it, so callers
+ * select the displayed fact (e.g. "inside the stale window") instead of subscribing to the stamp.
+ */
+export function useSessionLatestThinkingMessageActivity<T>(sessionId: string, select: (activityAtMs: number | null) => T): T {
   const normalizedSessionId = normalizeSessionId(sessionId);
-  return getStorage()(
-    useShallow((state) => {
-      const session = state.sessionMessages[normalizedSessionId];
-      return session?.latestThinkingMessageActivityAtMs ?? null;
-    })
-  );
+  return getStorage()((state) => select(state.sessionMessages[normalizedSessionId]?.latestThinkingMessageActivityAtMs ?? null),
+    { sessionMessages: [normalizedSessionId] });
 }
 
 export function useHasUnreadMessages(sessionId: string): boolean {
@@ -1913,7 +2022,7 @@ export function useHasUnreadMessages(sessionId: string): boolean {
     }
 
     return renderable?.hasUnreadMessages === true;
-  });
+  }, { sessionMessages: [normalizedSessionId] });
 }
 
 export function useSessionReadyActivity(sessionId: string): {
@@ -2014,7 +2123,7 @@ export function useSessionVisibleReadSeq(
     };
   }, [activeServerId, latestTurnStatus, normalizedSessionId, sessionSeq]);
 
-  return getStorage()(selector);
+  return getStorage()(selector, { sessionMessages: [normalizedSessionId] });
 }
 
 function hasTerminalPrimaryTurnStatus(status: PrimaryTurnStatusV1 | null | undefined): boolean {
@@ -2043,7 +2152,7 @@ export function useSessionListMeaningfulActivityAt(sessionId: string): number | 
   const normalizedSessionId = normalizeSessionId(sessionId);
   const activeServerId = normalizeTrimmedString(useActiveServerSnapshot().serverId);
   return getStorage()(
-    useShallow((state) => selectSessionListMeaningfulActivityAt(state, activeServerId, normalizedSessionId))
+    useShallow((state) => selectSessionListMeaningfulActivityAt(state, activeServerId, normalizedSessionId)), { sessionMessages: [normalizedSessionId] }
   );
 }
 
@@ -2109,47 +2218,6 @@ export function useWorkspaceReviewCommentsDrafts(scope: WorkspaceScopeBase | nul
   );
 }
 
-/**
- * Action-draft subscribers address a Session before its Home is always resolved
- * (`usePreferredServerIdForSession` returns `null` until it is). An unresolved
- * Home has no draft rows, so the key is simply absent rather than fabricated.
- */
-type SessionActionDraftAddressLike = Readonly<{ serverId: string | null | undefined; sessionId: string }>;
-
-function readSessionActionDraftAddressKey(address: SessionActionDraftAddressLike): string | null {
-  const normalized = normalizeSessionAddress(address.serverId, address.sessionId);
-  return normalized ? sessionAddressKey(normalized) : null;
-}
-
-export function useSessionActionDrafts(address: SessionActionDraftAddressLike): SessionActionDraft[] {
-  const addressKey = React.useMemo(
-    () => readSessionActionDraftAddressKey(address),
-    [address.serverId, address.sessionId],
-  );
-  return getStorage()(
-    useShallow((state) => (addressKey ? state.sessionActionDraftsByAddressKey?.[addressKey] ?? emptyActionDrafts : emptyActionDrafts))
-  );
-}
-
-/**
- * Whether this session has any action-draft row at all.
- *
- * A BOOLEAN selector, not `useSessionActionDrafts(...).length > 0`: the draft objects are rewritten
- * on every keystroke, so the shallow-compared array above re-renders its subscriber constantly. The
- * transcript root uses this to decide whether to pay for the draft-card option subscription
- * (`useSessionActionFieldOptionsForRowHeight`) at all, and it must not itself become a per-keystroke
- * re-render of the whole transcript.
- */
-export function useSessionHasActionDrafts(address: SessionActionDraftAddressLike): boolean {
-  const addressKey = React.useMemo(
-    () => readSessionActionDraftAddressKey(address),
-    [address.serverId, address.sessionId],
-  );
-  return getStorage()(
-    (state) => (addressKey ? state.sessionActionDraftsByAddressKey?.[addressKey]?.length ?? 0 : 0) > 0
-  );
-}
-
 function summarizeCommittedSessionMessagesForUnread(
   sessionMessages: StorageState['sessionMessages'][string] | undefined,
 ): ReturnType<typeof summarizeSessionListReadableActivityFromMessageRecords> {
@@ -2181,7 +2249,7 @@ export function useMessage(sessionId: string, messageId: string): Message | null
         revision,
         legacySignature: revision === null ? buildMessageLegacySignature(message, legacyMessagesVersion) : null,
       };
-    })
+    }), { sessionMessages: [normalizedSessionId] }
   ).message;
 }
 
@@ -2194,35 +2262,31 @@ export function useMessagesByRefs(messageRefs: readonly MessageStoreRef[]): read
     () => createMessagesByRefsSelector(messageRefs.slice()),
     [selectionKey],
   );
-  return getStorage()(selector).messages;
+  return getStorage()(selector, { sessionMessages: messageRefs.map(ref => ref.sessionId) }).messages;
 }
 
 export function useResolvedSessionMessageRouteId(sessionId: string, routeMessageId: string): string | null {
-  const messagesById = useSessionMessagesById(sessionId);
-  const version = useSessionMessagesVersion(sessionId, true);
-  const reducerState = useSessionMessagesReducerState(sessionId);
-
-  return React.useMemo(() => {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  return getStorage()((state) => {
+    const session = state.sessionMessages[normalizedSessionId];
     return resolveSessionMessageRouteId({
       routeMessageId,
-      messagesById,
-      reducerState,
+      messagesById: session?.messagesById ?? emptyRecord,
+      reducerState: session?.reducerState,
     });
-  }, [messagesById, reducerState, routeMessageId, version]);
+  }, { sessionMessages: [normalizedSessionId] });
 }
 
 export function useSessionMessageRouteId(sessionId: string, messageId: string): string | null {
-  const messagesById = useSessionMessagesById(sessionId);
-  const version = useSessionMessagesVersion(sessionId, true);
-  const reducerState = useSessionMessagesReducerState(sessionId);
-
-  return React.useMemo(() => {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  return getStorage()((state) => {
+    const session = state.sessionMessages[normalizedSessionId];
     return buildSessionMessageRouteId({
       messageId,
-      messagesById,
-      reducerState,
+      messagesById: session?.messagesById ?? emptyRecord,
+      reducerState: session?.reducerState,
     });
-  }, [messageId, messagesById, reducerState, version]);
+  }, { sessionMessages: [normalizedSessionId] });
 }
 
 export function useMessagesByIds(sessionId: string, messageIds: readonly string[]): Message[] {
@@ -2438,8 +2502,7 @@ export function useHomeHasMachines(): boolean {
 /** Park presentation-only inventory while retaining the draft's selection.
  * Account withdrawal/replacement still refreshes the snapshot while hidden.
  */
-function usePresentedMachineInventory<T>(select: (state: StorageState) => T, presented: boolean, reconcile?: (previous: T | undefined, next: T, state: StorageState) => T): T {
-  const selector = React.useMemo(() => {
+function createPresentedMachineInventorySelector<T>(select: (state: StorageState) => T, presented: boolean, reconcile?: (previous: T | undefined, next: T, state: StorageState) => T) {
     let held: { value: T; serverId: string | undefined; accountId: string | undefined } | null = null;
     return (state: StorageState): T => {
       const scope = state.profileScope;
@@ -2451,7 +2514,10 @@ function usePresentedMachineInventory<T>(select: (state: StorageState) => T, pre
       }
       return held!.value;
     };
-  }, [presented, select, reconcile]);
+}
+
+function usePresentedMachineInventory<T>(select: (state: StorageState) => T, presented: boolean, reconcile?: (previous: T | undefined, next: T, state: StorageState) => T): T {
+  const selector = React.useMemo(() => createPresentedMachineInventorySelector(select, presented, reconcile), [presented, select, reconcile]);
   return getStorage()(useShallow(selector));
 }
 
@@ -2463,28 +2529,10 @@ export function useLaunchSelectionMachines(presented = true, enabled = true): Ma
 }
 
 function createLaunchSelectionReconciler() {
-  const sources = new WeakMap<Machine, { current: Machine; presence: StorageState['machinePresenceById'][string] | undefined }>();
-  return (previous: Machine[] | undefined, next: Machine[], state: StorageState, serverId?: string): Machine[] => {
+  return (previous: Machine[] | undefined, next: Machine[]): Machine[] => {
     const reconciled = next.map((machine, index) => {
       const held = previous?.[index];
-      const source = held && sources.get(held);
-      // Presence owns recovery edges even when the raw row's timestamps mutate
-      // in place. Ordinary online heartbeats retain this same presence object.
-      const presence = serverId ? state.machinePresenceByServerId[serverId]?.[machine.id] : state.machinePresenceById[machine.id];
-      if (held && source && (!source.presence || source.presence === presence) && areMachineLaunchInputsEqual(held, machine)) {
-        source.current = machine;
-        source.presence = presence;
-        return held;
-      }
-      // Semantic launch inputs are retained, while presence follows the writer's
-      // current row, including heartbeat mutations after a resource replacement.
-      const current = { current: machine, presence };
-      const projected: Machine = { ...machine,
-        get activeAt() { return current.current.activeAt; },
-        get updatedAt() { return current.current.updatedAt; },
-      };
-      sources.set(projected, current);
-      return projected;
+      return held && areMachineLaunchInputsEqual(held, machine) ? held : machine;
     });
     return previous && previous.length === reconciled.length && reconciled.every((machine, index) => machine === previous[index]) ? previous : reconciled;
   };
@@ -2552,12 +2600,14 @@ function readMachineListForServer(state: StorageState, serverId: string): Machin
   return null;
 }
 
+/** One Home's visible list, with the facts semantics and presentation hold of `useMachineListByServerId`. */
 export function useMachineListForServer(serverId: string, enabled = true, presented = true): Machine[] | null {
   const owner = machineInventoryPresentation(getStorage());
   const select = React.useCallback((state: StorageState) => enabled ? owner.home(state, serverId, 'facts') : null, [enabled, owner, serverId]);
   return usePresentedMachineInventory(select, presented || !enabled);
 }
 
+/** `presented: false` holds the last presented facts while a retained surface is hidden (see `usePresentedMachineInventory`). */
 export function useActiveMachineFacts(enabled = true, presented = true): Machine[] {
   const owner = machineInventoryPresentation(getStorage());
   const select = React.useCallback((state: StorageState) => enabled
@@ -2569,20 +2619,37 @@ export function useActiveMachineFacts(enabled = true, presented = true): Machine
  * One fact derived from one Home's visible inventory. Any machine's publication replaces the list, so a reader
  * that needs only a name, a count or a boolean selects it here and redraws only when that value changes.
  * `select` must be stable and return a value comparable with `Object.is`; it reruns only when the list changes.
+ * Field demand uses caller-held membership and the exact Machine field owner, so unrelated publications do no selection work.
  */
-export function useMachineListForServerSelection<T>(serverId: string, select: (machines: readonly Machine[]) => T): T {
+export function useMachineListForServerSelection<T>(serverId: string, select: (machines: readonly Machine[]) => T,
+  demand?: Readonly<{ machineIds: readonly string[]; fields: readonly {
+    [Section in keyof MachineFieldContent]: Readonly<{ section: Section; field: keyof MachineFieldContent[Section] }>
+  }[keyof MachineFieldContent][] }>,
+): T {
+  const store = getStorage();
   const selector = React.useMemo(() => {
     let last: { list: Machine[] | null; value: T } | null = null;
-    return (state: StorageState): T => {
+    return (state: StorageState, refresh = false): T => {
+      // Exact-field readers retain this selector's snapshot between owner notifications,
+      // including incidental renders caused by a sibling inventory subscription.
+      if (demand && last && !refresh) return last.value;
       const list = readMachineListForServer(state, serverId);
       if (last?.list === list) return last.value;
       last = { list, value: select(selectVisibleMachines(list) ?? emptyArray as Machine[]) };
       return last.value;
     };
-  }, [select, serverId]);
-  return getStorage()(selector);
+  }, [demand, select, serverId]);
+  const getSnapshot = React.useCallback(() => selector(store.getState()), [selector, store]);
+  const subscribe = React.useCallback((listener: () => void) => {
+    if (!demand) return store.subscribe(listener, { machineListByServerId: true });
+    const refresh = () => { selector(store.getState(), true); listener(); };
+    const stop = subscribeMachineFields(store, { ...demand, serverId }, refresh);
+    // Observe any relevant change between the first render and installing the subscription.
+    refresh();
+    return stop;
+  }, [demand, selector, serverId, store]);
+  return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
-
 
 const EMPTY_MACHINE_LIST_STATUS_BY_SERVER_ID: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'> = {};
 
@@ -2691,8 +2758,9 @@ export function useMachine(machineId: string, enabled = true): Machine | null {
     () => store.getState().machines[machineId] ?? null,
     [machineId, store],
   );
+  const subscribe = React.useCallback((listener: () => void) => store.subscribe(listener, { machines: [machineId] }), [store, machineId]);
   return React.useSyncExternalStore(
-    enabled ? store.subscribe : noopMachineSubscribe,
+    enabled ? subscribe : noopMachineSubscribe,
     enabled ? getSnapshot : readNullMachine,
     enabled ? getSnapshot : readNullMachine,
   );
@@ -2775,6 +2843,21 @@ export function useMachineCliDetectionTargets(machineIds: readonly string[]): Ma
   return getStorage()(useShallow(selectTargets));
 }
 
+/** Launch choices observe semantic inputs; live reachability remains owned by the presence hooks. */
+export function useServerScopedLaunchMachine(serverId: string | null | undefined, machineId: string | null | undefined): Machine | null {
+  const store = getStorage();
+  const activeServerId = useActiveServerSnapshot().serverId;
+  const profilesGeneration = useServerProfilesGeneration();
+  const select = React.useCallback((state: StorageState): Machine[] => {
+    const machine = resolveServerScopedMachine(state, serverId, machineId ?? '');
+    return machine ? [machine] : emptyArray as Machine[];
+  }, [serverId, machineId, activeServerId, profilesGeneration]);
+  const reconcile = React.useMemo(createLaunchSelectionReconciler, []);
+  const selector = React.useMemo(() => createPresentedMachineInventorySelector(select, true, reconcile), [select, reconcile]);
+  const getSnapshot = React.useCallback(() => selector(store.getState()), [selector, store]);
+  return useServerScopedMachineSnapshot(getSnapshot, Boolean(machineId?.trim()))[0] ?? null;
+}
+
 export function useServerScopedMachine(serverId: string | null | undefined, machineId: string | null | undefined): Machine | null;
 export function useServerScopedMachine<T>(serverId: string | null | undefined, machineId: string | null | undefined, select: (machine: Machine | null) => T): T;
 export function useServerScopedMachine<T>(serverId: string | null | undefined, machineId: string | null | undefined, select?: (machine: Machine | null) => T): T | Machine | null {
@@ -2788,29 +2871,7 @@ export function useServerScopedMachine<T>(serverId: string | null | undefined, m
     },
     [store, serverId, normalizedMachineId, enabled, select],
   );
-  const subscribe = React.useCallback((listener: () => void) => {
-    const unsubscribeStore = store.subscribe((state, previous) => {
-      // These are the exact resolver's inputs. Unrelated Session/Artifact
-      // publications must not search a Machine inventory for each mounted row.
-      if (state.machines === previous.machines
-        && state.machineListByServerId === previous.machineListByServerId
-        && state.machineListStatusByServerId === previous.machineListStatusByServerId) return;
-      listener();
-    });
-    // Home/profile changes are resolver inputs even without a store publication.
-    const unsubscribeHome = subscribeActiveServer(listener);
-    const unsubscribeProfiles = subscribeServerProfiles(listener);
-    return () => {
-      unsubscribeStore();
-      unsubscribeHome();
-      unsubscribeProfiles();
-    };
-  }, [store]);
-  return React.useSyncExternalStore(
-    enabled ? subscribe : noopMachineSubscribe,
-    getSnapshot,
-    getSnapshot,
-  );
+  return useServerScopedMachineSnapshot(getSnapshot, enabled);
 }
 
 /**
@@ -2830,6 +2891,28 @@ export function useServerScopedMachineLabel(serverId: string | null | undefined,
   return useServerScopedMachine(serverId, normalizedMachineId, select);
 }
 
+function useServerScopedMachineSnapshot<T>(getSnapshot: () => T, enabled: boolean): T {
+  const store = getStorage();
+  const subscribe = React.useCallback((listener: () => void) => {
+    const unsubscribeStore = store.subscribe(listener, {
+      machines: true, machineListByServerId: true, machineListStatusByServerId: true, profileScope: true,
+    });
+    // Home/profile changes are resolver inputs even without a store publication.
+    const unsubscribeHome = subscribeActiveServer(listener);
+    const unsubscribeProfiles = subscribeServerProfiles(listener);
+    return () => {
+      unsubscribeStore();
+      unsubscribeHome();
+      unsubscribeProfiles();
+    };
+  }, [store]);
+  return React.useSyncExternalStore(
+    enabled ? subscribe : noopMachineSubscribe,
+    getSnapshot,
+    getSnapshot,
+  );
+}
+
 export function useAllSessions(): Session[] {
   return getStorage()(
     useShallow((state) => {
@@ -2837,6 +2920,34 @@ export function useAllSessions(): Session[] {
       return sortValuesByUpdatedAtDescending(state.sessions);
     })
   );
+}
+
+export type SessionJoinFact = Readonly<{ id: string; serverId: string | undefined }>;
+const NO_SESSION_JOIN_TUPLES: unknown[] = [];
+
+/**
+ * The Session identity a consumer joins against (newest first), for owners that only match Sessions to
+ * other facts and read the rest from the store when they need it. A streaming Session replaces its record
+ * on every update but keeps `metadata`, so the flat (id, serverId, metadata) tuples stay shallow-equal and
+ * the consumer does not render for output it cannot show; a metadata change (the input of Machine-target
+ * resolution) still does.
+ */
+export function useSessionJoinFacts(): readonly SessionJoinFact[] {
+  const tuples = getStorage()(
+    useShallow((state) => {
+      if (!state.isDataReady) return NO_SESSION_JOIN_TUPLES;
+      const flat: unknown[] = [];
+      for (const session of sortValuesByUpdatedAtDescending(state.sessions)) flat.push(session.id, session.serverId, session.metadata);
+      return flat;
+    })
+  );
+  return React.useMemo(() => {
+    const facts: SessionJoinFact[] = [];
+    for (let index = 0; index < tuples.length; index += 3) {
+      facts.push({ id: tuples[index] as string, serverId: tuples[index + 1] as string | undefined });
+    }
+    return facts;
+  }, [tuples]);
 }
 
 export function useAllSessionsForAttention(): Session[] {
@@ -3015,54 +3126,20 @@ export function useSessionRpcAvailabilityState(sessionId: string | null, serverI
   sessionRpcAvailable: boolean;
 }> {
   return getStorage()(
-    useShallow((state) => {
-      const normalizedServerId = normalizeTrimmedString(serverId);
-      const session = sessionId
-        ? normalizedServerId
-          ? state.sessionListRowsByServerId[normalizedServerId]?.[sessionId] ?? null
-          : state.sessions[sessionId] ?? null
-        : null;
-      const sessionExists = Boolean(session);
-      return {
-        sessionExists,
-        sessionRpcAvailable: sessionExists && session?.active !== false,
-      };
-    })
+    useShallow((state) => resolveSessionRpcAvailabilityState(state, sessionId, serverId))
   );
 }
 
 export { useProjectSessions } from '../domains/session/listing/useProjectSessions';
-
-export function useProjectScmStatus(projectId: string | null) {
-  return getStorage()(useShallow((state) => (projectId ? state.getProjectScmStatus(projectId) : null)));
-}
-
-export function useSessionProjectScmStatus(sessionId: string | null, serverId?: string | null) {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmStatus(sessionId, serverId) : null))
-  );
-}
-
-export function useProjectScmSnapshot(projectId: string | null): ScmWorkingSnapshot | null {
-  return getStorage()(
-    useShallow((state) => (projectId ? state.getProjectScmSnapshot(projectId) : null))
-  );
-}
-
-/** Whether the session's folder is a repository (null until known); re-renders only when that flips. */
-export function useSessionProjectScmIsRepo(sessionId: string | null, serverId?: string | null): boolean | null {
-  return getStorage()((state) => {
-    if (!sessionId) return null;
-    const snapshot = state.getSessionProjectScmSnapshot(sessionId, serverId);
-    return snapshot ? snapshot.repo.isRepo === true : null;
-  });
-}
-
-export function useSessionProjectScmSnapshot(sessionId: string | null, serverId?: string | null): ScmWorkingSnapshot | null {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmSnapshot(sessionId, serverId) : null))
-  );
-}
+export {
+  useProjectScmStatus, useSessionProjectScmStatus, useProjectScmSnapshot,
+  useSessionProjectScmIsRepo, useSessionProjectScmSnapshot, useSessionProjectScmSummarySnapshot, useSessionProjectScmSnapshotError,
+  useWorkspaceScmStatus, useWorkspaceScmSnapshot, useWorkspaceScmSummarySnapshot, useWorkspaceScmSnapshotError,
+  useWorkspaceScmCommitSelectionPaths, useWorkspaceScmCommitSelectionPatches,
+  useWorkspaceScmOperationLog, useWorkspaceScmInFlightOperation,
+  useSessionProjectScmCommitSelectionPaths, useSessionProjectScmCommitSelectionPatches,
+  useSessionProjectScmOperationLog, useSessionProjectScmInFlightOperation,
+} from './scmHooks';
 
 /**
  * Registers the mounted SCM surface's exact Session address, so realtime routing and the
@@ -3090,78 +3167,6 @@ export function useSessionRealtimeScmTranscriptConsumer(
   }, [mountedScmConsumerResetVersion, serverId, sessionId, snapshot]);
 }
 
-export function useSessionProjectScmSnapshotError(
-  sessionId: string | null, serverId?: string | null
-): import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmSnapshotError(sessionId, serverId) : null))
-  );
-}
-
-export function useWorkspaceScmStatus(scope: WorkspaceScopeBase | null): ScmStatus | null {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmStatus(scope) : null)));
-}
-
-export function useWorkspaceScmSnapshot(scope: WorkspaceScopeBase | null): ScmWorkingSnapshot | null {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmSnapshot(scope) : null)));
-}
-
-export function useWorkspaceScmSnapshotError(
-  scope: WorkspaceScopeBase | null
-): import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmSnapshotError(scope) : null)));
-}
-
-export function useWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase | null): string[] {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmTouchedPaths(scope) : [])));
-}
-
-export function useWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase | null): string[] {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmCommitSelectionPaths(scope) : [])));
-}
-
-export function useWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase | null): ScmCommitSelectionPatch[] {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmCommitSelectionPatches(scope) : [])));
-}
-
-export function useWorkspaceScmOperationLog(scope: WorkspaceScopeBase | null) {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmOperationLog(scope) : [])));
-}
-
-export function useWorkspaceScmInFlightOperation(scope: WorkspaceScopeBase | null) {
-  return getStorage()(useShallow((state) => (scope ? state.getWorkspaceScmInFlightOperation(scope) : null)));
-}
-
-export function useWorkspaceScmTouchedPathsForSession(sessionId: string | null, serverId?: string | null): string[] {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getWorkspaceScmTouchedPathsForSession(sessionId, serverId) : []))
-  );
-}
-
-export function useSessionProjectScmCommitSelectionPaths(sessionId: string | null, serverId?: string | null): string[] {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmCommitSelectionPaths(sessionId, serverId) : []))
-  );
-}
-
-export function useSessionProjectScmCommitSelectionPatches(sessionId: string | null, serverId?: string | null): ScmCommitSelectionPatch[] {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmCommitSelectionPatches(sessionId, serverId) : []))
-  );
-}
-
-export function useSessionProjectScmOperationLog(sessionId: string | null, serverId?: string | null) {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmOperationLog(sessionId, serverId) : []))
-  );
-}
-
-export function useSessionProjectScmInFlightOperation(sessionId: string | null, serverId?: string | null) {
-  return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectScmInFlightOperation(sessionId, serverId) : null))
-  );
-}
-
 export function useSessionRepositoryTreeExpandedPaths(sessionId: string | null): string[] {
   return getStorage()(
     useShallow((state) => (sessionId ? state.getSessionRepositoryTreeExpandedPaths(sessionId) : []))
@@ -3186,54 +3191,45 @@ export function useWorkspaceRepositoryTreeExpandedPaths(scope: WorkspaceScopeBas
 export function useSessionLastMobileSurface(
   sessionId: string | null,
   serverId?: string | null,
-): LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null {
+): SessionMobileSurface | null {
   const activeServer = useActiveServerSnapshot();
-  const selection = getStorage()(useShallow((state) => {
+  const persistenceKeys = getStorage()(useShallow((state) => {
     if (!sessionId) return null;
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) return null;
-    const persistenceKeys = resolveSessionLastMobileSurfacePersistenceKeysFromState(
+    return resolveSessionLastMobileSurfacePersistenceKeysFromState(
       state,
       normalizedSessionId,
       activeServer.serverId,
       serverId,
     );
-    const persistedSelection = readSessionLastMobileSurfaceFromMap(
-      state.localSettings.sessionLastMobileSurfaceBySessionId,
-      persistenceKeys,
-    );
-    return {
-      surface: persistedSelection.surface,
-      predecessorSurface: persistedSelection.predecessorSurface,
-      currentStorageKey: persistenceKeys?.realmQualifiedStorageKey ?? null,
-      predecessorStorageKey: persistenceKeys?.predecessorServerQualifiedStorageKey ?? null,
-    };
   }));
-  const currentStorageKey = selection?.currentStorageKey ?? null;
-  const predecessorStorageKey = selection?.predecessorStorageKey ?? null;
-  const predecessorSurface = selection?.predecessorSurface ?? null;
+  const currentStorageKey = persistenceKeys?.realmQualifiedStorageKey ?? null;
+  const predecessorStorageKey = persistenceKeys?.predecessorServerQualifiedStorageKey ?? null;
+  const current = usePersistentUiStateValue(sessionLastMobileSurfaceState, currentStorageKey);
+  const predecessor = usePersistentUiStateValue(sessionLastMobileSurfaceState, predecessorStorageKey);
+  const selection = readSessionMobileSurfaceWithPredecessor({
+    ...(currentStorageKey && current ? { [currentStorageKey]: current } : {}),
+    ...(predecessorStorageKey && predecessor ? { [predecessorStorageKey]: predecessor } : {}),
+  }, persistenceKeys);
+  const predecessorSurface = selection.predecessorSurface;
 
   React.useEffect(() => {
     if (!currentStorageKey || !predecessorStorageKey || !predecessorSurface) return;
-    const state = getStorage().getState();
-    const persisted = state.localSettings.sessionLastMobileSurfaceBySessionId ?? {};
-    const currentPredecessorSurface = persisted[predecessorStorageKey];
-    if (typeof currentPredecessorSurface !== 'string') return;
-
-    const next = { ...persisted };
-    if (typeof next[currentStorageKey] !== 'string') {
-      next[currentStorageKey] = currentPredecessorSurface;
+    const currentPredecessorSurface = sessionLastMobileSurfaceState.read(predecessorStorageKey);
+    if (!currentPredecessorSurface) return;
+    if (sessionLastMobileSurfaceState.read(currentStorageKey) === undefined) {
+      sessionLastMobileSurfaceState.set(currentStorageKey, currentPredecessorSurface);
     }
-    delete next[predecessorStorageKey];
-    state.applyLocalSettings({ sessionLastMobileSurfaceBySessionId: next }, { source: 'ui' });
+    sessionLastMobileSurfaceState.remove(predecessorStorageKey);
   }, [currentStorageKey, predecessorStorageKey, predecessorSurface]);
 
-  return selection?.surface ?? null;
+  return selection.surface;
 }
 
 export function usePersistSessionLastMobileSurface(): (
   sessionId: string,
-  surface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string],
+  surface: SessionMobileSurface,
   serverId?: string | null,
 ) => void {
   const activeServer = useActiveServerSnapshot();
@@ -3248,51 +3244,33 @@ export function usePersistSessionLastMobileSurface(): (
       serverId,
     );
     if (!persistenceKeys) return;
-    const current = state.localSettings.sessionLastMobileSurfaceBySessionId ?? {};
     const currentStorageKey = persistenceKeys.realmQualifiedStorageKey;
     const predecessorStorageKey = persistenceKeys.predecessorServerQualifiedStorageKey;
-    if (current[currentStorageKey] === surface && !(predecessorStorageKey in current)) return;
-    const next = {
-      ...current,
-      [currentStorageKey]: surface,
-    };
-    delete next[predecessorStorageKey];
-    state.applyLocalSettings({
-      sessionLastMobileSurfaceBySessionId: next,
-    }, { source: 'ui' });
+    sessionLastMobileSurfaceState.set(currentStorageKey, surface);
+    sessionLastMobileSurfaceState.remove(predecessorStorageKey);
   }, [activeServer.serverId]);
 }
 
 export { readSessionCompanionPreferenceSlotFromState, useSessionCompanionPreferenceSlot, useMutateSessionCompanionPreference } from './sessionCompanion';
 export type { SessionCompanionPreferenceEntry, SessionCompanionPreferenceSlot } from './sessionCompanion';
 
-export function useProjectLastMobileSurface(workspaceRefId: string | null, explicitServerId?: string | null): LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string] | null {
+export function useProjectLastMobileSurface(workspaceRefId: string | null, explicitServerId?: string | null): ProjectRememberedSelectionId | null {
   const activeServer = useActiveServerSnapshot();
-  return getStorage()(useShallow((state) => {
+  const storageKey = getStorage()((state) => {
     if (!workspaceRefId) return null;
-    const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
+    return resolveProjectLastMobileSurfaceStorageKeyFromState(
       state,
       workspaceRefId,
       activeServer.serverId,
       explicitServerId,
     );
-    return readRealmQualifiedMobileSurface(
-      state.localSettings.projectLastMobileSurfaceByWorkspaceRefId,
-      storageKey,
-    );
-  }));
-}
-
-export function useProjectLastMobileSurfacesByWorkspaceRefId(): Readonly<Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]>> {
-  const activeServer = useActiveServerSnapshot();
-  return getStorage()(useShallow((state) => (
-    selectProjectLastMobileSurfacesByWorkspaceRefId(state, activeServer.serverId)
-  )));
+  });
+  return usePersistentUiStateValue(projectLastMobileSurfaceState, storageKey) ?? null;
 }
 
 export function usePersistProjectLastMobileSurface(): (
   workspaceRefId: string,
-  surface: LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string],
+  surface: ProjectRememberedSelectionId,
   serverId?: string | null,
 ) => void {
   const activeServer = useActiveServerSnapshot();
@@ -3305,62 +3283,98 @@ export function usePersistProjectLastMobileSurface(): (
       serverId,
     );
     if (!storageKey) return;
-    const current = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId ?? {};
-    if (current[storageKey] === surface) return;
-    state.applyLocalSettings({
-      projectLastMobileSurfaceByWorkspaceRefId: {
-        ...current,
-        [storageKey]: surface,
-      },
-    }, { source: 'ui' });
+    projectLastMobileSurfaceState.set(storageKey, surface);
   }, [activeServer.serverId]);
 }
 
 // Artifact hooks
-export function useArtifacts(): DecryptedArtifact[] {
-  const artifacts = getStorage()((state) => state.artifacts);
+export function useArtifacts(view?: ArtifactInventoryView | 'none'): DecryptedArtifact[] {
+  const artifacts = getStorage()((state) => view === 'browserListed' ? state.artifactBrowserArtifacts
+    : view === 'promptLibrary' ? state.artifactPromptLibraryArtifacts : view === 'none' ? EMPTY_ARTIFACT_ROWS : state.artifacts);
   return React.useMemo(() => sortValuesByUpdatedAtDescending(artifacts)
     .filter((artifact) => !artifact.draft), [artifacts]);
 }
 
+/** Attention consumers share the Inbox owner's admitted open requests, never settled receipts. */
+/**
+ * The Discussion attention facts a list reads (Artifact id and its attention) for its own Discussions, newest
+ * first. Projected in the selector and retained: an Artifact write that moves none of these facts (a newer
+ * timestamp, a body read, another Discussion's request) renders nothing.
+ */
+export function useDiscussionApprovalAttentionEntries(discussionIds: readonly string[]): readonly DiscussionApprovalAttentionFact[] {
+  const idsKey = JSON.stringify(discussionIds);
+  const select = React.useMemo(() => {
+    const ids = new Set(JSON.parse(idsKey) as string[]);
+    let source: StorageState['artifactDiscussionAttentionEntries'] | undefined;
+    let facts: readonly DiscussionApprovalAttentionFact[] | undefined;
+    return (state: StorageState) => {
+      const entries = state.artifactDiscussionAttentionEntries;
+      if (facts && entries === source) return facts;
+      source = entries;
+      facts = retainDeep(facts, Object.values(entries)
+        .filter(entry => entry.discussionAttention !== null && ids.has(entry.discussionAttention.discussionId))
+        .sort((a, b) => b.artifact.updatedAt - a.artifact.updatedAt)
+        .map((entry): DiscussionApprovalAttentionFact => ({ artifact: { id: entry.artifact.id }, discussionAttention: entry.discussionAttention })));
+      return facts;
+    };
+  }, [idsKey]);
+  return getStorage()(select);
+}
+
+const EMPTY_ARTIFACT_ROWS: Record<string, DecryptedArtifact> = Object.freeze({});
+
 /** One demand owner shared by always-mounted summary chrome and the full Inbox model. */
-export function useInboxApprovalBodyHydration(
-  artifacts: readonly DecryptedArtifact[],
+export function useInboxArtifactBodyHydration(
+  artifacts: readonly DecryptedArtifact[] | Readonly<Record<string, DecryptedArtifact>>,
   fallbackServerId: string | null | undefined,
-): void {
+  accountId: string | null | undefined,
+  /** Approval bodies follow a presenting consumer; a count-only reader needs only notice bodies. */
+  approvalBodies = true,
+): Readonly<{ pending: boolean; failed: boolean; retry: () => void }> {
   const requests = React.useMemo(
-    () => listOpenApprovalInboxArtifactHydrationRequests(artifacts, fallbackServerId),
-    [artifacts, fallbackServerId],
+    () => listInboxArtifactBodyHydrationRequests(Array.isArray(artifacts) ? artifacts : Object.values(artifacts), fallbackServerId, accountId,
+      { approvalBodies }),
+    [artifacts, fallbackServerId, accountId, approvalBodies],
   );
+  const key = JSON.stringify(requests);
+  const requestsRef = React.useRef(requests);
+  requestsRef.current = requests;
+  const [retryVersion, retry] = React.useReducer((value: number) => value + 1, 0);
+  const [attempt, setAttempt] = React.useState<Readonly<{ key: string; pending: boolean; failed: boolean }> | null>(null);
   React.useEffect(() => {
+    // Nothing to hydrate settles nothing; `pending` is already false for an empty key.
+    if (requestsRef.current.length === 0) return;
+    // A new key is pending by derivation (`attempt.key !== key`); only a retry of the settled key resets it.
+    setAttempt(previous => previous?.key === key ? { key, pending: true, failed: false } : previous);
+    let current = true;
     const artifactIdsByServerId = new Map<string, string[]>();
-    for (const request of requests) {
+    for (const request of requestsRef.current) {
       const ids = artifactIdsByServerId.get(request.serverId) ?? [];
       ids.push(request.artifactId);
       artifactIdsByServerId.set(request.serverId, ids);
     }
-    for (const [serverId, artifactIds] of artifactIdsByServerId) {
-      void sync.hydrateSessionApprovalArtifacts(serverId, artifactIds).catch(error => {
-        log.log(`Inbox approval hydration failed: ${error instanceof Error ? error.name : 'unknown'}`);
+    void Promise.all([...artifactIdsByServerId].map(([serverId, artifactIds]) =>
+      sync.hydrateSessionApprovalArtifacts(serverId, artifactIds))).then(() => {
+        if (current) setAttempt({ key, pending: false, failed: false });
+      }, error => {
+        log.log(`Inbox artifact hydration failed: ${error instanceof Error ? error.name : 'unknown'}`);
+        if (current) setAttempt({ key, pending: false, failed: true });
       });
-    }
-  }, [requests]);
+    return () => { current = false; };
+  }, [key, retryVersion]);
+  return { pending: requests.length > 0 && (attempt?.key !== key || attempt.pending),
+    failed: requests.length > 0 && attempt?.key === key && attempt.failed, retry };
 }
 
-export function useArtifactsLoaded(): boolean {
-  return getStorage()((state) => state.isDataReady && state.artifactsLoaded);
+export function useArtifactsLoaded(selection?: ArtifactInventorySelection): boolean {
+  return getStorage()((state) => state.isDataReady && isArtifactInventoryReady(state, selection));
 }
 
-function collectOpenApprovalSessionReferenceListFromArtifacts(
-  artifacts: Readonly<Record<string, DecryptedArtifact>>,
+function collectOpenApprovalSessionReferenceListFromEntries(
+  entries: StorageState['artifactOpenApprovalEntries'],
   previousReferences: ReadonlyArray<OpenApprovalSessionReference>,
 ): ReadonlyArray<OpenApprovalSessionReference> {
-  const visibleArtifacts: DecryptedArtifact[] = [];
-  for (const artifact of Object.values(artifacts)) {
-    if (artifact.draft === true) continue;
-    visibleArtifacts.push(artifact);
-  }
-  const references = collectOpenApprovalSessionReferences(visibleArtifacts, previousReferences);
+  const references = collectOpenApprovalSessionReferenceFacts(Object.values(entries).flatMap(entry => entry.references), previousReferences);
   return references.length === 0 ? emptyOpenApprovalSessionReferences : references;
 }
 
@@ -3368,18 +3382,18 @@ export function useOpenApprovalSessionReferences(): ReadonlyArray<OpenApprovalSe
   const selectorRef = React.useRef<((state: StorageState) => ReadonlyArray<OpenApprovalSessionReference>) | null>(null);
   if (!selectorRef.current) {
     let previousIsDataReady: boolean | null = null;
-    let previousArtifacts: StorageState['artifacts'] | null = null;
+    let previousEntries: StorageState['artifactOpenApprovalEntries'] | null = null;
     let previousReferences: ReadonlyArray<OpenApprovalSessionReference> = emptyOpenApprovalSessionReferences;
 
     selectorRef.current = (state) => {
-      if (state.isDataReady === previousIsDataReady && state.artifacts === previousArtifacts) {
+      if (state.isDataReady === previousIsDataReady && state.artifactOpenApprovalEntries === previousEntries) {
         return previousReferences;
       }
 
       previousIsDataReady = state.isDataReady;
-      previousArtifacts = state.artifacts;
+      previousEntries = state.artifactOpenApprovalEntries;
       previousReferences = state.isDataReady
-        ? collectOpenApprovalSessionReferenceListFromArtifacts(state.artifacts, previousReferences)
+        ? collectOpenApprovalSessionReferenceListFromEntries(state.artifactOpenApprovalEntries, previousReferences)
         : emptyOpenApprovalSessionReferences;
       return previousReferences;
     };
@@ -3388,44 +3402,74 @@ export function useOpenApprovalSessionReferences(): ReadonlyArray<OpenApprovalSe
   return getStorage()(useShallow(selectorRef.current));
 }
 
-function buildOpenApprovalArtifactsForSessionSignature(
-  entries: ReadonlyArray<Readonly<{ artifact: DecryptedArtifact }>>,
-): string {
-  if (entries.length === 0) return '';
-  return entries.map((entry) => [
-    entry.artifact.id,
-    entry.artifact.headerVersion,
-    entry.artifact.bodyVersion ?? '',
-    entry.artifact.seq,
-    entry.artifact.updatedAt,
-  ].join(':')).join('\u0000');
-}
-
-function collectVisibleArtifacts(artifacts: Readonly<Record<string, DecryptedArtifact>>): DecryptedArtifact[] {
-  const visibleArtifacts: DecryptedArtifact[] = [];
-  for (const artifact of Object.values(artifacts)) {
-    if (artifact.draft === true) continue;
-    visibleArtifacts.push(artifact);
-  }
-  return visibleArtifacts;
-}
-
 export function useOpenApprovalArtifactsForSession(
   target: SessionAddress | null | undefined,
-): ReadonlyArray<OpenApprovalArtifactForSession> {
-  return useSessionApprovalArtifacts(target, null);
+): ReadonlyArray<OpenApprovalAttentionArtifactForSession> {
+  useSessionOpenApprovalBodyDemand(target);
+  return useSessionApprovalArtifacts(target, null, 'open');
+}
+
+/**
+ * A mounted approval row reads its own body (quick actions, requester, review). The Inbox list itself
+ * groups and counts from header facts, so only rows a person can see read bodies.
+ */
+export function useOpenApprovalArtifactBodyDemand(artifact: DecryptedArtifact | null | undefined): void {
+  const serverId = getStorage()(state => state.isDataReady ? state.profileScope?.serverId ?? null : null);
+  const request = artifact ? listOpenApprovalInboxArtifactHydrationRequests([artifact], serverId)[0] ?? null : null;
+  const requestServerId = request?.serverId ?? null;
+  const artifactId = request?.artifactId ?? null;
+  React.useEffect(() => {
+    if (!requestServerId || !artifactId) return;
+    void sync.hydrateSessionApprovalArtifacts(requestServerId, [artifactId]).catch(error => {
+      log.log(`Open approval hydration failed: ${error instanceof Error ? error.name : 'unknown'}`);
+    });
+  }, [requestServerId, artifactId]);
+}
+
+/** A mounted Session surface demands bodies only for its own open requests (the shell count reads headers). */
+function useSessionOpenApprovalBodyDemand(target: SessionAddress | null | undefined): void {
+  const sessionId = target?.sessionId;
+  const rows = getStorage()(state => sessionId
+    ? state.artifactApprovalArtifactsBySessionId[sessionId] ?? EMPTY_ARTIFACT_ROWS : EMPTY_ARTIFACT_ROWS);
+  const ready = getStorage()(state => state.isDataReady);
+  const serverId = target?.serverId;
+  const missingKey = React.useMemo(() => serverId && ready
+    ? JSON.stringify(listOpenApprovalInboxArtifactHydrationRequests(Object.values(rows), serverId).map(request => request.artifactId).sort())
+    : '[]', [rows, serverId, ready]);
+  React.useEffect(() => {
+    const missingIds: string[] = JSON.parse(missingKey);
+    if (!serverId || missingIds.length === 0) return;
+    void sync.hydrateSessionApprovalArtifacts(serverId, missingIds).catch(error => {
+      log.log(`Open approval hydration failed: ${error instanceof Error ? error.name : 'unknown'}`);
+    });
+  }, [serverId, missingKey]);
 }
 
 /**
  * The composer's approvals: every open request under the same projection as the open hook, plus
- * settled requests whose body declares an attention presentation. Unlike the transcript hook this
- * does not demand body hydration, so bodyless open headers remain index-only until sync hydrates them.
+ * settled requests whose body declares an attention presentation. It demands bodies for this
+ * Session's open requests only; settled receipts stay index-only unless the transcript demands them.
  */
 export function useComposerApprovalArtifactsForSession(
   target: SessionAddress | null | undefined,
   settledPresentations: readonly ApprovalSettledPresentation[],
-): ReadonlyArray<OpenApprovalArtifactForSession> {
-  return useSessionApprovalArtifacts(target, settledPresentations);
+): ReadonlyArray<OpenApprovalAttentionArtifactForSession> {
+  useSessionApprovalArtifactDiscovery(target?.serverId, target?.sessionId ? [target.sessionId] : []);
+  useSessionOpenApprovalBodyDemand(target);
+  return useSessionApprovalArtifacts(target, settledPresentations, 'composer');
+}
+
+/** A visible Session discovers its receipts by relationship, independently of the open Inbox census. */
+function useSessionApprovalArtifactDiscovery(serverId: string | null | undefined, sessionIds: readonly string[]): void {
+  const scope = useAccountSettingsScope();
+  const profilesGeneration = useServerProfilesGeneration();
+  const key = JSON.stringify([...new Set(sessionIds)].sort());
+  React.useEffect(() => {
+    if (!scope || !serverId || !areServerProfileIdentifiersEquivalent(scope.serverId, serverId)) return;
+    const ids: string[] = JSON.parse(key);
+    if (ids.length === 0) return;
+    return sync.observeArtifactInventory(scope, { approvalSessionIds: ids }, { refreshOnAdmission: true });
+  }, [scope?.serverId, scope?.accountId, serverId, key, profilesGeneration]);
 }
 
 /**
@@ -3436,38 +3480,29 @@ export function useComposerApprovalArtifactsForSession(
 export function useTranscriptApprovalArtifactsForSession(
   target: SessionAddress | null | undefined,
   settledPresentations: readonly ApprovalSettledPresentation[],
+  /** A detail surface may demand one Action family without opening unrelated private receipts. */
+  actionIds?: readonly string[],
 ): ReadonlyArray<OpenApprovalArtifactForSession> {
   const serverId = target?.serverId;
   const sessionId = target?.sessionId;
+  useSessionApprovalArtifactDiscovery(serverId, sessionId ? [sessionId] : []);
   const profilesGeneration = useServerProfilesGeneration();
-  const selectMissingIds = React.useMemo(() => {
-    let previousArtifacts: StorageState['artifacts'] | null = null;
-    let previousMembership: StorageState['ordinarySessionListMembershipByServerId'] | null = null;
-    let previousSessionServerId: string | undefined;
-    let previousReady = false;
-    let previousIds: string[] = [];
-    return (state: StorageState): string[] => {
-      const sessionServerId = sessionId ? state.sessions[sessionId]?.serverId : undefined;
-      if (previousArtifacts === state.artifacts && previousReady === state.isDataReady
-        && previousMembership === state.ordinarySessionListMembershipByServerId && previousSessionServerId === sessionServerId) return previousIds;
-      previousArtifacts = state.artifacts;
-      previousMembership = state.ordinarySessionListMembershipByServerId;
-      previousSessionServerId = sessionServerId;
-      previousReady = state.isDataReady;
-      previousIds = serverId && sessionId && state.isDataReady
-        ? listApprovalArtifactIdsNeedingHydrationForSession(collectVisibleArtifacts(state.artifacts), { serverId, sessionId },
-          listSessionAddressesForSessionIdFromLocalState(state, sessionId)) : [];
-      return previousIds;
-    };
-  }, [serverId, sessionId, profilesGeneration]);
-  const missingIds = getStorage()(useShallow(selectMissingIds));
+  const artifacts = getStorage()(state => sessionId
+    ? state.artifactApprovalArtifactsBySessionId[sessionId] ?? EMPTY_ARTIFACT_ROWS : EMPTY_ARTIFACT_ROWS);
+  const ready = getStorage()(state => state.isDataReady);
+  const membership = getStorage()(state => state.ordinarySessionListMembershipByServerId);
+  const sessionServerId = getStorage()(state => sessionId ? state.sessions[sessionId]?.serverId : undefined);
+  const missingIds = React.useMemo(() => serverId && sessionId && ready
+    ? listApprovalArtifactIdsNeedingHydrationForSession(Object.values(artifacts), { serverId, sessionId },
+      listSessionAddressesForSessionIdFromLocalState(getStorage().getState(), sessionId), actionIds) : [],
+  [artifacts, serverId, sessionId, ready, membership, sessionServerId, profilesGeneration, actionIds]);
   React.useEffect(() => {
     if (!serverId || missingIds.length === 0) return;
     void sync.hydrateSessionApprovalArtifacts(serverId, missingIds).catch(error => {
       log.log(`Approval transcript hydration failed: ${error instanceof Error ? error.name : 'unknown'}`);
     });
   }, [serverId, missingIds, profilesGeneration]);
-  return useSessionApprovalArtifacts(target, settledPresentations);
+  return useSessionApprovalArtifacts(target, settledPresentations, 'transcript', actionIds);
 }
 
 const emptyDiscussionRequesterApprovals: ReadonlyArray<DiscussionRequesterApproval> = Object.freeze([]);
@@ -3479,113 +3514,87 @@ const emptyDiscussionRequesterApprovals: ReadonlyArray<DiscussionRequesterApprov
  */
 export function useDiscussionRequesterApprovals(
   discussion: Readonly<{ serverId: string; discussionId: string }> | null,
-  /** Memoized by the caller: a new array re-derives the hydration demand. */
+  /** Exact linked Session demand; equal addresses do not restart hydration. */
   linkedSessions: ReadonlyArray<SessionAddress>,
 ): ReadonlyArray<DiscussionRequesterApproval> {
   const serverId = discussion?.serverId ?? null;
   const discussionId = discussion?.discussionId ?? null;
+  const linkedSessionKey = JSON.stringify(linkedSessions.map(({ serverId, sessionId }) => ({ serverId, sessionId })));
+  useSessionApprovalArtifactDiscovery(serverId, linkedSessions.filter(address => serverId
+    && areServerProfileIdentifiersEquivalent(address.serverId, serverId)).map(address => address.sessionId));
   const profilesGeneration = useServerProfilesGeneration();
-  const selectMissingIds = React.useMemo(() => {
-    let previousArtifacts: StorageState['artifacts'] | null = null;
-    let previousReady = false;
-    let previousIds: string[] = [];
-    return (state: StorageState): string[] => {
-      if (previousArtifacts === state.artifacts && previousReady === state.isDataReady) return previousIds;
-      previousArtifacts = state.artifacts;
-      previousReady = state.isDataReady;
-      if (!state.isDataReady || linkedSessions.length === 0) { previousIds = []; return previousIds; }
-      const visible = collectVisibleArtifacts(state.artifacts);
-      const ids = new Set<string>();
-      for (const address of linkedSessions) {
-        for (const id of listApprovalArtifactIdsNeedingHydrationForSession(visible, address,
-          listSessionAddressesForSessionIdFromLocalState(state, address.sessionId))) ids.add(id);
-      }
-      const next = [...ids].sort();
-      previousIds = next.join('\u0000') === previousIds.join('\u0000') ? previousIds : next;
-      return previousIds;
-    };
-  }, [linkedSessions, profilesGeneration]);
-  const missingIds = getStorage()(useShallow(selectMissingIds));
+  const ready = getStorage()(state => state.isDataReady);
+  const linkedArtifacts = getStorage()(useShallow(state => linkedSessions.map(address =>
+    state.artifactApprovalArtifactsBySessionId[address.sessionId] ?? EMPTY_ARTIFACT_ROWS)));
+  const membership = getStorage()(state => state.ordinarySessionListMembershipByServerId);
+  const sessionHomes = getStorage()(useShallow(state => linkedSessions.map(address => state.sessions[address.sessionId]?.serverId)));
+  const missingIds = React.useMemo(() => {
+    if (!ready) return [];
+    const state = getStorage().getState();
+    const ids = new Set<string>();
+    const addresses: SessionAddress[] = JSON.parse(linkedSessionKey);
+    for (const [index, address] of addresses.entries()) {
+      for (const id of listApprovalArtifactIdsNeedingHydrationForSession(Object.values(linkedArtifacts[index]!), address,
+        listSessionAddressesForSessionIdFromLocalState(state, address.sessionId))) ids.add(id);
+    }
+    return [...ids].sort();
+  }, [ready, linkedArtifacts, membership, sessionHomes, profilesGeneration, linkedSessionKey]);
   React.useEffect(() => {
     if (!serverId || missingIds.length === 0) return;
     void sync.hydrateSessionApprovalArtifacts(serverId, missingIds).catch(error => {
       log.log(`Discussion approval hydration failed: ${error instanceof Error ? error.name : 'unknown'}`);
     });
   }, [serverId, missingIds, profilesGeneration]);
-  const selector = React.useMemo(() => {
-    let previousArtifacts: StorageState['artifacts'] | null = null;
-    let previousReady: boolean | null = null;
-    let previousSignature = '';
-    let previous: ReadonlyArray<DiscussionRequesterApproval> = emptyDiscussionRequesterApprovals;
-    return (state: StorageState): ReadonlyArray<DiscussionRequesterApproval> => {
-      if (state.artifacts === previousArtifacts && state.isDataReady === previousReady) return previous;
-      previousArtifacts = state.artifacts;
-      previousReady = state.isDataReady;
-      const next = serverId && discussionId && state.isDataReady
-        ? listDiscussionRequesterApprovals(collectVisibleArtifacts(state.artifacts), { serverId, discussionId }) : [];
-      const signature = buildOpenApprovalArtifactsForSessionSignature(next);
-      if (signature === previousSignature) return previous;
-      previousSignature = signature;
-      previous = next.length === 0 ? emptyDiscussionRequesterApprovals : next;
-      return previous;
-    };
-  }, [discussionId, serverId, profilesGeneration]);
-  return getStorage()(useShallow(selector));
+  const artifacts = getStorage()(state => discussionId
+    ? state.artifactApprovalArtifactsByDiscussionId[discussionId] ?? EMPTY_ARTIFACT_ROWS : EMPTY_ARTIFACT_ROWS);
+  return React.useMemo(() => serverId && discussionId && ready
+    ? listDiscussionRequesterApprovals(Object.values(artifacts), { serverId, discussionId })
+    : emptyDiscussionRequesterApprovals, [artifacts, serverId, discussionId, ready, profilesGeneration]);
 }
 
 function useSessionApprovalArtifacts(
   target: SessionAddress | null | undefined,
   settledPresentations: readonly ApprovalSettledPresentation[] | null,
-): ReadonlyArray<OpenApprovalArtifactForSession> {
+  projection: 'open' | 'composer',
+): ReadonlyArray<OpenApprovalAttentionArtifactForSession>;
+function useSessionApprovalArtifacts(
+  target: SessionAddress | null | undefined,
+  settledPresentations: readonly ApprovalSettledPresentation[] | null,
+  projection: 'transcript',
+  actionIds?: readonly string[],
+): ReadonlyArray<OpenApprovalArtifactForSession>;
+function useSessionApprovalArtifacts(
+  target: SessionAddress | null | undefined,
+  settledPresentations: readonly ApprovalSettledPresentation[] | null,
+  projection: 'open' | 'composer' | 'transcript',
+  actionIds?: readonly string[],
+): ReadonlyArray<OpenApprovalAttentionArtifactForSession> {
   const targetServerId = target?.serverId ?? null;
   const targetSessionId = target?.sessionId ?? null;
   const profilesGeneration = useServerProfilesGeneration();
-  const normalizedTarget = React.useMemo<SessionAddress | null>(() => {
-    return targetServerId && targetSessionId
-      ? { serverId: targetServerId, sessionId: targetSessionId }
-      : null;
-  }, [targetServerId, targetSessionId]);
-  const selector = React.useMemo(() => {
-    let previousIsDataReady: boolean | null = null;
-    let previousArtifacts: StorageState['artifacts'] | null = null;
-    let previousMembership: StorageState['ordinarySessionListMembershipByServerId'] | null = null;
-    let previousSessionServerId: string | undefined;
-    let previousApprovals: ReadonlyArray<OpenApprovalArtifactForSession> = emptyOpenApprovalArtifactsForSession;
-
-    return (state: StorageState): ReadonlyArray<OpenApprovalArtifactForSession> => {
-      if (!normalizedTarget || !state.isDataReady) {
-        previousIsDataReady = state.isDataReady;
-        previousArtifacts = state.artifacts;
-        previousApprovals = emptyOpenApprovalArtifactsForSession;
-        return previousApprovals;
-      }
-
-      const sessionServerId = state.sessions[normalizedTarget.sessionId]?.serverId;
-      if (state.isDataReady === previousIsDataReady && state.artifacts === previousArtifacts
-        && state.ordinarySessionListMembershipByServerId === previousMembership && sessionServerId === previousSessionServerId) {
-        return previousApprovals;
-      }
-
-      previousIsDataReady = state.isDataReady;
-      previousArtifacts = state.artifacts;
-      previousMembership = state.ordinarySessionListMembershipByServerId;
-      previousSessionServerId = sessionServerId;
-      const nextApprovals = listTranscriptApprovalArtifactsForSession(
-        collectVisibleArtifacts(state.artifacts),
-        normalizedTarget,
-        {
-          knownSessionAddresses: listSessionAddressesForSessionIdFromLocalState(state, normalizedTarget.sessionId),
-          ...(settledPresentations ? { settledPresentations } : {}),
-        },
-      );
-      previousApprovals = nextApprovals.length === 0
-        ? emptyOpenApprovalArtifactsForSession
-        : nextApprovals;
-      return previousApprovals;
+  const rows = getStorage()(state => targetSessionId
+    ? state.artifactApprovalArtifactsBySessionId[targetSessionId] ?? EMPTY_ARTIFACT_ROWS : EMPTY_ARTIFACT_ROWS);
+  const ready = getStorage()(state => state.isDataReady);
+  const membership = getStorage()(state => state.ordinarySessionListMembershipByServerId);
+  const sessionServerId = getStorage()(state => targetSessionId ? state.sessions[targetSessionId]?.serverId : undefined);
+  return React.useMemo(() => {
+    if (!targetServerId || !targetSessionId || !ready) return emptyOpenApprovalArtifactsForSession;
+    const normalizedTarget = { serverId: targetServerId, sessionId: targetSessionId };
+    const visible = Object.values(rows);
+    const artifacts = actionIds ? visible.filter(artifact => typeof artifact.header?.actionId === 'string'
+      && actionIds.includes(artifact.header.actionId)) : visible;
+    const options = {
+      knownSessionAddresses: listSessionAddressesForSessionIdFromLocalState(getStorage().getState(), targetSessionId),
+      ...(settledPresentations ? { settledPresentations } : {}),
     };
-  }, [normalizedTarget, settledPresentations, profilesGeneration]);
-
-  return getStorage()(useShallow(selector));
+    const approvals = projection === 'open'
+      ? listOpenApprovalArtifactsForSession(artifacts, normalizedTarget, options)
+      : projection === 'composer'
+        ? listComposerApprovalArtifactsForSession(artifacts, normalizedTarget, options)
+        : listTranscriptApprovalArtifactsForSession(artifacts, normalizedTarget, options);
+    return approvals.length === 0 ? emptyOpenApprovalArtifactsForSession : approvals;
+  }, [rows, ready, membership, sessionServerId, targetServerId, targetSessionId, projection,
+    settledPresentations, profilesGeneration, actionIds]);
 }
 
 export function useAllArtifacts(): DecryptedArtifact[] {
@@ -3673,6 +3682,8 @@ export function useAutomation(
  * a refresh that restates the same revisions does not rerender the history.
  */
 export function useAutomationRuns(automationId: string): AutomationDefinitionRun[] {
+  const lifetime = useActiveServerAccountScopeLifetime();
+  React.useEffect(() => retainAutomationRunHistoryDemand(lifetime, [automationId]), [automationId, lifetime]);
   return getStorage()(
     useShallow((state) => {
       const runIds = state.automationRunIdsByAutomationId[automationId];
@@ -3740,6 +3751,11 @@ export function useArtifact(artifactId: string): DecryptedArtifact | null {
   return getStorage()(useShallow((state) => state.artifacts[artifactId] ?? null));
 }
 
+/** Exact admitted rows in caller order; unrelated publications never replace the selected input. */
+export function useArtifactRows(artifactIds: readonly string[]): readonly (DecryptedArtifact | null)[] {
+  return getStorage()(useShallow((state) => artifactIds.map(id => state.artifacts[id] ?? null)));
+}
+
 export function useArtifactsCount(): number {
   return getStorage()(
     useShallow((state) => {
@@ -3783,6 +3799,15 @@ export function useEndpointStatus() {
   return getStorage()((state) => state.endpointStatus);
 }
 
+/** Admission over the endpoint verdict: our own supervision restart is not evidence against an online Home. */
+export function useEndpointOnlineVerdict(): boolean {
+  return getStorage()((state) => state.endpointStatus === 'online' || state.endpointOnlineRetained);
+}
+
+export function useEndpointLastConnectedAt(): number | null {
+  return getStorage()((state) => state.endpointLastConnectedAt);
+}
+
 export function useSyncError() {
   return getStorage()(useShallow((state) => state.syncError));
 }
@@ -3817,9 +3842,7 @@ export function useProfile(select?: (profile: StorageState['profile']) => unknow
 export function useActiveServerAccountScope(serverId?: string | null) {
   const live = serverId !== undefined;
   const subscribe = React.useCallback((listener: () => void) => {
-    const unsubscribeProfile = getStorage().subscribe((state, previous) => {
-      if (state.profileScope !== previous.profileScope) listener();
-    });
+    const unsubscribeProfile = getStorage().subscribe(listener, { profileScope: true });
     if (!live) return unsubscribeProfile;
     const unsubscribeApplied = subscribeAppliedActiveServer(listener);
     const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(listener);
@@ -3857,9 +3880,7 @@ export function useActiveServerAccountScopeLifetime(): ActiveServerAccountScopeL
       });
       listener();
     };
-    const unsubscribeProfile = getStorage().subscribe((state, previous) => {
-      if (state.profileScope !== previous.profileScope) changed();
-    });
+    const unsubscribeProfile = getStorage().subscribe(changed, { profileScope: true });
     const unsubscribeApplied = subscribeAppliedActiveServer(changed);
     const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(changed);
     changed();

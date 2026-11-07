@@ -22,7 +22,10 @@ type ActivePluginCollectionChangeWatch = Readonly<{
     rowId?: string;
     lifetime: ActiveServerAccountScopeLifetime;
     onInvalidated: (invalidation?: PluginCollectionInvalidation) => void;
-}>;
+    readBasis?: Readonly<{ owner: object; key: string }>;
+    contractDigest?: string;
+    indexSelection?: Readonly<{ indexId: string; prefixes: readonly string[] }>;
+}> & { lastObservedCursor: number | null; acquiringReads: number; pendingChangeCursor: number | null };
 
 const activeWatches = new Set<ActivePluginCollectionChangeWatch>();
 
@@ -32,8 +35,14 @@ export function registerActivePluginCollectionChangeWatch(input: Readonly<{
     rowId?: string;
     lifetime: ActiveServerAccountScopeLifetime;
     onInvalidated(invalidation?: PluginCollectionInvalidation): void;
+    readBasis?: Readonly<{ owner: object; key: string }>;
+    acquisitionCursor?: number;
+    contractDigest?: string;
+    indexSelection?: Readonly<{ indexId: string; prefixes: readonly string[] }>;
 }>): PluginCollectionChangeWatchV1 {
-    const watch: ActivePluginCollectionChangeWatch = Object.freeze({ ...input });
+    const watch: ActivePluginCollectionChangeWatch = {
+        ...input, lastObservedCursor: input.acquisitionCursor ?? null, acquiringReads: 0, pendingChangeCursor: null,
+    };
     let disposed = false;
     let retirement: Readonly<{ dispose(): void }> | null = null;
     const dispose = (): void => {
@@ -47,6 +56,36 @@ export function registerActivePluginCollectionChangeWatch(input: Readonly<{
     retirement = input.lifetime.onRetire(dispose);
     if (!input.lifetime.isCurrent()) dispose();
     return Object.freeze({ dispose });
+}
+
+/** A successful first-page snapshot covers only its incumbent, bound selectors. */
+export function captureActivePluginCollectionReadBasis(input: Readonly<{
+    pluginId: string;
+    collectionId: string;
+    lifetime: ActiveServerAccountScopeLifetime;
+    readBasis: Readonly<{ owner: object; key: string }>;
+}>): (changeCursor?: number) => void {
+    const watches = [...activeWatches].filter(watch => watch.pluginId === input.pluginId
+        && watch.collectionId === input.collectionId && watch.lifetime === input.lifetime
+        && watch.readBasis?.owner === input.readBasis.owner && watch.readBasis.key === input.readBasis.key);
+    const acquiring = new Set(watches.filter(watch => watch.lastObservedCursor === null));
+    for (const watch of acquiring) watch.acquiringReads++;
+    let settled = false;
+    return changeCursor => {
+        if (settled) return;
+        settled = true;
+        for (const watch of watches) {
+            if (!activeWatches.has(watch) || !watch.lifetime.isCurrent()) continue;
+            if (changeCursor !== undefined) watch.lastObservedCursor = Math.max(watch.lastObservedCursor ?? 0, changeCursor);
+            if (acquiring.has(watch)) watch.acquiringReads--;
+            if ((watch.acquiringReads !== 0 && watch.lastObservedCursor === null) || watch.pendingChangeCursor === null) continue;
+            const pendingCursor = watch.pendingChangeCursor;
+            watch.pendingChangeCursor = null;
+            if (watch.lastObservedCursor !== null && pendingCursor <= watch.lastObservedCursor) continue;
+            watch.lastObservedCursor = pendingCursor;
+            notifyWatches([watch], Object.freeze({ kind: 'changed', changeCursor: pendingCursor }));
+        }
+    };
 }
 
 function notifyWatches(watches: Iterable<ActivePluginCollectionChangeWatch>, invalidation?: PluginCollectionInvalidation): void {
@@ -76,10 +115,31 @@ export function publishActivePluginCollectionChanges(changes: readonly unknown[]
         const { hint } = parsed.data;
         const { pluginId, collectionId } = hint;
         for (const watch of activeWatches) {
-            if (watch.pluginId === pluginId && watch.collectionId === collectionId
-                && (watch.rowId === undefined || 'full' in hint || hint.rowIds.includes(watch.rowId))) {
-                affected.set(watch, Math.max(affected.get(watch) ?? parsed.data.cursor, parsed.data.cursor));
+            if (watch.pluginId !== pluginId || watch.collectionId !== collectionId) continue;
+            const observed = watch.lastObservedCursor;
+            const awaitingBasis = watch.acquiringReads > 0 && observed === null;
+            // The query snapshot or a prior publication already covers this
+            // cursor. Catch-up is not itself a change to the observed data.
+            if (observed !== null && parsed.data.cursor <= observed) continue;
+            const missedPredecessor = 'indexChanges' in hint && hint.indexChanges
+                && (observed === null || observed < hint.indexChanges.previousCursor);
+            const differentContract = watch.contractDigest !== undefined && watch.contractDigest !== hint.contractDigest;
+            const indexChanges = 'indexChanges' in hint ? hint.indexChanges : undefined;
+            const selection = watch.indexSelection;
+            const matchesIndex = !selection || !indexChanges || indexChanges.keys.some(key => key.indexId === selection.indexId
+                && selection.prefixes.some(prefix => key.key.startsWith(prefix)));
+            if ('full' in hint || missedPredecessor || differentContract
+                || (watch.rowId === undefined ? matchesIndex : hint.rowIds.includes(watch.rowId))) {
+                if (awaitingBasis) {
+                    // Let the pending initial snapshot establish whether this
+                    // feed row precedes acquisition. A later fact is delivered
+                    // once when that read settles, including read failure.
+                    watch.pendingChangeCursor = Math.max(watch.pendingChangeCursor ?? 0, parsed.data.cursor);
+                } else {
+                    affected.set(watch, Math.max(affected.get(watch) ?? parsed.data.cursor, parsed.data.cursor));
+                }
             }
+            if (!awaitingBasis) watch.lastObservedCursor = Math.max(observed ?? 0, parsed.data.cursor);
         }
     }
     for (const [watch, changeCursor] of affected) {
@@ -88,5 +148,16 @@ export function publishActivePluginCollectionChanges(changes: readonly unknown[]
 }
 
 export function resetActivePluginCollectionChanges(): void {
-    notifyWatches(activeWatches);
+    captureActivePluginCollectionChangeReset()();
+}
+
+/** Snapshot repair covers observations that precede its base, not later fresh reads. */
+export function captureActivePluginCollectionChangeReset(): () => void {
+    const watches = [...activeWatches];
+    return () => {
+        for (const watch of watches) {
+            if (activeWatches.has(watch)) watch.lastObservedCursor = null;
+        }
+        notifyWatches(watches);
+    };
 }

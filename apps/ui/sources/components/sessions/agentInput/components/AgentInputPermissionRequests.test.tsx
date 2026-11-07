@@ -97,6 +97,47 @@ describe('AgentInputPermissionRequests', () => {
         expect(screen.findByTestId('agentInput.permissionRequests.divider:p2')).toBeTruthy();
     });
 
+    it('presents one request at a time on a phone, with a pager that follows decided requests', async () => {
+        const { act } = await import('react-test-renderer');
+        const request = (id: string) => ({ id, kind: 'permission' as const, tool: 'execute', arguments: { command: id }, createdAt: null });
+        const props = (ids: readonly string[]) => ({
+            sessionId: 's1',
+            permissionRequests: ids.map(request),
+            permissionLocationsById: new Map(),
+            metadata: null,
+            canApprovePermissions: true,
+            maxHeightPx: 280,
+            presentation: 'oneAtATime',
+            onContentSizeChange: () => {},
+            onLayout: () => {},
+            onScroll: () => {},
+            fadeVisibility: { top: false, bottom: false },
+        } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>);
+        const shownIds = () => screen.findAll((node) => node.type === 'PermissionPromptCard').map((node) => node.props.request.id);
+
+        // The Session's open requests change under the tray while it stays mounted.
+        let setIds: (ids: readonly string[]) => void = () => {};
+        function Harness() {
+            const [ids, update] = React.useState<readonly string[]>(['p1', 'p2', 'p3']);
+            setIds = update;
+            return React.createElement(AgentInputPermissionRequests, props(ids));
+        }
+        const screen = await renderScreen(React.createElement(Harness));
+        expect(shownIds()).toEqual(['p1']);
+        expect(screen.findByTestId('agentInput.permissionRequests.pager')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('agentInput.permissionRequests.next');
+        expect(shownIds()).toEqual(['p2']);
+
+        // Deciding the request on screen shows the one that took its place.
+        await act(async () => setIds(['p1', 'p3']));
+        expect(shownIds()).toEqual(['p3']);
+
+        await act(async () => setIds(['p1']));
+        expect(shownIds()).toEqual(['p1']);
+        expect(screen.findByTestId('agentInput.permissionRequests.pager')).toBeNull();
+    });
+
     it('renders approval requests and ignores explicit user action requests inside the composer chrome', async () => {
         capturedPermissionPromptCardProps.length = 0;
         capturedApprovalPromptCardProps.length = 0;

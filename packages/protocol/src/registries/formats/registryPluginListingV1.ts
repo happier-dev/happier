@@ -1,7 +1,7 @@
 import { MarketplaceIndexSourceSnapshotV1Schema, type MarketplaceIndexEntryV1, type MarketplaceIndexSourceSnapshotV1 } from '../../marketplace/marketplaceIndexV1.js';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '../../marketplace/marketplaceSourceRegistryV1.js';
 import type { RegistryKindV1, RegistrySourceV1 } from '../registrySourcesV1.js';
-import type { RegistryItemSummaryV1, RegistryItemV1 } from '../registryItemsV1.js';
+import type { RegistryItemSummaryV1, RegistryItemV1, RegistryPluginListingSummaryV1 } from '../registryItemsV1.js';
 
 /** Agent browsing selects plugin listings; their identity and install handoff stay plugin-owned. */
 export function registryPluginSupportsKindV1(listing: MarketplaceIndexEntryV1, kind: RegistryKindV1): boolean {
@@ -16,10 +16,18 @@ export function registryMarketplaceSourceV1(source: RegistrySourceV1): Marketpla
   });
 }
 
+export function registryPluginListingSummaryV1(listing: MarketplaceIndexEntryV1): RegistryPluginListingSummaryV1 {
+  return { pluginId: listing.pluginId, packageName: listing.distribution.packageName,
+    publisher: listing.publisher, categories: listing.categories, contributions: listing.summary.contributions,
+    executableRealms: listing.summary.executableRealms, platforms: listing.compatibility.platforms,
+    review: listing.review, updatePolicy: listing.updatePolicy, links: listing.links };
+}
+
 export function registryPluginSummaryV1(source: RegistrySourceV1, listing: MarketplaceIndexEntryV1): RegistryItemSummaryV1 {
   return { sourceId: source.id, kind: 'plugin', itemId: source.format === 'happier-npm' ? listing.distribution.packageName : listing.pluginId,
     title: listing.display.title, ...(listing.display.description === null ? {} : { description: listing.display.description }),
     version: listing.distribution.version, publisher: { name: listing.publisher.displayName },
+    pluginListing: registryPluginListingSummaryV1(listing),
     ...(listing.links.repository || listing.links.homepage ? { links: {
       ...(listing.links.repository ? { repository: listing.links.repository } : {}),
       ...(listing.links.homepage ? { website: listing.links.homepage } : {}),

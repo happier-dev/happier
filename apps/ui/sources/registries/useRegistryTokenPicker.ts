@@ -1,12 +1,8 @@
+import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
-import {
-  SavedSecretPickerModal,
-  type SavedSecretPickerModalProps,
-} from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
-import { Modal } from '@/modal';
-import { t } from '@/text';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 
 /**
  * The one way a registry token is chosen (P4 F3/F4): a private Saved Secret from the picker, named back by its
@@ -25,19 +21,18 @@ export function useRegistryTokenPicker() {
     [personalSecrets, sharedEntries],
   );
   const pick = React.useCallback(
-    (props: Pick<Extract<SavedSecretPickerModalProps, { selectedId: string | null }>, 'selectedId' | 'includeNoneRow' | 'onSelectId'>) => {
-      Modal.show({
-        component: SavedSecretPickerModal,
-        // Choosing a token binds one; renaming, replacing or deleting stored secrets stays in Settings → Secrets.
-        props: { ...props, allowEdit: false },
-        chrome: {
-          kind: 'card',
-          title: t('capabilities.registries.detail.tokenPickTitle'),
-          scrollHost: 'bounded',
-          bodyScroll: 'none',
-          dimensions: { size: 'lg' },
-        },
-        closeOnBackdrop: true,
+    (props: Readonly<{
+      selectedId: string | null;
+      anchor?: PopoverAnchor;
+      includeNoneRow?: boolean;
+      onSelectId: (secretRef: string | null) => void;
+    }>) => {
+      void presentConnectSheet({
+        service: { kind: 'key', keyKind: 'token' },
+        anchor: props.anchor,
+        ...(props.selectedId ? { current: props.selectedId } : {}),
+      }).then(result => {
+        if (result.kind !== 'dismissed') props.onSelectId(result.secretRef);
       });
     },
     [],

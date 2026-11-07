@@ -1,8 +1,9 @@
-import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
-import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
-import { createTemplateRequesterActionAdmissionScope } from '@/sync/api/externalActionAccountTransport';
-import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
+import { resolveApprovalReplayRoute } from './approvalReplayRoute';
+import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, isAccountModeDowngradeUnverifiedError, readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { writeSessionApprovalReviewerOverrideV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { recordReviewCommentReads } from '@/sync/domains/reviews/comments/reviewRunComments';
@@ -16,10 +17,8 @@ import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol
 import { inspectSessionContinuationOnMachine } from '@/sync/ops/sessionContinuationInspection';
 import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { readRpcFailureCode } from './rpcFailureCode';
-import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { StoredContentPublicSharesListResponseV1Schema } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
+import { replayLiveCliApproval } from './liveCliApprovalReplay';
 import { createWidgetInputActionDepsV1 } from './widgetInputActionDeps';
 import { createUiProjectWorkerActionV1 } from './projectWorkerAction';
 import { createUiRegistryActionExecuteV1, createUiRegistryHostV1 } from '@/registries/registryHostDeps';
@@ -30,6 +29,7 @@ import { readFoundSkillBundle } from '@/sync/domains/transfers/runtime/transferR
 import { SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { createUiProjectContextAction } from './projectContextAction';
 import { createUiSessionStatusGet } from './sessionStatusAction';
+import { createUiSessionHandoffRecoveryActionDeps } from './sessionHandoffRecoveryActionDeps';
 import { createUiPetChooseAction } from './petChooseAction';
 import { setClientEncryptionRequirement } from '@/sync/ops/settings/setClientEncryptionRequirement';
 import { readSessionTranscriptForAction } from '@/sync/api/session/sessionTranscriptActions';
@@ -60,7 +60,7 @@ import { startAgentSignInRpc, checkAgentSignInRpc } from '@/agents/machineAgents
 import { buildSessionPermissionRespondRpcParamsV1, buildSessionUserActionAnswerMap } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { buildMachineAgentsDetectRequest, projectMachineAgentsDetectResponse, projectAcpCatalogForMachineInventory, MachineAgentInventoryUnavailableError } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, listApprovalArtifactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, requiresExactDaemonApprovalReplay, isMountedPluginBlockingApprovalEligibleForLiveClient, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
@@ -72,9 +72,9 @@ import {
   sessionUsageLimitSwitchAccountNow, sessionUsageLimitConsumeResetCredit,
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { completeActionResult, createActionExecutor, readHostReviewedParentV1, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
-import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ActionSessionAddress } from '@happier-dev/protocol/actions/executor/types';
 import { SessionTargetPreviewV1Schema, type SessionTargetPreviewV1, type SessionTargetSelectorV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -83,35 +83,28 @@ import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/ac
 import { presentActionApproval, readActionApprovalSubject, readActionApprovalRoleId } from '@/components/approvals/actionApprovalPresentation';
 import { buildRoleCatalog } from '@/sync/domains/roles/roleCatalog';
 import { readApprovalReferenceForConfirmation } from '@/components/approvals/approvalReferenceReading';
+import { readDetectedProviderConfirmation } from '@/components/approvals/providerConnectionApprovalPresentation';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, type CurrentSessionPresentationActionResultV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUiProviderActionExecuteV1 } from './providerActionDeps';
-import { isSessionStateFieldActionId } from '@happier-dev/protocol/actions';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
-import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
-import { PROJECT_SOURCE_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/projectSources';
-import { PROJECT_ACTION_INPUT_SCHEMAS_V1, isProjectActionIdV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { SessionSpawnNewActionInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createUiSessionCapabilityActionDeps } from './sessionCapabilityActionDeps';
+import { createUiMachineRecipesRead } from './machineRecipeActionDeps';
 import { setSessionCapabilityV1 } from '@happier-dev/protocol/actions/executor/sessionCapabilities';
 import { setSessionConnectedServiceAuthBinding } from '@/sync/ops/connectedServices/sessionAuthSwitch';
-import { MachineWorkSummaryGetInputV1Schema } from '@happier-dev/protocol/machines/machineWorkSummaryV1';
-import { MachineVitalsActionIdSchema, MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
-import { MachineResourcesActionIdSchema, MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
-import { MachineStorageActionIdSchema, MACHINE_STORAGE_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/storage';
-import { MachineGuardActionIdSchema, MACHINE_GUARD_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineGuard';
+import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
+import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
 import { resolveMachineGuardOperationTimeoutMs } from '@happier-dev/protocol/machines/guard/actionIdsV1';
-import { MachineProcessesActionIdSchema, MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineProcesses';
 import { machineResourcesPolicyGet } from '@/sync/ops/machineResourcesPolicy';
 import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
 import { filterVisibleMachines, resolveServerScopedMachineInventoryKeys } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
-import { ProjectContextUpdateInputV1Schema } from '@happier-dev/protocol/projects/projectContextV1';
 import { decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { createTerminalUtf8ProjectionDecoder, TERMINAL_OUTPUT_GAP_MARKER } from '@/sync/domains/terminal/stream/runtime';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -119,13 +112,14 @@ import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { createPromptDocInLibrary, updatePromptBundleInLibrary, setPromptDocFavorite, listPromptLibrary, readPromptDocInLibrary, updatePromptDocInLibrary, readSkillInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { SkillReadResultV1Schema, type SkillReadInputV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import { resolvePromptDocCreateActionInputV1 } from '@happier-dev/protocol/prompts/library/promptDocV2';
-import { MEMORY_DOCUMENT_ACTION_IDS_V1, MemoryActionInputSchemasV1 } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
 import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { readSkillRulesForItemV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
 import { readSkillUsageCatalogV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOverrideInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
-import { isPluginDevLoopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -146,11 +140,11 @@ import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, ActionExecuteResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PendingResetStartWaitingReasonV1Schema } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
-import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import type { ArtifactPublicLinkIssuedV1, ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { searchDaemonMemory } from '@/sync/domains/memory/searchDaemonMemory';
 import type { MemoryWindowV1, MemoryWindowRequestV1 } from '@happier-dev/protocol/memory/memoryWindow';
 import { clearDaemonMemoryIndex } from '@/sync/domains/memory/clearDaemonMemoryIndex';
@@ -172,6 +166,8 @@ import { classifyWorkspaceFileRpcError } from '@/sync/ops/machineWorkspaceFileRp
 import { randomUUID } from '@/platform/randomUUID';
 import { executeCurrentUiContextAction, executeCurrentUiContextContributedAction, listCurrentUiContextContributedActionDefinitions } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
+import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
+import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { buildMachineAgentInventoryDescriptors } from '@/agents/machineAgents/machineAgentCatalog';
 import {
   readAgentInstallJobRpc,
@@ -181,6 +177,7 @@ import {
   sessionBoardActionUsesLayoutV1,
   projectSessionBoardAdapterFailureV1,
   projectSessionBoardFeatureDecisionFailureV1,
+  type SessionBoardActionIdV1,
   type SessionBoardActionFailureV1,
   type SessionBoardOutcomeUnknownDetailsV1,
 } from '@happier-dev/protocol/sessions/board';
@@ -196,6 +193,8 @@ import {
 } from '@happier-dev/agents/session/state/metadataWriters';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ApiTokenDeploymentAuthoringHost } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
@@ -208,8 +207,11 @@ import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAcc
 import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
 
 import { captureLazyActionAccountContext, captureApprovalSettlementAccount, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
+import { createUiPendingEditAction } from './pendingEdit';
+import { createUiPendingSendNowAction } from './pendingSendNow';
 import { resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
 import { createUiArtifactAction } from './artifactActionDeps';
+import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
 import { createUiProfileActionExecuteV1 } from './profileActionDeps';
 import { createUiMcpServerActionExecuteV1 } from './mcpServerActionDeps';
 import { createUiRemoteHostActionExecuteV1 } from '@/sync/ops/remoteHosts/remoteHostOperations';
@@ -221,9 +223,8 @@ import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { createWidgetCatalogActionDepsV1 } from './widgetCatalogActionDeps';
 import { publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureMountedWorkspaceAction, invokeWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
+import { captureMountedDesktopOverlayPresentation } from '@/components/appShell/workspace/desktopOverlayPresentationRuntime';
 import { invokeWorkflowAuthoringAction } from './workflowAuthoringAction';
-import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
-import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { openSessionAuthoringDraft } from './sessionAuthoringOpenAction';
 import { setSessionSpaceMembership } from '../sessionOrganization/sessionSpaceMembership';
 import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
@@ -233,6 +234,9 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { scmReviewComparisonOfSource, scmReviewViewUnavailableReason } from '@/sync/domains/scm/diffSummary/selection';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { applyWorkspaceFileViewerPreferenceMutationV1 } from '@happier-dev/protocol/account/settings/workspaceFileViewerPreferencesV1';
+import { ScopeActionInputSchemas } from '@happier-dev/protocol/actions/scopeActionFamily';
+import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { isVoiceHistoryActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -267,13 +271,17 @@ import { resolveSettingsHost, settingsHosts } from '@/components/settings/catalo
 import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog';
 import { executeCommandPaletteAction } from '@/components/appShell/commandPalette/commandPaletteActionRuntime';
 import { executeFindAction } from '@/keyboard/findActionRuntime';
-import { executePromptPickerOpenAction } from '@/components/sessions/agentInput/commandMenu/promptPickerActionRuntime';
+import { executePromptPickerOpenAction, executePromptPickerAction } from '@/components/sessions/agentInput/commandMenu/promptPickerActionRuntime';
+import { executePromptHistoryAction } from '@/components/sessions/agentInput/commandMenu/promptHistoryActionRuntime';
+import { executeSessionMessagePinsAction } from './sessionMessagePinsAction';
 import { invokeNextPendingRequest } from '@/activity/source/pendingNavigationRuntime';
 import { executeApiTokenAction, type ApiTokenActionTransport } from './apiTokenActionTransport';
 import { createMachinePoolActionClient, MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
 import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction } from '@/sync/api/machines/managedMachineOrigination';
+import { executeUiManagedProvisionerList, prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
+import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
@@ -284,7 +292,7 @@ import type { RunnerActivationCreateRequestV1 } from '@happier-dev/protocol/ephe
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
-import { writeUiSessionStateField, type UiSessionStateMetadataPreprocess } from '@/sync/state/engine';
+import { writeUiSessionStateField } from '@/sync/state/engine';
 import { admitDeclaredSessionVoicePreferenceV1, readBuiltInSessionVoiceDeclarationV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createUiExecutionRunActionDeps } from './executionRunActionDeps';
@@ -315,7 +323,7 @@ import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTarget
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
-import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerForProviderBindingChange, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -325,6 +333,7 @@ import {
 } from '@/sync/ops/sessionHandoffs';
 import { createWorkspaceSyncRelationshipOnController, observeWorkspaceSyncRelationshipCreationOnController } from '@/sync/ops/workspaceSyncRelationshipCreateRpc';
 import { listWorkspaceSyncRelationshipsOnController } from '@/sync/ops/workspaceSyncRelationshipsListRpc';
+import { createUiWorkspaceSyncReadActionDeps } from './workspaceSyncReadActionDeps';
 import {
   disableWorkspaceSyncRelationship,
   enableWorkspaceSyncRelationship,
@@ -332,11 +341,13 @@ import {
   terminatePersistedWorkspaceSyncRelationship,
 } from '@/sync/ops/workspaceSync';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { createExecutionRunHostApprovalReplay } from './executionRunHostApproval';
+import { createApprovalArtifactAccess } from './approvalReading';
+import { importBrowserProfileLoginsInContext } from './browserProfileLoginsImport';
 import {
   sendSessionMessageWithServerScope,
   projectServerScopedSessionSendMessageResult,
 } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
-import { importBrowserProfileLoginsInContext } from './browserProfileLoginsImport';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createUiSessionSpawnNewDirectoryApprovalPreflight, dispatchSessionSpawnNewWithManagerPreparation } from './sessionSpawnNewAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -369,6 +380,7 @@ import { acquireAdmittedSessionReferenceCorpusOptions } from '@/voice/tools/acti
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { setPrimaryActionSessionId, setTrackedSessionIds } from '@/voice/tools/actionImpl/sessionTargets';
 import { listSessionsForVoiceTool } from '@/voice/tools/actionImpl/sessionList';
+import { createUiSessionRead } from './sessionReadAction';
 import { getSessionActivityForVoiceTool } from '@/voice/tools/actionImpl/sessionActivity';
 import {
   getSessionRecentMessagesForVoiceTool,
@@ -379,6 +391,8 @@ import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
+import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
+import { createUiDeploymentActionDeps } from '@/sync/api/deployments/deploymentActions';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
@@ -412,6 +426,7 @@ import { executeSessionAttentionSetAction, setSessionAttentionStanding } from '@
 import { createSessionManagerAction } from '@/sync/api/session/sessionManagerAction';
 import { createSessionBoardActionAdapter, prepareSessionBoardItemForUi } from '@/sync/api/session/sessionBoardActions';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { readNewWorkFeatureAdmission } from './newWorkFeatureAdmission';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { sync } from '@/sync/sync';
 import { executeListReorderAction } from './listReorderAction';
@@ -421,7 +436,7 @@ import { createHomeDomainActionExecutorForScope } from '@/sync/api/home/homeDoma
 import { createUiPersonalSavedSecretActionExecute } from '@/sync/ops/settings/personalSavedSecretActionHost';
 import { createSessionOrganizationResourceAction, isSessionOrganizationResourceAction } from '@/sync/ops/sessionOrganization/sessionOrganizationAction';
 import { resolveSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
-import { writeApprovalRequestArtifact } from './approvalArtifactWriter';
+import { createApprovalArtifact, writeApprovalRequestArtifact } from './approvalArtifactWriter';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
 import { createUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { admitSessionContextIntentV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -431,7 +446,14 @@ import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollback
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { createUiWorkflowAction } from './workflowActionDeps';
+import { createUiTriggerSessionResolver, createUiWorkflowAction } from './workflowActionDeps';
+import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
+import { getAutomationDefinition } from '@/sync/api/automations/apiAutomations';
+import {
+  WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema,
+  SessionTriggerAddRequestV1Schema, SessionTriggerUpdateRequestV1Schema, SessionTriggerListResultV1Schema,
+} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { createUiOccurrenceAction } from './occurrenceAction';
 import { createUiNotificationActionDeps } from './notificationActionDeps';
 import {
   resolveSessionActionDefaultBackend,
@@ -468,7 +490,6 @@ import {
   enrollAccountPassword,
   fetchAccountSecurity,
   requestAccountSignInEmailChange,
-  setAccountTerminalPresentUserPolicy,
   submitAccountPasswordChange,
   submitAccountPasswordRemove,
 } from '@/sync/api/auth/accountSecurity';
@@ -481,12 +502,13 @@ import {
  * retirement stays a definite refusal.
  */
 export function projectRetiredSessionBoardActionFailure(input: Readonly<{
+  actionId: SessionBoardActionIdV1;
   mutationDispatched: boolean;
   retirementStatus: string;
   recoveryDetails: SessionBoardOutcomeUnknownDetailsV1 | null;
 }>): SessionBoardActionFailureV1 {
   if (!input.mutationDispatched || !input.recoveryDetails) {
-    return projectSessionBoardAdapterFailureV1({ code: input.retirementStatus }, 'forbidden');
+    return projectSessionBoardAdapterFailureV1({ code: input.retirementStatus }, 'forbidden', input.actionId);
   }
   return {
     ok: false,
@@ -522,11 +544,7 @@ function projectSessionInteractionRpcFailure(error: unknown) {
   return { ok: false, errorCode, errorMessage: error instanceof Error ? error.message : errorCode };
 }
 
-export type ApprovalReplayRoute = Readonly<{
-  serverId: string;
-  serverIdentityId: string;
-  originServerId: string;
-}>;
+export { resolveApprovalReplayRoute, type ApprovalReplayRoute } from './approvalReplayRoute';
 
 export function isApprovalExecutionOriginCurrentForAccountContext(input: Readonly<{
   origin: Readonly<{
@@ -555,27 +573,6 @@ export function isApprovalExecutionOriginCurrentForAccountContext(input: Readonl
  * of origin facts this client cannot verify belongs beside the schema that
  * introduces them, not in a hand-maintained consumer-side enumeration.
  */
-export { requiresExactDaemonApprovalReplay };
-
-export function resolveApprovalReplayRoute(approval: Readonly<{
-  v: number;
-  executionOriginV1?: Readonly<{ serverId: string; serverIdentityId?: string }>;
-}> | null): ApprovalReplayRoute | null {
-  if (!approval?.executionOriginV1) return null;
-  const originServerId = approval.executionOriginV1.serverId.trim();
-  const serverIdentityId = approval.executionOriginV1.serverIdentityId?.trim() ?? '';
-  if (!originServerId || !serverIdentityId) return null;
-  const resolution = resolveServerProfileForPortableIdentity(serverIdentityId);
-  if (
-    resolution.kind !== 'resolved'
-    || resolution.profile.serverIdentityId?.trim() !== serverIdentityId
-  ) return null;
-  return {
-    serverId: resolution.profile.id,
-    serverIdentityId,
-    originServerId,
-  };
-}
 
 export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
   artifactId: string;
@@ -656,7 +653,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 }
 
 export type UiSessionTargetPreview = SessionTargetPreviewV1;
-type UiProtocolActionExecutor = Pick<ReturnType<typeof createActionExecutor>, 'prepare' | 'execute' | 'executeAdmittedClientAction' | 'replayApprovedApprovalRequest'> & Readonly<{
+type UiProtocolActionExecutor = Pick<ReturnType<typeof createActionExecutor>, 'prepare' | 'execute' | 'replayApprovedApprovalRequest' | 'executeAdmittedClientAction'> & Readonly<{
   executeConfirmed: ReturnType<typeof createActionExecutor>['execute'];
   /** Read-only selector preparation; creates neither an effect nor an approval. */
   previewSessionTargets: (target: SessionTargetSelectorV1, context?: ActionExecutorContext) => Promise<UiSessionTargetPreview>;
@@ -699,10 +696,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   voiceModelPackPresentation?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['voiceModelPackPresentation'];
   /** Captured profile candidate; Settings admission remains in the shared executor. */
   publicProfileAtmosphereDraft?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['publicProfileAtmosphereDraft'];
+  /** One mounted Project intent; the Settings owner applies it to the fresh row after admission. */
+  projectAtmosphereEdit?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['projectAtmosphereEdit'];
   /** Fresh invocation's exact Session admission objects; never serialized or shared by cached executors. */
   archiveInvocation?: SessionArchiveInvocation;
   /** Private presentation leaf for this invocation; never enters Action custody. */
   openRoute?: (route: string) => void | Promise<void>;
+  /** Mounted template editor presentation; Action admission remains executor-owned. */
+  openBotTemplate?: (input: import('@happier-dev/protocol/bots/templates/botTemplateActionsV1').BotTemplateOpenInputV1) => void | Promise<void>;
+  /** Parsed link release retained by this mounted recipient invocation. */
   /** Mounted output host presentation; admission and operation lookup remain Action-owned. */
   actionOperationOpenOutput?: (address: Readonly<{ serverId: string; machineId: string; operationId: string; operation: ActionOperationSnapshotV1 }>) => void | Promise<void>;
   /** Surface-local custody notification, fired only by the admitted Provider RPC transport. */
@@ -724,11 +726,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Native/process task transport for local client Actions; admission stays with this executor. */
   homeRuntimeRunner?: SystemTaskRunner;
   /** Mounted presentation only; the existing blocking executor retains input and decision custody. */
-  onBlockingApprovalPending?: (input: Readonly<{ artifactId: string; signal?: AbortSignal }>) => void;
+  onBlockingApprovalPending?: (input: Readonly<{ artifactId: string; scope: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
+    signal?: AbortSignal }>) => void;
   /** Exact mounted invocation whose intent must remain live through shared approval. */
   hostActionApprovalLifetime?: Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'ui' }>;
   /** Exact mounted view command target; policy and raw terminal remain canonical. */
   scopeActionOwner?: import('./scopeActionFamily').MountedScopeActionOwner;
+  /** Original mounted Pending editor; retained with this executor, never serialized for approval replay. */
+  pendingMessageEditIsCurrent?: () => boolean;
+  /** Exact local follow intent retained by this factory across blocking approval. */
+  isExternalSessionFollowIntentCurrent?: () => boolean;
   listContributedActionDefinitions?: NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>;
   readContributedActionSchemas?: NonNullable<ActionExecutorDeps['readContributedActionSchemas']>;
   /** Optional surface-local policy composed with the canonical Action settings policy. */
@@ -762,8 +769,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   discussionAttachmentSources?: readonly import('@/sync/domains/attachments/prepareAttachmentPayloads').PreparedAttachmentSource[];
   /** Selected-Machine hook delivery; Action admission and approval stay in this executor. */
   pluginSessionHookManagementAction?: NonNullable<ActionExecutorDeps['pluginSessionHookManagementAction']>;
-  /** Trusted per-invocation precondition, evaluated on the metadata CAS candidate. */
-  sessionStateMetadataPreprocess?: UiSessionStateMetadataPreprocess;
   /** Mounted host resolver carrying an explicitly complete selected-Home corpus. */
   resolveSessionReference?: NonNullable<ActionExecutorDeps['resolveSessionReference']>;
   /** Current external Agent declaration supplied by a rendered lifecycle control. */
@@ -793,7 +798,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Original mounted Account administration intent retained by the incumbent approval waiter. */
   pluginAccountAdministrationIsCurrent?: () => boolean;
   /** Trusted raw projection already owned by the mounted administration surface. */
-  pluginAccountAdministrationProjection?: () => import('@happier-dev/protocol').PluginProjectionV2 | null;
+  pluginAccountAdministrationProjection?: () => import('@happier-dev/protocol/daemon/contributionRegistryProjection').PluginProjectionV2 | null;
   /** Exact mounted byte source; the captured library Account remains the write authority. */
   foundSkillSource?: Readonly<{
     target: import('@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1').MachineAdministrationTargetV1;
@@ -806,14 +811,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   machineGuardAction?: NonNullable<ActionExecutorDeps['machineGuardAction']>;
   machineProcessesAction?: NonNullable<ActionExecutorDeps['machineProcessesAction']>;
   machineServiceAction?: NonNullable<ActionExecutorDeps['machineServiceAction']>;
-  machineReboot?: NonNullable<ActionExecutorDeps['machineReboot']>;
+  machineServiceControl?: NonNullable<ActionExecutorDeps['machineServiceControl']>;
+  machineServiceLogsRead?: NonNullable<ActionExecutorDeps['machineServiceLogsRead']>;
   machineResourcesPolicyAction?: NonNullable<ActionExecutorDeps['machineResourcesPolicyAction']>;
+  machineAdminAccessAction?: NonNullable<ActionExecutorDeps['machineAdminAccessAction']>;
+  machineAgentIsolationAction?: NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>;
+  machineReboot?: NonNullable<ActionExecutorDeps['machineReboot']>;
   usageSourceDismiss?: Parameters<typeof createUiUsageSourceActionPort>[1];
   /** A mounted recap preview may provide the same client rasterization boundary. */
   usageRecapRender?: Parameters<typeof createUiUsageActionPorts>[1];
   projectWorkerAction?: NonNullable<ActionExecutorDeps['projectWorkerAction']>;
   /** Local keyholding-host delivery; never enters Action input, approval or result. */
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
+  consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
+  onArtifactSignedInLinkOpened?: (opened: ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
   /** Optional Session human-discussion family port bound by a mounted surface. */
   discussionAction?: NonNullable<ActionExecutorDeps['discussionAction']>;
   /** Exact mounted canvas for local pane interactions; external callers use the focused publication. */
@@ -832,15 +843,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Host-page defaults remain outside Action input and personal persisted copies. */
   resolveWidgetAreaPresets?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
   widgetAreaIsCurrent?: () => boolean;
-    /** Mounted template editor presentation; Action admission remains executor-owned. */
-  openBotTemplate?: (input: import('@happier-dev/protocol/bots/templates/botTemplateActionsV1').BotTemplateOpenInputV1) => void | Promise<void>;
-  /** Parsed link release retained by this mounted recipient invocation. */
-  resolveBotTemplateInstantiationRelease?: import('@happier-dev/protocol/bots/templates/botTemplateOperations').BotTemplateOperationPortV1['resolveInstantiationRelease'];
-  prepareBotTemplateRequesterAdmission?: NonNullable<import('@happier-dev/protocol/bots/templates/botTemplateOperations').BotTemplateOperationPortV1['recipient']>['prepareRequesterAdmission'];
-  prepareBotTemplateUpdateRequesterAdmission?: NonNullable<import('@happier-dev/protocol/bots/templates/botTemplateOperations').BotTemplateOperationPortV1['recipient']>['prepareUpdateRequesterAdmission'];
-  templateRequesterAdmissionScope?: ReturnType<typeof createTemplateRequesterActionAdmissionScope>;
-}>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
-    executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext,
+  }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
+    executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow?: boolean,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>): Promise<ActionExecuteResult>;
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
     readWidgetInputDescriptor(request: Parameters<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>[0]): ReturnType<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>;
@@ -922,46 +926,85 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       authority: args.context.authority, signal: args.context.signal });
     return result.ok ? result.result : result;
   });
-  const isMachineOwnedPluginAction = (actionId: string, input: unknown) => {
-    const pluginActionId = actionId === 'approval.request.create' && input !== null && typeof input === 'object'
+  const isMachineOwnedAdmissionAction = (actionId: string, input: unknown) => {
+    if (isWorkspaceSyncRelationshipWriteActionId(actionId)) return true;
+    const admittedActionId = actionId === 'approval.request.create' && input !== null && typeof input === 'object'
       && 'actionId' in input && typeof input.actionId === 'string' ? input.actionId : actionId;
-    return isPluginDevLoopActionIdV1(pluginActionId) && getActionSpec(pluginActionId).executionPlacement === 'machine';
+    const parsed = ActionIdSchema.safeParse(admittedActionId);
+    if (!parsed.success) return false;
+    if (parsed.data === 'session.spawn_new') {
+      const spawn = SessionSpawnNewActionInputV2Schema.safeParse(input);
+      if (spawn.success && spawn.data.machineSetupPlanInput) return true;
+    }
+    const spec = getActionSpec(parsed.data);
+    return spec.executionPlacement === 'machine' && spec.originalExecution?.daemonIngressSurfaces?.includes('ui') === true;
   };
-  const executeMachineOwnedPluginAction = async (args: Readonly<{
-    actionId: string; input: unknown; context: ActionExecutorContext;
+  const executeMachineOwnedAction = async (args: Readonly<{
+    actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean;
   }>) => {
     // Mounted surfaces supply this target through the admitted controller, not
     // Action input, presence ranking, or the UI's default Machine selection.
     const pluginInput = args.actionId === 'approval.request.create' && args.input !== null && typeof args.input === 'object'
       && 'actionArgs' in args.input ? args.input.actionArgs : args.input;
-    const machineOwnedPluginAction = isMachineOwnedPluginAction(args.actionId, args.input);
-    const requestedMachineId = pluginInput !== null && typeof pluginInput === 'object'
+    const machineOwnedAction = isMachineOwnedAdmissionAction(args.actionId, args.input);
+    const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(args.actionId);
+    let workspaceSourceMachineId: string | undefined;
+    if (relationshipWrite) {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const input = WorkspaceSyncRelationshipWriteActionInputV1Schema.parse(pluginInput);
+      const rows = await createUiProjectAccountRowsClient(accountContext).read(args.context.signal);
+      const source = rows.status === 'ready' && rows.coverage === 'complete'
+        ? resolveWorkspaceRefById(rows.workspaceRefs, input.sourceWorkspaceRefId, accountContext.serverIdentityId ?? accountContext.serverId)
+        : null;
+      if (source?.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
+      workspaceSourceMachineId = source.ref.machineId;
+      const target = args.context.externalActionTarget;
+      if (target && (target.kind !== 'machine' || target.machineId !== workspaceSourceMachineId)) {
+        return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
+      }
+    }
+    const originalSpec = ActionIdSchema.safeParse(args.actionId);
+    const demand = originalSpec.success ? getActionSpec(originalSpec.data).machineRuntimeDemandForInput?.(pluginInput, args.context) : null;
+    const requestedMachineId = workspaceSourceMachineId ?? (demand?.target.kind === 'machine' ? demand.target.machineId : pluginInput !== null && typeof pluginInput === 'object'
       && 'machineId' in pluginInput && typeof pluginInput.machineId === 'string'
-      ? pluginInput.machineId : undefined;
+      ? pluginInput.machineId : undefined);
     const mountedMachineId = args.context.executionRunTargetMachineId
-      ?? (args.context.surface !== 'plugin' ? args.context.defaultSessionMachineId : undefined);
+      ?? (!relationshipWrite && args.context.surface !== 'plugin' ? args.context.defaultSessionMachineId : undefined);
     if (requestedMachineId && mountedMachineId && requestedMachineId !== mountedMachineId) {
       return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
     }
     const machineId = requestedMachineId ?? mountedMachineId;
     if (!accountContext || !machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    const addressedContext = { ...args.context, externalActionTarget: args.context.externalActionTarget ?? { kind: 'machine' as const, machineId } };
+    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), args.input, addressedContext) : addressedContext;
+    const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
+    const reviewedParent = readHostReviewedParentV1(context);
     // Delegate admission with the original host origin. The receiving daemon
     // owns the retained candidate, Action policy and sole approval Artifact.
     // Mounted plugins have their own sealed pluginInvocation provenance. Do
     // not reinterpret that surface as a host Agent/CLI requester invocation.
-    const invocation = machineOwnedPluginAction && args.context.surface !== 'ui' && args.context.surface !== 'plugin'
+    const invocation = machineOwnedAction && context.surface !== 'plugin' && (relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent)
       ? ExternalActionRequesterInvocationV1Schema.safeParse({
-          caller: args.context.actionCaller ?? { kind: 'host' }, surface: args.context.surface, authority: args.context.authority,
-          callerPermissionMode: args.context.callerPermissionMode, callerInputConstraints: args.context.callerInputConstraints,
-          workspaceWrites: args.context.workspaceWrites, defaultSessionId: args.context.defaultSessionId,
+          caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface, authority: context.authority,
+          callerPermissionMode: context.callerPermissionMode, callerInputConstraints: context.callerInputConstraints,
+          workspaceWrites: context.workspaceWrites,
+          ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
+          ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
+          ...(reviewedParent ? { reviewedParent } : {}),
         }) : null;
     if (invocation && !invocation.success) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     const execution = await executeOriginalAccountMachineAction({ account: accountContext,
       actionId: args.actionId, input: args.input, machineId,
-      requestId: args.context.actionRequestId ?? randomUUID(),
-      actionCaller: args.context.actionCaller,
+      requestId: context.actionRequestId ?? randomUUID(),
+      actionCaller: context.actionCaller,
+      machineTarget: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined,
       ...(invocation?.success ? { invocation: invocation.data } : {}),
-      authority: args.context.authority, signal: args.context.signal });
+      ...(context.invocationServices?.managedContinuation ? { managedContinuation: context.invocationServices.managedContinuation } : {}),
+      ...(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource
+        ? { machineServiceLogsGeneration: { expectedGeneration: args.context.machineServiceLogsResource.expectedGeneration } }
+        : {}),
+      authority: context.authority, signal: context.signal,
+      ...(context.onTransportIssued ? { onTransportIssued: context.onTransportIssued } : {}) });
     return execution.ok ? execution.result : execution;
   };
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
@@ -1009,6 +1052,26 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const readAccountSettingsSnapshot = () => accountContext
     ? (accountContext.readLiveSettings() ?? accountContext.settings)
     : storage.getState().settings;
+  const deploymentActionDeps = accountContext ? createUiDeploymentActionDeps(accountContext) : null;
+  const prepareApiTokenAuthoringHost = async (deployment: AccountApiTokenDeploymentInputV1 | null | undefined,
+    grantDeployApproval: 'automatic' | undefined, context: ActionExecutorContext): Promise<ApiTokenDeploymentAuthoringHost> => {
+    if (deployment && accountContext && !areServerProfileIdentifiersEquivalent(deployment.serverId, accountContext.serverId)) {
+      throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+    }
+    let initialDeployApproval: 'automatic' | 'ask' | undefined;
+    if (deployment && deployment.deployApproval === undefined && grantDeployApproval === undefined) {
+      if (!deploymentActionDeps?.deploymentAction) throw Object.assign(new Error('client_required'), { code: 'client_required' });
+      const { resolveInitialDeploymentApprovalV1 } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
+      const initial = await resolveInitialDeploymentApprovalV1({ serverId: deployment.serverId, environmentId: deployment.environmentId,
+        context, read: deploymentActionDeps.deploymentAction });
+      if (!initial.ok) throw Object.assign(new Error(initial.errorCode), { code: initial.errorCode });
+      initialDeployApproval = initial.mode;
+    }
+    return { ...(initialDeployApproval ? { initialDeployApproval } : {}), ...(accountContext ? { nativeAccount: {
+      accountId: accountContext.accountId, serverId: accountContext.serverId,
+      isCurrent: async () => accountContext.credentialAuthorityKind === 'account' && accountContext.accountLifetime.isCurrent(),
+    } } : {}) };
+  };
   const resolveActionsSettingsSnapshot = () => resolveActionsSettingsV1FromState({ settings: readAccountSettingsSnapshot() });
   const executeReviewCommentAction = createReviewCommentsHttpActionExecutor(accountContext ? {
     request: accountContext.request,
@@ -1025,10 +1088,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const approvalCoordinator = getSharedBlockingApprovalCoordinator();
   const capturedFamilyPorts = accountContext ? createCapturedScopeFamilyPorts(accountContext, opts?.discussionAttachmentSources) : null;
   const machineAccessAction = opts?.machineAccessAction ?? capturedFamilyPorts?.machineAccessAction;
+  const workflowAction = opts?.workflowAction ?? (accountContext ? createUiWorkflowAction({ account: accountContext }) : undefined);
+  const projectSourceTeamMove = accountContext && deploymentActionDeps?.deploymentAction && machineAccessAction && workflowAction
+    ? createProjectSourceTeamMoveDeps(accountContext, { deploymentAction: deploymentActionDeps.deploymentAction, machineAccessAction, workflowAction })
+    : null;
   const settingsHost = resolveSettingsHost();
   const accountRoleAction = accountContext ? createAccountRoleActionExecutorV1({
     accountId: accountContext.accountId,
     readRawAccountSettings: accountContext.readRawSettings,
+    mutateRawAccountSettings: async (mutate, signal) => { await accountContext.mutateRawSettings(mutate, { signal }); },
     mutateAccountRoleOverrides: (mutation, context) => mutatePromptLibraryRoleOverrideInContext(accountContext, mutation, context.signal),
     generateId: randomUUID,
     artifactStore: createRoleArtifactStoreV1(accountContext.workflowArtifacts),
@@ -1036,18 +1104,31 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   }) : null;
 
   const connectedServiceAction = accountContext ? createUiConnectedServiceAction(accountContext) : undefined;
-  const updateApprovalArtifact = async ({ artifactId, request, context }: Readonly<{
+  const approvalArtifacts = createApprovalArtifactAccess({
+    read: artifactId => accountContext ? accountContext.fetchArtifact(artifactId, { fresh: true })
+      : sync.fetchArtifactWithBody(artifactId, { fresh: true }),
+    // Scoped executors live for one invocation, unlike the shared fallback.
+    reuseWriteBasis: Boolean(accountContext),
+    ...(!accountContext ? {
+      local: (artifactId: string) => storage.getState().artifacts[artifactId] ?? null,
+      publish: (artifact: Parameters<ReturnType<typeof storage.getState>['updateArtifact']>[0]) => storage.getState().updateArtifact(artifact),
+    } : {}),
+  });
+  const updateApprovalArtifact = async ({ artifactId, request, context, expectedStatus }: Readonly<{
     artifactId: string; request: ApprovalRequest | TargetActionApprovalRequestV1; context?: ActionExecutorContext;
+    expectedStatus?: ApprovalRequest['status'];
   }>) => {
     // Only the known Home-open ACK and a decided terminal outcome may outlive their
     // invoking presentation/intent; target decisions keep their captured Account lifetime.
     const settlement = accountContext && request.v === 2
       ? await captureApprovalSettlementAccount(accountContext, request) : null;
     const artifactAccount = settlement ?? accountContext;
+    const basis = approvalArtifacts.takeWriteBasis(artifactId);
+    const acquired = artifactAccount === accountContext ? basis : null;
     try {
       const written = await writeApprovalRequestArtifact({
-        artifactId, request,
-        read: async id => await (artifactAccount ? artifactAccount.fetchArtifact(id, { fresh: true }) : sync.fetchArtifactWithBody(id, { fresh: true })),
+        artifactId, request, expectedStatus,
+        read: async id => acquired ?? await (artifactAccount ? artifactAccount.fetchArtifact(id, { fresh: true }) : sync.fetchArtifactWithBody(id, { fresh: true })),
         write: async (basis, header, body) => {
           if (artifactAccount) {
             await artifactAccount.updateArtifact(artifactId, header, body, basis);
@@ -1080,12 +1161,72 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         machineId: call.machineId, method: call.method, payload: call.input,
         signal: context.signal, operationTimeoutMs: null }), context.signal),
     prepareHostReviewedChildren: async request => {
+      const refusal = await prepareUiManagedProvisionerAdmission(request, accountContext);
+      if (refusal) return refusal;
       const wake = await prepareUiManagedMachineWake(request, accountContext);
       if (wake) return wake;
-      return null;
+      return await projectSourceTeamMove?.prepareHostReviewedChildren?.(request) ?? null;
     },
     buildApprovalPreview: async ({ actionId, input, context, defaultPreview }) => {
-      if (actionId !== 'session.spawn_new' || !accountContext || !machineAccessAction) return defaultPreview;
+      if (actionId === 'projects.sources.moveToTeam' && projectSourceTeamMove)
+        return projectSourceTeamMove.buildApprovalPreview(input, context, defaultPreview);
+      if (!accountContext || !machineAccessAction) return defaultPreview;
+      if (actionId !== 'session.spawn_new') {
+        try {
+          let machineIds: string[] = [];
+          if (actionId === 'workflow.run.start') {
+            if (context.externalActionTarget?.kind === 'machine') machineIds = [context.externalActionTarget.machineId];
+          } else if (actionId === 'workflow.trigger.add') {
+            const selected = WorkflowTriggerAddRequestV1Schema.safeParse(input);
+            if (selected.success && selected.data.project) machineIds = [selected.data.project.machineId];
+          } else if (actionId === 'workflow.trigger.update') {
+            const selected = WorkflowTriggerUpdateRequestV1Schema.safeParse(input);
+            if (selected.success) {
+              if (selected.data.patch.project) machineIds = [selected.data.patch.project.machineId];
+              else {
+                const row = await withAccountLifetime(context.signal, signal => getAutomationDefinition(accountContext.credentials,
+                  selected.data.automationId, { ...accountContext, invocationSignal: signal }));
+                machineIds = row.assignments.filter(assignment => assignment.enabled).map(assignment => assignment.machineId);
+              }
+            }
+          } else if (actionId === 'session.trigger.add') {
+            const selected = SessionTriggerAddRequestV1Schema.safeParse(input);
+            if (selected.success) machineIds = [(selected.data.project
+              ?? (await createUiTriggerSessionResolver(accountContext)(selected.data.sessionId, { signal: context.signal })).project).machineId];
+          } else if (actionId === 'session.trigger.update') {
+            const selected = SessionTriggerUpdateRequestV1Schema.safeParse(input);
+            if (selected.success) {
+              if (selected.data.patch.project) machineIds = [selected.data.patch.project.machineId];
+              else if (workflowAction) {
+                const listed = await workflowAction({ actionId: 'session.trigger.list', input: { sessionId: selected.data.sessionId }, context });
+                const failure = ActionExecuteFailureSchema.safeParse(listed);
+                if (failure.success) return failure.data;
+                const set = SessionTriggerListResultV1Schema.parse(listed).sets
+                  .find(set => set.triggers.some(trigger => trigger.id === selected.data.triggerId));
+                machineIds = set?.project ? [set.project.machineId] : (set?.placements ?? []).map(placement => placement.machineId);
+              }
+            }
+          } else return defaultPreview;
+          accountContext.assertCurrent();
+          const disclosures = [];
+          for (const machineId of new Set(machineIds)) {
+            const access = await machineAccessAction({ actionId: 'machines.access.grants.list',
+              input: { serverId: accountContext.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) });
+            accountContext.assertCurrent();
+            const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId, access });
+            if (disposition.kind === 'requester') disclosures.push(disposition.disclosure);
+          }
+          const disclosure = disclosures[0];
+          if (!disclosure) return defaultPreview;
+          return { ...defaultPreview, requesterCredentialDisclosure: disclosure, summary: [defaultPreview.summary,
+            ...disclosures.flatMap(disclosure => [
+              t('machineRequester.fullSignIn', { machine: disclosure.machineId, retention: actionId === 'workflow.run.start' ? 'run' : 'trigger' }),
+              t('machineRequester.osVisibility', { owner: disclosure.custodian.displayName || disclosure.custodian.accountId,
+                machine: disclosure.machineId }),
+            ]),
+          ].join('\n\n') };
+        } catch (error) { return normalizeWorkflowActionThrownError(error, undefined, true); }
+      }
       const parsed = SessionSpawnNewActionInputV2Schema.safeParse(input);
       if (!parsed.success || !areServerProfileIdentifiersEquivalent(parsed.data.executionTarget.serverId, accountContext.serverId)) return defaultPreview;
       const machineId = parsed.data.executionTarget.machineId;
@@ -1178,16 +1319,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(accountContext && promptLibraryStore ? { memoryLibrary: {
       serverId: accountContext.serverId, store: promptLibraryStore, randomId: randomUUID,
       isSameServerId: serverId => areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId),
-      readExposure: async (artifactId, context) => {
-        accountContext.assertCurrent();
-        if (!deps.artifactAccessAction || !deps.artifactAction) throw Object.assign(new Error('memory_exposure_unavailable'), { code: 'memory_exposure_unavailable' });
-        const grants = ArtifactAccessGrantsListResponseV1Schema.parse(await deps.artifactAccessAction({
-          actionId: 'artifact.access.grants.list', input: { artifactId }, context, signal: context.signal }));
-        const publicShares = grants.access === 'owner' ? StoredContentPublicSharesListResponseV1Schema.parse(await deps.artifactAction({
-          actionId: 'artifact.public_link.list', input: { artifactId }, context, signal: context.signal })) : null;
-        accountContext.assertCurrent();
-        return { grants, publicShares };
-      },
+      readExposure: (artifactId, context) => accountContext.readArtifactExposure(artifactId, context.signal),
       readSession: (ref, context) => readUiOwnedSessionForAction(accountContext, ref, context),
       readInheritedContext: (snapshot, context) => readUiMemoryInheritedContext(accountContext, snapshot, context),
       readScopeContext: (target, context) => readUiMemoryScopeContext(accountContext, target, context),
@@ -1279,6 +1411,26 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     scopeAction: async ({ actionId, input, context }) => {
       throwIfAborted(context.signal);
       accountContext?.assertCurrent();
+      if (actionId === 'file.view.preference.set') {
+        if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+        const requested = ScopeActionInputSchemas[actionId].parse(input);
+        const result = await accountContext.mutateRawSettings(raw => ({
+          ...applyWorkspaceFileViewerPreferenceMutationV1(raw, requested.mutation),
+        }), { signal: context.signal, observeOutcome: true,
+          ...(requested.expectedSettingsVersion === undefined ? {} : {
+            expectedSettingsVersion: requested.expectedSettingsVersion, rebaseOnConflict: false,
+          }),
+        });
+        try {
+          const applied = requireOneShotAccountSettingsMutationApplied(result);
+          return { status: 'applied', settingsVersion: applied.settingsVersion };
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
+            return { ok: false, errorCode: error.code, error: error.message };
+          }
+          throw error;
+        }
+      }
       return await invokeScopeAction(actionId, input, context, opts?.scopeActionOwner);
     },
     diagnosticsAction: async ({ actionId, context }) => {
@@ -1345,7 +1497,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       accountContext?.assertCurrent();
       return copied ? { status: 'copied' } : { ok: false, errorCode: 'clipboard_unavailable', error: 'clipboard_unavailable' };
     },
-    hostExternalSessionAction: executeExternalSessionBrowseAction,
+    hostExternalSessionAction: args => executeExternalSessionBrowseAction(args, opts?.isExternalSessionFollowIntentCurrent),
     settingsDeclarationAction: createSettingsDeclarationAction({
       serverId: accountContext?.serverId,
       host: settingsHost,
@@ -1369,6 +1521,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         ...(accountContext && opts?.voiceModelPackPresentation ? { voiceModelPackPresentation: opts.voiceModelPackPresentation } : {}),
         ...(accountContext ? createAtmosphereSettingServices(accountContext) : {}),
         ...(accountContext && opts?.publicProfileAtmosphereDraft ? { publicProfileAtmosphereDraft: opts.publicProfileAtmosphereDraft } : {}),
+        ...(accountContext && opts?.projectAtmosphereEdit ? { projectAtmosphereEdit: opts.projectAtmosphereEdit } : {}),
         ...(accountContext ? { readConnectedAccountPurposes: async (signal?: AbortSignal) => {
           const { readAdmittedConnectedAccountCatalogInContext } = await import('@/sync/api/account/apiConnectedAccountCatalog');
           const snapshot = await readAdmittedConnectedAccountCatalogInContext(accountContext, 'purposes', signal);
@@ -1434,7 +1587,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
                   : result ? { status: 'completed', value: result } : { status: 'cancelled' };
               }, 'danger');
             } catch (error) {
-              return { status: 'unavailable', reason: error instanceof HappyError ? error.code ?? 'encryption_conversion_unavailable' : 'encryption_conversion_unavailable',
+              return { status: 'unavailable', reason: error instanceof HappyError ? error.code ?? 'encryption_conversion_unavailable'
+                : isAccountModeDowngradeUnverifiedError(error) ? ACCOUNT_MODE_DOWNGRADE_UNVERIFIED : 'encryption_conversion_unavailable',
                 // Only a HappyError message is user-facing; other failures keep the generic copy.
                 value: { ...(error instanceof HappyError ? { message: error.message } : {}),
                   ...(error instanceof AccountEncryptionModeChangedError ? { mode: error.mode } : {}),
@@ -1520,26 +1674,26 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         runtimeAccountId: accountContext.accountId } } : {}) });
     } } : {}),
     ...(accountContext ? createUiNotificationActionDeps({ account: accountContext }) : {}),
-    pluginsDevLoopAction: executeMachineOwnedPluginAction,
+    pluginsDevLoopAction: executeMachineOwnedAction,
     ...(opts?.pluginSessionHookManagementAction ? { pluginSessionHookManagementAction: opts.pluginSessionHookManagementAction } : {}),
     ...(accountContext ? { npmRegistryProfileAction: createUiNpmRegistryProfileAction(accountContext, opts?.npmRegistryProfileDelivery) } : {}),
     ...(accountContext ? createPluginAccountAdministrationActionDeps(accountContext, opts?.pluginAccountAdministrationIsCurrent,
       opts?.pluginAccountAdministrationProjection) : {}),
     ...(accountContext ? createPluginExecutionOriginActionDeps(accountContext) : {}),
     ...(accountContext ? { pluginSettingsAdministrationAction: createUiPluginSettingsAdministrationAction(accountContext) } : {}),
+    ...(accountContext ? { automationOccurrenceAction: createUiOccurrenceAction(accountContext) } : {}),
     automationConversationAction: async (args) => args.context
-      ? await executeMachineOwnedPluginAction({ actionId: args.actionId, input: args.input, context: args.context })
+      ? await executeMachineOwnedAction({ actionId: args.actionId, input: args.input, context: args.context })
       : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' },
-    ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued: opts?.onPublicLinkIssued }) } : {}),
+    ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued: opts?.onPublicLinkIssued,
+      consumeArtifactSignedInLinkSecret: opts?.consumeArtifactSignedInLinkSecret,
+      onArtifactSignedInLinkOpened: opts?.onArtifactSignedInLinkOpened }) } : {}),
     ...(accountContext ? (() => {
       const botTemplateAction = createUiBotTemplateAction(accountContext, opts?.openBotTemplate ?? (async input => {
         const { router } = await import('expo-router');
         const { buildBotTemplateEditorRoute } = await import('@/components/sessions/bots/templates/botTemplateEditorDestination');
         router.push(buildBotTemplateEditorRoute(input));
-      }), promptLibraryStore?.organization, () => deps, { onPublicLinkIssued: opts?.onPublicLinkIssued,
-        resolveInstantiationRelease: opts?.resolveBotTemplateInstantiationRelease,
-        prepareRequesterAdmission: opts?.prepareBotTemplateRequesterAdmission,
-        prepareUpdateRequesterAdmission: opts?.prepareBotTemplateUpdateRequesterAdmission });
+      }), promptLibraryStore?.organization, () => deps, { onPublicLinkIssued: opts?.onPublicLinkIssued });
       return { botTemplateAction, prepareBotTemplateInstantiation: request => botTemplateAction.prepareInstantiation(request),
         prepareBotTemplateUpdate: request => botTemplateAction.prepareUpdate(request),
         prepareBotTemplateRelease: request => botTemplateAction.prepareRelease(request) } satisfies
@@ -1559,12 +1713,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(accountContext ? { artifactAccessAction: createArtifactAccessActionsV1({
       read: (artifactId, options) => accountContext.readArtifactPublicLinkResource(artifactId, options?.signal),
       transport: accountContext.artifactAccessGrants,
+      prepareSharing: (resource, signal) => prepareWidgetAreaSharingV1(accountContext, resource, signal),
     }) } : {}),
-    ...(opts?.workflowAction
-      ? { workflowAction: opts.workflowAction }
-      : accountContext
-        ? { workflowAction: createUiWorkflowAction({ account: accountContext }) }
-        : {}),
+    ...(workflowAction ? { workflowAction } : {}),
     ...(accountContext ? {
       readAdmittedInputTypeOptions: async ({ input, context }) => {
         const { consumer } = getActionSpec('action.options.resolve').inputSchema.parse(input) as PublicActionInputById['action.options.resolve'];
@@ -1620,6 +1771,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         // The acquisition hydrated the admitted rows; resolve on the store after it.
       }, options ? { state: storage.getState(), options } : null);
     }),
+    prepareApprovalExecutionOriginContext: async ({ targetSessionId }) => ({
+      ...(accountContext?.serverIdentityId ? { serverIdentityId: accountContext.serverIdentityId } : {}),
+      ...(targetSessionId ? { defaultSessionMachineId: resolveSessionMachineId(targetSessionId, accountContext?.serverId) } : {}),
+    }),
     isApprovalExecutionOriginCurrent: async ({ origin, request, signal, reportStale }) => {
       const stale = (reason: ApprovalStaleReason) => { reportStale?.(reason); return false; };
       if (!accountContext) return stale('account_unavailable');
@@ -1630,7 +1785,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountId: accountContext.accountId,
         reportStale,
       })) return false;
-      if (isMountedPluginBlockingApprovalEligibleForLiveClient(request) && origin.caller.kind === 'plugin' && origin.machineId) {
+      const executor = resolveApprovalExecutor(request);
+      if (executor.kind === 'live_invocation' && origin.caller.kind === 'plugin' && origin.machineId) {
         // Reuse the exact daemon's current source producer. A retained app
         // invocation keeps its operands locally; its plugin never becomes host.
         const current = await machinePluginUiTargetedContributionsRead(origin.machineId, {
@@ -1646,13 +1802,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // app-owned Account proposal, verify against the fresh Home installation
       // identity before the Artifact claim and again immediately before effect.
       const authorization = origin.externalActionExecutionAuthorization;
-      if (!authorization || requiresExactDaemonApprovalReplay(request)) return true;
+      if (!authorization || executor.kind !== 'app') return true;
       if (request.v !== 2 || !origin.machineId || !origin.target || !origin.externalActionInputSignature
         || origin.actionId !== request.actionId
         // Public creation authenticates proposal authoring. Its installed producer
         // signs the reviewed target/input below; the carrier never authorizes the effect.
         || (authorization.binding.actionId !== request.actionId && authorization.binding.actionId !== 'approval.request.create')
-        || origin.caller.kind !== 'session' || request.createdBy.sessionId !== origin.caller.sessionId) return stale('credential_changed');
+        || (origin.caller.kind === 'session' ? request.createdBy.sessionId !== origin.caller.sessionId
+          : origin.caller.kind !== 'host')) return stale('credential_changed');
       const source = await readOriginalAccountActionMachine(accountContext, origin.machineId, signal);
       accountContext.assertCurrent();
       return Boolean(source && source.revokedAt === null && source.replacedByMachineId === null
@@ -1793,6 +1950,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (executed.status === 'ok') return executed.value;
       // Retirement discards Account-owned result content, but cannot undo a sent write.
       return projectRetiredSessionBoardActionFailure({
+        actionId: args.actionId,
         mutationDispatched,
         retirementStatus: executed.status,
         recoveryDetails,
@@ -1809,6 +1967,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           !isActionEnabledByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
             surface: ctx.surface ?? null,
             placement: ctx.placement ?? null,
+            callerSurface: ctx.callerSurface,
           })
         ) {
           return false;
@@ -1823,17 +1982,33 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
         return isSessionModeActionAvailable(session);
       },
-    isActionApprovalRequired: (actionId, ctx, input, defaultUiConfirmation?: boolean) => {
+    readActionApprovalProfileId: async context => {
+      const caller = context.actionCaller;
+      if (caller?.kind !== 'session') return undefined;
+      if (!accountContext) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      // An unreadable caller Session leaves its profile selection unknown: refuse admission, typed.
+      const session = await runWithServerRequestAuthorityForServerAccountScope({
+        scope: accountContext.accountLifetime.scope, activeRequest: accountContext.request,
+      }, authority => readSessionSnapshotForAuthority({ authority, sessionId: caller.sessionId,
+        includeTurns: false, signal: context.signal, isCurrent: accountContext.accountLifetime.isCurrent }))
+        .then(read => read.session, error => { if (error instanceof SessionSnapshotReadError) return null; throw error; });
+      const metadata = session ? readSessionOwnerMetadataView(session) : null;
+      if (!metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      return readSessionStateFieldFromMetadata(metadata, 'intent.approvalProfileId') ?? null;
+    },
+    isActionApprovalRequired: (actionId, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) => {
       const operationSettings = actionId === 'settings.invoke' ? accountContext?.readLiveSettings() : null;
       const anchor = input && typeof input === 'object' && 'anchor' in input && typeof input.anchor === 'string' ? input.anchor : '';
-      const operationPolicy = operationSettings ? resolveSettingsDeclarationOperationApprovalPolicy(anchor, operationSettings) : undefined;
+      const operationPolicy = operationSettings ? resolveSettingsDeclarationOperationApprovalPolicy(anchor, operationSettings, input) : undefined;
       const operationSafety = actionId === 'settings.invoke' ? operationPolicy?.requiresApproval === false ? 'safe' : 'danger' : undefined;
       return isActionApprovalRequiredByAccountSettings(actionId, readAccountSettingsSnapshot(), {
         surface: ctx.surface ?? null,
+        callerSurface: ctx.callerSurface,
         authority: ctx.authority,
         actionCaller: ctx.actionCaller,
         presentUserConfirmation: ctx.presentUserConfirmation,
-      }, { defaultSafety: operationSafety, defaultUiConfirmation: defaultUiConfirmation ?? operationPolicy?.uiConfirmationRequired, input });
+      }, { defaultSafety: operationSafety ?? defaultSafety, defaultUiConfirmation: defaultUiConfirmation ?? operationPolicy?.uiConfirmationRequired,
+        input, approvedOperation, approvalScope });
     },
     ...createUiExecutionRunActionDeps(accountContext?.accountLifetime.scope, accountContext),
     resolveSessionSpawnAgentInventorySelection: args => resolveSessionSpawnAgentInventorySelectionForActions({ ...args,
@@ -1851,7 +2026,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return response.success && response.data.startReview ? response.data.startReview : unavailable;
     },
     runtimeActionExecute: async (args) => {
-      const featureId = getActionRequiredServerFeatureId(args.actionId, args.context);
+      const featureId = getActionRequiredServerFeatureId(args.actionId, args.context, args.input);
       if (featureId === 'browser.automation') {
         const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId ?? args.context.serverId ?? undefined });
         accountContext?.assertCurrent();
@@ -1900,7 +2075,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         }, isCurrent);
       }
       const opensMicrophone = actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.recover'
-        || actionId === 'ui.voice_global.new_conversation'
+        || actionId === 'ui.voice_global.new_conversation' || actionId === 'ui.voice_global.continue_conversation'
         || (actionId === 'ui.voice_global.set_muted' && input && typeof input === 'object' && 'muted' in input && input.muted === false)
         || actionId === 'ui.voice_global.hold_begin' || actionId === 'ui.voice_global.brief.request'
         || actionId === 'ui.voice_global.brief.retry' || actionId === 'ui.voice_global.dictation.start';
@@ -1943,12 +2118,25 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     uiCurrentContextAction: (request) => executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
     accountHomeContinuationAction: (request) => executeCurrentUiContextAction(request),
     sessionAuthoringOpen: args => openSessionAuthoringDraft(args, accountContext ?? undefined),
-    invokeContributedAction: (request) => executeCurrentUiContextContributedAction(request, {
-      execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
-    }, accountContext?.accountLifetime),
     sessionSpaceMembershipSet: args => setSessionSpaceMembership(args, accountContext ?? undefined),
+    invokeContributedAction: (request) => {
+      // Nested plugin Actions retain their own exact declaration. Enter the
+      // UI front door so preparation binds that catalog, rather than borrowing
+      // this protocol executor's already-captured parent catalog.
+      const host = createDefaultActionExecutor(opts);
+      return executeCurrentUiContextContributedAction(request, {
+        execute: Object.assign(host.execute, { prepare: host.prepare }), context: request.context,
+      }, accountContext?.accountLifetime);
+    },
     uiFindAction: executeFindAction,
     uiPromptPickerOpen: executePromptPickerOpenAction,
+    uiPromptPickerAction: executePromptPickerAction,
+    uiPromptHistory: executePromptHistoryAction,
+    sessionMessagePinsAction: async request => {
+      if (!accountContext) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      throwIfAborted(request.context.signal);
+      return { ok: true, result: executeSessionMessagePinsAction(accountContext, request.input) };
+    },
     nextPendingSession: (context) => invokeNextPendingRequest({
       expectedServerId: context.serverId,
       signal: context.signal,
@@ -1979,26 +2167,34 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       input,
       signal ? { signal } : undefined,
     ),
-    accountApiTokensCreateAction: async ({ input, signal }) => await createCurrentAccountApiToken(
-      input,
-      signal ? { signal } : undefined,
-    ),
+    accountApiTokensCreateAction: async ({ input, signal, context }) => {
+      const { prepareApiTokenDeploymentAuthoring } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
+      const prepared = await prepareApiTokenDeploymentAuthoring({ actionId: 'account.apiTokens.create', value: input, context,
+        host: await prepareApiTokenAuthoringHost(input.deployment, input.grant?.deployApproval, context) });
+      const body = prepared.body.deployment && accountContext?.serverIdentityId
+        ? { ...prepared.body, deployment: { ...prepared.body.deployment, serverId: accountContext.serverIdentityId } } : prepared.body;
+      return await createCurrentAccountApiToken(body, { ...(signal ? { signal } : {}), ...(accountContext ? { accountContext } : {}) });
+    },
     accountApiTokensListAction: async ({ input, signal }) => await listCurrentAccountApiTokens(
       input,
-      signal ? { signal } : undefined,
+      { ...(signal ? { signal } : {}), ...(accountContext ? { accountContext } : {}) },
     ),
     accountApiTokensRevokeAction: async ({ input, signal }) => await revokeCurrentAccountApiToken(
       input,
-      signal ? { signal } : undefined,
+      { ...(signal ? { signal } : {}), ...(accountContext ? { accountContext } : {}) },
     ),
     accountApiTokensRevokeAllAction: async ({ input, signal }) => await revokeAllCurrentAccountApiTokens(
       input,
-      signal ? { signal } : undefined,
+      { ...(signal ? { signal } : {}), ...(accountContext ? { accountContext } : {}) },
     ),
-    accountApiTokensUpdateAction: async ({ input, signal }) => await updateCurrentAccountApiToken(
-      input,
-      signal ? { signal } : undefined,
-    ),
+    accountApiTokensUpdateAction: async ({ input, signal, context }) => {
+      const { prepareApiTokenDeploymentAuthoring } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
+      const prepared = await prepareApiTokenDeploymentAuthoring({ actionId: 'account.apiTokens.update', value: input, context,
+        host: await prepareApiTokenAuthoringHost(input.deployment, input.grant?.deployApproval, context) });
+      const body = prepared.body.deployment && accountContext?.serverIdentityId
+        ? { ...prepared.body, deployment: { ...prepared.body.deployment, serverId: accountContext.serverIdentityId } } : prepared.body;
+      return await updateCurrentAccountApiToken(body, { ...(signal ? { signal } : {}), ...(accountContext ? { accountContext } : {}) });
+    },
     ...(accountContext ? {
       accountSecurityGetAction: async ({ signal }) => {
         accountContext.assertCurrent();
@@ -2028,12 +2224,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountContext.assertCurrent();
         const result = await settleAccountSecurityAction(() => requestAccountSignInEmailChange(accountContext.request, input, signal));
         accountContext.assertResultCurrent(getActionSpec('account.email.change.request').sideEffectClass);
-        return result;
-      },
-      accountSecurityTerminalPresentUserSetAction: async ({ input, signal }) => {
-        accountContext.assertCurrent();
-        const result = await settleAccountSecurityAction(() => setAccountTerminalPresentUserPolicy(accountContext.request, input, signal));
-        accountContext.assertResultCurrent(getActionSpec('account.security.terminalPresentUser.set').sideEffectClass);
         return result;
       },
     } : {}),
@@ -2102,8 +2292,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     todoSessionLink: executeTodoSessionLinkAction,
     internalTaskAction: executeInternalTaskHostAction,
     sessionTerminalAction: invokeSessionTerminalAction,
-    actionOperationAction: async ({ actionId, input, signal }) => {
+    actionOperationAction: async ({ actionId, input, context, signal }) => {
       try {
+        if ((actionId === 'action.operations.list' || actionId === 'action.operations.get') && 'managed' in input && input.managed) {
+          if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+          const execution = await executeManagedMachineNativeAction({ account: accountContext, actionId, input, context,
+            ...(signal ? { signal } : {}) });
+          return execution.ok ? execution.result : execution;
+        }
         return await executeActionOperationActionV1({
           actionId, input, ...(signal ? { signal } : {}),
           transport: async request => await actionMachineRpc({
@@ -2173,7 +2369,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       runUsageLimitRecovery(sessionId, serverId, options => sessionUsageLimitConsumeResetCredit(sessionId, {
         provider: agentId, issueFingerprint, ...options,
       })),
-    sessionOpen: async ({ sessionId, serverId, intent, resumeRequest, approvedNewDirectoryCreation, actionRequestId, tabId, destination, signal }, context) => {
+    sessionOpen: async ({ sessionId, serverId, presentation, intent, resumeRequest, approvedNewDirectoryCreation, actionRequestId, tabId, destination, signal }, context) => {
+      if (presentation === 'overlay') {
+        const present = captureMountedDesktopOverlayPresentation();
+        if (!present || !serverId) return { ok: false, errorCode: 'unavailable', error: 'desktop_overlay_unavailable' };
+        return await present({ sessionId, serverId });
+      }
       const comparison = destination ? scmReviewComparisonOfSource(destination.comparison, destination.comparisonId) : null;
       if (destination && !comparison) return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_selector_unavailable' };
       const unavailableReason = destination ? scmReviewViewUnavailableReason(destination.view, comparison) : null;
@@ -2200,11 +2401,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           authority, sessionId, isCurrent: accountContext.accountLifetime.isCurrent,
         }));
         accountContext.assertCurrent();
-        const target = resolveSessionActionDefaultBackend({ session });
         // Resolve from the fresh exact-Home snapshot, not a same-id row in the focused Home.
         const machineTarget = resolveMachineControlTargetForSessionFromState({
           ...state, sessions: { [sessionId]: session }, sessionListRowsByServerId: {},
         }, { ...accountContext.accountLifetime.scope, sessionId });
+        const admittedTarget = context?.admittedMachineTarget;
+        if (admittedTarget && (machineTarget?.machineId !== admittedTarget.machineId
+          || admittedTarget.serverId && !areServerProfileIdentifiersEquivalent(admittedTarget.serverId, accountContext.serverId))) {
+          return { ok: false, errorCode: 'machine_target_mismatch', error: 'machine_target_mismatch' };
+        }
+        const target = resolveSessionActionDefaultBackend({ session });
         if (intent === 'resume' && !tabId && !destination && machineTarget) {
           const execution = await executeOriginalAccountMachineAction({ account: accountContext, actionId: 'session.open',
             requestId: actionRequestId ?? randomUUID(), machineId: machineTarget.machineId, foreignTargetOnly: true,
@@ -2245,6 +2451,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         }
         const resumed = await resumeSession({
           ...base, ...(resumeRequest ? resumeRequest : {}), serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
+          actionContext: context,
           executionAuthority: context?.authority ?? 'account_automation',
           executionAuthorization: { provenance: 'user_request', requestId: actionRequestId ?? randomUUID() },
           ...(approvedNewDirectoryCreation === true ? { approvedNewDirectoryCreation: true } : {}),
@@ -2401,6 +2608,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(accountContext ? { scope: accountContext.accountLifetime.scope,
             isCurrent: accountContext.accountLifetime.isCurrent } : {}) }));
         if (!result.success && operation) finishOwnedSessionArchive(operation);
+        if (result.holdRecorded === false && result.holdFailure) {
+          return { ...result, ok: false, errorCode: result.holdFailure, details: result };
+        }
         return result;
       } catch (error) {
         if (operation) finishOwnedSessionArchive(operation);
@@ -2488,6 +2698,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         },
       }),
 
+    sessionPendingEdit: accountContext ? createUiPendingEditAction(accountContext, opts?.pendingMessageEditIsCurrent) : undefined,
+    sessionPendingSendNow: accountContext ? createUiPendingSendNowAction(accountContext) : undefined,
+    sessionPendingRequeue: async ({ sessionId, localId, targetExecutionRunId, context }) => {
+      if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      accountContext.assertCurrent();
+      context.signal?.throwIfAborted();
+      await sync.restoreDiscardedPendingMessage(sessionId, localId, {
+        serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
+        ...(targetExecutionRunId ? { targetExecutionRunId } : {}),
+      });
+      return { ok: true };
+    },
     sessionPendingActionSet: async ({ sessionId, localId, requestedAction, resumeWhenAvailable, serverId, context }) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();
@@ -2627,6 +2849,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       workspaceAction,
       activatesExactMirror,
       destinationIntent,
+      replaceRelationshipId,
       serverId,
       operationId,
       signal,
@@ -2638,13 +2861,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       workspaceAction: workspaceAction ?? { kind: 'none' },
       ...(activatesExactMirror === undefined ? {} : { activatesExactMirror }),
       ...(destinationIntent ? { destinationIntent } : {}),
+      ...(replaceRelationshipId ? { replaceRelationshipId } : {}),
       ...(signal ? { signal } : {}),
     }),
 
     workspaceSyncRelationshipsList: async ({ input, signal }) => await listWorkspaceSyncRelationshipsOnController({
       input, account: accountContext, ...(signal ? { signal } : {}),
     }),
-
+    ...createUiWorkspaceSyncReadActionDeps(accountContext),
     workspaceSyncRelationshipObserveCreation: request => observeWorkspaceSyncRelationshipCreationOnController({ ...request, account: accountContext }),
 
     workspaceSyncRelationshipCreate: async ({
@@ -2676,7 +2900,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         relationshipId: input.relationshipId,
         ...(signal ? { signal } : {}),
       });
-      accountContext?.assertCurrent();
       return { v: 1 as const, relationshipId: input.relationshipId, terminated: true as const };
     },
 
@@ -2687,7 +2910,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       accountContext.assertCurrent();
       await disableWorkspaceSyncRelationship({ serverId: scope.serverId, ...input, ...(signal ? { signal } : {}) });
-      accountContext.assertCurrent();
       return { v: 1 as const, relationshipId: input.relationshipId, enabled: false as const };
     },
 
@@ -2698,7 +2920,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       accountContext.assertCurrent();
       await enableWorkspaceSyncRelationship({ serverId: scope.serverId, ...input, ...(signal ? { signal } : {}) });
-      accountContext.assertCurrent();
       return { v: 1 as const, relationshipId: input.relationshipId, enabled: true as const };
     },
 
@@ -2709,10 +2930,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       accountContext.assertCurrent();
       const status = await flushWorkspaceSyncRelationship({ serverId: scope.serverId, ...input, ...(signal ? { signal } : {}) });
-      accountContext.assertCurrent();
       return { v: 1 as const, relationshipId: input.relationshipId, status };
     },
 
+    ...createUiSessionHandoffRecoveryActionDeps(actionMachineRpc, accountContext ?? null),
     sessionHandoffStart: async ({
       sessionId,
       targetMachineId,
@@ -2769,8 +2990,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!admittedInput) return { type: 'error' as const, code: 'invalid_input' as const, retryable: false as const };
       if (continuation) {
         if (!accountContext) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
-        return createUiPreparedSessionBirthV1(accountContext, args, continuation,
-          opts?.templateRequesterAdmissionScope?.retainBirthAuthorization);
+        return createUiPreparedSessionBirthV1(accountContext, args, continuation);
       }
       // The daemon re-admits public selections. Host launch expansion (including
       // the original Discussion recipe sidecar) is never a transport payload.
@@ -2816,19 +3036,30 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
           machineId: input.executionTarget.machineId, access });
         if (disposition.kind === 'refused') return disposition.result;
-        if (disposition.kind === 'requester') {
+        const managedContinuation = context?.invocationServices?.managedContinuation;
+        if (disposition.kind === 'requester' || managedContinuation) {
+          const reviewedParent = context ? readHostReviewedParentV1(context) : undefined;
+          const invocation = reviewedParent && context ? ExternalActionRequesterInvocationV1Schema.safeParse({
+            caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface, authority: context.authority,
+            callerPermissionMode: context.callerPermissionMode, callerInputConstraints: context.callerInputConstraints,
+            workspaceWrites: context.workspaceWrites, reviewedParent,
+            ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
+          }) : null;
+          if (invocation && !invocation.success) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           const execution = await executeOriginalAccountMachineAction({ account: accountContext,
             actionId: 'session.spawn_new', requestId: actionRequestId ?? context?.actionRequestId ?? randomUUID(),
             machineId: input.executionTarget.machineId,
             // Requester HTTP and direct Machine RPC consume the same spawn owner's budget.
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
             input: projectSessionSpawnNewActionInputV2(placementOrigin && supportsOrigin ? { ...exactInput, placementOrigin } : exactInput),
+            ...(invocation?.success ? { invocation: invocation.data } : {}),
+            ...(managedContinuation ? { managedContinuation } : {}),
             actionCaller: _actionCaller, authority: context?.authority, ...(signal ? { signal } : {}) });
           accountContext.assertResultCurrent(getActionSpec('session.spawn_new').sideEffectClass);
-          if (!execution.ok && execution.errorCode === 'outcome_uncertain') {
+          if (!execution.ok && isActionOutcomeUnknownErrorCodeV1(execution.errorCode)) {
             return { type: 'pending' as const, retryWithSameCreationKey: true as const, outcome: 'unknown' as const };
           }
-          if (!execution.ok) throw Object.assign(new Error(execution.error), { code: execution.errorCode });
+          if (!execution.ok) return execution;
           return readSessionSpawnNewActionResultV1(SessionSpawnNewActionResultV1Schema.parse(execution.result));
         }
       }
@@ -2839,18 +3070,23 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       });
     },
 
-    presentUserActionConfirmation: accountContext ? async ({ actionId, input, context }) => {
+    presentUserActionConfirmation: accountContext ? async ({ actionId, input, context, preview }) => {
       accountContext.assertCurrent();
       throwIfAborted(context.signal);
       if (opts?.presentUserActionConfirmation) {
-        const confirmed = await opts.presentUserActionConfirmation({ actionId, input, context });
+        const confirmed = await opts.presentUserActionConfirmation({ actionId, input, context, ...(preview === undefined ? {} : { preview }) });
         if (context.signal?.aborted) return false;
         accountContext.assertCurrent();
         return confirmed;
       }
       const { Modal } = await import('@/modal');
-      const presentationInput = { actionId, actionArgs: input };
-      const reference = readActionApprovalSubject(presentationInput);
+      const authoredSummary = preview && typeof preview === 'object' && 'summary' in preview && typeof preview.summary === 'string'
+        ? preview.summary : undefined;
+      const presentationInput = { actionId, actionArgs: input, ...(preview === undefined ? {} : { preview }), ...(authoredSummary === undefined ? {} : { authoredSummary }) };
+      const detectedProvider = readDetectedProviderConfirmation(actionId, input, accountContext);
+      const reference = readActionApprovalSubject(presentationInput)
+        ?? (actionId === 'scm.diffSummary.result.clear' && context.externalActionTarget?.kind === 'machine'
+          ? { kind: 'machine' as const, id: context.externalActionTarget.machineId } : undefined);
       const reading = await readApprovalReferenceForConfirmation(reference, accountContext, context.signal);
       const roleId = readActionApprovalRoleId(presentationInput);
       const roleResult = roleId && accountRoleAction ? await accountRoleAction({ actionId: 'roles.get', input: { roleId }, context }) : null;
@@ -2864,12 +3100,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const homeDir = targetMachineId
         ? resolveServerScopedMachine(storage.getState(), accountContext.serverId, targetMachineId)?.metadata?.homeDir?.trim() || null : null;
       const formatPath = homeDir ? (path: string) => formatPathRelativeToHome(path, homeDir) : null;
-      const presentation = presentActionApproval({ ...presentationInput, subject: reading.named ? reading.text : null, role, formatPath });
+      const presentation = presentActionApproval({ ...presentationInput, subject: detectedProvider?.name ?? (reading.named ? reading.text : null), role, formatPath });
+      const confirmationSummary = [presentation.summary,
+        ...(detectedProvider ? [detectedProvider.where, detectedProvider.availability,
+          detectedProvider.models?.title, detectedProvider.models?.subtitle] : []),
+      ].filter(Boolean).join('\n\n');
       const confirmed = actionId === 'account.delete'
         ? await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), {
           placeholder: 'DELETE', confirmText: t('settingsAccount.deleteAccount'),
         }) === 'DELETE'
-        : await Modal.confirm(presentation.title ?? t('approvals.untitled'), presentation.summary ?? '',
+        : await Modal.confirm(presentation.title ?? t('approvals.untitled'), confirmationSummary,
           { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
             ...(presentation.destructive ? { destructive: true } : {}),
             ...(context.signal ? { signal: context.signal } : {}), });
@@ -2880,7 +3120,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return confirmed;
     } : undefined,
 
-    approvalRequestApprovedReplay: async ({ artifactId, request, decision, context, requestId, signal }) => {
+    approvalRequestApprovedReplay: async ({ artifactId, request, decision, context, requestId, signal, onReplayDispatched }) => {
+      try {
       const requesterDecision = readApprovalRequesterDecisionV1(request, decision);
       if (requesterDecision) {
         const { subject, decision } = requesterDecision;
@@ -2895,6 +3136,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         }
         accountContext.assertCurrent();
+        onReplayDispatched?.();
         const result = await actionSessionRpc<unknown, { artifactId: string; sessionId: string; decision: 'approve' | 'reject' | 'cancel'; decisionSource?: 'voice' }>({
           serverId: accountContext.serverId, sessionId: subject.personaSessionRef.sessionId,
           method: RPC_METHODS.APPROVAL_REQUEST_DECIDE,
@@ -2910,15 +3152,26 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return failure.success ? failure.data : { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
       }
       if (request.v !== 2) return null;
-      // Currentness above has revalidated the daemon-produced source identity.
-      // Only this existing live continuation may spend its retained app operands;
-      // durable/signed/remote replay keeps the exact-daemon route below.
-      if (isMountedPluginBlockingApprovalEligibleForLiveClient(request)
-        && approvalCoordinator.getLiveWaiterCount(artifactId) > 0
-        && accountContext && (context.surface === 'ui' || context.surface === 'voice') && context.authority === 'present_user'
-        && !context.externalActionCredential && !context.externalActionExecutionAuthorization
-        && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host')) return null;
-      if (!requiresExactDaemonApprovalReplay(request)) {
+      const executor = resolveApprovalExecutor(request);
+      if (executor.kind === 'unavailable') {
+        return { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' };
+      }
+      if (executor.kind === 'live_invocation') {
+        if (decision === 'reject' || decision === 'cancel') return null;
+        if (approvalCoordinator.getLiveWaiterCount(artifactId) > 0
+          && accountContext && (context.surface === 'ui' || context.surface === 'voice') && context.authority === 'present_user'
+          && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+          && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host')) return null;
+        const liveCliReplay = await replayLiveCliApproval({ account: accountContext ?? null, artifactId, request,
+          decision, context, requestId, signal, onReplayDispatched });
+        if (liveCliReplay) return liveCliReplay;
+        // The canonical destination names only an original daemon invocation;
+        // an absent app closure cannot transfer its private lifetime to a Machine.
+        if (!executor.daemonMachineId) {
+          return { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' };
+        }
+      }
+      if (executor.kind === 'app') {
         // Returning null resumes the single Protocol replay owner, including its
         // Artifact CAS and live-only result projection, on this captured app.
         if (request.v === 2 && request.executionOriginV1.externalActionExecutionAuthorization
@@ -2930,7 +3183,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return null;
       }
       const replayRoute = resolveApprovalReplayRoute(request);
-      const machineId = request.v === 2 ? request.executionOriginV1.machineId?.trim() ?? '' : '';
+      const machineId = executor.kind === 'daemon' ? executor.machineId : executor.daemonMachineId;
       if (!replayRoute || !machineId) {
         return {
           ok: false,
@@ -2943,6 +3196,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         // The exact daemon retained and evaluated this install candidate. Replay
         // its approved Artifact there directly; issuing another decision Action
         // would create a second decision boundary and never settle the candidate.
+        onReplayDispatched?.();
         return await replayApprovedApprovalRequestAtExactDaemon({
           artifactId,
           executionTarget: { ...replayRoute, machineId },
@@ -2952,20 +3206,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (accountContext && request.v === 2 && !context.externalActionCredential
         && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
         && (!context.actionCaller || context.actionCaller.kind === 'host')) {
-        if (!requestId || (context.surface !== 'ui' && context.surface !== 'voice') || context.authority !== 'present_user'
-          || !isApprovalExecutionOriginCurrentForAccountContext({ origin: request.executionOriginV1,
-            accountServerId: accountContext.serverId, accountId: accountContext.accountId })) {
+        if (!requestId || (context.surface !== 'ui' && context.surface !== 'voice') || context.authority !== 'present_user') {
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         }
         const execution = await executeOriginalAccountMachineAction({ account: accountContext,
           actionId: 'approval.request.decide', requestId, machineId,
-        input: { artifactId, decision: decision ?? 'approve',
+          onTransportIssued: () => onReplayDispatched?.(),
+          input: { artifactId, decision: decision ?? 'approve',
             serverIdentityId: replayRoute.serverIdentityId, originServerId: replayRoute.originServerId },
           ...(signal ? { signal } : {}) });
         accountContext.assertResultCurrent(getActionSpec('approval.request.decide').sideEffectClass);
         if (execution) return execution;
       }
       if (decision === 'approve') {
+        onReplayDispatched?.();
         const replay = ActionExecuteResultSchema.safeParse(await replayApprovalRequestAtExactDaemon({
           artifactId, decision, executionTarget: { ...replayRoute, machineId },
           ...(signal === undefined ? {} : { signal }),
@@ -2973,13 +3227,19 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return replay.success ? replay.data
           : { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
       }
+      onReplayDispatched?.();
       return await replayApprovedApprovalRequestAtExactDaemon({
         artifactId,
         executionTarget: { ...replayRoute, machineId },
         ...(signal === undefined ? {} : { signal }),
       });
+      } catch (error) {
+        if (readRpcRequestDisposition(error) === 'notSent') onReplayDispatched?.(false);
+        throw error;
+      }
     },
 
+    machineRecipesRead: createUiMachineRecipesRead(accountContext),
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
     projectDefinitionAction: createUiProjectDefinitionAction(accountContext),
     projectAction: createUiProjectAction(accountContext),
@@ -3072,6 +3332,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     ...(accountContext ? createProjectSourceActionDeps(accountContext) : {}),
+    ...(projectSourceTeamMove ? { projectSourcesMoveToTeam: projectSourceTeamMove.projectSourcesMoveToTeam } : {}),
+    ...deploymentActionDeps,
     promptInvocationsList: async (args) => {
       if (!accountContext) return listPromptInvocationsForActions(args);
       const projection = await readPromptLibraryCatalogProjectionInContext(accountContext);
@@ -3170,11 +3432,23 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.machineProcessesAction ?? capturedFamilyPorts?.machineProcessesAction
       ? { machineProcessesAction: opts?.machineProcessesAction ?? capturedFamilyPorts!.machineProcessesAction }
       : {}),
+    ...(opts?.machineServiceAction ?? capturedFamilyPorts?.machineServiceAction
+      ? { machineServiceAction: opts?.machineServiceAction ?? capturedFamilyPorts!.machineServiceAction }
+      : {}),
+    ...(opts?.machineServiceControl ?? capturedFamilyPorts?.machineServiceControl
+      ? { machineServiceControl: opts?.machineServiceControl ?? capturedFamilyPorts!.machineServiceControl }
+      : {}),
+    ...(opts?.machineServiceLogsRead ?? capturedFamilyPorts?.machineServiceLogsRead
+      ? { machineServiceLogsRead: opts?.machineServiceLogsRead ?? capturedFamilyPorts!.machineServiceLogsRead }
+      : {}),
     ...(opts?.machineResourcesPolicyAction ?? capturedFamilyPorts?.machineResourcesPolicyAction
       ? { machineResourcesPolicyAction: opts?.machineResourcesPolicyAction ?? capturedFamilyPorts!.machineResourcesPolicyAction }
       : {}),
-    ...(opts?.machineServiceAction ?? capturedFamilyPorts?.machineServiceAction
-      ? { machineServiceAction: opts?.machineServiceAction ?? capturedFamilyPorts!.machineServiceAction }
+    ...(opts?.machineAdminAccessAction ?? capturedFamilyPorts?.machineAdminAccessAction
+      ? { machineAdminAccessAction: opts?.machineAdminAccessAction ?? capturedFamilyPorts!.machineAdminAccessAction }
+      : {}),
+    ...(opts?.machineAgentIsolationAction ?? capturedFamilyPorts?.machineAgentIsolationAction
+      ? { machineAgentIsolationAction: opts?.machineAgentIsolationAction ?? capturedFamilyPorts!.machineAgentIsolationAction }
       : {}),
     ...(opts?.machineReboot ?? capturedFamilyPorts?.machineReboot
       ? { machineReboot: opts?.machineReboot ?? capturedFamilyPorts!.machineReboot }
@@ -3238,8 +3512,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     managedMachineAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       accountContext.assertCurrent();
-      if (args.actionId !== 'machines.managed.list' && args.actionId !== 'machines.managed.get' && args.actionId !== 'machines.managed.cancel'
-        && args.actionId !== 'machines.managed.setup.skip') {
+      if (args.actionId === 'machines.provisioners.list') {
+        const input = ManagedMachineActionInputSchemasV1[args.actionId].parse(args.input);
+        if (!input.controller) {
+          if (input.homeId !== accountContext.serverIdentityId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+          return await executeUiManagedProvisionerList(accountContext, input, args.signal);
+        }
+      }
+      if (args.actionId !== 'machines.managed.list' && args.actionId !== 'machines.managed.get'
+        && args.actionId !== 'machines.managed.setup.skip' && args.actionId !== 'machines.managed.birth.get') {
         try {
           const execution = await executeManagedMachineNativeAction({ account: accountContext, ...args });
           return execution.ok ? execution.result : execution;
@@ -3261,6 +3542,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     machineSetupPlan: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.plan', ...args }),
+    machineSetupApply: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.apply', ...args }),
+    machineSetupRemove: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.remove', ...args }),
+    machineSetupUpdatesApply: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.updates.apply', ...args }),
     machinePresetAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();
@@ -3285,8 +3569,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     machinePoolAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();
-      const features = await getReadyServerFeatures({ serverId: accountContext.serverId });
-      if (!features || readServerEnabledBit(features, 'machines.pools') !== true) {
+      const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext.serverId });
+      const settings = accountContext.readLiveSettings() ?? accountContext.settings;
+      if (resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'machines.pools', settings, snapshot })?.state !== 'enabled') {
         return { ok: false, errorCode: 'machine_pools_unavailable', error: 'machine_pools_unavailable' };
       }
       try {
@@ -3604,7 +3889,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (composerSubmission?.legacyAttachments && 'message' in input) {
           if (!localId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const { uploadSessionMessageAttachmentDrafts } = await import('@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts');
-          const handles = await uploadSessionMessageAttachmentDrafts({
+          const uploaded = await uploadSessionMessageAttachmentDrafts({
             target: { serverId: account.serverId, accountId: account.accountId, sessionId },
             executionTarget: { serverId: account.serverId, machineId: target.machineId },
             drafts: composerSubmission.legacyAttachments.drafts, config: composerSubmission.legacyAttachments.config,
@@ -3612,9 +3897,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             messageLocalId: localId, ...(signal ? { signal } : {}),
             isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
           });
-          if (!handles) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+          if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+          const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
           input = { ...input, message: composerSubmission.legacyAttachments.originalMessage,
-            structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: [...handles] } };
+            structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle),
+              ...(input.structuredInput?.browserContext ? { browserContext: reconcileBrowserContextPictures(input.structuredInput.browserContext, uploaded) } : {}) } };
         }
         let preparedAttachments: Awaited<ReturnType<typeof import('@/sync/domains/transfers/ops/prepareTargetComposerAttachments').prepareTargetComposerAttachments>> = null;
         if (composerSubmission && 'message' in input && input.structuredInput?.composerAttachments?.length) {
@@ -3711,7 +3998,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       if (fieldId === 'intent.context') {
         await withUiPromptLibraryArtifactReader(reader => admitSessionContextIntentV1(value, reader.readArtifactHeader), {
-          serverId, signal: context.signal,
+          serverId, signal: context.signal, accountContext,
         });
         throwIfAborted(context.signal);
       }
@@ -3719,16 +4006,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         sessionId: sid, fieldId,
         value: fieldId === 'display.title' ? { title: String(value), updatedAt } : value,
         metadataReason: `ui-${actionId}`,
-        ...(opts?.sessionStateMetadataPreprocess ? { metadataPreprocess: opts.sessionStateMetadataPreprocess } : {}),
+        expectedMetadataRevision: 'expectedMetadataRevision' in write ? write.expectedMetadataRevision : undefined,
+        expectedValue: 'expectedValue' in write ? write.expectedValue : undefined,
         updateSessionMetadataWithRetry: async (targetSessionId, updater) => {
           throwIfAborted(context.signal);
           let committedRevision: number | undefined;
-          await sync.patchSessionMetadataWithRetry(targetSessionId, (metadata) => {
+          await sync.patchSessionMetadataWithRetry(targetSessionId, (metadata, metadataRevision) => {
             throwIfAborted(context.signal);
-            return updater(metadata);
+            return updater(metadata, metadataRevision);
           }, { serverId: serverId ?? null,
             ...(fieldId === 'display.title' ? { mutationIntent: 'rename_session' as const } : {}),
-            ...(accountContext ? { accountLifetime: accountContext.accountLifetime } : {}),
+            ...(accountContext ? { accountLifetime: accountContext.accountLifetime,
+              ...(accountContext.prepareRequest ? { prepareRequest: accountContext.prepareRequest } : {}) } : {}),
             onMetadataCommitted: (revision) => { committedRevision = revision; },
             // Field conflict detection lives in the shared registered updater.
           });
@@ -3739,8 +4028,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!result.ok) return { ok: false, errorCode: result.reason, error: result.reason };
       return { ok: true, sessionId: sid, ...(fieldId === 'display.title' ? { title: value, updatedAt }
         : fieldId === 'display.statusReason' ? { reason: value }
-        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'intent.memoryEnabled' ? { enabled: value }
+        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value }
+        : fieldId === 'intent.memoryEnabled' ? { enabled: value }
         : fieldId === 'intent.voicePreference' ? { preference: value }
+        : fieldId === 'intent.approvalProfileId' ? { approvalProfileId: value }
         : fieldId === 'intent.context' ? { updated: true } : { showToolCalls: value }), version: result.version };
     },
 
@@ -3873,7 +4164,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false, errorCode: 'unsupported', error: 'unsupported' };
       }
       const normalizedSessionId = String(sessionId ?? '').trim();
-      const normalizedModelId = String(modelId ?? '').trim();
+      const normalizedModelId = readNonBlankOpaqueIdentifier(modelId) ?? '';
       if (!normalizedSessionId || (!normalizedModelId && args.teamCredentialModel === undefined)) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
@@ -4151,6 +4442,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         corpus: await acquireAdmittedSessionReferenceCorpusOptions(storage.getState()) ?? undefined,
     }),
     sessionList: listSessionsForVoiceTool,
+    sessionRead: createUiSessionRead(accountContext),
     sessionStatusGet: createUiSessionStatusGet(accountContext),
     readSessionManager: async ({ address, signal }) => {
       if (!accountContext || !areServerProfileIdentifiersEquivalent(address.serverId, accountContext.serverId)) return { kind: 'unavailable' };
@@ -4392,50 +4684,39 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }) : undefined,
 
     approvalsCreate: async ({ request }) => {
-      const header: ArtifactHeader = buildApprovalRequestArtifactHeaderV1(request);
-      const artifactId = await (accountContext ? accountContext.createArtifact(header, JSON.stringify(request)) : sync.createArtifactWithHeader(header, JSON.stringify(request)));
-      approvalCoordinator.notifyApprovalUpdated({ artifactId, request });
-      return { artifactId };
+      const scope = accountContext?.accountLifetime.scope ?? getActiveServerAccountScope();
+      if (!scope) throw new Error('approval_origin_unavailable');
+      const context = accountContext ?? await captureLazyActionAccountContext(scope.serverId);
+      const created = await createApprovalArtifact({ request, accountId: scope.accountId,
+        read: artifactId => context.readArtifact(artifactId, { fresh: true, ownerOnly: true }),
+        create: async (artifactId, header, body, idScope) => (await context.createArtifactDocument({ artifactId, header, body, idScope })).artifact,
+      });
+      approvalCoordinator.notifyApprovalUpdated(created);
+      return created;
     },
 
-    approvalsGet: async ({ artifactId }) => {
-      const local = accountContext ? null : storage.getState().artifacts[artifactId] ?? null;
-      const localBody = local?.body;
-      const localHeader = local?.header;
-      // The reader is body-authoritative but still indexes on the header, so a
-      // locked or header-less Artifact has nothing to match against.
-      if (localHeader && typeof localBody === 'string') {
-        const parsed = approvalArtifactBodyMatchesHeaderV1(localHeader, localBody);
-        if (parsed && parsed.family !== 'execution_run_host_action') return parsed.request;
-      }
-
-      // Consent must acquire its own current body, rather than wait on or
-      // borrow an ordinary read acquired before this decision was made.
-      const full = await (accountContext ? accountContext.fetchArtifact(artifactId, { fresh: true }) : sync.fetchArtifactWithBody(artifactId, { fresh: true }));
-      if (full) {
-        if (!accountContext) storage.getState().updateArtifact(full);
-        const body = full.body;
-        if (typeof body !== 'string' || !full.header) return null;
-        const parsed = approvalArtifactBodyMatchesHeaderV1(full.header, body);
-        return parsed && parsed.family !== 'execution_run_host_action' ? parsed.request : null;
-      }
-
-      return null;
-    },
+    approvalsGet: approvalArtifacts.get,
 
     approvalsUpdate: updateApprovalArtifact,
 
-    targetActionApprovalReplay: createTargetActionApprovalDecision({
+    targetActionApprovalReplay: createUiTargetActionApprovalReplay({
+      account: accountContext ?? null,
+      hasLocalInvocation: artifactId => approvalCoordinator.getLiveWaiterCount(artifactId) > 0,
       read: async (artifactId, initialRead) => {
         const parsed = TargetActionApprovalRequestV1Schema.safeParse(initialRead
           ? initialRead.request : await deps.approvalsGet?.({ artifactId, serverId: null }));
-        // This client records consent for an Account invocation, never replays
-        // Machine-bound effects or asserts another process's waiter is stale.
-        return parsed.success && parsed.data.approvalInputCustody === 'live_only'
-          && !parsed.data.executionOriginV1 && !parsed.data.replayPlacement ? parsed.data : null;
+        return parsed.success ? parsed.data : null;
       },
       update: updateApprovalArtifact,
     }),
+
+    executionRunHostActionApprovalReplay: accountContext ? createExecutionRunHostApprovalReplay({
+      read: artifactId => accountContext.fetchArtifact(artifactId, { fresh: true }),
+      decide: async ({ sessionId, artifactId, decision, signal }) => actionSessionRpc({
+        serverId: accountContext.serverId, sessionId, method: RPC_METHODS.APPROVAL_REQUEST_DECIDE,
+        payload: { artifactId, decision }, timeoutMs: null, ...(signal ? { signal } : {}),
+      }),
+    }) : undefined,
 
     approvalsResolveBlockingDecision: async ({ artifactId, request, decision, decisionAuthority }) =>
       await approvalCoordinator.resolveBlockingDecision({ artifactId, request, decision, decisionAuthority }),
@@ -4450,7 +4731,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (!accountLifetime.isCurrent()) throw scopeChanged();
       };
       assertCurrent();
-      if (!signal?.aborted) opts?.onBlockingApprovalPending?.({ artifactId, ...(signal ? { signal } : {}) });
+      if (!signal?.aborted) opts?.onBlockingApprovalPending?.({ artifactId, scope: accountLifetime.scope, ...(signal ? { signal } : {}) });
       const decision = await approvalCoordinator.waitForDecision({
         artifactId,
         request,
@@ -4462,7 +4743,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
               || (change.entityIds !== undefined && !change.entityIds.includes(artifactId))) return;
             if (!accountLifetime.isCurrent()) onError(scopeChanged());
             else onChange();
-          });
+          }, { reconnect: 'refresh' });
           const retirement = accountLifetime.onRetire(() => onError(scopeChanged()));
           return { dispose: () => { unsubscribe(); retirement.dispose(); } };
         },
@@ -4512,7 +4793,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     promptRegistryInstall: async ({ machineId, sourceId, itemId, serverId, signal }, context) => {
       if (accountContext && promptLibraryStore?.organization) {
         const registry = await createUiRegistryHostV1(accountContext, promptLibraryStore.organization, context);
-        if ((await registry.readRegistrySource(sourceId)).token) {
+        const source = await registry.readRegistrySource(sourceId);
+        if ('token' in source && source.token) {
           const result = await registry.executeOnMachine(machineId, 'prompt_registry.install', {
             machineId, sourceId, itemId,
           });
@@ -4551,7 +4833,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountContext.assertCurrent(); throwIfAborted(signal);
         const result = await setSessionCapabilityV1({ port: sessionCapabilities, request: { sessionId, kind: 'skill', id: skillId, state: 'on' },
           context: { surface: 'ui', serverId: accountContext.serverId, signal } });
-        return { ok: result.ok };
+        return result;
       }, async (machineId, path, signal) => {
         accountContext.assertCurrent(); throwIfAborted(signal);
         const source = opts?.foundSkillSource;
@@ -4626,36 +4908,30 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     };
   };
 
-  const executeMachinePluginAtDaemon = async (actionId: ActionId, input: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult> => {
+  const executeMachineActionAtDaemon = async (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false): Promise<ActionExecuteResult> => {
     if (context.externalActionCredential || context.externalActionExecutionAuthorization || context.rpcSessionAuthorization) {
       return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     }
     const spec = getActionSpec(actionId);
     const parsed = spec.inputSchema.safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await executeMachineOwnedPluginAction({ actionId, input: parsed.data, context });
-    const failure = ActionExecuteFailureSchema.safeParse(result);
-    if (failure.success) return failure.data;
-    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
-    if (approval.success && approval.data.actionId === actionId) return { ok: true, result: approval.data };
-    const output = spec.outputSchema?.safeParse(result);
-    return output?.success ? { ok: true, result: output.data }
-      : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    const result = await executeMachineOwnedAction({ actionId, input: parsed.data, context, confirmInFlow });
+    return settleActionOutput(actionId, completeActionResult(result));
   };
 
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
-      let resolved = resolveContext(context, input, actionId);
-    if (actionId === 'template.instantiate' && accountContext && opts?.templateRequesterAdmissionScope) {
-      const prepared = await opts.templateRequesterAdmissionScope.prepareOriginal(accountContext, input, resolved);
-      if (!prepared.ok) return prepared;
-      resolved = prepared.context;
+    const resolved = resolveContext(context, input, actionId);
+    if (opts?.admittedClientActionId !== actionId) {
+      const unavailable = await readNewWorkFeatureAdmission(actionId, input, resolved, accountContext?.serverId ?? resolved.serverId ?? undefined,
+        () => accountContext ? accountContext.readSettings() : storage.getState().settings);
+      if (unavailable) return unavailable;
     }
-      if (opts?.admittedClientActionId === actionId) {
-        return await executor.executeAdmittedClientAction(actionId, input, resolved);
-      }
-      return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
-        ? await executeMachinePluginAtDaemon(actionId, input, resolved)
-        : await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved);
+    if (opts?.admittedClientActionId === actionId) {
+      return await executor.executeAdmittedClientAction(actionId, input, resolved);
+    }
+    return resolved.surface !== 'plugin' && isMachineOwnedAdmissionAction(actionId, input)
+      ? await executeMachineActionAtDaemon(actionId, input, resolved, confirmInFlow)
+      : await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved);
   };
   return {
     previewSessionTargets: async (target, context) => {
@@ -4666,7 +4942,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     // A genuine present-user native invocation has one installed Action policy
     // and approval owner. Do not create a second local Ask before its relay.
-    executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext,
+    executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow = false,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>) => {
       if (!accountContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const resolvedContext = resolveContext(context, input, actionId);
@@ -4676,7 +4952,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled' };
       }
       return await executeManagedMachineNativeAction({ account: accountContext, actionId, input,
-        context: resolvedContext, retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) });
+        context: resolvedContext, confirmInFlow, retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) });
     },
     readWidgetInputDescriptor: async request => {
       const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
@@ -4688,17 +4964,22 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
       readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
     prepare: async (actionId, input, context, options) => {
-      let resolved = resolveContext(context, input, actionId);
-      if (actionId === 'template.instantiate' && accountContext && opts?.templateRequesterAdmissionScope) {
-        const prepared = await opts.templateRequesterAdmissionScope.prepareOriginal(accountContext, input, resolved);
-        if (!prepared.ok) return { kind: 'settled', result: prepared };
-        resolved = prepared.context;
+      const resolved = resolveContext(context, input, actionId);
+      if (opts?.admittedClientActionId !== actionId) {
+        const unavailable = await readNewWorkFeatureAdmission(actionId, input, resolved, accountContext?.serverId ?? resolved.serverId ?? undefined,
+          () => accountContext ? accountContext.readSettings() : storage.getState().settings);
+        if (unavailable) return { kind: 'settled', result: unavailable };
       }
-      // The daemon owns both implicit and explicitly requested plugin review.
+      // The daemon owns implicit and explicit review for its admitted Actions.
       // Preparation must not create an app-local approval before that owner runs.
-      return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
-        ? { kind: 'ready', invocation: { run: () => executeMachinePluginAtDaemon(actionId, input, resolved) } }
-        : await executor.prepare(actionId, input, resolved, options);
+      if (resolved.surface !== 'plugin' && isMachineOwnedAdmissionAction(actionId, input)) {
+        const review = options?.reviewOnly ? await executor.prepare(actionId, input, resolved, options) : null;
+        if (review?.kind === 'settled') return review;
+        return { kind: 'ready',
+          ...(review?.operation ? { operation: review.operation } : {}),
+          invocation: { run: () => executeMachineActionAtDaemon(actionId, input, resolved) } };
+      }
+      return await executor.prepare(actionId, input, resolved, options);
     },
     executeAdmittedClientAction: (actionId, input, context) => executor.executeAdmittedClientAction(actionId, input, context),
     execute: executeAction,
@@ -4712,6 +4993,8 @@ type DefaultActionExecutorOptions = Parameters<typeof buildDefaultActionExecutor
 /** UI-only projection qualifier; the captured Account owner enforces it before admission. */
 export type UiActionExecutorContext = import('@/components/plugins/surfaces/pluginSurfaceActionDispatch').PluginSurfaceActionExecutorContext & Readonly<{
   expectedAccountId?: string;
+  /** Reviewed Delete routing only; the receiving owner still admits expectedRevision and authority. Never serialized. */
+  reviewedManagedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
   /** Exact object admitted by the enclosing UI stop/archive lifecycle. */
   archiveOperation?: SessionArchiveOperation;
   /** Destination-owner navigation leaf, consumed only in this invocation. */
@@ -4720,7 +5003,8 @@ export type UiActionExecutorContext = import('@/components/plugins/surfaces/plug
 type DefaultActionExecutor = Omit<UiProtocolActionExecutor, 'execute' | 'prepare' | 'previewSessionTargets' | 'executeAdmittedClientAction'> & Readonly<{
   previewSessionTargets: (target: SessionTargetSelectorV1, context?: UiActionExecutorContext, readInputs?: SessionFollowReadInputs) => Promise<UiSessionTargetPreview>;
   execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['execute']>;
-  prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext, options?: import('@happier-dev/protocol/actions/executor/types').ActionPrepareOptions) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
+  prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext,
+    options?: import('@happier-dev/protocol/actions/executor/types').ActionPrepareOptions) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
 }>;
 type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential' | 'openRoute' | 'archiveOperation' | 'defaultSessionId' | 'contributedActionInvocation'> & Readonly<{
   archiveInput?: unknown;
@@ -4759,8 +5043,12 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
   machineGuardAction: NonNullable<ActionExecutorDeps['machineGuardAction']>;
   machineProcessesAction: NonNullable<ActionExecutorDeps['machineProcessesAction']>;
   machineServiceAction: NonNullable<ActionExecutorDeps['machineServiceAction']>;
-  machineReboot: NonNullable<ActionExecutorDeps['machineReboot']>;
+  machineServiceControl: NonNullable<ActionExecutorDeps['machineServiceControl']>;
+  machineServiceLogsRead: NonNullable<ActionExecutorDeps['machineServiceLogsRead']>;
   machineResourcesPolicyAction: NonNullable<ActionExecutorDeps['machineResourcesPolicyAction']>;
+  machineAdminAccessAction: NonNullable<ActionExecutorDeps['machineAdminAccessAction']>;
+  machineAgentIsolationAction: NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>;
+  machineReboot: NonNullable<ActionExecutorDeps['machineReboot']>;
   skillMachineActionExecute: NonNullable<ActionExecutorDeps['skillMachineActionExecute']>;
   discussionAction: NonNullable<ActionExecutorDeps['discussionAction']>;
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
@@ -4833,6 +5121,10 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
     },
     machineProcessesAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineServiceAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
+    machineServiceControl: ({ input, context, signal }) => machineActionRpc('machines.services.control', input, signal, context.actionRequestId ?? undefined),
+    machineServiceLogsRead: ({ input, context, signal }) => machineActionRpc('machines.services.logs.read', input, signal, context.actionRequestId ?? undefined),
+    machineAdminAccessAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
+    machineAgentIsolationAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineReboot: ({ input, context, signal }) => machineActionRpc('machines.reboot', input, signal, context.actionRequestId ?? undefined),
     // Guard reads, Activity, Undo and Keep running are the target daemon's: Undo re-runs the captured
     // original Action there, through its own approval, so the host only carries the request.
@@ -4969,10 +5261,8 @@ export async function withDefaultActionExecuteContext<TResult>(
   // intent signal ends. Its captured Account still owns that final Artifact
   // CAS; actual credential/Account retirement continues to revoke the carrier.
   const retained = opts?.hostActionApprovalLifetime;
-  const templateRequesterAdmissionScope = executedActionId === 'template.instantiate' || executedActionId === 'template.updates.apply'
-    ? createTemplateRequesterActionAdmissionScope(executedActionId) : undefined;
   const account = await captureLazyActionAccountContext(context.serverId,
-    retained?.signal === context.signal ? undefined : context.signal, templateRequesterAdmissionScope?.requestAuthorization);
+    retained?.signal === context.signal ? undefined : context.signal);
   const archiveInvocation = createSessionArchiveInvocation(executedActionId, context.archiveInput, context.archiveOperation, context.serverId, context.defaultSessionId);
   try {
     try {
@@ -4982,9 +5272,6 @@ export async function withDefaultActionExecuteContext<TResult>(
       throwIfAborted(context.signal);
       const listContributedActionDefinitions = context.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
       const result = await work(buildDefaultActionExecutor({ ...opts, archiveInvocation,
-        ...(templateRequesterAdmissionScope ? { templateRequesterAdmissionScope,
-          prepareBotTemplateRequesterAdmission: templateRequesterAdmissionScope.prepareRequesterAdmission,
-          prepareBotTemplateUpdateRequesterAdmission: request => templateRequesterAdmissionScope.prepareUpdateRequesterAdmission(account, request) } : {}),
         ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
         ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }, followReadInputs), account, settings);
       const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
@@ -5076,79 +5363,15 @@ export async function readDefaultWidgetShareInputDescriptorV1(input: Readonly<{
 // unqualified UI actions fall back to the currently focused Home.
 export function resolveDefaultActionInvocationServerId(actionId: ActionId, input: unknown, context?: UiActionExecutorContext): string | undefined {
     if (context?.serverId) return context.serverId;
-    if (isProjectActionIdV1(actionId) && actionId !== 'projects.trust.list' && actionId !== 'projects.trust.revoke') {
-      const qualified = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
-      if (qualified.success) return 'workspace' in qualified.data ? qualified.data.workspace.serverId : qualified.data.serverId;
-    }
-    if (isSessionStateFieldActionId(actionId)) {
-      const qualified = getActionSpec(actionId).inputSchema.safeParse(input);
-      const target = qualified.success ? qualified.data : null;
-      if (target && typeof target === 'object' && 'serverId' in target && typeof target.serverId === 'string') return target.serverId;
-    }
-    if (actionId === 'session.spawn_new') {
-      const qualified = SessionSpawnNewActionInputV2Schema.safeParse(input);
-      if (qualified.success) return qualified.data.executionTarget.serverId;
-    }
-    if (actionId === 'machines.work.summary.get') {
-      const qualified = MachineWorkSummaryGetInputV1Schema.safeParse(input);
-      if (qualified.success) return qualified.data.serverId;
-    }
-    const vitalsAction = MachineVitalsActionIdSchema.safeParse(actionId);
-    if (vitalsAction.success) {
-      const qualified = MACHINE_VITALS_ACTION_INPUT_SCHEMAS[vitalsAction.data].safeParse(input);
-      if (qualified.success && qualified.data.serverId) return qualified.data.serverId;
-    }
-    const resourcesAction = MachineResourcesActionIdSchema.safeParse(actionId);
-    if (resourcesAction.success) {
-      const qualified = MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS[resourcesAction.data].safeParse(input);
-      if (qualified.success && qualified.data.serverId) return qualified.data.serverId;
-    }
-    const storageAction = MachineStorageActionIdSchema.safeParse(actionId);
-    if (storageAction.success) {
-      const qualified = MACHINE_STORAGE_ACTION_INPUT_SCHEMAS[storageAction.data].safeParse(input);
-      if (qualified.success && qualified.data.serverId) return qualified.data.serverId;
-    }
-    const guardAction = MachineGuardActionIdSchema.safeParse(actionId);
-    if (guardAction.success) {
-      const qualified = MACHINE_GUARD_ACTION_INPUT_SCHEMAS[guardAction.data].safeParse(input);
-      if (qualified.success && qualified.data.serverId) return qualified.data.serverId;
-    }
-    const processesAction = MachineProcessesActionIdSchema.safeParse(actionId);
-    if (processesAction.success) {
-      const qualified = MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS[processesAction.data].safeParse(input);
-      if (qualified.success && qualified.data.serverId) return qualified.data.serverId;
-    }
-    const memoryAction = MEMORY_DOCUMENT_ACTION_IDS_V1.find(id => id === actionId);
-    if (memoryAction) {
-      const qualified = MemoryActionInputSchemasV1[memoryAction].safeParse(input);
-      if (qualified.success) {
-        const target = qualified.data;
-        const serverId = 'ref' in target ? target.ref.serverId
-          : 'sessionRef' in target ? target.sessionRef.serverId
-            : 'scope' in target ? target.scope === 'project' ? target.projectRef.serverId : undefined : target.serverId;
-        if (serverId) return serverId;
-      }
-    }
-    const operationAction = ActionOperationActionIdV1Schema.safeParse(actionId);
-    if (operationAction.success) {
-      const qualified = ActionOperationActionInputSchemasV1[operationAction.data].safeParse(input);
-      if (qualified.success) return qualified.data.serverId;
-    }
-    const sourceAction = PROJECT_SOURCE_ACTION_SPECS_V1.find(spec => spec.id === actionId);
-    if (sourceAction) {
-      const qualified = sourceAction.inputSchema.safeParse(input);
-      if (qualified.success) return qualified.data.serverId;
-    }
-    if (actionId === 'projects.context.update') {
-      const qualified = ProjectContextUpdateInputV1Schema.safeParse(input);
-      if (qualified.success) return qualified.data.target.serverId;
-    }
+    const declaredServerId = getActionSpec(actionId).invocationServerIdForInput?.(input);
+    if (declaredServerId !== undefined) return declaredServerId;
     return (isRoleActionIdV1(actionId) || (context?.surface ?? 'ui') === 'ui')
       ? getActiveServerAccountScope()?.serverId : undefined;
 }
 
 async function resolveNativeManagedAction(actionId: ActionId, input: unknown, account: LazyActionAccountContext,
-  context?: ActionExecutorContext, opts?: DefaultActionExecutorOptions): Promise<Readonly<{ actionId: ManagedMachineActionIdV1;
+  context?: ActionExecutorContext, opts?: DefaultActionExecutorOptions,
+  reviewedManagedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>): Promise<Readonly<{ actionId: ManagedMachineActionIdV1;
     retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'> }> | ActionExecuteFailure | null> {
   // An admitted replay retains its existing strict approval custody. Ordinary
   // relay ingress cannot consume a local Artifact's bypass proof.
@@ -5161,7 +5384,8 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
     const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     try {
-      const retainedMachine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+      const retainedMachine = (actionId === 'machines.managed.delete' ? reviewedManagedMachine : undefined)
+        ?? await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
         homeId: parsed.data.homeId, managedId: parsed.data.managedId,
       }, { signal: account.invocationSignal });
       account.assertCurrent();
@@ -5176,6 +5400,7 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
   if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), input) === 'account') return null;
   const parsed = ManagedMachineActionIdV1Schema.safeParse(actionId);
   return parsed.success && parsed.data !== 'machines.managed.list'
+    && parsed.data !== 'machines.managed.birth.get'
     && parsed.data !== 'machines.managed.get' && parsed.data !== 'machines.managed.cancel'
     && parsed.data !== 'machines.managed.setup.skip'
     && parsed.data !== 'machines.managed.references.get' ? { actionId: parsed.data } : null;
@@ -5247,7 +5472,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       input = parsed.data;
     }
-    const { openRoute, archiveOperation, ...actionContext } = context ?? {};
+    const { openRoute, archiveOperation, reviewedManagedMachine, ...actionContext } = context ?? {};
     const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
     if (custodyFailure) return custodyFailure;
     const api = await apiTokenTransport();
@@ -5259,7 +5484,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     if (!serverId) return await (confirmInFlow ? ordinary().executeConfirmed : ordinary().execute)(actionId, input, actionContext);
     try {
       const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, archiveInput: input, serverId }, async (executor, account) => {
-        const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts);
+        const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts, reviewedManagedMachine);
         if (native && 'ok' in native) return native;
         const actionRequestId = native || confirmInFlow ? actionContext.actionRequestId ?? randomUUID() : actionContext.actionRequestId;
         const capturedContext = {
@@ -5275,7 +5500,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         if (!native) return await (confirmInFlow ? executor.executeConfirmed : executor.execute)(actionId, input, capturedContext);
         return await executeManagedNativeActionWithApprovalObservation({ actionId: native.actionId,
           requestId: actionRequestId!, serverId, accountId: account.accountId,
-          execute: () => executor.executeNativeManagedAction(native.actionId, input, capturedContext, native.retainedMachine) });
+          execute: () => executor.executeNativeManagedAction(native.actionId, input, capturedContext, confirmInFlow, native.retainedMachine) });
       }, actionId);
       return await execute(actionContext.signal);
     } catch (error) {
@@ -5299,20 +5524,19 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     execute: executeAction,
     executeConfirmed: (actionId, input, context) => executeAction(actionId, input, context, true),
     prepare: async (actionId, input, context, options) => {
-      const { openRoute, archiveOperation, ...actionContext } = context ?? {};
+      const { openRoute, archiveOperation, reviewedManagedMachine, ...actionContext } = context ?? {};
       const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
       if (custodyFailure) return { kind: 'settled', result: custodyFailure };
       const api = await apiTokenTransport();
       if (api) {
         const failure = apiTokenComposerSubmissionFailure(actionId);
+        let result: Promise<ActionExecuteResult> | undefined;
         return failure ? { kind: 'settled', result: failure }
-          : { kind: 'ready', invocation: { run: async () => await executeApiTokenAction(api, actionId, input, actionContext) } };
+          : { kind: 'ready', invocation: { run: () => result ??= executeApiTokenAction(api, actionId, input, actionContext) } };
       }
       const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
       if (!serverId) return await ordinary().prepare(actionId, input, actionContext, options);
-      const templateRequesterAdmissionScope = actionId === 'template.instantiate' || actionId === 'template.updates.apply'
-        ? createTemplateRequesterActionAdmissionScope(actionId) : undefined;
-      const account = await captureLazyActionAccountContext(serverId, context?.signal, templateRequesterAdmissionScope?.requestAuthorization);
+      const account = await captureLazyActionAccountContext(serverId, context?.signal);
       const archiveInvocation = createSessionArchiveInvocation(actionId, input, archiveOperation, account.serverId, context?.defaultSessionId);
       try {
         assertExpectedActionAccount(account, context);
@@ -5321,12 +5545,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         throwIfAborted(context?.signal);
         const listContributedActionDefinitions = actionContext.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
         const executor = buildDefaultActionExecutor({ ...opts, archiveInvocation,
-          ...(templateRequesterAdmissionScope ? { templateRequesterAdmissionScope,
-            prepareBotTemplateRequesterAdmission: templateRequesterAdmissionScope.prepareRequesterAdmission,
-            prepareBotTemplateUpdateRequesterAdmission: request => templateRequesterAdmissionScope.prepareUpdateRequesterAdmission(account, request) } : {}),
           ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
           ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
-        const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts);
+        const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts, reviewedManagedMachine);
         if (native && 'ok' in native) {
           finishSessionArchiveInvocation(archiveInvocation);
           account.dispose();
@@ -5342,11 +5563,17 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         const preferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, {
           managedMachineCreationEnabled: settings.managedMachineCreationEnabled,
         });
-        const prepared = native
-          ? preferenceFailure ? { kind: 'settled' as const, result: preferenceFailure }
-            : { kind: 'ready' as const, invocation: { run: async () =>
-              await executor.executeNativeManagedAction(native.actionId, input, capturedContext, native.retainedMachine) } }
-          : await executor.prepare(actionId, input, capturedContext, options);
+        let prepared: import('@happier-dev/protocol/actions/executor/types').ActionPrepareResult;
+        if (native) {
+          if (preferenceFailure) prepared = { kind: 'settled', result: preferenceFailure };
+          else if (options?.reviewOnly) {
+            const review = await executor.prepare(actionId, input, capturedContext, options);
+            prepared = review.kind === 'ready' ? { ...review, invocation: { run: async () =>
+              await executor.executeNativeManagedAction(native.actionId, review.operation?.normalizedInput ?? input, capturedContext, false, native.retainedMachine) } } : review;
+          } else prepared = { kind: 'ready', invocation: {
+            run: async () => await executor.executeNativeManagedAction(native.actionId, input, capturedContext, false, native.retainedMachine),
+          } };
+        } else prepared = await executor.prepare(actionId, input, capturedContext, options);
         account.assertCurrent();
         account.dispose();
         if (prepared.kind === 'settled') {
@@ -5377,10 +5604,10 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     },
     replayApprovedApprovalRequest: async (args) => {
       const api = await apiTokenTransport();
-      if (api) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      if (api) return { ok: false, effectAttempted: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       return await ordinary().replayApprovedApprovalRequest(args);
     },
   };
 }
 import { createVoiceAgentSettingsCatalogReader } from './voiceAgentSettingsCatalog';
-import { createWidgetAreaActionDepsV1 } from './widgetAreaActionDeps';
+import { createWidgetAreaActionDepsV1, prepareWidgetAreaSharingV1 } from './widgetAreaActionDeps';

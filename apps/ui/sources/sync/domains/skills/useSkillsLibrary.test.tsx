@@ -11,6 +11,7 @@ import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@h
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { capabilityDismissalState } from '@/sync/domains/state/persistentUiState';
 
 installDisconnectedServerSocketBoundary();
 // A native inventory scan is the Machine transport boundary, never a library prerequisite.
@@ -20,7 +21,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { observePromptLibraryCatalog, resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
 const { getPromptLibraryCatalogValue, getPromptLibraryCatalogSnapshot, beginPromptLibraryCatalogRowsLoad,
     applyPromptLibraryCatalogRowsSnapshot, resetPromptLibraryCatalogSnapshotsForTests } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
-const { useSkillsLibrary, readSkillsLibraryItems } = await import('./useSkillsLibrary');
+const { useSkillsLibrary, readSkillsLibraryItems, peekSkillsLibraryItems } = await import('./useSkillsLibrary');
 const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiDeclarationSources } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -29,11 +30,189 @@ const { useReachProjection } = await import('@/sync/domains/capabilities/reach/u
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { adoptHomeProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 const { SkillFoundListResultV1Schema, SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1 } = await import('@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1');
+const { groupSkillsByFolder } = await import('@/components/settings/skills/skillsCollectionModel');
 
 afterEach(() => {
     standardCleanup();
     resetPromptLibraryCatalogEngineForTests();
     resetPromptLibraryCatalogSnapshotsForTests();
+});
+
+it('reads only demanded skill ids without warming or replacing the full library', async () => {
+    const home = await createSeededSkillsHome('https://skills-selected-demand.test', {
+        skills: [{ id: 'visible-skill' }, { id: 'unrelated-skill' }],
+    });
+    const hook = await renderHook(() => useSkillsLibrary(undefined, { skillIds: ['visible-skill'] }));
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().items.map(item => item.skillId)).toEqual(['visible-skill']);
+        const scope = hook.getCurrent().scope;
+        if (!scope) throw new Error('Expected the selected library scope');
+        expect(peekSkillsLibraryItems(scope)).toBeNull();
+        expect(home.requests.filter(request => request.method === 'GET' && request.path === '/v1/artifacts')).toHaveLength(0);
+        expect(home.requests.filter(request => request.path === '/v1/artifacts/unrelated-skill')).toHaveLength(0);
+        const requests = home.requests.length;
+        const items = hook.getCurrent().items;
+        await act(async () => storage.getState().addArtifact({ id: 'unrelated-skill', kindHint: 'prompt_bundle.v2', title: null,
+            headerVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, storageMode: 'e2ee', isDecrypted: false,
+            availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }));
+        await flushHookEffects();
+        expect(hook.getCurrent().items).toBe(items);
+        expect(home.requests).toHaveLength(requests);
+    } finally { await hook.unmount(); await home.dispose(); }
+});
+
+it('keeps an unpresented library cold and reads current skills only when demanded', async () => {
+    const home = await createSeededSkillsHome('https://skills-presented-demand.test', { skills: [{ id: 'demanded-skill' }] });
+    let enabled = false;
+    const before = home.requests.length;
+    const hook = await renderHook(() => useSkillsLibrary(undefined, { enabled }));
+    try {
+        await flushHookEffects();
+        expect(home.requests.slice(before).filter(request => request.path.startsWith('/v1/artifacts')
+            || request.path.startsWith('/v1/account/entity-rows/prompt-library'))).toHaveLength(0);
+        enabled = true;
+        await hook.rerender();
+        await vi.waitFor(() => expect(hook.getCurrent().items.some(item => item.skillId === 'demanded-skill')).toBe(true));
+        expect(hook.getCurrent().status).toBe('ready');
+    } finally { await hook.unmount(); await home.dispose(); }
+});
+
+it('keeps selected account metadata current without rereading it for unrelated plugin declarations', async () => {
+    const home = await createSeededSkillsHome('https://skills-selected-plugin.test', { skills: [{ id: 'selected' }] });
+    const { projectPluginSkillDeclarationV1 } = await import('@happier-dev/protocol/plugins/contributions/skills');
+    const entry = projectPluginSkillDeclarationV1({ pluginId: 'com.acme.skills', pluginVersion: '1.0.0',
+        definition: { id: 'unrelated', directory: './unrelated' } });
+    let library: ReturnType<typeof useSkillsLibrary> | undefined;
+    const Probe = React.memo(function SelectedLibraryProbe() { library = useSkillsLibrary(undefined, { skillIds: ['selected'] }); return null; });
+    const child = <Probe />;
+    const value = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+        phase: 'current' as const, interactionEnabled: true, machineId: null, serverId: null,
+        platform: 'web' as const, accountLifetime: captureActiveServerAccountScopeLifetime(),
+        connectedAccountProjectionRevision: 1, clientExecutableActivation: { status: 'ready' as const },
+        reloadConnectedAccountProjection() {}, reloadClientExecutables() {} };
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={value}>{child}</AppShellPluginUiProjectionValueProvider>);
+    try {
+        await vi.waitFor(() => expect(library).toMatchObject({ status: 'ready', stale: false }));
+        const items = library!.items;
+        const reads = home.requests.length;
+        await screen.update(<AppShellPluginUiProjectionValueProvider value={{ ...value,
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, skillsById: { [entry.id]: entry } } }}>{child}</AppShellPluginUiProjectionValueProvider>);
+        await flushHookEffects();
+        expect(library).toMatchObject({ status: 'ready', stale: false });
+        expect(library!.items).toBe(items);
+        expect(home.requests).toHaveLength(reads);
+    } finally { await screen.unmount(); await home.dispose(); }
+});
+
+it('marks changed Skills stale before paint with exact bundle membership despite an unrelated locked row', async () => {
+    const home = await createSeededSkillsHome('https://skills-scoped-membership.test', { skills: [{ id: 'changing' }] });
+    const observations: Array<{ revision: string | undefined; stale: boolean }> = [];
+    const hook = await renderHook(() => {
+        const library = useSkillsLibrary();
+        React.useLayoutEffect(() => { observations.push({ revision: library.items.find(item => item.skillId === 'changing')?.revision,
+            stale: library.stale }); });
+        return library;
+    });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false }));
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(home.home.id);
+        try {
+            await act(async () => {
+                const current = await account.fetchArtifact('changing');
+                if (!current?.isDecrypted) throw new Error('Expected admitted skill');
+                storage.getState().applyArtifacts([current], storage.getState().artifacts, ['prompt_bundle.v2']);
+                storage.getState().addArtifact({ id: 'locked-role', kindHint: 'role.v1', title: null,
+                    headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'e2ee', isDecrypted: false,
+                    availability: { kind: 'locked', reason: 'encryption_material_unavailable' } });
+            });
+        } finally { account.dispose(); }
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false }));
+        const row = home.boundary.read('changing')!;
+        home.boundary.replaceStoredRow({ ...row, bodyVersion: 2 });
+        observations.length = 0;
+        await act(async () => storage.getState().updateArtifact({ ...storage.getState().artifacts.changing!, bodyVersion: 2 }));
+        expect(observations[0]).toEqual({ revision: '1:1', stale: true });
+        await vi.waitFor(() => expect(hook.getCurrent().items.find(item => item.skillId === 'changing')?.revision).toBe('1:2'));
+        expect(hook.getCurrent().stale).toBe(false);
+        expect(storage.getState().artifactsLoaded).toBe(false);
+    } finally { await hook.unmount(); await home.dispose(); }
+});
+
+it('marks browser-proven Skills membership removal stale before paint without claiming full inventory', async () => {
+    const home = await createSeededSkillsHome('https://skills-browser-membership.test', { skills: [{ id: 'browser-skill' }] });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(home.home.id);
+    try {
+        const current = await account.fetchArtifact('browser-skill');
+        if (!current?.isDecrypted) throw new Error('Expected admitted skill');
+        storage.getState().applyArtifacts([current], storage.getState().artifacts, 'browserListed');
+    } finally { account.dispose(); }
+    const observations: boolean[] = [];
+    const hook = await renderHook(() => {
+        const library = useSkillsLibrary();
+        React.useLayoutEffect(() => { observations.push(library.stale); });
+        return library;
+    });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false,
+            items: expect.arrayContaining([expect.objectContaining({ skillId: 'browser-skill' })]) }));
+        expect(storage.getState().artifactsLoaded).toBe(false);
+        expect(storage.getState().artifactInventoryKindsLoaded).toEqual([]);
+        home.boundary.clear();
+        observations.length = 0;
+        await act(async () => storage.getState().applyArtifacts([], storage.getState().artifacts, 'browserListed'));
+        expect(observations[0]).toBe(true);
+        await vi.waitFor(() => expect(hook.getCurrent().items.some(item => item.skillId === 'browser-skill')).toBe(false));
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false });
+    } finally { await hook.unmount(); await home.dispose(); }
+});
+
+it.each([false, true])('re-observes Skills once when a new opaque row makes known bundle membership uncertain (unreadable: %s)', async unreadable => {
+    const home = await createSeededSkillsHome(`https://skills-opaque-arrival-${unreadable}.test`, { skills: [{ id: 'known-skill' }] });
+    const observations: boolean[] = [];
+    const hook = await renderHook(() => {
+        const library = useSkillsLibrary();
+        React.useLayoutEffect(() => { observations.push(library.stale); });
+        return library;
+    });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false }));
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(home.home.id);
+        try {
+            await act(async () => {
+                const current = await account.fetchArtifact('known-skill');
+                if (!current?.isDecrypted) throw new Error('Expected admitted skill');
+                storage.getState().applyArtifacts([current], storage.getState().artifacts, ['prompt_bundle.v2']);
+            });
+        } finally { account.dispose(); }
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false }));
+        const row = home.boundary.read('known-skill')!;
+        home.boundary.replaceStoredRow({ ...row, id: 'new-opaque-skill',
+            ...(unreadable ? { kind: null, kindHint: undefined, header: 'invalid-stored-header' } : {}) });
+        const before = home.requests.length;
+        observations.length = 0;
+        await act(async () => storage.getState().addArtifact({ id: 'new-opaque-skill', title: null,
+            headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'plain', isDecrypted: false,
+            availability: { kind: 'locked', reason: 'invalid_stored_content' } }));
+        expect(observations[0]).toBe(true);
+        if (unreadable) {
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', stale: true }));
+            expect(hook.getCurrent().items.some(item => item.skillId === 'known-skill')).toBe(true);
+        } else {
+            await vi.waitFor(() => expect(hook.getCurrent().items.some(item => item.skillId === 'new-opaque-skill')).toBe(true));
+            expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false });
+        }
+        await flushHookEffects();
+        const lists = () => home.requests.slice(before).filter(request => request.path.startsWith('/v1/artifacts?'));
+        if (!unreadable) expect(lists()).toHaveLength(1);
+        const observedReads = lists().length;
+        expect(observedReads).toBeGreaterThan(0);
+        await flushHookEffects();
+        expect(lists()).toHaveLength(observedReads);
+    } finally { await hook.unmount(); await home.dispose(); }
 });
 
 it('does no library render or read work for unrelated publications at Account scale and retains unchanged skill rows', async () => {
@@ -71,6 +250,8 @@ it('does no library render or read work for unrelated publications at Account sc
         for (let i = 0; i < 5; i++) {
             await act(async () => storage.getState().updateArtifact({ ...unrelated[i]!, headerVersion: 2, updatedAt: 2 }));
         }
+        console.info('Skills unrelated arrival cost', { publications: 5, libraryRenders: renders - settled,
+            rowRenders: [...rowRenders.values()].reduce((a, b) => a + b, 0), requests: home.requests.length - reads });
         expect(renders - settled).toBe(0);
         expect(library?.items).toBe(items);
         expect(rowRenders.size).toBe(0);
@@ -119,7 +300,7 @@ it('does not rerender the real library for executable-only AppShell updates', as
     } finally { await screen.unmount(); await home.dispose(); }
 });
 
-it('does not render read-only Skills observers for unchanged rule freshness transitions', async () => {
+it('does not render read-only Skills observers for unchanged rule and usage freshness transitions', async () => {
     const home = await createSeededSkillsHome('https://skills-rule-freshness-cost.test', { skills: [{ id: 'stable-rules' }],
         records: [{ key: 'skill-rules', value: { v: 1, rules: [{ id: 'returning-rule', skillId: 'stable-rules',
             target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 1 }] } }] });
@@ -136,8 +317,8 @@ it('does not render read-only Skills observers for unchanged rule freshness tran
         const received = getPromptLibraryCatalogSnapshot(scope)!;
         const before = { library: libraryRenders, firstRun: firstRunRenders, reads: home.requests.length };
         for (let i = 0; i < 5; i++) {
-            await act(async () => beginPromptLibraryCatalogRowsLoad(scope, ['skill-rules']));
-            await act(async () => applyPromptLibraryCatalogRowsSnapshot(scope, ['skill-rules'], received, true));
+            await act(async () => beginPromptLibraryCatalogRowsLoad(scope, ['skill-rules', 'skill-usage']));
+            await act(async () => applyPromptLibraryCatalogRowsSnapshot(scope, ['skill-rules', 'skill-usage'], received, true));
         }
         expect(libraryRenders - before.library).toBe(0);
         expect(firstRunRenders - before.firstRun).toBe(0);
@@ -181,6 +362,7 @@ it('does not serialize unchanged Skills declarations when the real library obser
         expect(renders).toBeGreaterThan(settled);
         expect(library?.items).toBe(items);
         expect(home.requests).toHaveLength(reads);
+        console.info('Skills unchanged declaration publications', { publications: 5, serializations });
         expect(serializations).toBe(0);
     } finally { stringify.mockRestore(); await screen.unmount(); await home.dispose(); }
 });
@@ -301,8 +483,8 @@ it.each(['local', 'remote'] as const)('updates a mounted library after a %s reac
     } finally { await hook.unmount(); await home.dispose(); }
 });
 
-it('projects personal folder moves and clears without reopening content or replacing unrelated rows', async () => {
-    const home = await createSeededSkillsHome('https://skills-personal-folders.test', {
+it.each(['move', 'clear', 'delete'] as const)('retains admitted personal placement through name withdrawal/recovery after %s, without reopening content', async change => {
+    const home = await createSeededSkillsHome(`https://skills-personal-folders-${change}.test`, {
         skills: [{ id: 'moving', header: { folderId: 'old' } }, { id: 'unchanged' }],
         records: [{ key: 'folders', value: { v: 1, folders: [
             { id: 'old', name: 'Old' }, { id: 'work', name: 'Work' },
@@ -311,23 +493,62 @@ it('projects personal folder moves and clears without reopening content or repla
     const hook = await renderHook(() => useSkillsLibrary());
     try {
         await vi.waitFor(() => expect(hook.getCurrent().items.find(item => item.skillId === 'moving')?.folderId).toBe('old'));
+        const folderGroups = () => {
+            const current = hook.getCurrent();
+            const folders = getPromptLibraryCatalogValue(current.scope, 'folders');
+            return groupSkillsByFolder(current.items, folders.value);
+        };
+        // The Action's placement ids and the observed Account catalog share the same namespace.
+        expect(folderGroups()?.find(group => group.id === 'old')).toMatchObject({ title: 'Old' });
         const unchanged = hook.getCurrent().items.find(item => item.skillId === 'unchanged');
         expect(unchanged).toBeDefined();
-        const contentReads = () => home.requests.filter(request => request.path === '/v1/artifacts/read'
+        const contentReads = () => home.requests.filter(request => request.path === '/v1/artifacts/read' && request.projection !== 'headers'
             || request.method === 'GET' && ['/v1/artifacts/moving', '/v1/artifacts/unchanged'].includes(request.path)).length;
         const opened = contentReads();
         expect(opened).toBeGreaterThan(0);
-        for (const folderId of ['work', null]) {
-            await act(async () => {
-                const result = await createDefaultActionExecutor().execute('artifact.folder.set', {
+        const folderId = change === 'move' ? 'work' : null;
+        await act(async () => {
+            const result = change === 'delete'
+                ? await createDefaultActionExecutor().execute('artifact.folders.delete', {
+                    folderId: 'old', expectedRevision: home.catalog.revision('folders'),
+                }, { serverId: home.home.id, surface: 'ui', authority: 'present_user' })
+                : await createDefaultActionExecutor().execute('artifact.folder.set', {
                     artifactId: 'moving', folderId, expectedRevision: home.catalog.revision('folders'),
                 }, { serverId: home.home.id, surface: 'ui', authority: 'present_user' });
-                expect(result).toMatchObject({ ok: true, result: { status: 'updated' } });
-            });
-            await vi.waitFor(() => expect(hook.getCurrent().items.find(item => item.skillId === 'moving')?.folderId).toBe(folderId));
+            expect(result).toMatchObject({ ok: true, result: { status: 'updated' } });
+        });
+        await vi.waitFor(() => expect(hook.getCurrent().items.find(item => item.skillId === 'moving')?.folderId).toBe(folderId));
+        const scope = hook.getCurrent().scope!;
+        const received = getPromptLibraryCatalogSnapshot(scope)!;
+        const admitted = hook.getCurrent().items;
+        const assertPlacement = (namesRead = true) => {
+            expect(hook.getCurrent().items.find(item => item.skillId === 'moving')?.folderId).toBe(folderId);
+            if (folderId === null) expect(folderGroups()).toBeNull();
+            else if (namesRead) expect(folderGroups()?.map(group => group.id)).toEqual(['work', null]);
+            else {
+                // Names withdrawn: the filed row stays filed, in the one shared unnamed section above the unfiled rows.
+                const groups = folderGroups()!;
+                expect(groups).toHaveLength(2);
+                expect(groups[0]!.id).not.toBeNull();
+                expect(groups[0]!.rows.map(row => row.skillId)).toEqual(['moving']);
+                expect(groups[1]!.id).toBeNull();
+            }
             expect(hook.getCurrent().items.find(item => item.skillId === 'unchanged')).toBe(unchanged);
             expect(contentReads()).toBe(opened);
-        }
+        };
+        assertPlacement();
+        await act(async () => applyPromptLibraryCatalogRowsSnapshot(scope, ['folders'], { ...received,
+            catalog: { status: 'partial', rows: [], tombstones: [], diagnostics: [{ key: 'folders', revision: 'absent',
+                reason: 'invalid-stored-content' }] } }, true));
+        expect(getPromptLibraryCatalogValue(scope, 'folders').value).toBeNull();
+        assertPlacement(false);
+        expect(hook.getCurrent().items).toBe(admitted);
+        expect(peekSkillsLibraryItems(scope)?.find(item => item.skillId === 'moving')?.folderId).toBe(folderId);
+        if (folderId !== null) expect(folderGroups()?.find(group => group.id === folderId)?.title).not.toBe('Work');
+        await act(async () => applyPromptLibraryCatalogRowsSnapshot(scope, ['folders'], received, true));
+        assertPlacement();
+        expect(hook.getCurrent().items).toBe(admitted);
+        if (folderId !== null) expect(folderGroups()?.find(group => group.id === folderId)).toMatchObject({ title: 'Work' });
     } finally { await hook.unmount(); await home.dispose(); }
 });
 
@@ -501,7 +722,7 @@ it.each(['mounted', 'picker'] as const)('shares ready catalog authority and the 
     }
 });
 
-it.each([false, true])('starts cold content before rules and preserves revision freshness (edit during read: %s)', async editDuringRead => {
+it.each([false, true, 'opaque'] as const)('starts cold content before rules and preserves revision freshness (edit during read: %s)', async editDuringRead => {
     const catalogReady = createDeferred<void>();
     const bodyReady = createDeferred<void>();
     let inventories = 0;
@@ -541,20 +762,33 @@ it.each([false, true])('starts cold content before rules and preserves revision 
             home.boundary.replaceStoredRow({ ...row, bodyVersion, updatedAt: row.updatedAt + 1,
                 body: encodePlainArtifactStoredContent({ body: JSON.stringify(updatedBody) }) });
         };
-        if (editDuringRead) replaceBody('Concurrent', 2);
-        const { fetchAndApplyArtifactsList } = await import('@/sync/engine/artifacts/syncArtifacts');
-        const { withUiPromptLibraryArtifactStore } = await import('@/sync/ops/promptLibrary/promptLibraryArtifactStore');
-        await act(async () => withUiPromptLibraryArtifactStore(async (_store, account) => {
-            const basis = storage.getState().artifacts;
-            await fetchAndApplyArtifactsList({ credentials: account.credentials, request: account.request,
-                encryption: null, artifactDataKeys: new Map(),
-                applyArtifacts: (rows, source) => storage.getState().applyArtifacts(rows, source === 'inventory' ? basis : undefined) });
-        }, { serverId: home.home.id }));
+        if (editDuringRead === true) replaceBody('Concurrent', 2);
+        if (editDuringRead === 'opaque') {
+            home.boundary.replaceStoredRow({ ...home.boundary.read('cold-skill')!, id: 'new-opaque-skill' });
+            await act(async () => storage.getState().addArtifact({ id: 'new-opaque-skill', title: null,
+                headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'plain', isDecrypted: false,
+                availability: { kind: 'locked', reason: 'invalid_stored_content' } }));
+        } else {
+            const { fetchAndApplyArtifactsList } = await import('@/sync/engine/artifacts/syncArtifacts');
+            const { withUiPromptLibraryArtifactStore } = await import('@/sync/ops/promptLibrary/promptLibraryArtifactStore');
+            await act(async () => withUiPromptLibraryArtifactStore(async (_store, account) => {
+                const basis = storage.getState().artifacts;
+                await fetchAndApplyArtifactsList({ credentials: account.credentials, request: account.request,
+                    encryption: null, artifactDataKeys: new Map(),
+                    applyArtifacts: (rows, source) => storage.getState().applyArtifacts(rows, source === 'inventory' ? basis : undefined) });
+            }, { serverId: home.home.id }));
+        }
         // Partial sync can publish headers already covered by this pending
         // complete Action result; that is not a content edit or a new read.
         if (!editDuringRead) await act(async () => storage.setState({ artifactsLoaded: false }));
         bodyReady.resolve();
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', stale: false }), { timeout: 10_000 });
+        if (editDuringRead === 'opaque') {
+            expect(hook.getCurrent().items.some(item => item.skillId === 'new-opaque-skill')).toBe(true);
+            expect(bodyReads).toBe(2);
+            expect(inventories).toBe(2);
+            return;
+        }
         expect(hook.getCurrent().items.find(item => item.skillId === 'cold-skill')).toMatchObject(editDuringRead
             ? { revision: '1:2', description: 'Concurrent' } : { revision: '1:1', description: 'Original' });
         expect(bodyReads).toBe(editDuringRead ? 2 : 1);
@@ -598,7 +832,7 @@ it('joins the usage row, ranks/preselects Off skills and writes one real bulk re
         settings: previousActionSettings, actionId: 'skills.rules.set',
         surface: 'ui', approvalRequired: false,
     }) });
-    storage.getState().applyLocalSettings({ skillsFirstRunDecidedAt: null });
+    capabilityDismissalState.remove('skillsFirstRunDecidedAt');
     for (const id of ['never', 'older', 'recent']) {
         const header = PromptBundleArtifactHeaderV1Schema.parse({ v: 1, kind: 'prompt_bundle.v2', title: id, bundleSchemaId: 'skills.skill_md_v1' });
         const body = PromptBundleBodyV1Schema.parse({ v: 1, createdAtMs: 1, updatedAtMs: 1, entries: [{ path: 'SKILL.md', contentKind: 'utf8',
@@ -621,8 +855,12 @@ it('joins the usage row, ranks/preselects Off skills and writes one real bulk re
         await act(async () => { outcomes.push(await hook.getCurrent().firstRun.turnOn()); });
         expect(outcomes).toEqual([false]);
         expect(hook.getCurrent().firstRun.errorCode).toBe('conflict');
-        expect(storage.getState().localSettings.skillsFirstRunDecidedAt).toBeNull();
-        expect(hook.getCurrent().firstRun.eligible).toBe(true);
+        expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toBeUndefined();
+        // A refused write revalidates rule authority; retry becomes eligible when that read settles.
+        await vi.waitFor(() => {
+            expect(getPromptLibraryCatalogValue(hook.getCurrent().library.scope, 'skill-rules').status).toBe('ready');
+            expect(hook.getCurrent().firstRun.eligible).toBe(true);
+        });
         failRules = false;
         await act(async () => { outcomes.push(...await Promise.all([hook.getCurrent().firstRun.turnOn(), hook.getCurrent().firstRun.turnOn()])); });
         expect(outcomes).toEqual([false, true, true]);
@@ -631,7 +869,7 @@ it('joins the usage row, ranks/preselects Off skills and writes one real bulk re
         expect(record.value.rules.filter(rule => rule.skillId === 'recent')).toMatchObject([{ enabled: true, target: { t: 'allMachines' } }]);
         expect(record.value.rules.filter(rule => rule.skillId === 'older' || rule.skillId === 'never')).toEqual([]);
         expect(catalog.requests.filter(request => request.key === 'skill-rules')).toHaveLength(1);
-        expect(storage.getState().localSettings.skillsFirstRunDecidedAt).not.toBeNull();
+        expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toEqual(expect.any(Number));
         await vi.waitFor(() => expect(hook.getCurrent().firstRun.eligible).toBe(false));
         usageUnavailable = true;
         await act(async () => hook.getCurrent().library.retry());
@@ -639,7 +877,7 @@ it('joins the usage row, ranks/preselects Off skills and writes one real bulk re
         expect(hook.getCurrent().library.items.every(item => item.lastUsedAt === undefined)).toBe(true);
         const ruleWrites = catalog.requests.length;
         await act(async () => hook.getCurrent().firstRun.notNow());
-        expect(storage.getState().localSettings.skillsFirstRunDecidedAt).not.toBeNull();
+        expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toEqual(expect.any(Number));
         expect(catalog.requests).toHaveLength(ruleWrites);
     } finally {
         await hook.unmount();

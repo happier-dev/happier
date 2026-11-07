@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     type McpServerCatalogEntryTransportV1,
     type McpServerCatalogEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
@@ -22,6 +22,14 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { t } from '@/text';
 
 export type McpConfigurationSaveState = 'idle' | 'saving' | 'saved' | 'failed';
+
+/** The one transport switch: a command keeps its command, an address keeps its address, the other side is dropped. */
+export function withMcpServerTransport(current: McpServerCatalogEntryV1, transport: McpServerCatalogEntryTransportV1): McpServerCatalogEntryV1 {
+    if (current.transport === transport) return current;
+    return transport === 'stdio'
+        ? { ...current, transport, stdio: current.stdio ?? { command: '', args: [] }, remote: undefined, updatedAt: Date.now() }
+        : { ...current, transport, remote: current.remote ?? { url: '', headers: {} }, stdio: undefined, updatedAt: Date.now() };
+}
 
 /**
  * Everything the catalog entry holds about starting or reaching a server, edited in place (md C).
@@ -40,6 +48,13 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
      * values one machine runs, so the rows drop the descriptions that speak for every machine.
      */
     mode?: 'create' | 'edit' | 'machine';
+    /**
+     * The transports `create` offers (default all three). The Add dialog's Custom list already chose command or
+     * remote, so its form offers only what is left of that choice; one option draws no picker.
+     */
+    transports?: readonly McpServerCatalogEntryTransportV1[];
+    /** Shown but not editable (an add is pending): every field, list and value row holds still. */
+    readOnly?: boolean;
     /** Section title and purpose (the server page names it Configuration). */
     title?: string;
     description?: string;
@@ -59,16 +74,16 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
     const [folderChoice, setFolderChoice] = React.useState<'session' | 'path'>(server.stdio?.cwd?.t === 'path' ? 'path' : 'session');
     React.useEffect(() => { setFolderChoice(server.stdio?.cwd?.t === 'path' ? 'path' : 'session'); }, [server.stdio?.cwd?.t]);
 
+    const readOnly = props.readOnly === true;
+    const offered = props.transports;
     const transportOptions = React.useMemo(() => ([
         { id: 'stdio' as const, label: t('settings.mcpServersTransportLocalTitle'), description: t('settings.mcpServersTransportLocalSubtitle') },
         { id: 'http' as const, label: t('settings.mcpServersTransportHttpTitle'), description: t('settings.mcpServersTransportHttpSubtitle') },
         { id: 'sse' as const, label: t('settings.mcpServersTransportSseTitle'), description: t('settings.mcpServersTransportSseSubtitle') },
-    ]), []);
+    ].filter(option => offered === undefined || offered.includes(option.id))), [offered]);
 
     const setTransport = React.useCallback((transport: McpServerCatalogEntryTransportV1) => {
-        onChangeServer((current) => (transport === 'stdio'
-            ? { ...current, transport, stdio: current.stdio ?? { command: '', args: [] }, remote: undefined, updatedAt: Date.now() }
-            : { ...current, transport, remote: current.remote ?? { url: '', headers: {} }, stdio: undefined, updatedAt: Date.now() }));
+        onChangeServer((current) => withMcpServerTransport(current, transport));
     }, [onChangeServer]);
 
     const setStdio = React.useCallback((patch: (stdio: NonNullable<McpServerCatalogEntryV1['stdio']>) => NonNullable<McpServerCatalogEntryV1['stdio']>) => {
@@ -108,6 +123,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                     title={t('settings.mcpServersFieldName')}
                     accessoryLayout="adaptive"
                     showChevron={false}
+                    disabled={readOnly}
                     rightElement={(
                         <FieldTextInput
                             testID="mcp.server.editor.name"
@@ -116,11 +132,12 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                             accessibilityLabel={t('settings.mcpServersFieldName')}
                             placeholder="my_server"
                             monospace
+                            editable={!readOnly}
                         />
                     )}
                 />
             ) : null}
-            {props.mode === 'create' ? (
+            {props.mode === 'create' && transportOptions.length > 1 ? (
                 <SegmentedChoiceItem<McpServerCatalogEntryTransportV1>
                     testID="mcp.server.transport"
                     testIDPrefix="mcp.server.transport"
@@ -128,6 +145,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                     value={server.transport}
                     options={transportOptions}
                     onChange={setTransport}
+                    disabled={readOnly}
                 />
             ) : null}
             {local ? (
@@ -141,6 +159,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                         committedValue={committed ? committed.stdio?.command ?? '' : undefined}
                         placeholder="npx"
                         monospace
+                        disabled={readOnly}
                         onDraftChange={(command) => setStdio((stdio) => ({ ...stdio, command }))}
                         onCommit={(draft) => {
                             const command = draft.trim();
@@ -153,6 +172,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                         // One field per argument, as wide as the values below it (Environment's rhythm).
                         accessoryLayout="stacked"
                         showChevron={false}
+                        disabled={readOnly}
                         rightElement={(
                             <StringListField
                                 testID="mcp.server.editor.args"
@@ -163,13 +183,14 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                                 removeLabel={(position) => t('capabilities.mcp.config.removeArgument', { position })}
                                 addLabel={t('capabilities.mcp.config.addArgument')}
                                 monospace
+                                disabled={readOnly}
                             />
                         )}
                     />
                     <DropdownMenu
                         testID="mcp.server.config.folder"
-                        open={folderMenuOpen}
-                        onOpenChange={setFolderMenuOpen}
+                        open={folderMenuOpen && !readOnly}
+                        onOpenChange={(open) => setFolderMenuOpen(open && !readOnly)}
                         variant="selectable"
                         search={false}
                         selectedId={folderChoice}
@@ -177,7 +198,9 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                         matchTriggerWidth
                         connectToTrigger
                         rowKind="item"
-                        itemTrigger={{ title: t('capabilities.mcp.config.workingFolder'), subtitle: t('capabilities.mcp.config.workingFolderDescription'), showSelectedSubtitle: false }}
+                        itemTrigger={{ title: t('capabilities.mcp.config.workingFolder'), subtitle: t('capabilities.mcp.config.workingFolderDescription'), showSelectedSubtitle: false,
+                            // Held while a create is pending: the row dims like the fields above it.
+                            ...(readOnly ? { itemProps: { disabled: true } } : {}) }}
                         items={folderItems}
                         onSelect={(id) => {
                             setFolderMenuOpen(false);
@@ -198,6 +221,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                             committedValue={committed ? committed.stdio?.cwd?.t === 'path' ? committed.stdio.cwd.path : '' : undefined}
                             placeholder="/srv/project"
                             monospace
+                            disabled={readOnly}
                             autoFocus={server.stdio?.cwd?.t !== 'path'}
                             onDraftChange={(path) => setStdio((stdio) => ({ ...stdio, cwd: { t: 'path', path } }))}
                             onCommit={(draft) => {
@@ -220,6 +244,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                     committedValue={committed ? committed.remote?.url ?? '' : undefined}
                     placeholder="https://example.com/mcp"
                     monospace
+                    disabled={readOnly}
                     onDraftChange={(url) => onChangeServer((current) => ({ ...current, remote: { ...(current.remote ?? { headers: {} }), url }, updatedAt: Date.now() }))}
                     onCommit={(draft) => {
                         const url = draft.trim();
@@ -233,6 +258,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                 subtitle={local ? t('capabilities.mcp.config.environmentDescription') : t('capabilities.mcp.config.headersDescription')}
                 accessoryLayout="stacked"
                 showChevron={false}
+                disabled={readOnly}
                 rightElement={local ? (
                     <ValueRefRowsEditor
                         kind="env"
@@ -241,6 +267,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                         scope={props.scope}
                         attentionKeys={props.attentionKeys}
                         addLabel={t('capabilities.mcp.config.addVariable')}
+                        readOnly={readOnly}
                         testIdPrefix="mcp.server.env"
                         onChangeEntries={(env) => commitWith(() => onChangeServer((current) => ({ ...current, env, updatedAt: Date.now() })))}
                     />
@@ -252,6 +279,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
                         scope={props.scope}
                         attentionKeys={props.attentionKeys}
                         addLabel={t('capabilities.mcp.config.addHeader')}
+                        readOnly={readOnly}
                         testIdPrefix="mcp.server.headers"
                         onChangeEntries={(headers) => commitWith(() => onChangeServer((current) => ({ ...current, remote: { ...(current.remote ?? { url: '' }), headers }, updatedAt: Date.now() })))}
                     />

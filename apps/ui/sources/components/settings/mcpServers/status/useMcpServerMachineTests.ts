@@ -13,8 +13,9 @@ export type McpServerMachineTest = McpServerTestFact & Readonly<{ stderrTail?: s
 type Results = Readonly<Record<string, McpServerMachineTest | undefined>>;
 type Snapshot = Readonly<{ results: Results; running: ReadonlySet<string> }>;
 type Entry = { configuration: string; pluginDefinition?: McpServerCatalogEntryV1; snapshot: Snapshot };
-type Partition = { entries: Map<string, Entry>; listeners: Set<() => void> };
+type Partition = { entries: ReadonlyMap<string, Entry>; listeners: Set<() => void>; invalidate: (serverId?: string) => void };
 const EMPTY: Snapshot = Object.freeze({ results: {}, running: new Set<string>() });
+const EMPTY_ENTRIES: ReadonlyMap<string, Entry> = new Map();
 
 // On-demand facts survive reopening only within the incumbent Account lifetime and tested configuration.
 const sessionResults = new WeakMap<ActiveServerAccountScopeLifetime, Partition>();
@@ -30,27 +31,42 @@ function configuration(lifetime: ActiveServerAccountScopeLifetime, serverId: str
 function partitionFor(lifetime: ActiveServerAccountScopeLifetime): Partition {
     const existing = sessionResults.get(lifetime);
     if (existing) return existing;
-    const partition: Partition = { entries: new Map(), listeners: new Set() };
-    sessionResults.set(lifetime, partition);
-    const unsubscribe = subscribeMcpServerCatalogSnapshots(() => {
+    const partition: Partition = { entries: new Map(), listeners: new Set(), invalidate: serverId => {
         // A refresh retains facts; a proven configuration change or deletion retires them, even with no page open.
-        const catalog = getMcpServerCatalogSnapshot(lifetime.scope);
-        if (catalog.status !== 'ready' && catalog.status !== 'partial') return;
-        let changed = false;
+        const next = new Map(partition.entries);
         for (const [id, entry] of partition.entries) {
+            if (serverId !== undefined && id !== serverId) continue;
             if (configuration(lifetime, id, entry.pluginDefinition) === entry.configuration) continue;
-            partition.entries.delete(id);
-            changed = true;
+            next.delete(id);
         }
-        if (changed) for (const listener of partition.listeners) listener();
-    });
+        if (next.size !== partition.entries.size) {
+            partition.entries = next;
+            for (const listener of partition.listeners) listener();
+        }
+    } };
+    sessionResults.set(lifetime, partition);
+    const unsubscribe = subscribeMcpServerCatalogSnapshots(() => partition.invalidate());
     lifetime.onRetire(() => {
         unsubscribe();
-        partition.entries.clear();
+        partition.entries = EMPTY_ENTRIES;
         sessionResults.delete(lifetime);
         for (const listener of partition.listeners) listener();
     });
     return partition;
+}
+
+/** Read the Test owner's held results without starting a Test or mounting one controller per server. */
+export function useHeldMcpServerMachineTests(): ReadonlyMap<string, Results> {
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const partition = React.useMemo(() => lifetime ? partitionFor(lifetime) : null, [lifetime]);
+    const read = React.useCallback(() => lifetime?.isCurrent() && partition ? partition.entries : EMPTY_ENTRIES,
+        [lifetime, partition]);
+    const subscribe = React.useCallback((listener: () => void) => {
+        partition?.listeners.add(listener);
+        return () => { partition?.listeners.delete(listener); };
+    }, [partition]);
+    const entries = React.useSyncExternalStore(subscribe, read, read);
+    return React.useMemo(() => new Map([...entries].map(([id, entry]) => [id, entry.snapshot.results])), [entries]);
 }
 
 /** The canonical Test Action, with late answers fenced by the Account and configuration that requested them. */
@@ -60,31 +76,36 @@ export function useMcpServerMachineTests(serverId: string, pluginDefinition?: Mc
     const partition = React.useMemo(() => lifetime ? partitionFor(lifetime) : null, [lifetime]);
     const read = React.useCallback(() => {
         if (!lifetime?.isCurrent() || !partition) return EMPTY;
-        const signature = configuration(lifetime, serverId, pluginDefinition);
-        if (!signature) return EMPTY;
-        let entry = partition.entries.get(serverId);
-        if (!entry || entry.configuration !== signature) {
-            entry = { configuration: signature, ...(serverId.startsWith('plugin:') ? { pluginDefinition } : {}), snapshot: EMPTY };
-            partition.entries.set(serverId, entry);
-        }
-        return entry.snapshot;
-    }, [lifetime, partition, serverId, pluginDefinition]);
+        return partition.entries.get(serverId)?.snapshot ?? EMPTY;
+    }, [lifetime, partition, serverId]);
     const subscribe = React.useCallback((listener: () => void) => {
         if (!partition) return () => {};
         partition.listeners.add(listener);
-        const unsubscribe = subscribeMcpServerCatalogSnapshots(listener);
-        return () => { partition.listeners.delete(listener); unsubscribe(); };
+        return () => { partition.listeners.delete(listener); };
     }, [partition]);
     const snapshot = React.useSyncExternalStore(subscribe, read, read);
-    const run = React.useCallback((machineIds: readonly string[]) => {
-        if (!lifetime?.isCurrent() || !partition || !execution.ready) return;
-        read();
+    React.useLayoutEffect(() => {
+        // Plugin declarations arrive through the detail input, not the Account catalog publisher.
+        if (!partition || !serverId.startsWith('plugin:')) return;
         const entry = partition.entries.get(serverId);
         if (!entry) return;
-        const current = () => lifetime.isCurrent() && partition.entries.get(serverId) === entry
-            && configuration(lifetime, serverId, pluginDefinition) === entry.configuration;
-        const emit = () => { for (const listener of partition.listeners) listener(); };
+        entry.pluginDefinition = pluginDefinition;
+        partition.invalidate(serverId);
+    }, [partition, serverId, pluginDefinition]);
+    const run = React.useCallback((machineIds: readonly string[]) => {
+        if (!lifetime?.isCurrent() || !partition || !execution.ready) return;
+        const signature = configuration(lifetime, serverId, pluginDefinition);
+        if (!signature) return;
+        const previous = partition.entries.get(serverId);
+        const entry: Entry = previous?.configuration === signature ? previous
+            : { configuration: signature, ...(serverId.startsWith('plugin:') ? { pluginDefinition } : {}), snapshot: EMPTY };
+        const current = () => lifetime.isCurrent() && partition.entries.get(serverId) === entry;
+        const emit = () => {
+            partition.entries = new Map(partition.entries).set(serverId, entry);
+            for (const listener of partition.listeners) listener();
+        };
         const targets = [...new Set(machineIds)].filter(id => !entry.snapshot.running.has(id));
+        if (targets.length === 0) return;
         entry.snapshot = { ...entry.snapshot, running: new Set([...entry.snapshot.running, ...targets]) };
         emit();
         for (const machineId of targets) void (async () => {
@@ -104,6 +125,6 @@ export function useMcpServerMachineTests(serverId: string, pluginDefinition?: Mc
             entry.snapshot = { results: { ...entry.snapshot.results, [machineId]: result }, running };
             emit();
         })();
-    }, [execution.execute, execution.ready, lifetime, partition, read, serverId, pluginDefinition]);
+    }, [execution.execute, execution.ready, lifetime, partition, serverId, pluginDefinition]);
     return React.useMemo(() => ({ ...snapshot, run }), [snapshot, run]);
 }

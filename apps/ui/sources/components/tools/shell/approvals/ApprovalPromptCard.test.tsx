@@ -1,11 +1,16 @@
-import { renderWithSessionTranscriptSource, createTestSessionTranscriptSource } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource, createTestSessionTranscriptSource, createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestSchema, ApprovalRequestV2Schema, ARTIFACT_PLAIN_DATA_KEY_MARKER, API_TOKEN_FULL_GRANT_V1, StrictJsonValueSchema, buildApprovalRequestArtifactHeaderV1, computeExternalActionRequestEnvelopeDigestV1, encodePlainArtifactStoredContent, signExternalActionApprovalInputV1, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { ApprovalRequestSchema, ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import { StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1} from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import tweetnacl from 'tweetnacl';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -20,6 +25,10 @@ import { deriveTranscriptInteraction, deriveTranscriptInteractionFromSession } f
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { deriveReadOnlyTranscriptInteraction } from '@/components/sessions/transcript/forkContext/deriveReadOnlyTranscriptInteraction';
 import { TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from './transcriptSettledApprovalPresentations';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -121,18 +130,51 @@ function approvalRequest(): ApprovalRequestV1 {
     };
 }
 
-function invitationApprovalRequest(preview?: ApprovalRequestV2['preview']): ApprovalRequestV2 {
+async function invitationApprovalRequest(includePreview = true): Promise<ApprovalRequestV2> {
+    let prepared: ApprovalRequest | null = null;
+    const bearer = 'a'.repeat(43);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        // The authenticated Home owns exchanging the bearer for deferred custody.
+        homeDomainAction: async ({ actionId, input }) => {
+            expect(actionId).toBe('teams.invitations.accept.prepareApproval');
+            expect(input).toEqual({ v: 1, token: bearer });
+            return {
+                outcome: 'ok', continuation: {
+                    v: 1, kind: 'post_auth_invitation', reference: 'prepared-invitation-reference', teamId: 'team-acme',
+                },
+                preview: {
+                    home: { serverId: 'srv-home-acme', displayName: 'Acme Home', storageMode: 'encrypted' },
+                    team: { teamId: 'team-acme', name: 'Acme Platform', logo: null, accentSeed: 'team-acme' },
+                    role: 'member', historyAccess: 'from_membership', state: 'active',
+                    expiresAt: 1234, recipientEmailMask: 'a•••@example.com',
+                },
+            };
+        },
+        approvalsCreate: async ({ request }) => {
+            prepared = request;
+            return { artifactId: 'approval-1' };
+        },
+    }));
+    expect(await executor.execute('approval.request.create', {
+        actionId: 'teams.invitations.accept', actionArgs: { v: 1, token: bearer },
+        summary: 'Accept invitation', createdBy: { surface: 'system' },
+    }, { surface: 'mcp', authority: 'present_user', serverId: homeId,
+        runtimeAccountId: 'account-1', actionRequestId: 'request-invitation-1', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true, result: { artifactId: 'approval-1' } });
+    const invitation = ApprovalRequestV2Schema.parse(prepared);
+    expect(JSON.stringify(invitation)).not.toContain(bearer);
     const request = daemonApprovalRequest();
     return withApiAdmission({
         ...request,
         actionId: 'teams.invitations.accept',
-        actionArgs: { v: 1, token: 'a'.repeat(43) },
+        // Missing stored presentation models an incomplete bearer-only request.
+        actionArgs: includePreview ? invitation.actionArgs : { v: 1, token: bearer },
         summary: 'Accept invitation',
         executionOriginV1: {
             ...request.executionOriginV1,
             actionId: 'teams.invitations.accept',
         },
-        ...(preview === undefined ? {} : { preview }),
+        ...(includePreview ? { preview: invitation.preview } : {}),
     });
 }
 
@@ -157,12 +199,13 @@ function daemonApprovalRequest(): ApprovalRequestV2 {
             sessionId: 'session-1',
             machineId: 'machine-exact',
             target: { kind: 'session', sessionId: 'session-1' },
-            actionId: 'session.title.set',
+            actionId: 'session.archive',
             requestId: 'request-1',
         },
-        actionId: 'session.title.set',
-        actionArgs: { sessionId: 'session-1', title: 'Current title' },
-        summary: 'Set session title',
+        // Title writes are Account-placed; this fixture exercises Session-daemon replay.
+        actionId: 'session.archive',
+        actionArgs: { sessionId: 'session-1' },
+        summary: 'Archive session',
     });
 }
 
@@ -208,6 +251,9 @@ function localUiApprovalRequest(serverId = homeId): ApprovalRequestV2 {
     const approval = daemonApprovalRequest();
     return {
         ...approval,
+        actionId: 'session.title.set',
+        actionArgs: { sessionId: 'session-1', title: 'Current title' },
+        summary: 'Set session title',
         requestedSurface: 'ui',
         executionOriginV1: {
             v: 1,
@@ -290,11 +336,120 @@ describe('ApprovalPromptCard', () => {
         expect(daemonRpc).not.toHaveBeenCalled();
     });
 
+    describe('an Agent visual at Ask', () => {
+        const visualArgs = {
+            sessionId: 'session-1', itemId: 'visual-1', expectedItemRevision: null, destination: 'transcript' as const,
+            item: { v: 1 as const, title: 'Release checklist', frame: 'frameless' as const,
+                height: { mode: 'auto' as const, fallback: 'regular' as const },
+                source: { kind: 'declarative' as const, document: createSessionSurfaceNoteDocumentV1('- ship it') } },
+        };
+        function visualApproval(overrides: Record<string, unknown> = {}): ApprovalRequest {
+            return ApprovalRequestV2Schema.parse({
+                v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+                createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+                origin: { kind: 'transcript_tool_call', sessionId: 'session-1', messageId: 'message-1', toolCallId: 'tool-1',
+                    toolName: 'session_board_item_upsert', toolInput: visualArgs },
+                executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+                    caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
+                    serverId: homeId, sessionId: 'session-1', machineId: 'machine-1',
+                    actionId: 'session.board.item.upsert', requestId: 'request-1' },
+                actionId: 'session.board.item.upsert', actionArgs: visualArgs, summary: 'Show Release checklist?',
+                ...overrides,
+            });
+        }
+
+        it('becomes the visual itself once approved: the live occurrence at the request, not a card around it', async () => {
+            const approved = visualApproval({ status: 'executed', updatedAtMs: 3, decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 3, effectAttempted: true, ok: true, result: {
+                    v: 1, serverId: homeId, sessionId: 'session-1', itemDestination: 'transcript', destination: null,
+                    result: { operation: 'upsert_item', itemId: 'visual-1', outcome: 'created', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' },
+                } } });
+            const screen = await renderCard(approved, { chrome: 'inline' });
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids).toContain('transcript-board-item-visual-1');
+            expect(ids).not.toContain('approval-prompt-card');
+        });
+
+        it('keeps the request at its call while it waits, with its decision', async () => {
+            const screen = await renderCard(visualApproval(), { chrome: 'inline' });
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids).toContain('approval-prompt-card');
+            expect(ids).toContain('approval-prompt-approve');
+            expect(ids).not.toContain('transcript-board-item-visual-1');
+        });
+    });
+
     it('renders the action approval summary in inline chrome', async () => {
         const screen = await renderCard(approvalRequest(), { chrome: 'inline' });
         expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
         expect(screen.getTextContent()).toContain('List sessions before continuing');
         expect(screen.getTextContent()).toContain('Agent wants to inspect active sessions');
+    });
+
+    it('withholds requester-bound decisions from the Bot Session owner', async () => {
+        const artifact = buildDiscussionRequesterApprovalArtifact({
+            id: 'approval-1', serverId: homeId, serverIdentityId: 'srv_stable-home-a',
+            botSessionId: 'session-1', executionAccountId: 'account-1', requesterAccountId: 'account-2',
+            summary: 'Update document',
+        });
+        if (typeof artifact.body !== 'string') throw new Error('Expected requester approval body');
+        const approval = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+        await seedApproval(approval);
+
+        const screen = await renderWithSessionTranscriptSource(<ApprovalPromptCard
+            artifact={approvalArtifact(homeId)} approval={approval} sessionId="session-1" canApprove chrome="inline"
+        />, createApprovalTestSource());
+
+        expect(screen.findByTestId('approval-prompt-approve')).toBeNull();
+        expect(screen.findByTestId('approval-prompt-reject')).toBeNull();
+        expect(screen.findByTestId('approval-prompt-requester-waiting')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('detailPages.approval.requester.thread.waiting');
+        expect(readApproval().status).toBe('open');
+        expect(home.requestsFor('/v1/artifacts/approval-1').filter(request => request.input !== null)).toEqual([]);
+    });
+
+    it('offers requester-bound decisions after the requester restores the Home under another local profile id', async () => {
+        const artifact = buildDiscussionRequesterApprovalArtifact({
+            id: 'approval-1', serverId: 'creator-local-home-profile', serverIdentityId: 'srv_stable-home-a',
+            botSessionId: 'session-1', executionAccountId: 'bot-owner', requesterAccountId: 'account-1',
+            summary: 'Update document',
+        });
+        if (typeof artifact.body !== 'string') throw new Error('Expected requester approval body');
+        const approval = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+        await seedApproval(approval);
+
+        const screen = await renderWithSessionTranscriptSource(<ApprovalPromptCard
+            artifact={approvalArtifact(homeId)} approval={approval} sessionId="session-1" canApprove chrome="inline"
+        />, createApprovalTestSource());
+
+        await waitForHomeGovernance(() => {
+            expect(screen.findByTestId('approval-prompt-approve')).toBeTruthy();
+            expect(screen.findByTestId('approval-prompt-reject')).toBeTruthy();
+            expect(screen.findByTestId('approval-prompt-requester-waiting')).toBeNull();
+        });
+    });
+
+    it('renders a contributed Action approval with its canonical decision controls', async () => {
+        const approval = TargetActionApprovalRequestV1Schema.parse({
+            v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+            qualifiedActionId: 'dev.leads-fixture/actions/update-stage', input: { leadId: 'verdant', stage: 'qualified' },
+            sourceCustody: { kind: 'managed', immutableGenerationId: 'fixture-generation', installSource: 'npm' },
+            policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), approvalInputCustody: 'live_only',
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+                caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
+                serverId: homeId, sessionId: 'session-1', actionId: 'action.invoke', requestId: 'request-1' },
+            summary: 'Update this lead’s stage?',
+        });
+        const screen = await renderWithSessionTranscriptSource(<ApprovalPromptCard
+            artifact={{ id: 'target-approval', header: { title: approval.summary, kind: 'target_action_approval.v1',
+                approvalStatus: 'open', sessionId: 'session-1', serverId: homeId } }}
+            approval={approval} sessionId="session-1" canApprove chrome="inline"
+        />, createApprovalTestSource());
+        expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Update this lead’s stage?');
+        expect(screen.findByTestId('approval-prompt-approve')).toBeTruthy();
+        expect(screen.findByTestId('approval-prompt-reject')).toBeTruthy();
     });
 
     function declinedSignIn(status: 'rejected' | 'canceled'): ApprovalRequest {
@@ -378,6 +533,67 @@ describe('ApprovalPromptCard', () => {
         expect(screen.getTextContent()).toContain('filesystem_operation_failed');
     });
 
+    function executedConfidentialFill(result: unknown, submit?: Readonly<{ label: string; consequence: string }>): ApprovalRequest {
+        const submitControl = submit ? { controlId: 'control-submit', locator: '#submit', ...submit } : undefined;
+        return ApprovalRequestSchema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+            createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'ui',
+            actionId: 'browser.automation.secret.fill', summary: 'Sign in to App Store Connect',
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+                serverId: homeId, serverIdentityId: 'srv_stable-home-a', sessionId: 'session-1', machineId: 'machine-exact',
+                target: { kind: 'session', sessionId: 'session-1' }, actionId: 'browser.automation.secret.fill', requestId: 'fill-1' },
+            actionArgs: { serverId: homeId, sessionId: 'session-1', machineId: 'machine-exact', purpose: 'Sign in',
+                browserSessionId: 'browser-1', viewId: 'view-1', tabId: 'tab-1', frameId: 'frame-1',
+                documentId: 'document-1', navigationGeneration: 1, origin: 'https://appstoreconnect.apple.com',
+                field: { fieldId: 'password', focusId: 'focus-1', locator: '#password' }, ...(submitControl ? { submit: submitControl } : {}) },
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: { executedAtMs: 3, ok: true, result },
+        });
+    }
+
+    it('reads a settled confidential fill as what was entered and what is still held for the person (lab b-secret F)', async () => {
+        const held = await renderCard(executedConfidentialFill({ status: 'filled', code: 'filled' },
+            { label: 'Continue', consequence: 'submits' }), { chrome: 'inline' });
+        expect(held.findByTestId('approval-prompt-approve')).toBeNull();
+        const outcome = held.findByTestId('approval-prompt-confidential-outcome');
+        expect(outcome).toBeTruthy();
+        const text = held.getTextContent();
+        expect(text).toContain('approvals.confidential.filled');
+        expect(text).toContain('approvals.confidential.submitHeld');
+    });
+
+    it('reads a refused confidential fill as nothing entered, with no held submit', async () => {
+        const refused = await renderCard(executedConfidentialFill({ status: 'refused', code: 'target_changed' }), { chrome: 'inline' });
+        const refusedText = refused.getTextContent();
+        expect(refusedText).toContain('approvals.confidential.targetChanged');
+        expect(refusedText).toContain('approvals.confidential.nothingEntered');
+        expect(refusedText).not.toContain('approvals.confidential.submitHeld');
+    });
+
+    it('says why a Service start failed and offers the same output disclosure as the Service row', async () => {
+        const { DaemonLocalServiceLauncherStartResponseV1Schema } = await import('@happier-dev/protocol/local/services/launcher/v1');
+        const result = DaemonLocalServiceLauncherStartResponseV1Schema.parse({
+            protocolVersion: 1, machineId: 'machine', targetId: 'declared:lumen', status: 'failed',
+            reasonCode: 'plugin_managed_service_establishment_failed',
+            establishmentFailure: { cause: 'process_exited', exitCode: 1, lastStderrLine: 'Unable to bind listener' },
+            snapshot: { v: 1, machineId: 'machine', updatedAt: 10, targets: [{
+                id: 'declared:lumen', source: 'managed_service', machineId: 'machine', title: 'Lumen web',
+                confidence: 'high', state: 'available', serviceState: 'failed', actions: ['manage'],
+                sourceClass: { kind: 'managed_service', managedServiceId: 'lumen' },
+                diagnostics: [{ code: 'native_service_output', severity: 'info', message: 'Unable to bind listener' }],
+            }] },
+        });
+        const approval = ApprovalRequestSchema.parse({ ...failedWriteFile(),
+            actionId: 'localServices.launcher.start', summary: 'Start Lumen web',
+            actionArgs: { machineId: 'machine', targetId: 'declared:lumen',
+                declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'Lumen web' } } },
+            execution: { executedAtMs: 3, ok: true, result } });
+        const screen = await renderCard(approval, { chrome: 'inline' });
+        expect(screen.getTextContent()).toContain('localServices.actions.failure.namedStartFailed');
+        expect(screen.findByTestId('approval-prompt-service-start-output-toggle')).toBeTruthy();
+        // The output stays closed until asked for.
+        expect(screen.getTextContent()).not.toContain('Unable to bind listener');
+    });
+
     it('names the failed action for a failure with no typed copy', async () => {
         const approval = ApprovalRequestSchema.parse({ ...failedWriteFile(), status: 'failed', actionId: 'session.list', actionArgs: {},
             execution: { executedAtMs: 3, ok: false, errorCode: 'boom_happened', error: 'boom_happened' } });
@@ -433,9 +649,12 @@ describe('ApprovalPromptCard', () => {
     });
 
     it('dismisses a settled failure on this device only, and keeps open approvals undismissable', async () => {
+        storage.setState({ profileScope: { serverId: homeId, accountId: 'account-1' } });
         const screen = await renderCard(failedWriteFile(), { chrome: 'inline' });
         await screen.pressByTestIdAsync('approval-prompt-dismiss');
-        expect(typeof storage.getState().localSettings.dismissedFailedApprovalsV1['approval-1']).toBe('number');
+        const { failedApprovalDismissalsState, failedApprovalDismissalScopeKey } = await import('@/sync/domains/state/failedApprovalUiState');
+        expect(failedApprovalDismissalsState.read(failedApprovalDismissalScopeKey(storage.getState().profileScope!))?.['approval-1'])
+            .toEqual(expect.any(Number));
         expect(readApproval().status).toBe('executed');
         const open = await renderCard(approvalRequest(), { chrome: 'inline' });
         expect(open.findByTestId('approval-prompt-dismiss')).toBeNull();
@@ -465,6 +684,22 @@ describe('ApprovalPromptCard', () => {
         }
     });
 
+    it('reads an agent\'s Discussion draft in a Session as the answer it would post, with Post and Decline', async () => {
+        const { createWorkflowPublicationApprovalArtifact } = await import('@/dev/testkit/fixtures/workflowPublicationApprovalFixture');
+        const approval = ApprovalRequestSchema.parse(JSON.parse(createWorkflowPublicationApprovalArtifact({
+            id: 'approval-1', runId: 'run-1', scope: { serverId: homeId, accountId: 'account-1' },
+        }).body));
+        const screen = await renderCard(approval, { chrome: 'inline' });
+        // The same presentation the Discussion's own waiting card draws: the answer, who sees it, then the decision.
+        expect(screen.findByTestId('approval-prompt-discussion-draft')).toBeTruthy();
+        const text = screen.getTextContent();
+        expect(text).toContain('session.collaboration.discussion.draftReview.onlyYou');
+        expect(text).toContain('session.collaboration.discussion.draftReview.post');
+        expect(text).toContain('session.collaboration.discussion.draftReview.decline');
+        // The Action's operands wait behind Details instead of leading the card.
+        expect(text).not.toContain('Durable message identity');
+    });
+
     it('reads a summary that only repeats the Action title once', async () => {
         const repeated = await renderCard({ ...approvalRequest(), actionId: 'browser.view.open', actionArgs: {}, summary: 'Open browser view', preview: undefined });
         expect(repeated.getTextContent().match(/browser\.view\.open|Open browser view/g)).toHaveLength(1);
@@ -491,6 +726,49 @@ describe('ApprovalPromptCard', () => {
             actionArgs: { artifactId: 'instructions-doc', title: 'Release captain', markdown: 'Check prerelease versions first.' } });
         expect(screen.findByTestId('approval-prompt-prompt-doc-diff')).toBeTruthy();
         expect(screen.getTextContent()).toContain('sessionInstructions.nextBoundary');
+    });
+
+    describe('an Agent instructions edit that has settled', () => {
+        const proposed = { actionId: 'prompt_doc.update', summary: 'Update its instructions',
+            actionArgs: { artifactId: 'instructions-doc', title: 'Release captain', markdown: 'Check prerelease versions first.',
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 } } };
+        const settledText = async (patch: Record<string, unknown>) => {
+            const screen = await renderCard(ApprovalRequestSchema.parse({ ...approvalRequest(), ...proposed, ...patch }), { chrome: 'inline' });
+            return screen.getTextContent();
+        };
+
+        it('says the previous instructions were kept when it was denied or canceled, with no promise to apply', async () => {
+            for (const status of ['rejected', 'canceled'] as const) {
+                const text = await settledText(status === 'rejected' ? { status, decision: { kind: 'reject', decidedAtMs: 2 } } : { status });
+                expect(text).toContain('sessionInstructions.saveDenied');
+                expect(text).not.toContain('sessionInstructions.nextBoundary');
+            }
+        });
+
+        it('says a denied edit\'s outcome once: the kept instructions, not a second generic Rejected line', async () => {
+            const screen = await renderCard(ApprovalRequestSchema.parse({ ...approvalRequest(), ...proposed,
+                status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } }), { chrome: 'inline' });
+            expect(screen.getTextContent()).toContain('sessionInstructions.saveDenied');
+            expect(screen.findAllByTestId('approval-prompt-declined')).toHaveLength(0);
+        });
+
+        it('says it updated, and when it applies, once the write executed', async () => {
+            const text = await settledText({ status: 'executed', decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 3, ok: true } });
+            expect(text).toContain('sessionInstructions.updated');
+            expect(text).toContain('sessionInstructions.nextBoundary');
+            expect(text).not.toContain('sessionInstructions.saveConflict');
+        });
+
+        it('reports a revision mismatch as the conflict it is, and still-pending as waiting', async () => {
+            expect(await settledText({ status: 'failed', decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 3, ok: false, errorCode: 'version_mismatch', error: 'version_mismatch' } }))
+                .toContain('sessionInstructions.saveConflict');
+            const pending = await settledText({});
+            expect(pending).toContain('sessionInstructions.nextBoundary');
+            expect(pending).not.toContain('sessionInstructions.updated');
+            expect(pending).not.toContain('sessionInstructions.saveDenied');
+        });
     });
 
     it('keeps the failure code behind Technical details when a specialized body replaces the Details card', async () => {
@@ -524,13 +802,7 @@ describe('ApprovalPromptCard', () => {
 
     it('renders canonical invitation context without revealing its bearer', async () => {
         const bearer = 'a'.repeat(43);
-        const screen = await renderCard(invitationApprovalRequest({
-            actionId: 'teams.invitations.accept', actionArgs: {
-                homeServerId: 'srv-home-acme', continuation: { teamId: 'team-acme' },
-                teamName: 'Acme Platform', role: 'member', historyAccess: 'from_membership',
-                state: 'active', expiresAt: 1234, recipientEmailMask: 'a•••@example.com',
-            },
-        }));
+        const screen = await renderCard(await invitationApprovalRequest());
         expect(screen.getTextContent()).toContain('Acme Platform');
         expect(screen.getTextContent()).toContain('a•••@example.com');
         expect(screen.getTextContent()).not.toContain(bearer);
@@ -538,7 +810,7 @@ describe('ApprovalPromptCard', () => {
     });
 
     it('withholds approval when required invitation context is unavailable while preserving rejection', async () => {
-        const screen = await renderCard(invitationApprovalRequest());
+        const screen = await renderCard(await invitationApprovalRequest(false));
         expect(screen.findByTestId('approvals.unrepresentable-details')).not.toBeNull();
         expect(screen.getTextContent()).toContain('approvals.unsafeDetailsTitle');
         expect(screen.getTextContent()).not.toContain('a'.repeat(43));
@@ -618,14 +890,63 @@ describe('ApprovalPromptCard', () => {
         expect(daemonRpc).not.toHaveBeenCalled();
         expect(home.requests.filter(request => request.path.includes('/sessions/'))).toEqual([]);
         const { Modal } = await import('@/modal');
-        expect(Modal.alert).toHaveBeenCalledWith('common.error', 'approvals.staleFailure');
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'approvals.staleFailure'));
     });
 
-    it('fails closed instead of locally replaying an API approval whose daemon placement is missing', async () => {
+    it('settles a recorded stale decision on the card itself, with no modal repeating it', async () => {
+        // Owner ruling C3: the decision was saved and its effect refused as stale, so the card reads
+        // "Request not run" from the settled record; a dialog saying the same thing is a second message.
+        home.answer(homeId, '/v1/actions/approval.request.decide', { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
+                requestId: envelope.requestId, execution: { ok: true, result: { status: 'failed',
+                    execution: { executedAtMs: 3, ok: false, errorCode: 'approval_stale', error: 'approval_stale' } } } }) };
+        } });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.alert).mockClear();
+        const screen = await renderCard(daemonApprovalRequest());
+        await screen.pressByTestIdAsync('approval-prompt-approve');
+        await vi.waitFor(() => expect(home.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findByTestId('approval-prompt-approve')).toBeFalsy());
+        expect(Modal.alert).not.toHaveBeenCalled();
+    });
+
+    it('says on the card that a request whose stored input no longer fits its Action cannot run, and keeps Deny', async () => {
+        // Owner ruling C3: the canonical executor resolver already knows this request can never run
+        // (`invalid_input`), so the card says so in place; Approve is withheld and no modal appears.
+        const request = daemonApprovalRequest();
+        const unrunnable = withApiAdmission({ ...request, actionArgs: { sessionId: 'session-1', retiredOption: true } });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.alert).mockClear();
+        const screen = await renderCard(unrunnable);
+        expect(screen.findByTestId('approval-prompt-cannot-run')).toBeTruthy();
+        expect(screen.findByTestId('approval-prompt-approve')?.props).toMatchObject({
+            disabled: true, accessibilityHint: 'approvals.cannotRun',
+        });
+        await screen.pressByTestIdAsync('approval-prompt-approve');
+        expect(Modal.alert).not.toHaveBeenCalled();
+        expect(readApproval().status).toBe('open');
+        await screen.pressByTestIdAsync('approval-prompt-reject');
+        await expectDecision('reject');
+        expect(readApproval().status).toBe('rejected');
+        expect(Modal.alert).not.toHaveBeenCalled();
+    });
+
+    it('fails closed on an API approval whose daemon placement is missing, and says so on the card', async () => {
+        // Owner ruling C3: no Machine is recorded to run it, so the card says so in place and keeps Deny; no modal.
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.alert).mockClear();
         const screen = await renderCard(unplacedApiApprovalRequest());
+        expect(screen.findByTestId('approval-prompt-cannot-run')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('approvals.cannotRunNoMachine');
+        expect(screen.findByTestId('approval-prompt-approve')?.props).toMatchObject({
+            disabled: true, accessibilityHint: 'approvals.cannotRunNoMachine',
+        });
         await screen.pressByTestIdAsync('approval-prompt-approve');
         expect(daemonRpc).not.toHaveBeenCalled();
+        expect(Modal.alert).not.toHaveBeenCalled();
         expect(readApproval().status).toBe('open');
+        expect(screen.findByTestId('approval-prompt-reject')?.props.disabled).toBe(false);
     });
 
     it('fails closed when the immutable Home identity is unavailable even with a saved different Home', async () => {

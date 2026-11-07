@@ -1,11 +1,98 @@
 import type { RegistryHostDepsV1 } from './registryHostV1.js';
-import type { RegistryProvenanceV1 } from './registryItemsV1.js';
+import type { RegistryContentRefV1, RegistryProvenanceV1, RegistryRemoteProvenanceV1 } from './registryItemsV1.js';
 import { RegistryFetchErrorV1 } from './registryListV1.js';
 import { resolveLegacyRegistrySourceRefV1, type RegistrySourceDescriptorV1 } from './registrySourcesV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1, RegistryHttpV1 } from './formats/registryFormatAdapterV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
 import { compareRegistryContentRefV1, type RegistryUpstreamCheckV1 } from './registryUpstreamV1.js';
+import { readRegistryPackageAppCatalogV1 } from './registryPackageContentV1.js';
+import { latestHappierAppCatalogRefsV1 } from './formats/happierAppCatalog.js';
+import type { RegistryAppUpdateDemandV1 } from './registryActionsV1.js';
+import type { DeploymentTemplateRefV1Schema } from '../deployments/storedAppInputV1.js';
+import type { RegistryUpdateCheckResultV1 } from './registryUpstreamV1.js';
 export * from './registryUpstreamV1.js';
+
+/** Structural projection of the authorized, opened Environment; never a caller-supplied pin. */
+export type RegistryAppUpdateEnvironmentV1 = Readonly<{
+  environment: Readonly<{ id: string; revision: number }>;
+  content: Readonly<{ template?: Readonly<{ templateRef: import('zod/mini').infer<typeof DeploymentTemplateRefV1Schema> }> }>;
+}>;
+
+export async function checkRegistryAppUpdatesV1(ctx: RegistryFetchContextV1, input: Readonly<{
+  environments: readonly RegistryAppUpdateDemandV1[];
+  readEnvironment: (environmentId: string) => Promise<RegistryAppUpdateEnvironmentV1>;
+  readSources: () => Promise<readonly RegistrySourceDescriptorV1[]>;
+  admitSource?: RegistryHostDepsV1['admitSource'];
+}>): Promise<RegistryUpdateCheckResultV1> {
+  ctx.signal?.throwIfAborted();
+  const results: RegistryUpdateCheckResultV1['results'][number][] = [];
+  const selected = await Promise.all(input.environments.map(async demand => {
+    try {
+      const current = await input.readEnvironment(demand.environmentId);
+      ctx.signal?.throwIfAborted();
+      if (current.environment.id !== demand.environmentId || current.environment.revision !== demand.expectedRevision) {
+        throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+      }
+      return current.content.template ? { key: demand.environmentId, templateRef: current.content.template.templateRef } : null;
+    } catch (error) {
+      ctx.signal?.throwIfAborted();
+      if (!(error instanceof RegistryFetchErrorV1)) throw error;
+      results.push({ kind: 'app', key: demand.environmentId, upstream: { state: 'unchecked', reason: error.status } });
+      return null;
+    }
+  }));
+  const templates = selected.filter(item => item !== null);
+  let descriptors: readonly RegistrySourceDescriptorV1[] = [];
+  if (templates.length) {
+    try {
+      const sources = await input.readSources();
+      descriptors = sources;
+      ctx.signal?.throwIfAborted();
+      const byId = new Map(sources.map(source => [source.id, source]));
+      const items: { key: string; provenance: RegistryProvenanceV1 }[] = [];
+      for (const { key, templateRef } of templates) {
+        const source = byId.get(resolveLegacyRegistrySourceRefV1(templateRef.sourceId));
+        if (!source?.enabled || !source.kinds.includes('app')) {
+          results.push({ kind: 'app', key, upstream: { state: 'unchecked', reason: { state: 'invalid_source' } } });
+          continue;
+        }
+        if ('packageContent' in source) {
+          if (templateRef.ref.kind !== 'packageContent') {
+            results.push({ kind: 'app', key, upstream: { state: 'unchecked', reason: { state: 'invalid_source' } } });
+            continue;
+          }
+          items.push({ key, provenance: { sourceId: source.id, format: source.format,
+            itemId: templateRef.itemId, ref: templateRef.ref, importedAt: 0 } });
+        } else {
+          if (templateRef.ref.kind === 'packageContent') {
+            results.push({ kind: 'app', key, upstream: { state: 'unchecked', reason: { state: 'invalid_source' } } });
+            continue;
+          }
+          items.push({ key, provenance: { sourceId: source.id, format: source.format, sourceUrl: source.url,
+            itemId: templateRef.itemId, ref: templateRef.ref, importedAt: 0 } });
+        }
+      }
+      const observations = await checkRegistryUpstreamV1(ctx, { sources, items, admitSource: input.admitSource });
+      for (const { key } of items) results.push({ kind: 'app', key, upstream: observations.get(key)! });
+    } catch (error) {
+      ctx.signal?.throwIfAborted();
+      if (!(error instanceof RegistryFetchErrorV1)) throw error;
+      for (const { key } of templates) if (!results.some(result => result.key === key)) {
+        results.push({ kind: 'app', key, upstream: { state: 'unchecked', reason: error.status } });
+      }
+    }
+  }
+  ctx.signal?.throwIfAborted();
+  return { checkedAt: Date.now(), results: results.map(result => {
+    if (result.upstream.state !== 'unchecked') return result;
+    const selected = templates.find(template => template.key === result.key);
+    // A refused Environment read has no admitted template/source to disclose.
+    if (!selected) return result;
+    const sourceId = resolveLegacyRegistrySourceRefV1(selected.templateRef.sourceId);
+    const source = descriptors.find(source => source.id === sourceId);
+    return { ...result, sourceId, ...(source?.title ? { sourceTitle: source.title } : {}) };
+  }) };
+}
 
 export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input: Readonly<{
   sources: readonly RegistrySourceDescriptorV1[];
@@ -17,7 +104,11 @@ export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input
   const groups = new Map<RegistrySourceDescriptorV1, typeof input.items[number][]>();
   for (const item of input.items) {
     const source = input.sources.find(source => source.id === resolveLegacyRegistrySourceRefV1(item.provenance.sourceId));
-    if (!source?.enabled || source.format !== item.provenance.format || source.url !== item.provenance.sourceUrl) {
+    const ref = item.provenance.ref;
+    if (!source?.enabled || source.format !== item.provenance.format || ('packageContent' in source
+      ? ref.kind !== 'packageContent' || source.packageContent.pluginId !== ref.pluginId
+        || source.packageContent.path !== ref.path
+      : source.url !== item.provenance.sourceUrl)) {
       result.set(item.key, { state: 'unchecked', reason: { state: 'invalid_source' } });
       continue;
     }
@@ -41,9 +132,18 @@ export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input
         getText: (...args) => transport(() => operationCtx.http.getText(...args)),
         getBytes: (...args) => transport(() => operationCtx.http.getBytes(...args)),
       };
-      const adapter: RegistryFormatAdapterV1 | undefined = (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<string, RegistryFormatAdapterV1>>)[source.format];
-      if (!adapter) throw new RegistryFetchErrorV1({ state: 'newer_format', found: source.format });
-      const latest = await adapter.latest({ ...operationCtx, http }, items.map(item => item.provenance), { source });
+      let latest: ReadonlyMap<string, RegistryContentRefV1 | 'removed'>;
+      if ('packageContent' in source) {
+        const acquired = await readRegistryPackageAppCatalogV1(operationCtx, source);
+        latest = latestHappierAppCatalogRefsV1({ sourceId: source.id, ...acquired,
+          itemIds: items.map(item => item.provenance.itemId), packageContent: source.packageContent });
+      } else {
+        const adapter: RegistryFormatAdapterV1 | undefined = (REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<string, RegistryFormatAdapterV1>>)[source.format];
+        if (!adapter) throw new RegistryFetchErrorV1({ state: 'newer_format', found: source.format });
+        const remote = items.map(item => item.provenance).filter((provenance): provenance is RegistryRemoteProvenanceV1 =>
+          provenance.sourceUrl !== undefined);
+        latest = await adapter.latest({ ...operationCtx, http }, remote, { source });
+      }
       ctx.signal?.throwIfAborted();
       for (const { key, provenance } of items) {
         const ref = latest.get(provenance.itemId);

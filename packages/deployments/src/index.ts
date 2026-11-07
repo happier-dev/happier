@@ -6,6 +6,7 @@ export * from './configuration/resolveDeploymentCreationDefaultsV1.js';
 export * from './projection/environmentSecretBindingsProjection.js';
 export * from './projection/deploymentStepProjection.js';
 export * from './projection/deploymentSelectors.js';
+export * from './projection/deploymentDomainFacts.js';
 export type { DeploymentActivityV1, DeploymentChipV1 } from './projection/deploymentSurfaceFacts.js';
 export { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1,
     selectDeploymentReceiptRetainedHistoryV1, selectDeploymentRetainedPreviousV1,

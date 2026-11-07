@@ -14,17 +14,24 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 type AcpCatalogDemand = Readonly<{ enabled?: boolean }>;
 
 /** A Home alone cannot manufacture an Account. Unknown or different Homes remain unavailable. */
-export function useAcpCatalogForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
+function useAcpCatalogScopeForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null) {
     const activeScope = useAccountSettingsScope();
     const accountScope = requestedScope === undefined ? activeScope : requestedScope;
     const scope = requestedServerId === undefined ? accountScope
         : requestedServerId && accountScope && areServerProfileIdentifiersEquivalent(requestedServerId, accountScope.serverId)
             ? accountScope : null;
-    return useAcpCatalog(scope, demand);
+    return scope;
 }
 
-/** The ready catalog and its CAS stay scoped independently of Account preferences. */
-export function useAcpCatalog(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
+export function useAcpCatalogForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
+    return useAcpCatalog(useAcpCatalogScopeForServer(requestedServerId, requestedScope), demand);
+}
+
+export function useAcpCatalogDataForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
+    return useAcpCatalogData(useAcpCatalogScopeForServer(requestedServerId, requestedScope), demand);
+}
+
+function useAcpCatalogSource(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
     const presented = useLayoutPresentationActive();
     const enabled = demand?.enabled !== false && presented;
     const activeScope = useAccountSettingsScope();
@@ -54,6 +61,19 @@ export function useAcpCatalog(requestedScope?: ServerAccountScope | null, demand
     const read = React.useCallback(() => getAcpCatalogSnapshot(captured), [captured]);
     const subscribe = React.useCallback((listener: () => void) => enabled
         ? subscribeAcpCatalogSnapshots(listener) : () => {}, [enabled]);
+    return { captured, enabled, read, subscribe };
+}
+
+/** Display-only data retains continuity; it supplies no mutation or execution authority. */
+export function useAcpCatalogData(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
+    const { read, subscribe } = useAcpCatalogSource(requestedScope, demand);
+    const readData = React.useCallback(() => read()?.data ?? null, [read]);
+    return React.useSyncExternalStore(subscribe, readData, readData);
+}
+
+/** The ready catalog and its CAS stay scoped independently of Account preferences. */
+export function useAcpCatalog(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
+    const { captured, enabled, read, subscribe } = useAcpCatalogSource(requestedScope, demand);
     const snapshot = React.useSyncExternalStore(subscribe, read, read);
     const write = React.useCallback(async (record: AcpCatalogRecordV1) => {
         if (!enabled || !captured || snapshot?.catalog.status !== 'ready' || snapshot.stale) throw new AcpCatalogOperationError('catalog-unavailable');

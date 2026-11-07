@@ -11,6 +11,7 @@ import { DetectedMcpServerV1Schema } from './daemonRpcV1.js';
 import { RegistryItemPointerV1Schema } from '../../registries/registryItemsV1.js';
 import { ValueRefV1Schema } from '../../valueRefs/valueRefV1.js';
 import { McpImportPreviewV1Schema, McpImportCommitV1Schema, McpImportValuesV1Schema, McpImportValueChoiceV1Schema } from './import/mcpServerImportV1.js';
+import { MCP_SERVER_CATALOG_SUGGESTIONS_V1 } from './catalogSuggestionsV1.js';
 export { MCP_SERVER_ACTION_IDS_V1, isMcpServerActionIdV1, type McpServerActionIdV1 } from './serverActionIdsV1.js';
 
 const revision = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
@@ -23,6 +24,9 @@ const serverWrite = lazyZodSchema(() => z.strictObject({ expectedRevision: catal
 const serverCreate = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(createItem, { expectedRevision: catalogRevision })),
   z.strictObject({ expectedRevision: catalogRevision, entries: z.array(createItem) }),
+  z.strictObject({ expectedRevision: catalogRevision,
+    suggestionId: z.enum(MCP_SERVER_CATALOG_SUGGESTIONS_V1.map(suggestion => suggestion.id)),
+    where: z.optional(ReachRulesChangeV1Schema) }),
   z.strictObject({ expectedRevision: catalogRevision, from: z.strictObject({ registry: RegistryItemPointerV1Schema }),
     name: z.optional(z.string()), title: z.optional(z.string()), inputs: z.optional(z.record(z.string(), ValueRefV1Schema)),
     remote: z.optional(z.strictObject({ auth: z.strictObject({ kind: z.literal('oauth') }) })),

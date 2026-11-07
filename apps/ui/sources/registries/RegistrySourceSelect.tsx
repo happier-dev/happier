@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_PICKS_SOURCE_ID,
-  type RegistryKindV1,
   type RegistrySourceDescriptorV1,
 } from '@happier-dev/protocol/registries';
 
@@ -14,7 +13,6 @@ import {
   registryFormatIcon,
   registrySourceKindLabel,
 } from './registrySourcePresentation';
-import { useRegistrySources } from './useRegistrySources';
 
 export type RegistrySourceSelection = 'all' | string;
 
@@ -41,7 +39,7 @@ export function orderRegistrySourcesForSelect(
  */
 export function RegistrySourceSelect(
   props: Readonly<{
-    kind: RegistryKindV1;
+    sources: readonly RegistrySourceDescriptorV1[];
     value: RegistrySourceSelection;
     onChange: (next: RegistrySourceSelection) => void;
     onOpenRegistries: (intent: 'manage' | 'add') => void;
@@ -49,7 +47,7 @@ export function RegistrySourceSelect(
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
-  const { sources } = useRegistrySources(props.kind);
+  const { sources, onChange, onOpenRegistries } = props;
   const mark = React.useCallback(
     (name: Parameters<typeof Icon>[0]['name']) => (
       <Icon
@@ -91,12 +89,7 @@ export function RegistrySourceSelect(
     ],
     [mark],
   );
-  // A selected source that went away (removed, turned off) reads as All rather than a stale name.
-  const value =
-    props.value === 'all' || options.some((option) => option.id === props.value)
-      ? props.value
-      : 'all';
-  const selected = options.find((option) => option.id === value) ?? options[0];
+  const selected = options.find((option) => option.id === props.value) ?? options[0];
   return (
     <SelectionListFilterChip filter={{
       id: 'registry-source',
@@ -115,13 +108,13 @@ export function RegistrySourceSelect(
             { kind: 'static', id: 'sources', options },
             { kind: 'static', id: 'operations', options: operations },
           ] }}
-          selectedOptionId={value}
+          selectedOptionId={props.value}
           onSelect={(id) => {
             close();
             // An operation never changes the choice.
-            if (id === REGISTRY_ADD_ID) props.onOpenRegistries('add');
-            else if (id === REGISTRY_MANAGE_ID) props.onOpenRegistries('manage');
-            else props.onChange(id);
+            if (id === REGISTRY_ADD_ID) onOpenRegistries('add');
+            else if (id === REGISTRY_MANAGE_ID) onOpenRegistries('manage');
+            else onChange(id);
           }}
         />
       ),

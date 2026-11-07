@@ -3,6 +3,8 @@ import { useWindowDimensions } from 'react-native';
 
 import {
   HappierCapabilityAddBody,
+  HappierCapabilityAddDetailAction,
+  type HappierCapabilityAddBodyProps,
   type HappierCapabilityAddConfig,
   type HappierCapabilityAddDetailFooter,
   type HappierCapabilityAddFound,
@@ -12,12 +14,11 @@ import {
   type HappierCapabilityAddMode,
 } from '../presentation/capabilities/CapabilityAddBody.js';
 import { resolveHappierViewportClass } from '../presentation/layout/viewportClass.js';
-import { Button, IconButton } from './Button.js';
+import { Button } from './Button.js';
 import { Collection } from './Collection.js';
-import { DetailsPaneFooter } from './DetailsPane.js';
 import { Select } from './Form.js';
 import { Banner } from './Foundation.js';
-import { Icon, type IconName } from './Icon.js';
+import type { IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { Text } from './Text.js';
 
@@ -28,23 +29,17 @@ export type CapabilityAddConfig<Item> = HappierCapabilityAddConfig<Item, IconNam
 export type CapabilityAddFound<Found> = HappierCapabilityAddFound<Found>;
 export type CapabilityAddDetailFooter = HappierCapabilityAddDetailFooter;
 export type CapabilityAddLevel = HappierCapabilityAddLevel;
-export type CapabilityAddBodyProps<Item> = Readonly<{
-  config: CapabilityAddConfig<Item>;
-  /** The person is done (Done, an added item that closes, a mode that hands off). */
-  onClose: () => void;
-  /** Where the body stands: show the way back in your page or sheet header for `detail` and `registries`. */
-  onLevelChange?: (level: CapabilityAddLevel) => void;
-}>;
+export type CapabilityAddBodyProps<Item> = Pick<HappierCapabilityAddBodyProps<Item, IconName>,
+  'config' | 'onClose' | 'onLevelChange' | 'renderLayout'>;
 
 const PUBLIC_ADD_SLOTS: HappierCapabilityAddHost<IconName> = {
   Collection,
-  DetailsFooter: DetailsPaneFooter,
-  ModeTabs: ({ modes, activeKey, onSelect, narrow, accessibilityLabel, testID }) => (
+  ModeTabs: ({ modes, activeKey, onSelect, accessibilityLabel, testID }) => (
     <Select
       testID={`${testID}:modes`}
       label={accessibilityLabel}
       presentation="segmented"
-      options={modes.map((mode) => ({ value: mode.key, label: mode.label, ...(narrow ? {} : { icon: mode.icon }) }))}
+      options={modes.map((mode) => ({ value: mode.key, label: mode.label }))}
       value={activeKey}
       onChange={(next) => onSelect(String(next))}
     />
@@ -58,9 +53,6 @@ const PUBLIC_ADD_SLOTS: HappierCapabilityAddHost<IconName> = {
       onPress={onPress}
       testID={testID}
     />
-  ),
-  CloseDetail: ({ accessibilityLabel, onPress, testID }) => (
-    <IconButton accessibilityLabel={accessibilityLabel} icon={<Icon name="close" size="small" tone="secondary" />} onPress={onPress} testID={testID} />
   ),
   SourceFailure: ({ title, retryLabel, onRetry, retryTestID, testID }) => (
     <Banner
@@ -80,9 +72,12 @@ const PUBLIC_ADD_SLOTS: HappierCapabilityAddHost<IconName> = {
 
 /**
  * The Add body for a plugin's own installable things, inside the plugin's own page or sheet: the ways to add as tabs,
- * the catalog list with details beside it (pushed on a phone), the pinned footer and the registry selector — the same
+ * the catalog list with details beside it (pushed on a phone), the item's action under its identity and the registry selector — the same
  * body Happier's Add a skill, Add a server and Add an agent dialogs draw. The frame and its header stay yours.
  */
+/** Place the open item's action under its identity and purpose in your details. */
+export const CapabilityAddDetailAction = HappierCapabilityAddDetailAction;
+
 export function CapabilityAddBody<Item>(props: CapabilityAddBodyProps<Item>): React.ReactElement {
   const translate = usePluginTranslation();
   const theme = usePluginTheme();
@@ -104,6 +99,7 @@ export function CapabilityAddBody<Item>(props: CapabilityAddBodyProps<Item>): Re
       config={props.config}
       onClose={props.onClose}
       {...(props.onLevelChange === undefined ? {} : { onLevelChange: props.onLevelChange })}
+      {...(props.renderLayout === undefined ? {} : { renderLayout: props.renderLayout })}
       phone={resolveHappierViewportClass({ width, height }) === 'compact'}
       labels={labels}
       host={PUBLIC_ADD_SLOTS}

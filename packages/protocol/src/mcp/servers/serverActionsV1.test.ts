@@ -15,8 +15,77 @@ import { MCP_REGISTRY_V01_READ_FIXTURE } from '../../registries/formats/fixtures
 import { createPersonalSavedSecretActionExecuteV1 } from '../../account/settings/personalSavedSecretActionsV1.js';
 import { parseMcpServerImportV1 } from './import/parseMcpServerImportV1.js';
 import { DaemonMcpServersTestRequestSchema } from './daemonRpcV1.js';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RpcError } from '../../rpc/errors.js';
+
+it('preserves admitted RPC refusals without exposing transport messages', () => {
+  const message = 'private transport diagnostic';
+  for (const [cause, errorCode] of [
+    [new RpcError(message, RPC_ERROR_CODES.OUTCOME_UNKNOWN), RPC_ERROR_CODES.OUTCOME_UNKNOWN],
+    [new RpcError(message, RPC_ERROR_CODES.FORBIDDEN), RPC_ERROR_CODES.FORBIDDEN],
+    [Object.assign(new Error(message), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE }), MACHINE_RPC_TIMEOUT_ERROR_CODE],
+  ] as const) {
+    expect(projectMcpServerActionFailureV1(cause)).toEqual({ ok: false, errorCode, error: errorCode });
+  }
+  expect(projectMcpServerActionFailureV1(new RpcError(message, 'untrusted-private-code')))
+    .toEqual({ ok: false, errorCode: 'mcp_catalog_operation_failed', error: 'mcp_catalog_operation_failed' });
+  expect(projectMcpServerActionFailureV1(new Error(message), 'host_admission')).toMatchObject({
+    ok: false, errorCode: 'mcp_sign_in_host_admission_failed', error: 'mcp_sign_in_host_admission_failed',
+    details: { stage: 'host_admission' },
+  });
+});
 
 describe('canonical MCP Action owner', () => {
+  it('discovers and individually creates the four static Cloudflare suggestions without network or grants', async () => {
+    const spec = MCP_SERVER_ACTION_SPECS_V1.find(spec => spec.id === 'mcp.servers.create')!;
+    const options = spec.inputHints?.fields.find(field => field.path === 'suggestionId')?.options;
+    expect(options?.map(option => option.value)).toEqual([
+      'cloudflare-api', 'cloudflare-docs', 'cloudflare-browser', 'cloudflare-containers',
+    ]);
+    const expected = [
+      ['cloudflare-api', 'Cloudflare API', 'https://mcp.cloudflare.com/mcp', true],
+      ['cloudflare-docs', 'Cloudflare Docs', 'https://docs.mcp.cloudflare.com/mcp', false],
+      ['cloudflare-browser', 'Cloudflare Browser Run', 'https://browser.mcp.cloudflare.com/mcp', true],
+      ['cloudflare-containers', 'Cloudflare Containers', 'https://containers.mcp.cloudflare.com/mcp', true],
+    ] as const;
+    for (const [suggestionId, title, url, oauth] of expected) {
+      let catalog: McpServerCatalogV1 = { v: 1, servers: [], bindings: [] }; let revision = 0; let ids = 0;
+      const execute = createMcpServerActionExecuteV1({
+        ruleWriteContext: () => ({ nowMs: 10, newId: () => `id-${++ids}` }),
+        readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+          readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }) }),
+        mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null,
+          writeCatalog: async candidate => {
+            if (candidate.expectedRevision !== revision || expectedRevision !== revision) return { status: 'conflict', revision };
+            catalog = candidate.catalog; return { status: 'updated', revision: ++revision, cursor: revision };
+          } }),
+        machine: async () => { throw new Error('Suggestion create cannot start code'); },
+        registryActionExecute: async () => { throw new Error('Suggestions cannot fetch registry data'); },
+        connectedServiceAction: async () => { throw new Error('Suggestion create cannot grant sign-in'); },
+      });
+      const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+      const input = { expectedRevision: 0, suggestionId,
+        where: { kind: 'write', write: { place: { t: 'machine', machineId: 'chosen-machine' }, state: 'on' } } } as const;
+      const schema = MCP_SERVER_ACTION_INPUT_SCHEMAS_V1['mcp.servers.create'];
+      expect(schema.safeParse(input).success).toBe(true);
+      expect(schema.safeParse({ ...input, suggestionId: 'unknown' }).success).toBe(false);
+      expect(schema.safeParse({ ...input, remote: { auth: { kind: 'oauth' } } }).success).toBe(false);
+      const review = spec.approvalPresentation!.projectInput(input);
+      expect(review).toMatchObject({ servers: [{ title, address: url, ...(oauth ? { signIn: 'OAuth' } : {}) }], where: input.where });
+      if (!oauth) expect(JSON.stringify(review)).not.toContain('OAuth');
+      expect(await execute({ actionId: 'mcp.servers.create', input, context })).toEqual({ ok: true,
+        result: { status: 'updated', revision: 1, cursor: 1, serverId: 'id-1' } });
+      expect(catalog.servers).toHaveLength(1);
+      expect(catalog.servers[0]).toMatchObject({ id: 'id-1', name: suggestionId, title, transport: 'http',
+        remote: { url, headers: {} }, env: {}, createdAt: 10, updatedAt: 10 });
+      expect(catalog.servers[0]?.remote?.auth).toEqual(oauth ? { kind: 'oauth' } : undefined);
+      expect(catalog.servers[0]?.origin).toBeUndefined();
+      expect(projectMcpToolLaunchPolicyV1({ policy: catalog.servers[0]?.tools, snapshot: undefined,
+        permissionMode: 'default' })).toEqual({ unlisted: 'ask', tools: {} });
+      expect(catalog.bindings).toMatchObject([{ serverId: 'id-1', enabled: true, target: input.where.write.place }]);
+      expect(await execute({ actionId: 'mcp.servers.create', input, context })).toMatchObject({ ok: false, errorCode: 'mcp_catalog_conflict' });
+      expect(catalog.servers).toHaveLength(1);
+    }
+  });
   it('duplicates by source identity under catalog CAS with unique names, default reach and no sign-in transfer', async () => {
     let catalog: McpServerCatalogV1 = { v: 1, bindings: [{ id: 'source-rule', serverId: 'source', enabled: false,
       target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }], servers: [{ id: 'source', name: 'issues', title: 'Issues',
@@ -69,6 +138,23 @@ describe('canonical MCP Action owner', () => {
         env: {}, createdAt: 1, updatedAt: 1 } };
     expect(DaemonMcpServersTestRequestSchema.safeParse(draft).success).toBe(true);
     expect(action.safeParse(draft).success).toBe(false);
+  });
+
+  it('keeps saved SSE OAuth rows readable without offering an unsupported install link', async () => {
+    const catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'one', name: 'one', transport: 'sse',
+      remote: { url: 'https://mcp.example.test/events', headers: {}, auth: { kind: 'oauth' } },
+      env: {}, createdAt: 1, updatedAt: 1 }] };
+    const execute = createMcpServerActionExecuteV1({
+      resolveWebappUrl: () => 'https://web.example.test',
+      readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+        readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+      mutate: async () => { throw new Error('Read cannot mutate'); },
+      machine: async () => { throw new Error('Read cannot start sign-in'); },
+    });
+    const receipt = await execute({ actionId: 'mcp.servers.read', input: { serverId: 'one' }, context: { surface: 'ui' } });
+    const output = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.read'].parse(receipt.ok ? receipt.result : null);
+    expect(output).toMatchObject({ status: 'present', server: catalog.servers[0] });
+    expect(output).not.toHaveProperty('installLink');
   });
 
   it('reads an install link through the output schema and the shared importer without exporting values', async () => {
@@ -158,7 +244,12 @@ describe('canonical MCP Action owner', () => {
   });
   it('creates a pinned registry server only after required value choices through the real catalog owner', async () => {
     let catalog: McpServerCatalogV1 = { v: 1, servers: [], bindings: [] }; let revision = 0;
-    let registryResponse: unknown = MCP_REGISTRY_V01_READ_FIXTURE;
+    let registryResponse: unknown = { ...MCP_REGISTRY_V01_READ_FIXTURE, server: {
+      ...MCP_REGISTRY_V01_READ_FIXTURE.server, icons: [
+        { src: 'https://example.test/light.png', theme: 'light' },
+        { src: 'https://example.test/dark.png', theme: 'dark' },
+      ],
+    } };
     const host = createRegistryHostV1({ host: 'web', readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1,
       http: { getJson: async () => ({ ok: true, value: registryResponse, fetchedAt: 10 }),
         getText: async () => { throw new Error('Unexpected read'); }, getBytes: async () => { throw new Error('Unexpected read'); } } });
@@ -185,6 +276,12 @@ describe('canonical MCP Action owner', () => {
     expect(catalog.servers).toHaveLength(1);
     expect(catalog.servers[0]).toMatchObject({ transport: 'http', origin: { kind: 'registry', provenance: { itemId: input.from.registry.itemId,
       ref: { kind: 'version', version: '1.0.0' } } }, remote: { headers: { Authorization: { t: 'template' } } } });
+    expect(catalog.servers[0]?.origin).toMatchObject({ iconUrl: 'https://example.test/light.png', iconDarkUrl: 'https://example.test/dark.png' });
+    const reopened = await loadMcpServerCatalogV1({ mode: 'plain', material: null,
+      readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: JSON.parse(JSON.stringify(catalog)) } }) });
+    expect(reopened).toMatchObject({ status: 'ready', catalog: { servers: [{ origin: {
+      iconUrl: 'https://example.test/light.png', iconDarkUrl: 'https://example.test/dark.png',
+    } }] } });
     expect(catalog.bindings).toMatchObject([{ enabled: true, target: { t: 'allMachines' } }]);
     const registryVersion = (version: string) => ({ ...MCP_REGISTRY_V01_READ_FIXTURE, server: {
       ...MCP_REGISTRY_V01_READ_FIXTURE.server, version, remotes: [{ type: 'streamable-http',

@@ -1,18 +1,19 @@
-import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
-import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
+import { HAPPIER_PICKS_SOURCE_ID, registryMarketplaceSourceV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
-const platform = vi.hoisted(() => ({ value: 'web' }));
+const platform = vi.hoisted(() => ({ value: 'web', width: 1440 }));
 const confirmation = vi.hoisted(() => ({ accepted: true }));
 installPromptRegistriesCommonModuleMocks({ storage: original => original(), reactNative: async () =>
-    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { get OS() { return platform.value; } } }), modal: async () =>
+    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { get OS() { return platform.value; } },
+        useWindowDimensions: () => ({ width: platform.width, height: 900, scale: 1, fontScale: 1 }) }), modal: async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
         spies: { confirm: vi.fn(async () => confirmation.accepted) },
     }).module });
@@ -24,26 +25,34 @@ const { createPlainPromptLibraryCatalogHomeFixture } = await import('@/dev/testk
 await Promise.all([import('@/auth/storage/tokenStorage'), import('@/sync/domains/server/serverRuntime'),
     import('@/sync/domains/state/storage'), import('@/utils/system/runtimeFetch'),
     import('@/sync/runtime/orchestration/appliedActiveServerRuntime')]);
-const [{ useRegistryItems }, { useRegistrySourceMutations }, { useRegistrySuggestions }, { useSkillsHomepageModel }, { useRegistryItem }] = await Promise.all([
+const [{ useRegistryItems }, { useRegistrySourceMutations }, { useRegistrySuggestions, useRegistryCuration }, { useRegistryItem }] = await Promise.all([
     import('./useRegistryItems'), import('./useRegistrySourceMutations'), import('./useRegistrySuggestions'),
-    import('@/components/settings/skills/useSkillsHomepageModel'),
     import('./useRegistryItem'),
 ]);
-const [{ usePluginSettingsScreenState }, { usePromptLibraryCatalogValue }] = await Promise.all([
-    import('@/components/settings/plugins/model/usePluginSettingsScreenState'), import('@/sync/store/usePromptLibraryCatalog'),
+const [{ usePluginCatalog }, { usePromptLibraryCatalogValue }] = await Promise.all([
+    import('@/components/settings/plugins/model/usePluginCatalog'), import('@/sync/store/usePromptLibraryCatalog'),
 ]);
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { useRegistrySourceRevision } = await import('./useRegistrySourceRevision');
 const { useRegistrySources } = await import('./useRegistrySources');
+const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+type ShellValue = import('@/components/appShell/plugins/AppShellPluginUiProjection').AppShellPluginUiProjectionValue;
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { SkillsHomepage } = await import('@/components/settings/skills/SkillsHomepage');
+const { useSkillsLibrary } = await import('@/sync/domains/skills/useSkillsLibrary');
+const { McpServersHome, McpServersEmpty } = await import('@/components/settings/mcpServers/home/McpServersHome');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { getPromptLibraryCatalogSnapshot, getPromptLibraryCatalogValue, beginPromptLibraryCatalogRowsLoad,
-    applyPromptLibraryCatalogRowsSnapshot, applyPromptLibraryCatalogAcknowledgedRecord } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+    applyPromptLibraryCatalogRowsSnapshot, applyPromptLibraryCatalogAcknowledgedRecord, beginPromptLibraryCatalogLoad,
+    applyPromptLibraryCatalogSnapshot } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
 
-async function setupHome(suffix: string) {
+async function setupHome(suffix: string, entries?: Parameters<typeof createRegistryPluginCatalogFixture>[0]['entries']) {
     const serverUrl = `https://registry-refresh-${suffix}.test`;
     const sourceUrl = `${serverUrl}/catalog.json`;
     const sourceId = deriveMarketplaceSourceId(sourceUrl);
-    const catalog = createRegistryPluginCatalogFixture({ sourceUrl });
+    const catalog = createRegistryPluginCatalogFixture({ sourceUrl, entries });
     let unavailable = false;
     let rateLimited = false;
     const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
@@ -54,7 +63,7 @@ async function setupHome(suffix: string) {
             : unavailable ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json(catalog) : null });
     onTestFailed(() => { console.error('Registry read Home requests:', JSON.stringify(fixture.requests)); });
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
-    return { fixture, sourceId, setUnavailable: () => { unavailable = true; }, setRateLimited: (next: boolean) => { rateLimited = next; } };
+    return { fixture, sourceId, catalog, setUnavailable: () => { unavailable = true; }, setRateLimited: (next: boolean) => { rateLimited = next; } };
 }
 
 async function setup(suffix: string, refresh = true) {
@@ -74,6 +83,39 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
+    it('selects Bot-template packages before paging and leaves selected package bodies cold', async () => {
+        const { fixture, sourceId } = await setupHome('bot-template-selector', [
+            { pluginId: 'garden.bot', title: 'Garden', botTemplates: [{ id: 'gardener', path: './templates/garden.json' }] },
+            { pluginId: 'ordinary.plugin', title: 'Ordinary' },
+        ]);
+        const hook = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [sourceId], contributionFamily: 'botTemplates' }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['garden.bot']);
+        expect(fixture.requests.some(request => request.path.includes('.tgz'))).toBe(false);
+        await hook.unmount();
+    });
+    it.each(['skills', 'mcpHome', 'mcpEmpty'] as const)('keeps %s hook order stable through empty-Account readiness, hidden layout and phone resize', async home => {
+        await setupHome(`empty-hook-order-${home}`);
+        const errors = vi.spyOn(console, 'error');
+        onTestFinished(() => { platform.width = 1440; errors.mockRestore(); });
+        function SkillsHome() { return <SkillsHomepage library={useSkillsLibrary()} />; }
+        const tree = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+            {home === 'skills' ? <SkillsHome /> : home === 'mcpHome' ? <McpServersHome /> : <McpServersEmpty />}
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(tree(false));
+        await flushHookEffects();
+        await screen.update(tree(true));
+        await waitForHomeGovernance(() => expect(screen.getTextContent().length).toBeGreaterThan(0));
+        await flushHookEffects();
+        platform.width = 390;
+        await screen.update(tree(true));
+        await screen.update(tree(false));
+        await screen.update(tree(true));
+        await flushHookEffects();
+        expect(errors.mock.calls.filter(args => /change in the order of Hooks|Rendered (?:more|fewer) hooks/i.test(String(args[0])))).toEqual([]);
+    });
+
     it('keeps source-revision acquisition cold while every registry consumer is disabled', async () => {
         const { fixture, sourceId } = await setupHome('disabled-revision-demand');
         const before = fixture.requests.length;
@@ -94,6 +136,400 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         await hook.unmount();
     });
 
+    it('opens the scoped Store through the Project menu Action and changes, clears and withdraws scope through the real route', async () => {
+        const { fixture } = await setupHome('project-store-scope');
+        const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { WorkspaceRefV1WriteSchema } = await import('@happier-dev/protocol/workspaces/workspaceRefV1');
+        const { projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+        const { buildProjectAccountRowPhysicalKeyV1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        const { renderScreen } = await import('@/dev/testkit');
+        const { View } = await import('react-native');
+        const { ProjectsListItemMenu } = await import('@/components/projects/ProjectsListItemMenu');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { StoreProjectScopeChip } = await import('@/components/store/StoreProjectScopeChip');
+        const { SelectionList, SelectionListFilterChip } = await import('@/components/ui/selectionList');
+        const { useStoreProjectScope } = await import('@/components/settings/plugins/model/useStoreProjectScope');
+        const { buildPluginsHomeRoute, readStoreProjectRoute, storeProjectRouteParams } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { resolveCompactAppDestinations, hrefForDestinationRef } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+        const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+        const { createWorkspaceActionAdapter } = await import('@/components/appShell/workspace/workspaceActions');
+        const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+        const { resolveHref } = await import('expo-router/build/link/href');
+        const scope = storage.getState().profileScope!;
+        const workspace = WorkspaceRefV1WriteSchema.parse({ id: 'checkout', serverId: scope.serverId, projectKey: 'client/web & api',
+            machineId: 'machine', rootPath: '/projects/web', label: 'Web', createdAtMs: 1 });
+        const second = { ...workspace, id: 'second', projectKey: 'api', label: 'API', rootPath: '/api' };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspace, second] });
+        const project = projectWorkspaceRefV1(workspace);
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+        let state = createWorkspaceState({ id: 'projects', target: { kind: 'projects', params: {} }, pinned: false, preview: false });
+        let nextId = 0;
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            getScope: () => scope, dispatch: action => { state = reduceWorkspaceState(state, action); },
+            transport: { commit: () => {} }, createId: () => `tab:${++nextId}`, onChange: () => {} });
+        navigation.initialize('/projects');
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => `tab:${++nextId}` });
+        const unregister = registerMountedWorkspaceAction(async request => execute(request.actionId, request.input));
+        onTestFinished(unregister);
+        let selected: ReturnType<typeof useStoreProjectScope> | undefined;
+        function Scope() {
+            selected = useStoreProjectScope();
+            return <View testID="scope.result" accessibilityLabel={selected.project?.projectKey ?? 'none'}><StoreProjectScopeChip /></View>;
+        }
+        const current = () => state.tabs[state.groups[state.focusedGroupId].activeTabId]!;
+        const tree = (children: React.ReactNode) => <DestinationInstanceHost tabId={current().id} ref={current().target}
+            pathname={hrefForDestinationRef(catalog, current().target)?.split('?')[0] ?? ''} focused visible
+            navigation={{ push: href => { navigation.openHref(resolveHref(href)); },
+                replace: href => { navigation.openHref(resolveHref(href), { tabId: current().id, replace: true }); },
+                pushRetainingCurrent: href => { navigation.openHref(resolveHref(href)); }, back: () => navigation.step(-1),
+                setParams: params => navigation.setParams(current().id, params) }}>{children}</DestinationInstanceHost>;
+        // A Project group needs no arbitrary checkout selection to offer Browse Store.
+        const screen = await renderScreen(tree(<ProjectsListItemMenu workspaceRef={null} project={project}
+            onTogglePinned={() => {}} onRename={() => {}} onReset={() => {}} onRemove={() => {}} />));
+        const menu = screen.root.findByType(DropdownMenu);
+        expect(menu.props.items.map((item: { id: string }) => item.id)).toContain('browse-store');
+        await act(async () => { menu.props.onSelect('browse-store'); });
+        await waitForHomeGovernance(() => expect(current().target.kind).toBe('plugins'));
+        expect(readStoreProjectRoute(current().target.params)).toEqual(project);
+        await screen.update(tree(<Scope />));
+        expect(screen.findByTestId('scope.result')!.props.accessibilityLabel).toBe(project.projectKey);
+        const requests = fixture.requests.length;
+        // Opening the existing shared picker, then selecting its actual option, updates only route state.
+        async function pickScope(id: string) {
+            const chipProps: React.ComponentProps<typeof SelectionListFilterChip> = screen.findByType(SelectionListFilterChip).props;
+            const renderPicker = chipProps.filter.renderPopoverContent;
+            if (!renderPicker) throw new Error('Project chip must use the shared picker');
+            await screen.update(tree(<><Scope />{renderPicker({ close: () => {}, maxHeight: 600 })}</>));
+            const pickerProps: React.ComponentProps<typeof SelectionList> = screen.findByType(SelectionList).props;
+            const option = pickerProps.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+                .find(option => option.id === id);
+            if (!option) throw new Error('Expected an admitted Project picker option');
+            await act(async () => { pickerProps.onSelect(option.id, option); });
+            await screen.update(tree(<Scope />));
+        }
+        await pickScope(storeProjectRouteParams(projectWorkspaceRefV1(second)).project!);
+        expect(selected!.project?.projectKey).toBe(second.projectKey);
+        await pickScope('all');
+        expect(current().target.params).not.toHaveProperty('project');
+        expect(selected!.project).toBeNull();
+        expect(execute('workspace.tabs.open', { href: buildPluginsHomeRoute('app', { view: 'installed', project }), tabId: current().id })).toEqual({ ok: true });
+        await screen.update(tree(<Scope />));
+        expect(selected!.project).toEqual(project);
+        const retiredKey = buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.id });
+        // The census retires a known row with its revisioned tombstone, not an omitted page entry.
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [second], revisionsByPhysicalKey: { [retiredKey]: 1 } }); });
+        expect(selected!.project).toBeNull();
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspace, second], revisionsByPhysicalKey: { [retiredKey]: 2 } }); });
+        expect(selected!.project).toEqual(project);
+        await act(async () => { applyProjectAccountRowsFixture(storage, { status: 'refused', coverage: 'unknown', workspaceRefs: [workspace] }); });
+        expect(selected!.project).toBeNull();
+        expect(fixture.requests).toHaveLength(requests);
+    });
+    it('cancels a hidden finite read and reopens it through a fresh demand lifetime', async () => {
+        const { createDeferred } = await import('@/dev/testkit');
+        const sourceUrl = 'https://registry-demand-cancel.test/catalog.json';
+        const sourceId = deriveMarketplaceSourceId(sourceUrl);
+        const catalog = createRegistryPluginCatalogFixture({ sourceUrl });
+        const held = createDeferred<Response>();
+        let released = false;
+        const signals: Array<AbortSignal | null | undefined> = [];
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-demand-home.test', {
+            key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{ id: sourceId, title: 'Selected catalog',
+                format: 'happier-catalog', kinds: ['plugin'], url: sourceUrl, enabled: true, addedAt: 1 }] },
+        }, 'updated', { handleExternalRequest: async (url, init) => {
+            if (url !== sourceUrl) return null;
+            signals.push(init?.signal);
+            return released ? Response.json(catalog) : held.promise;
+        } });
+        onTestFinished(async () => { held.resolve(Response.json(catalog)); await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook(({ presented }: { presented: boolean }) =>
+            useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }, presented), { initialProps: { presented: true } });
+        await waitForHomeGovernance(() => expect(signals.length).toBeGreaterThan(0));
+        expect(signals.at(-1)?.aborted).toBe(false);
+        const firstSignals = [...signals];
+        const remaining = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }));
+        await waitForHomeGovernance(() => expect(signals.length).toBeGreaterThan(firstSignals.length));
+        const remainingSignal = signals.at(-1);
+        await hook.rerender({ presented: false });
+        expect(firstSignals.every(signal => signal?.aborted)).toBe(true);
+        expect(remainingSignal?.aborted).toBe(false);
+        released = true;
+        held.resolve(Response.json(catalog));
+        await waitForHomeGovernance(() => expect(remaining.getCurrent().items).toHaveLength(1));
+        const settledReads = signals.length;
+        await hook.rerender({ presented: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().items).toHaveLength(1));
+        expect(signals).toHaveLength(settledReads);
+        expect(remainingSignal?.aborted).toBe(false);
+    });
+    it('binds Discover suggestions to held authorized Project facts with no additional reads and no empty placeholder', async () => {
+        const { StoreDiscover } = await import('@/components/store/StoreDiscover');
+        const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { WorkspaceRefV1WriteSchema } = await import('@happier-dev/protocol/workspaces/workspaceRefV1');
+        const { buildProjectAccountRowPhysicalKeyV1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        const { renderScreen } = await import('@/dev/testkit');
+        const { View } = await import('react-native');
+        let acquisitions = 0;
+        const unexpected: string[] = [];
+        const discovery = { items: [{ id: 'review', title: 'Review', reference: { type: 'registryItem', kind: 'skill',
+            sourceId: 'builtin:skills-sh', itemId: 'fixture/skills/review' } }], categories: [], jobs: [],
+            suggestions: [{ item: 'review', because: { kind: 'repository', hostingKind: 'github' } }] };
+        const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { id: HAPPIER_PICKS_SOURCE_ID,
+            title: 'Picks', kind: 'curated', sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL },
+            freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [], discovery });
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://project-suggestions.test', {
+            key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+        }, 'updated', { handleExternalRequest: async url => {
+            if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) { acquisitions++; return Response.json(catalog); }
+            unexpected.push(url);
+            throw new Error('Suggestions must use only the held Project fact and admitted curation');
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const scope = storage.getState().profileScope!;
+        const project = { serverId: scope.serverId, projectKey: 'project' };
+        const workspace = WorkspaceRefV1WriteSchema.parse({ id: 'checkout', ...project, machineId: 'machine',
+            rootPath: '/projects/web', label: 'Web', createdAtMs: 1,
+            repositoryIdentity: { kind: 'github', deployment: 'https://github.com', repository: 'fixture/web' } });
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspace] });
+        let refresh: (() => Promise<void>) | undefined;
+        const screen = await renderScreen(<StoreDiscover demand={{ presented: true }} project={project}>
+            {({ suggestions, curation }) => {
+                refresh = curation.refresh;
+                return suggestions.length ? <View testID="project.suggestions"
+                    accessibilityLabel={suggestions[0]!.because.repository.repository} /> : null;
+            }}
+        </StoreDiscover>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project.suggestions')).not.toBeNull());
+        expect(screen.findByTestId('project.suggestions')!.props.accessibilityLabel).toBe('fixture/web');
+        expect(acquisitions).toBe(1);
+        const before = fixture.requests.length;
+        const foreignProject = { ...project, serverId: 'withdrawn-home' };
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ ...workspace, ...foreignProject }] }); });
+        await screen.update(<StoreDiscover demand={{ presented: true }} project={foreignProject}>
+            {({ suggestions }) => suggestions.length ? <View testID="project.suggestions" /> : null}
+        </StoreDiscover>);
+        // A retained foreign-Home row is not a Project admitted by this Account.
+        expect(screen.findByTestId('project.suggestions')).toBeNull();
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspace] }); });
+        await screen.update(<StoreDiscover demand={{ presented: true }} project={project}>
+            {({ suggestions, curation }) => {
+                refresh = curation.refresh;
+                return suggestions.length ? <View testID="project.suggestions" /> : null;
+            }}
+        </StoreDiscover>);
+        const key = buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.id });
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [], revisionsByPhysicalKey: { [key]: 1 } }); });
+        expect(screen.findByTestId('project.suggestions')).toBeNull();
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspace], revisionsByPhysicalKey: { [key]: 2 } }); });
+        expect(screen.findByTestId('project.suggestions')).not.toBeNull();
+        await act(async () => { applyProjectAccountRowsFixture(storage, { status: 'refused', coverage: 'unknown', workspaceRefs: [workspace] }); });
+        expect(screen.findByTestId('project.suggestions')).toBeNull();
+        expect(fixture.requests).toHaveLength(before);
+        expect(acquisitions).toBe(1);
+        expect(unexpected).toEqual([]);
+        // Only this explicit catalog refresh reads again; empty authored mappings
+        // retain the real fact but render no suggestion or placeholder.
+        await act(async () => { applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspace], revisionsByPhysicalKey: { [key]: 2 } }); });
+        catalog.discovery!.suggestions = [];
+        await act(async () => { await refresh!(); });
+        expect(screen.findByTestId('project.suggestions')).toBeNull();
+        expect(acquisitions).toBe(2);
+        expect(unexpected).toEqual([]);
+    });
+    it('shares every enabled admitted curation source across Discover and kind shelves without opening their targets', async () => {
+        const { projectStoreDiscover } = await import('@/components/store/discover/storeDiscoverModel');
+        const devUrl = 'https://dev-curation.test/catalog.json';
+        const disabledUrl = 'https://disabled-curation.test/catalog.json';
+        const devId = deriveMarketplaceSourceId(devUrl);
+        const disabledId = deriveMarketplaceSourceId(disabledUrl);
+        const acquisitions = new Map<string, number>();
+        const targetReads: string[] = [];
+        const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { id: HAPPIER_PICKS_SOURCE_ID,
+            title: 'Picks', kind: 'curated', sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL },
+            freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [], picks: Array.from({ length: 100 }, (_, index) => index % 2
+                ? { kind: 'skill', format: 'git', sourceUrl: `https://github.com/owner${index}/skills`, itemId: '', display: { title: `Skill ${index}` } }
+                : { kind: 'mcpServer', format: 'mcp-registry', sourceUrl: 'https://registry.modelcontextprotocol.io', itemId: `server${index}`, display: { title: `Server ${index}` } }) });
+        const devSource = { id: devId, title: 'Dev picks', format: 'happier-catalog', kinds: ['plugin'], url: devUrl,
+            enabled: true, addedAt: 1 } satisfies RegistrySourceV1;
+        const devCatalog = MarketplaceIndexSourceSnapshotV1Schema.parse({ source: registryMarketplaceSourceV1(devSource),
+            freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [], discovery: { items: [
+                { id: 'repeat', title: 'Repeated server', reference: { type: 'registryItem', kind: 'mcpServer',
+                    sourceId: HAPPIER_PICKS_SOURCE_ID, itemId: 'server0' } },
+                { id: 'dev-skill', title: 'Dev skill', reference: { type: 'registryItem', kind: 'skill',
+                    sourceId: 'builtin:skills-sh', itemId: 'dev/skills/dev-skill' } },
+            ], categories: [], jobs: [] } });
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://shared-curation.test', {
+            key: 'registry-sources', value: { v: 2, sources: [
+                devSource,
+                { id: disabledId, title: 'Disabled picks', format: 'happier-catalog', kinds: ['plugin'], url: disabledUrl, enabled: false, addedAt: 1 },
+            ], disabledSourceIds: ['builtin:mcp-registry'] },
+        }, 'updated', { handleExternalRequest: async url => {
+            if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL || url === devUrl || url === disabledUrl) {
+                acquisitions.set(url, (acquisitions.get(url) ?? 0) + 1);
+                return Response.json(url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL ? catalog : devCatalog);
+            }
+            targetReads.push(url);
+            throw new Error('Curation must not open target content');
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const initialProps: { presented: boolean; sourceIds?: readonly string[] } = { presented: false };
+        const hook = await renderHook(({ presented, sourceIds }: typeof initialProps) => {
+            const curation = useRegistryCuration({ sourceIds }, presented);
+            return { curation, skill: useRegistrySuggestions('skill', { curation, enabled: presented }),
+                mcp: useRegistrySuggestions('mcpServer', { curation, enabled: presented }),
+                discover: projectStoreDiscover(curation.curation, []) };
+        }, { initialProps });
+        expect(acquisitions.size).toBe(0);
+        await hook.rerender({ presented: true });
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().skill.loading).toBe(false);
+            expect(hook.getCurrent().mcp.loading).toBe(false);
+        });
+        expect(hook.getCurrent().skill.items).toHaveLength(51);
+        expect(hook.getCurrent().mcp.items).toHaveLength(50);
+        expect(hook.getCurrent().curation.curation.map(page => page.sourceId)).toEqual([HAPPIER_PICKS_SOURCE_ID, devId]);
+        const choices = hook.getCurrent().discover.sections.flatMap(section => section.items);
+        expect(choices).toHaveLength(101);
+        expect(choices[0]?.title).toBe('Server 0');
+        expect(choices.at(-1)?.title).toBe('Dev skill');
+        expect(hook.getCurrent().mcp.items[0]?.title).toBe('Server 0');
+        expect(Object.fromEntries(acquisitions)).toEqual({ [DEFAULT_CURATED_MARKETPLACE_SOURCE_URL]: 1, [devUrl]: 1 });
+        expect(targetReads).toEqual([]);
+        const heldCuration = hook.getCurrent().curation.curation;
+        const heldChoices = hook.getCurrent().discover.sections.flatMap(section => section.items);
+        await hook.rerender({ presented: false });
+        expect(hook.getCurrent().curation.curation).toBe(heldCuration);
+        expect(hook.getCurrent().discover.sections.flatMap(section => section.items)).toEqual(heldChoices);
+        expect(Object.fromEntries(acquisitions)).toEqual({ [DEFAULT_CURATED_MARKETPLACE_SOURCE_URL]: 1, [devUrl]: 1 });
+        await hook.rerender({ presented: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().curation.loading).toBe(false));
+        expect(hook.getCurrent().curation.curation).toBe(heldCuration);
+        catalog.picks = [];
+        devCatalog.discovery!.items = [];
+        await act(async () => { await hook.getCurrent().curation.refresh(); });
+        expect(hook.getCurrent().skill.items).toEqual([]);
+        expect(hook.getCurrent().mcp.items).toEqual([]);
+        await hook.rerender({ presented: false });
+        const afterHide = [...acquisitions];
+        await hook.rerender({ presented: false });
+        expect([...acquisitions]).toEqual(afterHide);
+        expect(targetReads).toEqual([]);
+        // An explicit source selection remains narrower than the default all-enabled scope.
+        await hook.rerender({ presented: true, sourceIds: [devId, disabledId] });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().curation.loading).toBe(false));
+        expect(hook.getCurrent().curation.pages.map(page => page.sourceId)).toEqual([devId]);
+        expect(acquisitions.has(disabledUrl)).toBe(false);
+        expect(targetReads).toEqual([]);
+    });
+    it('reconciles refresh by content: zero changed row identities for equal content and only one for one changed listing', async () => {
+        const { sourceId, catalog } = await setupHome('row-identity', Array.from({ length: 100 }, (_, index) => ({
+            pluginId: `sample.plugin${index}`, title: `Plugin ${index}`,
+        })));
+        const base = catalog.entries[0]!;
+        catalog.discovery = { items: catalog.entries.map((entry, index) => ({ id: `choice-${index}`, title: entry.display.title,
+            reference: { type: 'registryItem', kind: 'plugin', sourceId, itemId: entry.pluginId, version: entry.distribution.version } })),
+            categories: [], jobs: [] };
+        const hook = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().items).toHaveLength(100));
+        const before = hook.getCurrent().items;
+        const presentation = await renderHook(() => usePluginCatalog({ enabled: true, browse: true,
+            query: { text: '', sourceId } }));
+        await waitForHomeGovernance(() => expect(presentation.getCurrent().discoverEntries).toHaveLength(100));
+        const entriesBefore = presentation.getCurrent().discoverEntries;
+        const discoveryBefore = hook.getCurrent().pages[0]!.discovery!.items;
+        const observed = hook.getCurrent().pages[0]!.status;
+        if (observed.state !== 'ok') throw new Error('Expected admitted catalog observation');
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(observed.fetchedAt + 1);
+        onTestFinished(() => clock.mockRestore());
+        const marks = before.map(item => Reflect.get(item, 'brandMark'));
+        expect(marks.filter(Boolean)).toHaveLength(100);
+        await act(async () => { await hook.getCurrent().refresh(); });
+        await act(async () => { presentation.getCurrent().refreshDiscover(); });
+        await waitForHomeGovernance(() => expect(presentation.getCurrent().loadingDiscover).toBe(false));
+        expect.soft(presentation.getCurrent().discoverEntries.filter((item, index) => item !== entriesBefore[index])).toHaveLength(0);
+        expect(hook.getCurrent().pages[0]!.status).toEqual({ state: 'ok', fetchedAt: observed.fetchedAt + 1 });
+        expect(hook.getCurrent().items.filter((item, index) => item !== before[index])).toHaveLength(0);
+        expect(hook.getCurrent().pages[0]!.discovery!.items.filter((item, index) => item !== discoveryBefore[index])).toHaveLength(0);
+        expect(hook.getCurrent().items.filter((item, index) => Reflect.get(item, 'brandMark') !== marks[index])).toHaveLength(0);
+        catalog.entries[42] = { ...catalog.entries[42]!, display: { ...base.display, title: 'Changed Plugin' } };
+        catalog.discovery.items[42] = { ...catalog.discovery.items[42]!, title: 'Changed Plugin' };
+        clock.mockReturnValue(observed.fetchedAt + 2);
+        await act(async () => { await hook.getCurrent().refresh(); });
+        await act(async () => { presentation.getCurrent().refreshDiscover(); });
+        await waitForHomeGovernance(() => expect(presentation.getCurrent().discoverEntries[42]?.title).toBe('Changed Plugin'));
+        expect.soft(presentation.getCurrent().discoverEntries.filter((item, index) => item !== entriesBefore[index])).toHaveLength(1);
+        expect(hook.getCurrent().items[42]?.title).toBe('Changed Plugin');
+        expect(hook.getCurrent().items.filter((item, index) => item !== before[index])).toHaveLength(1);
+        expect(hook.getCurrent().pages[0]!.discovery!.items.filter((item, index) => item !== discoveryBefore[index])).toHaveLength(1);
+        expect(hook.getCurrent().items.filter((item, index) => Reflect.get(item, 'brandMark') !== marks[index])).toHaveLength(1);
+    });
+    it('does not reload source lists for execution or unrelated declaration currentness, but refreshes changed sources', async () => {
+        const { fixture, sourceId } = await setupHome('source-input-cost');
+        let loads = 0;
+        const createExecute = actionFrontDoor.createFrontDoorActionExecute;
+        // Count canonical dispatches without replacing Action logic or its prepare port.
+        const observation = vi.spyOn(actionFrontDoor, 'createFrontDoorActionExecute').mockImplementation((...args) => {
+            const execute = createExecute(...args);
+            return Object.assign((...invocation: Parameters<typeof execute>) => {
+                if (invocation[0] === 'registries.sources.list') loads++;
+                return execute(...invocation);
+            }, { prepare: execute.prepare });
+        });
+        onTestFinished(() => observation.mockRestore());
+        let shell: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
+        const hook = await renderHook(() => useRegistrySources('plugin'), { wrapper });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        const baseline = loads;
+        for (let generation = 1; generation <= 5; generation++) {
+            shell = { ...shell, connectedAccountProjectionRevision: generation,
+                clientExecutableActivation: { status: generation % 2 ? 'establishing' : 'ready' },
+                pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation } };
+            await hook.rerender();
+        }
+        expect(loads - baseline).toBe(0);
+        const scope = storage.getState().settingsScope!;
+        const received = getPromptLibraryCatalogSnapshot(scope)!;
+        for (let wake = 0; wake < 5; wake++) {
+            await act(async () => beginPromptLibraryCatalogLoad(scope));
+            await act(async () => applyPromptLibraryCatalogRowsSnapshot(scope, ['skill-rules'], {
+                rawSettings: {}, sourceSettingsVersion: 0, catalog: { status: 'ready', rows: [{ revision: 1,
+                    record: { key: 'skill-rules', value: { v: 1, rules: [] } } }], tombstones: [], diagnostics: [] },
+            }, true));
+            expect(loads - baseline).toBe(0);
+            await act(async () => applyPromptLibraryCatalogSnapshot(scope, { ...received,
+                catalog: { status: 'unavailable', reason: 'unreachable' } }, true));
+            await act(async () => applyPromptLibraryCatalogSnapshot(scope, received, true));
+        }
+        expect(loads - baseline).toBe(0);
+        const row = received.catalog.status === 'ready' || received.catalog.status === 'partial'
+            ? received.catalog.rows.find(row => row.record.key === 'registry-sources') : null;
+        const sourceValue = getPromptLibraryCatalogValue(scope, 'registry-sources').value;
+        if (!row || row.record.key !== 'registry-sources' || !sourceValue) throw new Error('Expected source record');
+        await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources',
+            value: { ...sourceValue, sources: sourceValue.sources.map(source => source.id === sourceId
+                ? { ...source, title: 'Changed source' } : source) } }, row.revision + 1, true));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().sources).toContainEqual(expect.objectContaining({ id: sourceId, title: 'Changed source' })));
+        expect(loads - baseline).toBe(1);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const beforeRenewal = loads;
+        const credentials = await TokenStorage.getCredentialsForServerUrl(fixture.home.serverUrl, { serverId: fixture.home.id });
+        if (!credentials) throw new Error('Expected fixture credentials');
+        const replacement = await TokenStorage.setCredentialsForServerUrlWithRollback(fixture.home.serverUrl,
+            { serverId: fixture.home.id }, { ...credentials, token: `${credentials.token}-renewed` });
+        if (!replacement) throw new Error('Expected replacement fixture lifetime');
+        try {
+            await waitForHomeGovernance(() => {
+                expect(loads).toBeGreaterThan(beforeRenewal);
+                expect(hook.getCurrent().status).toBe('ready');
+                expect(hook.getCurrent().sources).toContainEqual(expect.objectContaining({ id: sourceId }));
+            });
+        } finally { await act(async () => { await replacement.rollback(); }); }
+    });
     it('renders registry observers only for changed source facts, not read freshness', async () => {
         const { fixture } = await setupHome('source-render-cost');
         let renders = 0;
@@ -184,37 +620,69 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         await waitForHomeGovernance(() => expect(hook.getCurrent().item).not.toBeNull());
         expect(hook.getCurrent().status).toBeNull();
     });
-    it('reads curated skill picks through the mounted Action and real target adapter with no Machine', async () => {
+    it('browses curated skill pointers without target work, then reads only the selected skill with no Machine', async () => {
         const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({ source: {
             id: HAPPIER_PICKS_SOURCE_ID, title: 'Happier picks', kind: 'curated', sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL,
         }, freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [], picks: [{
             kind: 'skill', format: 'git', sourceUrl: 'https://github.com/example/skills', itemId: '',
         }] });
         const commit = '1'.repeat(40);
+        const targets: string[] = [];
         const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-picks.test', {
             key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
         }, 'updated', { handleExternalRequest: async url => {
             if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return Response.json(catalog);
+            targets.push(url);
             if (url.startsWith('https://api.github.com/repos/example/skills/commits/')) return Response.json({ sha: commit });
             if (url.includes('/git/trees/')) return Response.json({ sha: 'tree', tree: [{ path: 'SKILL.md', type: 'blob', mode: '100644', sha: 'blob', size: 40 }] });
             if (url.startsWith('https://raw.githubusercontent.com/example/skills/')) return new Response('---\nname: review-changes\n---\nInstructions');
             return null;
         } });
         onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
-        const { storage } = await import('@/sync/domains/state/storage');
-        const hook = await renderHook(() => useSkillsHomepageModel({ scope: storage.getState().settingsScope, status: 'ready', items: [], stale: false, errorCode: null,
-            usageObservedSince: null, retry() {} }, []));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().registryShelf.loading).toBe(false));
-        expect(hook.getCurrent().registryShelf.items).toContainEqual(expect.objectContaining({ title: 'review-changes', flags: { pick: true }, version: commit }));
-        expect(hook.getCurrent().registryShelf.sourceId).toBe(HAPPIER_PICKS_SOURCE_ID);
+        const hook = await renderHook(() => useRegistrySuggestions('skill'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items).toContainEqual(expect.objectContaining({ title: 'skills', flags: { pick: true } }));
+        expect(hook.getCurrent().sourceId).toBe(HAPPIER_PICKS_SOURCE_ID);
+        expect(targets).toEqual([]);
+        const pointer = hook.getCurrent().items[0]!;
+        expect(pointer.version).toBeUndefined();
+        const selected = await renderHook(() => useRegistryItem({ kind: 'skill', sourceId: pointer.sourceId, itemId: pointer.itemId }));
+        await waitForHomeGovernance(() => expect(selected.getCurrent().item?.summary.version).toBe(commit));
+        expect(selected.getCurrent().item?.summary.title).toBe('review-changes');
+        expect(targets.length).toBeGreaterThan(0);
         expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
     });
-    it('quietly omits the web skill shelf instead of browsing skills.sh through a Machine when picks are empty or unreachable', async () => {
+    it('retains a typed source-acquisition error in skill suggestions when no catalog can be admitted', async () => {
+        let externalReads = 0;
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const fixture = await createPlainArtifactHomeFixture('https://registry-invalid-suggestions.test', {
+            handleRequest: async path => path.startsWith('/v1/account/entity-rows/prompt-library')
+                ? Response.json({ status: 'invalid-stored-content' }) : null,
+            handleExternalRequest: async () => {
+                externalReads++;
+                throw new Error('Invalid sources must not start a catalog acquisition');
+            },
+        });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook(() => useRegistrySuggestions('skill'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent()).toMatchObject({ items: [], sourceId: null, status: { state: 'invalid_source' } });
+        expect(hook.getCurrent().error).toEqual(expect.any(String));
+        expect(hook.getCurrent().error).not.toBe('');
+        const settledRequests = fixture.requests.length;
+        await hook.rerender();
+        expect(fixture.requests).toHaveLength(settledRequests);
+        expect(externalReads).toBe(0);
+    });
+
+    it('distinguishes empty web skill suggestions from typed unavailability without Machine fallback work', async () => {
         let unavailable = false;
+        let reads = 0;
         const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-empty-picks.test', {
             key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
         }, 'updated', { handleExternalRequest: async url => {
             expect(url).toBe(DEFAULT_CURATED_MARKETPLACE_SOURCE_URL);
+            reads++;
             return unavailable ? new Response(null, { status: 503 }) : Response.json(MarketplaceIndexSourceSnapshotV1Schema.parse({ source: {
                 id: HAPPIER_PICKS_SOURCE_ID, title: 'Picks', kind: 'curated', sourceUrl: url,
             }, freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [], picks: [] }));
@@ -222,10 +690,19 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
         const hook = await renderHook(() => useRegistrySuggestions('skill'));
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
-        expect(hook.getCurrent()).toMatchObject({ items: [], sourceId: null });
+        expect(hook.getCurrent()).toMatchObject({ items: [], sourceId: null, error: null, sourceFailures: [] });
         unavailable = true;
         await act(async () => { await hook.getCurrent().refresh(); });
-        expect(hook.getCurrent()).toMatchObject({ items: [], sourceId: null, loading: false });
+        expect(hook.getCurrent()).toMatchObject({ items: [], sourceId: null, loading: false,
+            sourceFailures: [expect.objectContaining({ sourceId: HAPPIER_PICKS_SOURCE_ID,
+                status: { state: 'unreachable' }, onRetry: expect.any(Function) })] });
+        const settledReads = reads;
+        await hook.rerender();
+        expect(reads).toBe(settledReads);
+        unavailable = false;
+        await act(async () => { await hook.getCurrent().sourceFailures[0]!.onRetry(); });
+        expect(hook.getCurrent()).toMatchObject({ items: [], error: null, sourceFailures: [], loading: false });
+        expect(reads).toBe(settledReads + 1);
         expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
     });
     it('falls back to the first direct built-in agent registry without browsing user or daemon sources', async () => {
@@ -260,6 +737,39 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         expect(hook.getCurrent()).toMatchObject({ sourceId: 'builtin:skills-sh', items: [{ itemId: 'example/skills/review' }] });
         expect(externalRequests).toContain('https://skills.sh/');
         expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
+    });
+    it.each(['mcpServer', 'skill', 'plugin'] as const)('keeps cold %s catalog failures distinct from a successful empty read and recovers by Retry', async kind => {
+        let status = 429;
+        let reads = 0;
+        const catalog = createRegistryPluginCatalogFixture({ sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, kind: 'curated', entries: [] });
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://registry-cold-${kind}.test`, {
+            key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+        }, 'updated', { handleExternalRequest: async url => {
+            if (url !== DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return null;
+            reads++;
+            return status === 200 ? Response.json(catalog) : new Response('Too many requests', { status });
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook(() => useRegistryItems({ kind, sourceIds: [HAPPIER_PICKS_SOURCE_ID] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items).toEqual([]);
+        expect(hook.getCurrent().sourceFailures).toEqual([expect.objectContaining({ sourceId: HAPPIER_PICKS_SOURCE_ID,
+            message: expect.any(String), onRetry: expect.any(Function) })]);
+        expect(hook.getCurrent().sourceFailures[0]!.message).not.toBe('');
+        expect(hook.getCurrent().pages[0]?.status).toEqual({ state: 'rate_limited' });
+        const beforeRetry = reads;
+        status = 200;
+        await act(async () => { await hook.getCurrent().sourceFailures[0]!.onRetry(); });
+        expect(hook.getCurrent().items).toEqual([]);
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().sourceFailures).toEqual([]);
+        expect(hook.getCurrent().pages.every(page => page.status.state === 'ok')).toBe(true);
+        expect(reads).toBe(beforeRetry + 1);
+        status = 503;
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().pages[0]?.status).toEqual({ state: 'unreachable' });
+        expect(hook.getCurrent().sourceFailures).toHaveLength(1);
+        expect(reads).toBe(beforeRetry + 2);
     });
     it('keeps known items on a headerless rate limit and recovers through the source failure manual Retry', async () => {
         const { sourceId, setRateLimited } = await setupHome('rate-limit');
@@ -338,28 +848,29 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         const { fixture, sourceId, setUnavailable } = await setupHome(`controller-${operation}`);
         const observations: { revision: ReturnType<typeof usePromptLibraryCatalogValue>['revision']; entries: readonly string[]; canInstall: boolean }[] = [];
         const hook = await renderHook(() => {
-            const state = usePluginSettingsScreenState();
+            const state = usePluginCatalog();
+            const mutations = useRegistrySourceMutations();
             const catalog = usePromptLibraryCatalogValue('registry-sources');
             React.useLayoutEffect(() => {
-                observations.push({ revision: catalog.revision, entries: state.discoverEntries.map(entry => entry.id), canInstall: state.canRunDiscoverActions });
-            }, [catalog.revision, state.discoverEntries, state.canRunDiscoverActions]);
-            return state;
+                observations.push({ revision: catalog.revision, entries: state.discoverEntries.map(entry => entry.id), canInstall: state.current });
+            }, [catalog.revision, state.discoverEntries, state.current]);
+            return { ...state, mutations };
         });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().marketplaceSourceRegistryAvailable).toBe(true));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().discoverSources.some(source => source.id === sourceId)).toBe(true));
         await act(async () => { hook.getCurrent().openDiscoverListing({ sourceId, pluginId: 'sample.plugin' }); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().discoverEntries).toContainEqual(expect.objectContaining({
             id: 'sample.plugin', sourceId, title: 'Sample Plugin', version: '1.2.3', packageName: 'sample-plugin', installable: true,
         })));
         setUnavailable();
         observations.length = 0;
-        if (operation === 'disable') await act(async () => { await hook.getCurrent().setMarketplaceSourceEnabled(sourceId, false); });
-        else await act(async () => { await hook.getCurrent().removeMarketplaceSource(sourceId); });
+        if (operation === 'disable') await act(async () => { await hook.getCurrent().mutations.update({ sourceId, enabled: false }); });
+        else await act(async () => { await hook.getCurrent().mutations.delete(sourceId); });
         expect(fixture.read().revision).toBe(5);
         const changedRevision = observations.filter(observation => observation.revision === 5);
         expect(changedRevision.length).toBeGreaterThan(0);
         expect(changedRevision.every(observation => observation.entries.length === 0 && !observation.canInstall)).toBe(true);
         expect(hook.getCurrent().discoverEntries).toEqual([]);
-        expect(hook.getCurrent().canRunDiscoverActions).toBe(false);
-        expect(hook.getCurrent().executionMachineId).toBeNull();
+        expect(hook.getCurrent().current).toBe(false);
+        expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
     });
 });

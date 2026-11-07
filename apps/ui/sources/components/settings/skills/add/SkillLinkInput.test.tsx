@@ -3,7 +3,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 import { CapabilityAddModalBody, type CapabilityAddInputContext } from '@/components/capabilities/add/CapabilityAddModal';
 import { SkillLinkInput } from './SkillLinkInput';
@@ -56,11 +56,14 @@ const PREVIEW = {
   },
 } as const;
 
-/** The Action transport is the boundary: the preview finds one skill, the add itself is refused. */
+const SECOND = { ...PREVIEW, path: 'skills/to-prd', name: 'to-prd', description: 'Turn the talk into a PRD.',
+  provenance: { ...PREVIEW.provenance, ref: { ...PREVIEW.provenance.ref, path: 'skills/to-prd', treeSha: 'c'.repeat(40) } } };
+
+/** The Action transport is the boundary: the preview finds two skills, the add itself is refused. */
 const execute: MountedAuthoringActionExecute = async (_actionId, input) => {
   const dryRun = (input as { dryRun?: boolean }).dryRun === true;
   const answer: ActionExecuteResult = dryRun
-    ? { ok: true, result: { items: [PREVIEW] } }
+    ? { ok: true, result: { items: [PREVIEW, SECOND] } }
     : { ok: false, error: 'install failed', errorCode: 'skill_install_failed' };
   return answer;
 };
@@ -98,7 +101,7 @@ async function renderLink(answer: MountedAuthoringActionExecute, callbacks: Call
               ctx={ctx}
               execute={answer}
               onAdded={callbacks.onAdded ?? (() => {})}
-              onSelectAdded={callbacks.onSelectAdded ?? (() => {})}
+              onSelectAdded={(id) => { callbacks.onSelectAdded?.(id); onClose(); }}
               onDone={callbacks.onDone ?? (() => {})}
               testID="link"
             />
@@ -151,7 +154,7 @@ async function renderLink(answer: MountedAuthoringActionExecute, callbacks: Call
   return { screen, open, closeDetail, pressPrimary, row, onClose };
 }
 
-/** Finds a skill from a link, then tries to add it, so the footer carries a refusal beside Add. */
+/** Finds two skills from a link, then tries to add them, so the footer carries a refusal beside Add. */
 async function renderFailedAdd() {
   const { screen } = await renderLink(execute);
   await screen.pressByTestIdAsync('link.add');
@@ -209,9 +212,9 @@ describe('SkillLinkInput footer', () => {
         ? { ok: true, result: { items: [PREVIEW] } }
         : { ok: true, result: { skillIds: ['skill-new'], includedInSessionId: null } };
     };
-    const { screen } = await renderLink(answer, {}, '  npx skills add https://github.com/acme/agent-skills  ');
+    const { pressPrimary } = await renderLink(answer, {}, '  npx skills add https://github.com/acme/agent-skills  ');
     expect(calls[0]).toEqual({ source: { kind: 'link', url: 'https://github.com/acme/agent-skills' }, dryRun: true });
-    await screen.pressByTestIdAsync('link.add');
+    await pressPrimary();
     expect(calls).toEqual([
       { source: { kind: 'link', url: 'https://github.com/acme/agent-skills' }, dryRun: true },
       { source: { kind: 'link', url: 'https://github.com/acme/agent-skills', refs: [PREVIEW.provenance.ref] } },
@@ -224,7 +227,7 @@ describe('SkillLinkInput footer', () => {
     const onAdded = vi.fn();
     const answer: MountedAuthoringActionExecute = async (actionId, input) => {
       if (actionId === 'skills.install' && (input as { dryRun?: boolean }).dryRun)
-        return { ok: true, result: { items: [PREVIEW] } };
+        return { ok: true, result: { items: [PREVIEW, SECOND] } };
       calls.push({ actionId, input });
       if (actionId === 'skills.install') return { ok: true, result: {
         skillIds: ['primary', 'sibling-a', 'sibling-b'], includedInSessionId: null,
@@ -260,9 +263,46 @@ describe('SkillLinkInput footer', () => {
   });
 });
 
+describe('SkillLinkInput one found skill', () => {
+  it('opens it straight in its details, whose Add is the one primary and carries the Where picked there', async () => {
+    const installs: Record<string, unknown>[] = [];
+    const answer: MountedAuthoringActionExecute = async (_actionId, input) => {
+      if ((input as { dryRun?: boolean }).dryRun === true) return { ok: true, result: { items: [PREVIEW] } };
+      installs.push(input as Record<string, unknown>);
+      return { ok: true, result: { skillIds: ['skill-new'], includedInSessionId: null } };
+    };
+    const selected: string[] = [];
+    const { screen, pressPrimary } = await renderLink(answer, { onSelectAdded: (id) => selected.push(id) });
+    expect(screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model).props.model.openKey).toBe(PREVIEW.path);
+    expect(screen.findByTestId('link.add')).toBeNull();
+    expect(screen.findByTestId('link.footer')).toBeNull();
+    expect(screen.find(node => node.props.testID === 'skills.add:primary' && typeof node.props.display === 'string').props.display).toBe('primary');
+    const { WhereItsOnControl } = await import('@/components/capabilities/where/WhereItsOnControl');
+    const narrowed = { kind: 'write', write: { place: { t: 'machine', machineId: 'machine-1' }, state: 'on' } } as const;
+    await act(async () => screen.findByType(WhereItsOnControl).props.onChange(narrowed));
+    await pressPrimary();
+    expect(installs).toEqual([{ source: { kind: 'link', url: PREVIEW.provenance.url, refs: [PREVIEW.provenance.ref] }, where: narrowed }]);
+    expect(selected).toEqual(['skill-new']);
+  });
+
+  it('commits the Where picked in its details when the dialog is left with Save', async () => {
+    const installs: Record<string, unknown>[] = [];
+    const answer: MountedAuthoringActionExecute = async (_actionId, input) => {
+      installs.push(input as Record<string, unknown>);
+      return { ok: true, result: { skillIds: ['skill-new'], includedInSessionId: null } };
+    };
+    const { createSkillFoundDraft, commitSkillFoundDraft } = await import('./SkillFoundAdd');
+    const draft = createSkillFoundDraft([PREVIEW] as never);
+    const narrowed = { kind: 'write', write: { place: { t: 'machine', machineId: 'machine-1' }, state: 'off' } } as const;
+    draft.getState().wheres.set(PREVIEW.path, narrowed);
+    const source = { kind: 'link', url: PREVIEW.provenance.url, refs: [PREVIEW.provenance.ref] } as const;
+    expect(await commitSkillFoundDraft(draft, answer, source as never, [PREVIEW] as never)).toBe('skill-new');
+    expect(installs).toEqual([{ source, where: narrowed }]);
+  });
+});
+
 describe('SkillLinkInput details (G8)', () => {
-  const second = { ...PREVIEW, path: 'skills/to-prd', name: 'to-prd', description: 'Turn the talk into a PRD.',
-    provenance: { ...PREVIEW.provenance, ref: { ...PREVIEW.provenance.ref, path: 'skills/to-prd', treeSha: 'c'.repeat(40) } } };
+  const second = SECOND;
   const source = { kind: 'link', url: 'https://github.com/acme/agent-skills', refs: [PREVIEW.provenance.ref, second.provenance.ref] };
   async function renderPair() {
     const installs: Record<string, unknown>[] = [];
@@ -275,6 +315,82 @@ describe('SkillLinkInput details (G8)', () => {
     const rendered = await renderLink(answer, { onSelectAdded: (id) => selected.push(id) });
     return { ...rendered, installs, selected };
   }
+
+  it('keeps B selected when an individual Add for A finishes, retaining A without repeating its install', async () => {
+    const pending = createDeferred<ActionExecuteResult>();
+    const installs: unknown[] = [];
+    const onSelectAdded = vi.fn();
+    const answer: MountedAuthoringActionExecute = async (_id, input) => {
+      if ((input as { dryRun?: boolean }).dryRun) return { ok: true, result: { items: [PREVIEW, second] } };
+      installs.push(input);
+      return pending.promise;
+    };
+    const { screen, open, onClose } = await renderLink(answer, { onSelectAdded });
+    await open(PREVIEW.path);
+    let operation!: Promise<void>;
+    await act(async () => {
+      operation = screen.find(node => node.props.testID === 'skills.add:primary' && typeof node.props.onPress === 'function').props.onPress();
+    });
+    await open(second.path);
+    await act(async () => {
+      pending.resolve({ ok: true, result: { skillIds: ['added-a'], includedInSessionId: null } });
+      await operation;
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSelectAdded).not.toHaveBeenCalled();
+    expect(screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model).props.model.openKey).toBe(second.path);
+    await open(PREVIEW.path);
+    await screen.pressByTestIdAsync('skills.add:open-added');
+    expect(onSelectAdded).toHaveBeenCalledExactlyOnceWith('added-a');
+    expect(installs).toHaveLength(1);
+  });
+
+  it.each(['individual', 'batch'] as const)('does not depart a new Find when an older %s Add finishes', async kind => {
+    const pending = createDeferred<ActionExecuteResult>();
+    const onAdded = vi.fn(), onSelectAdded = vi.fn();
+    const answer: MountedAuthoringActionExecute = async (_id, input) =>
+      (input as { dryRun?: boolean }).dryRun
+        ? { ok: true, result: { items: [PREVIEW, second] } }
+        : pending.promise;
+    const { screen, open, onClose } = await renderLink(answer, { onAdded, onSelectAdded });
+    if (kind === 'individual') await open(PREVIEW.path);
+    let operation!: Promise<void>;
+    await act(async () => {
+      operation = screen.find(node => node.props.testID === (kind === 'individual' ? 'skills.add:primary' : 'link.add')
+        && typeof node.props.onPress === 'function').props.onPress();
+    });
+    await act(async () => screen.changeTextByTestId('link.url', 'https://github.com/acme/newer'));
+    await screen.pressByTestIdAsync('link.find');
+    await act(async () => {
+      pending.resolve({ ok: true, result: { skillIds: ['added-old'], includedInSessionId: null } });
+      await operation;
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onAdded).not.toHaveBeenCalled();
+    expect(onSelectAdded).not.toHaveBeenCalled();
+    expect(screen.findByTestId('link.url')?.props.value).toBe('https://github.com/acme/newer');
+  });
+
+  it('does not let an older Find replace a newer link preview', async () => {
+    const older = createDeferred<ActionExecuteResult>(), newer = createDeferred<ActionExecuteResult>();
+    let reads = 0;
+    const answer: MountedAuthoringActionExecute = async () => {
+      reads += 1;
+      return reads === 1 ? { ok: true, result: { items: [PREVIEW] } } : reads === 2 ? older.promise : newer.promise;
+    };
+    const { screen } = await renderLink(answer);
+    await act(async () => screen.changeTextByTestId('link.url', 'https://github.com/acme/older'));
+    await screen.pressByTestIdAsync('link.find');
+    await act(async () => screen.changeTextByTestId('link.url', 'https://github.com/acme/newer'));
+    // Return/Enter is independently available while the previous button is busy.
+    await act(async () => screen.findAllByTestId('link.url').find(node => typeof node.props.onSubmitEditing === 'function')!.props.onSubmitEditing());
+    expect(reads).toBe(3);
+    await act(async () => newer.resolve({ ok: true, result: { items: [second] } }));
+    const keys = () => screen.find(node => node.props.testID === 'skills.add:collection' && node.props.model?.keys).props.model.keys;
+    expect(keys()).toContain('skills/to-prd');
+    await act(async () => older.resolve({ ok: true, result: { items: [PREVIEW] } }));
+    expect(keys()).toEqual(['skills/to-prd']);
+  });
 
   it('opens a found row in the same details, with Where it\'s on, and adds only that skill with the Where picked', async () => {
     const { screen, open, pressPrimary, installs, selected, onClose } = await renderPair();
@@ -302,12 +418,40 @@ describe('SkillLinkInput details (G8)', () => {
     expect(installs).toEqual([{ source, selectPaths: ['skills/grill-me'] }]);
   });
 
+  it('retains the individual Where after visiting another result without applying it to batch Add', async () => {
+    const { screen, open, pressPrimary, installs } = await renderPair();
+    const { WhereItsOnControl } = await import('@/components/capabilities/where/WhereItsOnControl');
+    const narrowed = { kind: 'write', write: { place: { t: 'machine', machineId: 'machine-1' }, state: 'off' } } as const;
+    await open('skills/to-prd');
+    await act(async () => screen.findByType(WhereItsOnControl).props.onChange(narrowed));
+    await open('skills/grill-me');
+    await open('skills/to-prd');
+    await pressPrimary();
+    expect(installs).toEqual([{ source, selectPaths: ['skills/to-prd'], where: narrowed }]);
+  });
+
   it('ticks with the box, not the row, and the checklist footer adds the ticked set without a Where', async () => {
     const { screen, row, installs } = await renderPair();
     await (await row(PREVIEW)).pressByTestIdAsync('link.item.grill-me.tick');
     expect(screen.findByTestId('link.detail.title')).toBeNull();
     await screen.pressByTestIdAsync('link.add');
     expect(installs).toEqual([{ source, selectPaths: ['skills/to-prd'] }]);
+  });
+
+  it('offers the found group a Select all that ticks every new skill again, then Select none', async () => {
+    const { screen, row, installs } = await renderPair();
+    const groupAction = () => {
+      const collection = screen.findAll((node) => node.props?.testID === 'skills.add:collection' && node.props?.model !== undefined)[0];
+      return collection?.props.groupAction?.('found') ?? null;
+    };
+    // Everything new starts ticked: the group offers to clear it.
+    expect(groupAction()?.label).toBe('Select none');
+    await (await row(PREVIEW)).pressByTestIdAsync('link.item.grill-me.tick');
+    expect(groupAction()?.label).toBe('Select all');
+    await act(async () => { groupAction()!.onPress(); });
+    expect(groupAction()?.label).toBe('Select none');
+    await screen.pressByTestIdAsync('link.add');
+    expect(installs).toEqual([{ source, selectPaths: ['skills/grill-me', 'skills/to-prd'] }]);
   });
 });
 
@@ -329,7 +473,7 @@ describe('SkillLinkInput outside references', () => {
     });
     expect(screen.findHostByTestId('link.detail.outsideReferences')).not.toBeNull();
     expect(screen.getTextContent()).toContain('2 files');
-    expect(screen.findByTestId('link.add')?.props.disabled).not.toBe(true);
+    expect(screen.find(node => node.props.testID === 'skills.add:primary' && typeof node.props.disabled === 'boolean').props.disabled).toBe(false);
   });
 
   it('draws nothing for a skill whose references are all in its folder', async () => {
@@ -384,6 +528,16 @@ describe('SkillLinkInput referenced siblings', () => {
     await pressPrimary();
     expect(installs).toEqual([expect.objectContaining({ selectPaths: ['skills/prisma-cli', 'skills/orm-setup'] })]);
   });
+
+  it('retains an unticked individual sibling after visiting another result', async () => {
+    const { screen, open, pressPrimary, installs } = await renderFoundPair();
+    await open('skills/prisma-cli');
+    await screen.pressByTestIdAsync('link.detail.sibling.orm-setup');
+    await open('skills/orm-setup');
+    await open('skills/prisma-cli');
+    await pressPrimary();
+    expect(installs).toEqual([expect.objectContaining({ selectPaths: ['skills/prisma-cli'] })]);
+  });
 });
 
 describe('SkillLinkInput skills the library already holds', () => {
@@ -416,13 +570,14 @@ describe('SkillLinkInput skills the library already holds', () => {
     return { ...rendered, installs, opened, selected, done };
   }
 
-  it('marks a held skill In your library and the footer opens it instead of adding it again', async () => {
-    const { screen, row, installs, opened } = await renderFound([held]);
+  it('marks a held skill In your library and its details open it instead of adding it again', async () => {
+    const { screen, row, pressPrimary, installs, selected } = await renderFound([held]);
     expect((await row(held)).findHostByTestId('link.item.grill-me.inLibrary')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain('Add to library');
-    await screen.pressByTestIdAsync('link.add');
+    expect(screen.findByTestId('link.add')).toBeNull();
+    await pressPrimary();
     expect(installs).toEqual([]);
-    expect(opened).toEqual(['skill-held']);
+    expect(selected).toEqual(['skill-held']);
   });
 
   it('offers Done, not an ambiguous Open, when several roots are held and none is new', async () => {

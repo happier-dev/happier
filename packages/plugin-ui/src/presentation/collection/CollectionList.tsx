@@ -8,6 +8,7 @@ import { HappierPressable } from '../interaction/Pressable.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { HappierDisclosureChevron } from './DisclosureChevron.js';
 import { resolveHappierCollectionTitleAccessoryFits } from './collectionTitleRoom.js';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../../environment/interactiveTarget.js';
 import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import type { HappierPageTextStep } from '../layout/pageText.js';
 import { resolveHappierTypeScale, type HappierTypeEmphasis, type HappierTypeRole } from '../text/typeScale.js';
@@ -31,6 +32,14 @@ export type HappierCollectionListTextRole = 'title' | 'count' | 'subtitle' | 'gr
 
 export type HappierCollectionRowRole = 'catalogRow' | 'item' | 'menu';
 
+/** Collection bindings decide once from their declared content; preferences keep Item's default. */
+export function resolveHappierCollectionRowRole(input: Readonly<{
+  rowRole?: HappierCollectionRowRole;
+  hasDescription: boolean;
+}>): HappierCollectionRowRole {
+  return input.rowRole ?? (input.hasDescription ? 'catalogRow' : 'item');
+}
+
 export type HappierCollectionListHost = Readonly<{
   /** One line of text in an anatomy role. */
   Text: ComponentType<Readonly<{
@@ -51,7 +60,7 @@ export type HappierCollectionListHost = Readonly<{
     /** A control inside the field's well, after the input (the list's filter button). */
     trailing?: ReactNode;
     /** Resolves to the field's drawn frame, the anchor of what opens under it (the filter editor). */
-    anchorRef?: RefObject<View | null>;
+    anchorRef?: RefObject<unknown>;
     /** Focus on mount: only a field the person just opened from its magnifier. */
     autoFocus?: boolean;
     style: HappierStyleProp;
@@ -78,7 +87,7 @@ export type HappierCollectionListSearch = Readonly<{
   /** The list's filter button, inside the field's well where the list has a search field (lab `sfcols:mcpFilter`). */
   trailing?: ReactNode;
   /** The field's frame, for the filter editor to open under the field's left edge. */
-  anchorRef?: RefObject<View | null>;
+  anchorRef?: RefObject<unknown>;
   /**
    * A titled column keeps its field behind a magnifier in the title row until it is opened (the Sessions
    * header), so the header is one row. A query keeps it open; closing it clears the query.
@@ -174,17 +183,31 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    */
   rowMinHeight: 32,
   /**
-   * A described row: the navigation row with one quiet context line under its title (a pool's service and
-   * active account, a skill's description). One shape for every column, never a per-column height.
+   * A described row in a column (a Settings rail, a phone's collection page): the navigation row with its
+   * description under the title, on the same glyph column, so every row of the column shares one icon axis
+   * and one title edge. Its natural height (6 + title 18 + description 16 + 6, lab `sfcols:*`) is also the
+   * floor of a title-only peer, so a described column keeps one row pitch (owner, 2026-10-30).
    */
-  describedRowMinHeight: 44,
+  describedRowMinHeight: 46,
   /**
-   * A disclosure tree in a column (a service and its accounts): the caret's box and its gap to the parent's
-   * mark. A disclosed child carries no mark and starts on the parent's title edge
-   * ({@link resolveHappierCollectionTreeChildIndentPx}).
+   * Described catalog records on a page (Store, Add, Installed, a page directory). In a column the same
+   * row keeps its content (mark, name, one description line) on the column's geometry instead
+   * ({@link describedRowMinHeight}); see {@link useHappierCollectionListRow}.
    */
-  treeCaretBox: 12,
-  treeCaretGap: 4,
+  catalogRow: Object.freeze({
+    minHeight: 60,
+    markBox: 32,
+    markGap: 12,
+    rowGap: 2,
+    /** Air above and below the text block: a two-line row (title 20 + 2 + description 18) lands on the floor. */
+    paddingVertical: 10,
+    /** The row's hover/selected fill. */
+    radius: HAPPIER_RADIUS_V1.md,
+    /** A page directory's column: narrower than this, the directory returns to one column. */
+    directoryColumnMinWidth: 320,
+    /** Air between a page directory's two columns. */
+    directoryColumnGap: 40,
+  }),
   rowGlyphBox: Platform.OS === 'ios' ? 18 : 20,
   rowGlyphGap: 10,
   /** The header's title row (title, count, the header action's 30px icon buttons). */
@@ -261,12 +284,14 @@ export const COLLECTION_RAIL_MIN_WIDTH_PX = Math.ceil(
 );
 
 /**
- * How far a disclosed child row is indented so its title starts on its parent's title edge: the parent's
- * caret, the caret's gap, the mark's box and the mark's gap to the title.
+ * How far a disclosed child row is indented: one step, so the child's own mark starts where its parent's mark
+ * ends (the mark's box and its gap). The parent shows its disclosure in place of its mark on hover or focus, so
+ * no caret column is reserved (owner 10-31).
  */
 export function resolveHappierCollectionTreeChildIndentPx(): number {
   const M = HAPPIER_COLLECTION_LIST_METRICS;
-  return M.treeCaretBox + M.treeCaretGap + M.rowGlyphBox + M.rowGlyphGap;
+  // Trees live in columns, where every row role draws its mark in the column's glyph box.
+  return M.rowGlyphBox + M.rowGlyphGap;
 }
 
 /** A row's content inset (its own horizontal padding inside the gutter), plus a disclosure indent. */
@@ -294,17 +319,25 @@ export function useHappierCollectionListRow(): boolean {
  * height the Collection planned. A resting list (a phone, a narrow page) separates its rows by air instead
  * (`hairline: false`); the fills and edge stay.
  */
-export type HappierCollectionTableRowFacts = Readonly<{ hairline: boolean }>;
+export type HappierCollectionTableRowFacts = Readonly<{
+  hairline: boolean;
+  /**
+   * A catalog row in the list beside a detail (lab m:mcp): no hairline; its hover and selection fill sits
+   * rowInset in from the list's edges with the catalog row radius, so rows part by air.
+   */
+  insetFill?: boolean;
+}>;
 export const HappierCollectionTableRowContext = createContext<HappierCollectionTableRowFacts | null>(null);
 
 /**
  * How a Collection's resting list (no detail beside it) parts its rows. `air` (default): the page's own edges,
  * rows apart by space, for a phone or a page. `ruled`: the table's own insets and the row hairline, as the list
  * beside an open detail, for a host whose list fills a dialog and keeps one rhythm at rest and beside the detail.
- * `ruled-page`: the same ruled rows with their ends on the page gutter, for that dialog as a phone's full-screen page.
- * Host-provided; an author's Collection takes whatever its host presents.
+ * `air-page`: rows apart by space with their ends on the page gutter, for that dialog as a phone's full-screen
+ * page whose list fills it edge to edge (lab `mp:mcpList`). Host-provided; an author's Collection takes whatever
+ * its host presents.
  */
-export type HappierCollectionRestingRows = 'air' | 'ruled' | 'ruled-page';
+export type HappierCollectionRestingRows = 'air' | 'air-page' | 'ruled';
 export const HappierCollectionRestingRowsContext = createContext<HappierCollectionRestingRows>('air');
 
 export function useHappierCollectionTableRow(): HappierCollectionTableRowFacts | null {
@@ -423,7 +456,9 @@ const groupLabelDisclosureStyle: HappierPortableStyle = { ...groupLabelLeadStyle
 const groupLabelDetailStyle: ViewStyle = { flexShrink: 100000, minWidth: 0 };
 const groupLabelDetailEndStyle: ViewStyle = { flexShrink: 0 };
 const groupLabelDisclosureMarkStyle: ViewStyle = { ...groupLabelMarkStyle, marginRight: 4 };
-const groupLabelSpacerStyle: ViewStyle = { flex: 1, minWidth: 8 };
+// The free space after the fold control: what its hit area may take on that side.
+const GROUP_LABEL_SPACER_MIN_PX = 8;
+const groupLabelSpacerStyle: ViewStyle = { flex: 1, minWidth: GROUP_LABEL_SPACER_MIN_PX };
 const groupLabelEndCountStyle: ViewStyle = { marginRight: M.contentInset - M.rowInset };
 const groupLabelActionsStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: 2 };
 const groupLabelActionsHiddenStyle: ViewStyle = { opacity: 0 };
@@ -431,6 +466,15 @@ const groupLabelChevronStyle: HappierPortableStyle = { width: 16, height: 16, al
 const markStyle: ViewStyle = {
   width: HAPPIER_COLLECTION_LIST_METRICS.markSize,
   height: HAPPIER_COLLECTION_LIST_METRICS.markSize,
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+// In a column a mark takes its own size on the column's glyph box: a glyph drawn at the box lands on the
+// column's one axis, and an identity mark larger than it (an avatar) widens its row's leading column from the
+// text edge instead of overhanging it.
+const columnMarkStyle: ViewStyle = {
+  minWidth: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox,
+  minHeight: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox,
   alignItems: 'center',
   justifyContent: 'center',
 };
@@ -664,9 +708,10 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
             accessibilityLabel={disclosure.toggleAccessibilityLabel ?? props.title}
             expanded={disclosure.expanded}
             onPress={disclosure.onToggle}
-            hitSlop={6}
-            // It abuts the lead (no gap between the two targets): a finger's hit area never reaches back into it.
-            hitReach={{ left: 0 }}
+            hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+            // It abuts the lead (no gap between the two targets): its hit area never reaches back into the lead,
+            // and takes the share it cannot use there from the spacer after it (8 + the 16 drawn = the 24 floor).
+            hitReach={{ left: 0, right: GROUP_LABEL_SPACER_MIN_PX }}
             style={groupLabelChevronStyle}
             {...(props.testID === undefined ? {} : { testID: `${props.testID}:fold` })}
           >
@@ -676,7 +721,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
         <View style={groupLabelSpacerStyle} />
         {disclosure.expanded ? null : props.rollup ?? null}
         {props.actions ? <View style={[groupLabelActionsStyle, actionsShown ? null : groupLabelActionsHiddenStyle]}>{props.actions}</View> : null}
-        {props.trailing ?? null}
+        {props.trailing != null ? <View style={groupLabelEndCountStyle}>{props.trailing}</View> : null}
       </View>
     );
   }
@@ -700,14 +745,18 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
           <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text>
         </View>
       ) : null}
-      {props.trailing ?? null}
+      {/* A trailing state or "+" ends on the rows' trailing text edge too, so it shares their one end column. */}
+      {props.trailing != null ? <View style={pageSection || props.presentation === 'menu' ? null : groupLabelEndCountStyle}>{props.trailing}</View> : null}
     </View>
   );
 }
 
 /** The box a row's identity mark sits in, so names align whatever the mark's shape. */
-export function HappierCollectionListMark(props: Readonly<{ children: ReactNode; dimmed?: boolean }>): ReactElement {
-  return <View style={[markStyle, props.dimmed ? dimmedStyle : null]}>{props.children}</View>;
+export function HappierCollectionListMark(props: Readonly<{ children: ReactNode; dimmed?: boolean; rowRole?: HappierCollectionRowRole }>): ReactElement {
+  // A page's catalog row draws its mark in the catalog box; in a column every mark sits on the column's box.
+  const inColumn = useContext(HappierCollectionListRowContext);
+  return <View style={[inColumn ? columnMarkStyle : markStyle, !inColumn && props.rowRole === 'catalogRow'
+    ? { width: M.catalogRow.markBox, height: M.catalogRow.markBox } : null, props.dimmed ? dimmedStyle : null]}>{props.children}</View>;
 }
 
 /**

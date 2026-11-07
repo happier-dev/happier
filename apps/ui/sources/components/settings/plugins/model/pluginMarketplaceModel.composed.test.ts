@@ -5,6 +5,8 @@ import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCap
 import { PluginInstallationReviewSchema } from '@happier-dev/protocol/marketplace/internal';
 import { BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION } from '@/agents/registry/generatedBundledPluginEntries';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
+import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
+import { presentPluginInstallationReviewAuthority } from './pluginInstallationReviewFacts';
 import { resolvePluginDetailFacts } from '../detail/PluginDetailHeader';
 
 import {
@@ -12,7 +14,6 @@ import {
   filterInstalledPlugins,
   groupDiscoverEntriesByShelf,
   projectBrowseShelves,
-  isPluginMutationVisibleAfterRefresh,
   projectDevelopmentPluginPresentation,
   projectInstalledPluginLifecycleCapabilities,
   projectAccountInstalledPlugins,
@@ -127,6 +128,24 @@ const installed: InstalledPluginEntry = {
 };
 
 describe('selected plugin truth read lifecycle', () => {
+  it('keeps captured daemon power last-known at both the review model and dialog facts boundaries', () => {
+    const review = PluginInstallationReviewSchema.parse({ ...completeReview, daemonRights: {
+      freshness: 'current', observation: {
+        version: 1, observedAt: 1, daemonUid: 0, daemonUsername: 'root', daemonIdentity: 'root',
+        rootEquivalentGroups: [], passwordlessSudoToRoot: 'denied', managedDropIn: 'absent',
+        tailscaledOperator: { authorization: 'allowed' },
+      },
+    } });
+    const parsed = readPendingPluginChangeReview({ action: 'install', pluginId: review.pluginId, change: {
+      kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall', currentVersion: null,
+      authorityExpansion: [], pendingChangeId: 'held-before-reconnect', review,
+    } }, 'install', review.pluginId);
+    const expected = { hostAuthority: 'unknown', lastKnownHostAuthority: 'administrator', freshness: 'stale',
+      tailscaledOperator: { authorization: 'allowed', currentAuthorization: 'unknown', freshness: 'stale' } };
+    expect(parsed?.authority).toMatchObject(expected);
+    expect(presentPluginInstallationReviewAuthority(review)).toMatchObject(expected);
+  });
+
   it('keeps an online target unresolved until its fresh execution target exists', () => {
     expect(
       resolvePluginTruthReadState({
@@ -324,7 +343,9 @@ describe('installed plugin lifecycle capabilities', () => {
       const presentation =
         BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION[row.pluginId];
       expect(presentation).toBeDefined();
-      expect(row.description).toBe(presentation?.description ?? null);
+      expect(row.description).toBe(resolvePluginLocalizedText({
+        projection: null, pluginId: row.pluginId, value: presentation?.description,
+      }) || null);
     }
   });
   it('allows bundled enablement while preserving host package custody', () => {
@@ -454,18 +475,24 @@ describe('installed marketplace catalog formatting', () => {
     );
   });
 
+  it('distinguishes no selected Machine from a selected disconnected Machine', () => {
+    const input = { hasSelectedTarget: false, daemonOperationsAvailable: false, daemonTransportOnline: false,
+      projectionPhase: 'idle' as const, hasCapabilitySnapshot: false, installedPluginCount: 0,
+      developmentPluginCount: 0 };
+    expect(resolvePluginReadOnlySnapshotNotice(input)).toEqual({ reason: 'noTarget' });
+    expect(resolvePluginReadOnlySnapshotNotice({ ...input, hasSelectedTarget: true })).toEqual({ reason: 'disconnected' });
+  });
+
   it('marks catalog-only cached management metadata as a read-only snapshot while the daemon is unavailable', () => {
     expect(
       resolvePluginReadOnlySnapshotNotice({
+        hasSelectedTarget: true,
         daemonOperationsAvailable: false,
         daemonTransportOnline: false,
         projectionPhase: 'idle',
         hasCapabilitySnapshot: false,
         installedPluginCount: 0,
         developmentPluginCount: 0,
-        hasCatalog: true,
-        hasMarketplaceSourceRegistry: false,
-        hasProjectionInputs: false,
       }),
     ).toEqual({ reason: 'disconnected' });
   });
@@ -473,15 +500,13 @@ describe('installed marketplace catalog formatting', () => {
   it('reports a projection failure rather than a disconnect when the machine is still reachable', () => {
     expect(
       resolvePluginReadOnlySnapshotNotice({
+        hasSelectedTarget: true,
         daemonOperationsAvailable: false,
         daemonTransportOnline: true,
         projectionPhase: 'error',
         hasCapabilitySnapshot: true,
         installedPluginCount: 2,
         developmentPluginCount: 0,
-        hasCatalog: false,
-        hasMarketplaceSourceRegistry: false,
-        hasProjectionInputs: true,
       }),
     ).toEqual({ reason: 'projectionUnavailable' });
   });
@@ -489,15 +514,13 @@ describe('installed marketplace catalog formatting', () => {
   it('reports a projection failure when a reachable daemon does not serve the registry projection', () => {
     expect(
       resolvePluginReadOnlySnapshotNotice({
+        hasSelectedTarget: true,
         daemonOperationsAvailable: false,
         daemonTransportOnline: true,
         projectionPhase: 'unsupported',
         hasCapabilitySnapshot: true,
         installedPluginCount: 1,
         developmentPluginCount: 0,
-        hasCatalog: false,
-        hasMarketplaceSourceRegistry: false,
-        hasProjectionInputs: false,
       }),
     ).toEqual({ reason: 'projectionUnavailable' });
   });
@@ -505,21 +528,20 @@ describe('installed marketplace catalog formatting', () => {
   it('does not report a disconnect while a reachable transport is still reading plugin truth', () => {
     expect(
       resolvePluginReadOnlySnapshotNotice({
+        hasSelectedTarget: true,
         daemonOperationsAvailable: false,
         daemonTransportOnline: true,
         projectionPhase: 'loading',
         hasCapabilitySnapshot: true,
         installedPluginCount: 1,
         developmentPluginCount: 0,
-        hasCatalog: false,
-        hasMarketplaceSourceRegistry: false,
-        hasProjectionInputs: false,
       }),
     ).toEqual({ reason: 'refreshing' });
   });
 
   it('reads a selected machine that is still resolving as checking, never as disconnected', () => {
     const resolving = {
+      hasSelectedTarget: true,
       daemonOperationsAvailable: false,
       daemonTransportOnline: false,
       targetResolving: true,
@@ -527,9 +549,6 @@ describe('installed marketplace catalog formatting', () => {
       hasCapabilitySnapshot: false,
       installedPluginCount: 0,
       developmentPluginCount: 0,
-      hasCatalog: false,
-      hasMarketplaceSourceRegistry: false,
-      hasProjectionInputs: false,
     };
     expect(resolvePluginReadOnlySnapshotNotice(resolving)).toBeNull();
     expect(
@@ -608,15 +627,13 @@ describe('installed marketplace catalog formatting', () => {
   it('shows no notice when daemon operations are available', () => {
     expect(
       resolvePluginReadOnlySnapshotNotice({
+        hasSelectedTarget: true,
         daemonOperationsAvailable: true,
         daemonTransportOnline: true,
         projectionPhase: 'ready',
         hasCapabilitySnapshot: true,
         installedPluginCount: 1,
         developmentPluginCount: 0,
-        hasCatalog: true,
-        hasMarketplaceSourceRegistry: true,
-        hasProjectionInputs: true,
       }),
     ).toBeNull();
   });
@@ -642,6 +659,7 @@ describe('installed marketplace catalog formatting', () => {
       ),
     ).toEqual({
       pendingChangeId: 'pending-1',
+      authority: expect.objectContaining({ hostAuthority: 'unknown' }),
       reason: 'firstInstall',
       currentVersion: null,
       authorityExpansion: [],
@@ -868,6 +886,7 @@ describe('installed marketplace catalog formatting', () => {
       ),
     ).toEqual({
       pendingChangeId: 'pending-daemon-entry',
+      authority: expect.objectContaining({ hostAuthority: 'unknown' }),
       reason: 'firstInstall',
       currentVersion: null,
       authorityExpansion: [],
@@ -915,6 +934,7 @@ describe('installed marketplace catalog formatting', () => {
       ),
     ).toEqual({
       pendingChangeId: 'pending-ui-artifact',
+      authority: expect.objectContaining({ hostAuthority: 'unknown' }),
       reason: 'firstInstall',
       currentVersion: null,
       authorityExpansion: [],
@@ -962,6 +982,7 @@ describe('installed marketplace catalog formatting', () => {
       ),
     ).toEqual({
       pendingChangeId: 'pending-incompatible-engine',
+      authority: expect.objectContaining({ hostAuthority: 'unknown' }),
       reason: 'firstInstall',
       currentVersion: null,
       authorityExpansion: [],
@@ -998,6 +1019,7 @@ describe('installed marketplace catalog formatting', () => {
       ),
     ).toEqual({
       pendingChangeId: 'pending-selected-engine',
+      authority: expect.objectContaining({ hostAuthority: 'unknown' }),
       reason: 'firstInstall',
       currentVersion: null,
       authorityExpansion: [],
@@ -1191,100 +1213,26 @@ describe('installed marketplace catalog formatting', () => {
     ).toBeNull();
   });
 
-  it.each([
-    ['install', null, { ...installed, version: '2.0.0' }, '2.0.0', true],
-    ['install', null, null, '2.0.0', false],
-    ['update', installed, { ...installed, version: '2.0.0' }, '2.0.0', true],
-    ['update', installed, installed, '2.0.0', false],
-    // The canonical update owner picks the newest compatible version from the
-    // installed record, so a caller that never reviewed a candidate has no
-    // target version to hold it to: the installed record advancing is the fact.
-    ['update', installed, { ...installed, version: '1.4.0' }, null, true],
-    ['update', installed, installed, null, false],
-    ['update', installed, { ...installed, version: '1.4.0' }, '2.0.0', false],
-    ['rollback', installed, { ...installed, version: '0.9.0' }, null, true],
-    ['rollback', installed, installed, null, false],
-    ['uninstall', installed, null, null, true],
-    ['uninstall', installed, installed, null, false],
-    [
-      'forgetTrust',
-      installed,
-      {
-        ...installed,
-        enabled: false,
-        source: { ...installed.source, trustPolicy: 'untrusted' },
-      },
-      null,
-      true,
-    ],
-    ['forgetTrust', installed, installed, null, false],
-  ] as const)(
-    'derives a visible %s result only from the authoritative refreshed installed state',
-    (method, before, after, targetVersion, expected) => {
-      expect(
-        isPluginMutationVisibleAfterRefresh({
-          method,
-          pluginId: installed.pluginId,
-          before,
-          after,
-          targetVersion,
-        }),
-      ).toBe(expected);
-    },
-  );
-
-  it('treats a same-version acquisition-integrity replacement as a visible external mutation', () => {
-    const before = Object.assign(
-      { ...installed },
-      { admittedIntegrity: 'sha512:first' },
-    );
-    const after = Object.assign(
-      { ...installed },
-      { admittedIntegrity: 'sha512:second' },
-    );
-
-    expect(
-      isPluginMutationVisibleAfterRefresh({
-        method: 'rollback',
-        pluginId: installed.pluginId,
-        before,
-        after,
-        targetVersion: null,
-      }),
-    ).toBe(true);
-  });
-
-  it('retains structural generation identity for same-version local-path mutations', () => {
-    const before = Object.assign(
-      { ...installed },
-      {
-        source: { ...installed.source, kind: 'path' },
-        desiredGeneration: 'generation-1',
-        appliedGeneration: 'generation-1',
-      },
-    );
-    const after = Object.assign(
-      { ...installed },
-      {
-        source: { ...installed.source, kind: 'path' },
-        desiredGeneration: 'generation-2',
-        appliedGeneration: 'generation-2',
-      },
-    );
-
-    expect(
-      isPluginMutationVisibleAfterRefresh({
-        method: 'rollback',
-        pluginId: installed.pluginId,
-        before,
-        after,
-        targetVersion: null,
-      }),
-    ).toBe(true);
-  });
 });
 
 describe('daemon-issued pending plugin changes', () => {
+  it('presents operator-only and stale daemon power through the shared authority owner', () => {
+    for (const freshness of ['current', 'stale'] as const) {
+      const review = createPluginInstallationReviewFixture({ daemonRights: {
+        freshness,
+        observation: { version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier',
+          daemonIdentity: 'nonRoot', rootEquivalentGroups: [], groupMembership: { state: 'current' }, passwordlessSudoToRoot: 'denied',
+          managedDropIn: 'absent', tailscaledOperator: { authorization: 'allowed' } },
+      } });
+      const result = readPendingPluginChangeReview({ action: 'install', pluginId: review.pluginId,
+        change: { kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: 'power-review',
+          reason: 'firstInstall', currentVersion: null, authorityExpansion: [], review },
+      }, 'install', review.pluginId);
+      expect(result?.authority).toMatchObject({ hostAuthority: 'unknown', lastKnownHostAuthority: 'ordinary', freshness: 'stale',
+        tailscaledOperator: { authorization: 'allowed', currentAuthorization: 'unknown' } });
+    }
+  });
+
   const sourceRootReview = {
     pendingChangeId: 'pending-1',
     review: {
@@ -1369,7 +1317,7 @@ describe('daemon-issued pending plugin changes', () => {
         'install',
         review.pluginId,
       ),
-    ).toEqual(installationReview);
+    ).toEqual({ ...installationReview, authority: expect.objectContaining({ hostAuthority: 'unknown' }) });
 
     // By-id rejoin: the same review re-read at the daemon change owner.
     expect(
@@ -1386,7 +1334,9 @@ describe('daemon-issued pending plugin changes', () => {
           review,
         },
       }),
-    ).toEqual({ kind: 'installation', installationReview });
+    ).toEqual({ kind: 'installation', installationReview: {
+      ...installationReview, authority: expect.objectContaining({ hostAuthority: 'unknown' }),
+    } });
 
     // Raw daemon reviews are no longer projected as a second decision
     // surface; their ordinary approval Artifact is visible in the Inbox.
