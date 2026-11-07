@@ -1060,6 +1060,45 @@ export type DeploymentsActionInputById = {
                 kind: 'edgeCaddy';
                 edgeMachineId: string;
             };
+            backup?: undefined | {
+                configRevision: number;
+                destinationRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                occurrenceId: string;
+                config: unknown;
+                credentialBindings: {
+                    purpose: 'backupDestination';
+                    configKey: 'destination';
+                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                }[];
+                sources: ({
+                    kind: 'dump';
+                    sourceId: string;
+                    service: string;
+                    consistency: 'logical';
+                } | {
+                    kind: 'volume';
+                    sourceId: string;
+                    service: string;
+                    volume: string;
+                    consistency: 'stopDuringCopy';
+                })[];
+                ownership: {
+                    environmentId: string;
+                    prefix: string;
+                };
+                retention: {
+                    kind: 'keep';
+                    last?: number | undefined;
+                    daily?: number | undefined;
+                    weekly?: number | undefined;
+                    monthly?: number | undefined;
+                } | {
+                    kind: 'keepEverything';
+                };
+            };
             backupRetention?: undefined | {
                 configRevision: number;
                 retention: {
