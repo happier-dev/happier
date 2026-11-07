@@ -612,10 +612,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     const lastInteractiveRenderStateRef = React.useRef<Readonly<{
         renderContext: RenderContext;
         privateHostBindings?: PluginReactNativeSurfacePrivateHostBindings;
-    }>>({
-        renderContext: currentRenderContext,
-        privateHostBindings: props.privateHostBindings,
-    });
+    }> | null>(null);
     React.useLayoutEffect(() => {
         if (interactionEnabled) {
             lastInteractiveRenderStateRef.current = Object.freeze({
@@ -626,7 +623,10 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             });
         }
     }, [currentRenderContext, interactionEnabled, props.privateHostBindings]);
-    const renderState = interactionEnabled
+    // A new mount has no interactive generation to retain yet. Follow its
+    // commit-bound shared scope while revalidation is still pending, so a
+    // reopened surface can present the rows that scope already owns.
+    const renderState = interactionEnabled || lastInteractiveRenderStateRef.current === null
         ? { renderContext: currentRenderContext, privateHostBindings: props.privateHostBindings }
         : lastInteractiveRenderStateRef.current;
     const retainedRenderContext = renderState.renderContext;

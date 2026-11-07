@@ -12,6 +12,8 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+import { getPluginUiEphemeralSharedScope } from '../surfaces/pluginUiEphemeralSharedScope';
+import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
 import { projectPluginUiTheme } from '../surfaces/pluginUiThemeProjection';
 import { darkTheme } from '@/theme';
 import type { PluginUiPrivatePresentationHost } from '../surfaces/pluginUiPrivatePresentationHost';
@@ -464,6 +466,57 @@ describe('PluginReactNativeSurface', () => {
         expect(authorContextScope).toBeUndefined();
         expect(screen.findByTestId('plugin-native-ephemeral-scope:bound')).toBeTruthy();
         expect(screen.findByTestId('plugin-native-ephemeral-scope:missing')).toBeNull();
+    });
+
+    it('presents one retained row on reopen with zero revalidation responses', async () => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const retirement = new AbortController();
+        const accountLifetime = {
+            scope: { serverId: 'retained-home', accountId: 'retained-account' },
+            isCurrent: () => !retirement.signal.aborted,
+            onRetire(listener: () => void) {
+                retirement.signal.addEventListener('abort', listener);
+                return { dispose: () => retirement.signal.removeEventListener('abort', listener) };
+            },
+        };
+        const scope = getPluginUiEphemeralSharedScope({ accountLifetime, pluginId: 'acme.preview',
+            pluginGenerationId: 'retained-release', isCurrent: accountLifetime.isCurrent });
+        if (!scope) throw new Error('Expected admitted presentation scope');
+        const retained = scope.acquire('rows', () => ({ value: ['retained-row'], retainWhenIdle: true, dispose() {} }));
+        retained?.release();
+        let responses = 0;
+        const revalidation = createDeferred<void>();
+        const completed = revalidation.promise.then(() => { responses += 1; });
+        function SurfaceEntryProvider(props: Readonly<{ ephemeralSharedScope?: PluginUiEphemeralSharedScope | null }>) {
+            const [rows, setRows] = React.useState<readonly string[]>([]);
+            React.useLayoutEffect(() => {
+                const lease = props.ephemeralSharedScope?.acquire<readonly string[]>('rows', () => ({ value: [], dispose() {} }));
+                setRows(lease?.value ?? []);
+                return () => lease?.release();
+            }, [props.ephemeralSharedScope]);
+            return <>{rows.map(row => React.createElement('RetainedRow', { key: row, testID: row }))}</>;
+        }
+        Object.defineProperty(SurfaceEntryProvider, Symbol.for('happier.pluginUi.privateSurfaceEntryProvider.v1'), { value: true });
+        const module = { renderSurface: () => React.createElement(SurfaceEntryProvider) };
+        const element = (ephemeralSharedScope: PluginUiEphemeralSharedScope | null) => <PluginReactNativeSurface
+            surfaceId="surface_1" decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            module={module} renderContext={defaultRenderContext} interactionEnabled={false}
+            privateHostBindings={{ ephemeralSharedScope, accountLifetime }} />;
+        const screen = await renderScreen(element(null));
+        try {
+            // The host's commit-safe scope binding settles before describe/scan.
+            await screen.update(element(scope));
+            expect(responses).toBe(0);
+            expect(screen.findAllByTestId('retained-row')).toHaveLength(1);
+            await act(async () => { revalidation.resolve(); await completed; });
+            expect(responses).toBe(1);
+            expect(screen.findAllByTestId('retained-row')).toHaveLength(1);
+        } finally {
+            revalidation.resolve();
+            await completed;
+            await screen.unmount();
+            retirement.abort();
+        }
     });
 
     it('keeps private entry bindings paired with the last interactive context while an offline snapshot is retained', async () => {

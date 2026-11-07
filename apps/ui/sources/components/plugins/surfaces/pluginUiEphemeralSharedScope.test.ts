@@ -53,6 +53,28 @@ function executionOrigin(machineId: string) {
 }
 
 describe('plugin UI ephemeral shared scope', () => {
+    it('presents the retained row after the last reader unmounts while its Account owner stays current', () => {
+        const accountLifetime = createAccountLifetime('reopened-reader-account');
+        const firstReader = Object.freeze({ ...createAccountLifetime('reopened-reader-account'), accountLifetime });
+        const identity = { pluginId: 'acme.triage', pluginGenerationId: 'same-release', isCurrent: () => true };
+        const firstScope = getPluginUiEphemeralSharedScope({ ...identity, accountLifetime: firstReader })!;
+        const dispose = vi.fn();
+        const original = firstScope.acquire('window', () => ({ value: { rows: ['retained-row'] }, retainWhenIdle: true, dispose }))!;
+        original.release();
+        firstReader.retire();
+
+        const nextReader = Object.freeze({ ...createAccountLifetime('reopened-reader-account'), accountLifetime });
+        const reopenedScope = getPluginUiEphemeralSharedScope({ ...identity, accountLifetime: nextReader })!;
+        const reopened = reopenedScope.acquire('window', () => ({ value: { rows: [] as string[] }, dispose() {} }))!;
+        expect(reopened.value.rows).toEqual(['retained-row']);
+        expect(dispose).not.toHaveBeenCalled();
+        expect(firstScope.acquire('late', () => { throw new Error('Retired reader cannot acquire'); })).toBeNull();
+        accountLifetime.retire();
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(reopenedScope.acquire('late', () => { throw new Error('Retired Account cannot acquire'); })).toBeNull();
+        reopened.release();
+    });
+
     it('shares across independent credential readers and retires only after their last Account binding', () => {
         const firstAccount = createAccountLifetime();
         const secondAccount = createAccountLifetime();

@@ -4,7 +4,7 @@ import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui'
 import { useLayoutEffect, useState } from 'react';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
 type SharedValueEntry = {
     value: unknown;
@@ -76,8 +76,9 @@ function readExecutionOriginSlot(executionOrigin: PluginMachineExecutionOriginV1
 }
 
 function readAccountRecord(
-    accountLifetime: ActiveServerAccountScopeLifetime,
+    readerLifetime: ActiveServerAccountScopeLifetime,
 ): AccountScopeRecord | null {
+    const accountLifetime = readServerAccountScopeOwnerLifetime(readerLifetime);
     if (!accountLifetime.isCurrent()) return null;
     const key = serverAccountScopeKeySuffix(accountLifetime.scope);
     let record = accountScopes.get(key);
@@ -88,8 +89,8 @@ function readAccountRecord(
     if (!record.lifetimes.has(accountLifetime)) {
         const shared = record;
         shared.lifetimes.add(accountLifetime);
-        // Credential readers have independent cancellation lifetimes. They
-        // participate in one Account scope; unmounting one cannot retire peers.
+        // Idle presentation follows credential-owned Account retirement.
+        // Closing the last mounted reader must not discard its retained rows.
         accountLifetime.onRetire(() => {
             shared.lifetimes.delete(accountLifetime);
             if ([...shared.lifetimes].some(lifetime => lifetime.isCurrent())) return;
