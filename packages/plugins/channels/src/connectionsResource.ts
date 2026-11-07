@@ -6,6 +6,7 @@ import type {
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
+  CHANNEL_DELIVERIES_INDEX_ID,
   CHANNEL_STATE_COLLECTION,
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
@@ -20,23 +21,12 @@ import { createChannelsCollectionAccess } from './collectionUpdateRequired.js';
 
 async function readConnectionsResource(
   options: PluginDynamicResourceInvocationOptionsV1,
-): Promise<string> {
-  const access = createChannelsCollectionAccess(requireChannelsResourceAccountStorage(options, 'connections'));
+) {
+  const producer = createConnectionsResourceProducer();
   try {
-    const connectionRows = await readConversationConnectionManagementRows({
-      collection: access.storage.collection(CHANNEL_STATE_COLLECTION),
-      signal: options.signal,
-    });
-    return JSON.stringify({ connections: await projectConversationConnectionDeliveryAttention({
-      connections: connectionRows.connections,
-      deliveriesCollection: access.storage.collection(CHANNEL_DELIVERIES_COLLECTION), signal: options.signal,
-    }) });
-  } catch (error) {
-    if (options.signal.aborted || access.updateRequired === undefined) throw error;
-    // No rows are claimed when this reader's compiled contract is behind.
-    // The existing management Resource carries the update remedy, including
-    // when a custody adapter reduced the refusal to generic unavailability.
-    return JSON.stringify({ status: access.updateRequired });
+    return await producer.read(options);
+  } finally {
+    producer.dispose();
   }
 }
 
@@ -74,7 +64,7 @@ export async function projectConversationConnectionDeliveryAttention(input: Read
         },
       };
       const recommendedRecovery = recommendConversationConnectionRecovery(result);
-      return { ...result, ...(recommendedRecovery === null ? {} : { recommendedRecovery }) };
+      return { ...result, recommendedRecovery };
     });
 }
 
@@ -85,25 +75,116 @@ export async function projectConversationConnectionDeliveryAttention(input: Read
  */
 export const CONNECTIONS_RESOURCE_RUNTIME: PluginDynamicResourceRuntime = {
   read: readConnectionsResource,
-  observe(invalidate, options) {
-    const accountStorage = requireChannelsResourceAccountStorage(options, 'connections');
-    const stateObservation = accountStorage.collection(CHANNEL_STATE_COLLECTION).watch({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.connection],
-      order: 'asc',
-    }, () => { invalidate(); });
-    // Delivery custody is the existing status source for retry/partial/unknown
-    // attention. Watch its Collection directly; the Resource host still owns
-    // coalescing, currentness, and the subsequent snapshot reread.
-    const deliveriesObservation = accountStorage.collection(CHANNEL_DELIVERIES_COLLECTION).watch(
-      { kind: 'collection' },
-      () => { invalidate(); },
-    );
-    return {
-      dispose() {
-        stateObservation.dispose();
-        deliveriesObservation.dispose();
-      },
-    };
+  observe() {
+    throw new PluginError({
+      code: 'plugin_resource_producer_unavailable',
+      message: 'Connections observation requires the host Resource context producer.',
+    });
   },
+  createProducer: () => createConnectionsResourceProducer(),
 };
+
+/** The admitted Resource owns its projection; only changed attention buckets are read again. */
+function createConnectionsResourceProducer(): Awaited<ReturnType<NonNullable<PluginDynamicResourceRuntime['createProducer']>>> {
+  const connections = new Map<string, ConversationConnectionManagementRow>();
+  const dirtyAttention = new Set<string>();
+  const deliveryObservations = new Map<string, { dispose(): void }>();
+  let invalidate: (() => void) | undefined;
+  let metadataDirty = true;
+  let stateObservation: { dispose(): void } | undefined;
+  let observationStorage: ReturnType<typeof requireChannelsResourceAccountStorage> | undefined;
+  const notify = () => { invalidate?.(); };
+  const stopObserving = () => {
+    invalidate = undefined;
+    stateObservation?.dispose();
+    stateObservation = undefined;
+    observationStorage = undefined;
+    for (const observation of deliveryObservations.values()) observation.dispose();
+    deliveryObservations.clear();
+  };
+
+  function watchAttention(connectionId: string) {
+    if (observationStorage === undefined || deliveryObservations.has(connectionId)) return;
+    deliveryObservations.set(connectionId, observationStorage.collection(CHANNEL_DELIVERIES_COLLECTION).watch({
+      index: CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention,
+      prefix: [connectionId, true], order: 'asc',
+    }, () => { dirtyAttention.add(connectionId); notify(); }));
+  }
+
+  async function readMetadata(options: PluginDynamicResourceInvocationOptionsV1) {
+    if (!metadataDirty) return;
+    metadataDirty = false;
+    const storage = requireChannelsResourceAccountStorage(options, 'connections');
+    try {
+      const rows = await readConversationConnectionManagementRows({
+        collection: storage.collection(CHANNEL_STATE_COLLECTION), signal: options.signal,
+      });
+      const retained = new Set(rows.connections.map(row => row.connectionId));
+      for (const id of connections.keys()) {
+        if (retained.has(id)) continue;
+        connections.delete(id);
+        dirtyAttention.delete(id);
+        deliveryObservations.get(id)?.dispose();
+        deliveryObservations.delete(id);
+      }
+      for (const row of rows.connections) {
+        const previous = connections.get(row.connectionId);
+        if (previous === undefined) dirtyAttention.add(row.connectionId);
+        const result = { ...row, attention: { ...row.attention, outwardDelivery: previous?.attention.outwardDelivery } };
+        connections.set(row.connectionId, { ...result, recommendedRecovery: recommendConversationConnectionRecovery(result) });
+        watchAttention(row.connectionId);
+      }
+    } catch (error) {
+      metadataDirty = true;
+      throw error;
+    }
+  }
+
+  return {
+    async read(options) {
+      if (invalidate === undefined) {
+        connections.clear();
+        dirtyAttention.clear();
+        metadataDirty = true;
+      }
+      const access = createChannelsCollectionAccess(requireChannelsResourceAccountStorage(options, 'connections'));
+      const boundOptions = { ...options, accountStorage: access.storage };
+      try {
+        await readMetadata(boundOptions);
+        const changed = [...dirtyAttention];
+        for (const id of changed) dirtyAttention.delete(id);
+        try {
+          const projected = await projectConversationConnectionDeliveryAttention({
+            connections: changed.flatMap(id => { const row = connections.get(id); return row === undefined ? [] : [row]; }),
+            deliveriesCollection: access.storage.collection(CHANNEL_DELIVERIES_COLLECTION), signal: options.signal,
+          });
+          for (const row of projected) connections.set(row.connectionId, row);
+        } catch (error) {
+          for (const id of changed) dirtyAttention.add(id);
+          throw error;
+        }
+        return JSON.stringify({ connections: [...connections.values()] });
+      } catch (error) {
+        if (options.signal.aborted || access.updateRequired === undefined) throw error;
+        return JSON.stringify({ status: access.updateRequired });
+      }
+    },
+    observe(onInvalidate, options) {
+      invalidate = onInvalidate;
+      metadataDirty = true;
+      for (const id of connections.keys()) dirtyAttention.add(id);
+      const storage = requireChannelsResourceAccountStorage(options, 'connections');
+      observationStorage = storage;
+      for (const id of connections.keys()) watchAttention(id);
+      stateObservation ??= storage.collection(CHANNEL_STATE_COLLECTION).watch({
+        index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc',
+      }, () => { metadataDirty = true; notify(); });
+      return { dispose: stopObserving };
+    },
+    dispose() {
+      stopObserving();
+      connections.clear();
+      dirtyAttention.clear();
+    },
+  };
+}

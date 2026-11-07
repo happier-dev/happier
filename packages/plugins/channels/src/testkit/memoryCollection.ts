@@ -260,6 +260,10 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     const compareRows = (left: StoredRow, right: StoredRow): number => {
       const comparison = input.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
         ? compareConnectionBindingRows(left, right)
+        : input.index === CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt
+          ? Number(left.value.terminal) - Number(right.value.terminal)
+            || Number(left.value['updated-at']) - Number(right.value['updated-at'])
+            || compareCanonicalText(left.rowId, right.rowId)
         : input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
           ? compareCanonicalText(String(left.value['connection-id'] ?? ''), String(right.value['connection-id'] ?? ''))
             || compareCanonicalText(String(left.value['record-kind']), String(right.value['record-kind']))
@@ -317,6 +321,12 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
         }
         if (input.index === CHANNEL_DELIVERIES_INDEX_ID.byRetryDue) {
           return row.value.terminal === prefix;
+        }
+        if (input.index === CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt) {
+          const updatedAt = row.value['updated-at'];
+          return row.value.terminal === prefix
+            && (input.range?.lower === undefined || (typeof updatedAt === 'number' && updatedAt >= input.range.lower))
+            && (input.range?.upper === undefined || (typeof updatedAt === 'number' && updatedAt <= input.range.upper));
         }
         if (prefix === CHANNEL_STATE_RECORD_KIND.binding) {
           return row.value['record-kind'] === CHANNEL_STATE_RECORD_KIND.binding;

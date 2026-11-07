@@ -646,8 +646,8 @@ describe('Channels core manifest', () => {
     });
     expect(collections?.find(({ id }) => id === CHANNEL_DELIVERIES_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_DELIVERIES_COLLECTION_ID,
-      schemaVersion: 5,
-      readableSchemaVersions: [1, 2, 3, 4],
+      schemaVersion: 6,
+      readableSchemaVersions: [1, 2, 3, 4, 5],
       rowIdField: CHANNEL_DELIVERIES_FIELD.id,
       serverReadable: [
         CHANNEL_DELIVERIES_FIELD.recordKind,
@@ -684,6 +684,14 @@ describe('Channels core manifest', () => {
           fields: [
             { field: CHANNEL_DELIVERIES_FIELD.terminal, direction: 'asc' },
             { field: CHANNEL_DELIVERIES_FIELD.retryNotBefore, direction: 'asc' },
+            { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
+          ],
+        },
+        {
+          id: CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt,
+          fields: [
+            { field: CHANNEL_DELIVERIES_FIELD.terminal, direction: 'asc' },
+            { field: CHANNEL_DELIVERIES_FIELD.updatedAt, direction: 'asc' },
             { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
           ],
         },

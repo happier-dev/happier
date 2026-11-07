@@ -47841,6 +47841,23 @@
               }
             ],
             "id": "by-retry-due"
+          },
+          {
+            "fields": [
+              {
+                "direction": "asc",
+                "field": "terminal"
+              },
+              {
+                "direction": "asc",
+                "field": "updated-at"
+              },
+              {
+                "direction": "asc",
+                "field": "id"
+              }
+            ],
+            "id": "by-terminal-updated-at"
           }
         ],
         "migrationArtifact": {
@@ -47867,13 +47884,19 @@
             "fromSchemaVersion": 4,
             "id": "channel-deliveries-v4-to-v5",
             "toSchemaVersion": 5
+          },
+          {
+            "fromSchemaVersion": 5,
+            "id": "channel-deliveries-v5-to-v6",
+            "toSchemaVersion": 6
           }
         ],
         "readableSchemaVersions": [
           1,
           2,
           3,
-          4
+          4,
+          5
         ],
         "relations": [],
         "rowIdField": "id",
@@ -51094,7 +51117,7 @@
           ],
           "type": "object"
         },
-        "schemaVersion": 5,
+        "schemaVersion": 6,
         "serverReadable": [
           "record-kind",
           "v",

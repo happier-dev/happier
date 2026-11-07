@@ -26,6 +26,7 @@ import {
 } from './collections.js';
 import {
   createConversationOutwardDeliveryCollectionStore,
+  createConversationOutwardDeliveryCollectionScanner,
   readConversationPermissionWaitMediationSource,
   settleConversationOutwardDeliveriesForBindingDeletion,
   settleConversationOutwardDeliveriesForConnectionDeletion,
@@ -1768,7 +1769,7 @@ describe('Channels outward-delivery supervisor', () => {
     }
     created.sort((left, right) => left.custodyId.localeCompare(right.custodyId));
     for (const [index, record] of created.entries()) {
-      // The first page cannot age yet. Every later page is eligible now.
+      // Retained history is excluded by age; expired rows still span two pages.
       persistedAt = index < pageSize ? now - 1 : 100;
       const settled = await store.compareAndSwap({ custodyId: record.custodyId,
         expectedRevision: record.revision,
@@ -1807,17 +1808,19 @@ describe('Channels outward-delivery supervisor', () => {
       await vi.advanceTimersByTimeAsync(0);
       if (failContinuation) {
         expect(continuationFailed).toBe(true);
-        expect(deliveries.rows.size).toBe(pageSize * 3);
+        expect(deliveries.rows.size).toBe(pageSize * 2);
         await vi.advanceTimersByTimeAsync(999);
-        expect(deliveries.rows.size).toBe(pageSize * 3);
+        expect(deliveries.rows.size).toBe(pageSize * 2);
         await vi.advanceTimersByTimeAsync(1);
       }
       await vi.waitFor(() => expect(deliveries.rows.size).toBe(pageSize), { interval: 0 });
       await vi.advanceTimersByTimeAsync(0);
-      const retentionStarts = () => query.mock.calls.filter(([input]) => input.prefix?.[0] === true && input.cursor === undefined).length;
-      // One original sweep and one coalesced fresh sweep, not a restart after
-      // every retired page that repeatedly reads the retained first page.
-      expect(retentionStarts()).toBe(2);
+      const retentionQueries = query.mock.calls.map(([input]) => input)
+        .filter(input => input.prefix?.[0] === true && input.range?.upper !== undefined);
+      // FIN B9: retirement writes keep the original sweep and its deadline.
+      expect(retentionQueries.filter(input => input.cursor === undefined)).toHaveLength(1);
+      // Data binds cursor reuse to the original range, even after recovery.
+      expect(new Set(retentionQueries.map(input => input.range?.upper))).toEqual(new Set([now - 30 * 24 * 60 * 60 * 1_000]));
       const exhaustedReads = query.mock.calls.length;
       await vi.advanceTimersByTimeAsync(60_000);
       expect(query).toHaveBeenCalledTimes(exhaustedReads);
@@ -2315,6 +2318,136 @@ describe('Channels outward-delivery supervisor', () => {
     for (const record of records) expect(deliveries.rows.has(record.custodyId)).toBe(false);
   });
 
+  it.each([false, true])('keeps retention reads at the deadline while healthy delivery writes continue (empty start: %s)', async emptyStart => {
+    const window = 30 * 24 * 60 * 60 * 1_000;
+    const terminalAt = window + 100;
+    vi.useFakeTimers();
+    vi.setSystemTime(terminalAt);
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    const generation = new AbortController();
+    const context = { ...backgroundContext({ state, deliveries, execute: vi.fn(),
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() }), signal: generation.signal };
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal: generation.signal, now: () => Date.now() });
+    const settle = async (key: string) => {
+      const created = await store.ensure(retireableControlOutwardObligation(key));
+      if (created.kind !== 'created') throw new Error('Expected new healthy delivery.');
+      const settled = await store.compareAndSwap({ custodyId: created.record.custodyId,
+        expectedRevision: created.record.revision,
+        custody: { state: 'delivered', attemptCount: 1, providerMessageIds: ['receipt'] } });
+      if (settled.kind !== 'updated') throw new Error('Expected healthy terminal delivery.');
+      return settled.record;
+    };
+    let first = emptyStart ? undefined : await settle('first-retained-delivery');
+    const query = vi.spyOn(deliveries, 'query');
+    const retentionReads = () => query.mock.calls.filter(([input]) => input.prefix?.[0] === true).length;
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const running = supervisor.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      if (emptyStart) {
+        first = await settle('first-retained-delivery');
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      if (first === undefined) throw new Error('Expected the first retained delivery.');
+      const initialReads = retentionReads();
+      expect(initialReads).toBeGreaterThan(0);
+      const recent = [];
+      for (let index = 0; index < 3; index += 1) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        recent.push(await settle(`healthy-delivery-${index}`));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(retentionReads()).toBe(initialReads);
+      await vi.advanceTimersByTimeAsync(terminalAt + window - Date.now());
+      expect(await deliveries.get(first.custodyId)).toBeNull();
+      expect(retentionReads()).toBeGreaterThan(initialReads);
+      for (const record of recent) expect(await deliveries.get(record.custodyId)).not.toBeNull();
+    } finally {
+      generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+  });
+
+  it('does no retention reads for live retry writes after terminal history is empty', async () => {
+    const window = 30 * 24 * 60 * 60 * 1_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(window + 100);
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    const generation = new AbortController();
+    const context = { ...backgroundContext({ state, deliveries, execute: vi.fn(),
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() }), signal: generation.signal };
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal: generation.signal, now: () => Date.now() });
+    const created = await store.ensure(retireableControlOutwardObligation('live-retry-before-terminal'));
+    if (created.kind !== 'created') throw new Error('Expected live delivery.');
+    const deferred = await store.compareAndSwap({ custodyId: created.record.custodyId,
+      expectedRevision: created.record.revision, custody: { state: 'retryDue', attemptCount: 1,
+        retryNotBefore: Date.now() + window, providerMessageIds: [] } });
+    if (deferred.kind !== 'updated') throw new Error('Expected future retry.');
+    let record = deferred.record;
+    const query = vi.spyOn(deliveries, 'query');
+    const retentionReads = () => query.mock.calls.filter(([input]) => input.prefix?.[0] === true).length;
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const running = supervisor.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const initialReads = retentionReads();
+      for (let index = 0; index < 3; index += 1) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        const updated = await store.compareAndSwap({ custodyId: record.custodyId,
+          expectedRevision: record.revision, custody: { state: 'retryDue', attemptCount: index + 2,
+            retryNotBefore: Date.now() + window, providerMessageIds: [] } });
+        if (updated.kind !== 'updated') throw new Error('Expected live retry update.');
+        record = updated.record;
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(retentionReads() - initialReads).toBe(0);
+      const settledAt = Date.now();
+      const settled = await store.compareAndSwap({ custodyId: record.custodyId,
+        expectedRevision: record.revision, custody: { state: 'delivered', attemptCount: 4,
+          providerMessageIds: ['receipt'] } });
+      expect(settled.kind).toBe('updated');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retentionReads()).toBeGreaterThan(initialReads);
+      await vi.advanceTimersByTimeAsync(settledAt + window - Date.now());
+      expect(await deliveries.get(record.custodyId)).toBeNull();
+    } finally {
+      generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+  });
+
+  it('selects expired terminal rows before reading their bodies and reads one future deadline anchor', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    let persistedAt = 0;
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal, now: () => persistedAt });
+    const count = PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 + 2;
+    for (let index = 0; index < count; index += 1) {
+      persistedAt = index < 2 ? 100 : 201;
+      const created = await store.ensure(retireableControlOutwardObligation(`age-selection-${index}`));
+      if (created.kind !== 'created') throw new Error('Expected retention fixture.');
+      await store.compareAndSwap({ custodyId: created.record.custodyId, expectedRevision: created.record.revision,
+        custody: { state: 'delivered', attemptCount: 1, providerMessageIds: ['receipt'] } });
+    }
+    const query = vi.spyOn(deliveries, 'query');
+    const scanner = createConversationOutwardDeliveryCollectionScanner({ deliveriesCollection: deliveries as never, signal });
+    const page = await scanner.scanRetention({ cutoff: 200, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 });
+    expect(page.kind).toBe('ready');
+    if (page.kind !== 'ready') throw new Error('Expected retained custody selection.');
+    expect(page.records).toHaveLength(2);
+    const returnedRows = (await Promise.all(query.mock.results.map(result => result.value))).reduce((count, page) => count + page.rows.length, 0);
+    expect(returnedRows).toBe(3);
+    expect(page.nextCursor).toBeUndefined();
+    expect(page.earliestRetainedUpdatedAt).toBe(201);
+  });
+
   it('does not restart an exhausted retention sweep before the earliest retained row can age out', async () => {
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
     // A wall clock already past one whole window: the scanner answers a cutoff
@@ -2351,7 +2484,7 @@ describe('Channels outward-delivery supervisor', () => {
     const query = deliveries.query.bind(deliveries);
     let retentionScans = 0;
     deliveries.query = (async (request: Parameters<typeof query>[0]) => {
-      if (request.index === CHANNEL_DELIVERIES_INDEX_ID.byRetryDue && request.prefix?.[0] === true) {
+      if (request.index === CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt && request.range?.upper !== undefined) {
         retentionScans += 1;
       }
       return await query(request);

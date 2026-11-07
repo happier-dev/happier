@@ -108,6 +108,7 @@ export const CHANNEL_DELIVERIES_INDEX_ID = {
   byOwnerAttention: 'by-owner-attention',
   byConnectionAttention: 'by-connection-attention',
   byRetryDue: 'by-retry-due',
+  byTerminalUpdatedAt: 'by-terminal-updated-at',
 } as const;
 
 export const CHANNEL_DELIVERIES_RECORD_KIND = {
@@ -2140,8 +2141,8 @@ const DELIVERY_ROW_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
  */
 export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
   id: CHANNEL_DELIVERIES_COLLECTION_ID,
-  schemaVersion: 5,
-  readableSchemaVersions: [1, 2, 3, 4],
+  schemaVersion: 6,
+  readableSchemaVersions: [1, 2, 3, 4, 5],
   schema: {
     type: 'object',
     properties: {
@@ -2211,6 +2212,14 @@ export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
       fields: [
         { field: CHANNEL_DELIVERIES_FIELD.terminal, direction: 'asc' },
         { field: CHANNEL_DELIVERIES_FIELD.retryNotBefore, direction: 'asc' },
+        { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
+      ],
+    },
+    {
+      id: CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt,
+      fields: [
+        { field: CHANNEL_DELIVERIES_FIELD.terminal, direction: 'asc' },
+        { field: CHANNEL_DELIVERIES_FIELD.updatedAt, direction: 'asc' },
         { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
       ],
     },

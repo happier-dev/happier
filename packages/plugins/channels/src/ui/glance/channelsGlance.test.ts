@@ -2,7 +2,7 @@
 
 import { act } from 'react';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ResourceContent } from '@happier-dev/plugin-sdk/ui';
+import type { ResourceContent, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -114,6 +114,7 @@ async function mountGlance(input: Readonly<{
   subPath?: string;
   bindings?: ResourceContent;
   readResource?: NonNullable<PluginUiTestkitHostHandlers['readResource']>;
+  sessionHandlers?: Pick<PluginUiTestkitHostHandlers, 'readSession' | 'watchSession'>;
   openSurface: (input: PluginUiTestkitOpenSurfaceInput) => void;
 }>): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
@@ -137,6 +138,7 @@ async function mountGlance(input: Readonly<{
       handlers: {
         readResource: input.readResource ?? readResource(input.bindings),
         openSurface: input.openSurface,
+        ...input.sessionHandlers,
       },
     });
   });
@@ -212,6 +214,75 @@ describe('the Channels column', () => {
 });
 
 describe('the Channels Home widget', () => {
+  it.each([
+    { view: 'widget' as const, count: 1000, presented: 4 },
+    { view: 'column' as const, count: 12, presented: 12 },
+  ])('reads and watches only the $presented presented $view conversations out of $count', async ({ view, count, presented }) => {
+    const bindings = Array.from({ length: count }, (_, index) => {
+      const id = String(index).padStart(4, '0');
+      const row = binding({ id, connectionId: 'dc-bot', label: `Conversation ${id}` });
+      return { ...row, target: { ...row.target, sessionId: `session-${id}` } };
+    });
+    const readIds: string[] = [];
+    const watchedIds: string[] = [];
+    let reply = 'The first reply';
+    const surface = await mountGlance({
+      view,
+      openSurface: () => undefined,
+      readResource: async ({ resource }) => {
+        const localId = typeof resource === 'string' ? resource : 'localId' in resource ? resource.localId : '';
+        return localId === 'bindings-v1' ? jsonResource({ bindings }, 'b')
+          : jsonResource({ connections: [connection({ id: 'dc-bot', provider: DISCORD, label: 'Happier bot' })] }, 'c');
+      },
+      sessionHandlers: {
+        readSession: ({ sessionId }): SessionStateV1 => {
+          readIds.push(sessionId);
+          return { sessionId, lifecycle: 'active', runtime: 'idle', operational: 'none', pendingPermissions: [],
+            workStatus: { state: 'waiting', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Idle' },
+            latestActivity: { kind: 'ready', text: reply, createdAt: 1_700_000_000_000 } };
+        },
+        watchSession: ({ sessionId }) => { watchedIds.push(sessionId); },
+      },
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(`[data-testid^="channels-${view}-row-"]`)).toHaveLength(presented);
+      expect(readIds.length).toBeGreaterThan(0);
+    });
+    const expected = bindings.slice(0, presented).map((row) => row.target.sessionId);
+    expect(readIds).toEqual(expected);
+    expect(watchedIds).toEqual(expected);
+
+    // Invisible Session pushes cannot cause reads; a visible reply must still advance.
+    await act(async () => {
+      for (const row of bindings.slice(presented)) surface.invalidateSession(row.target.sessionId, `sha256:${'d'.repeat(64)}`);
+    });
+    expect(readIds).toHaveLength(presented);
+    reply = 'The updated reply';
+    await act(async () => { surface.invalidateSession('session-0000', `sha256:${'e'.repeat(64)}`); });
+    await vi.waitFor(() => { expect(readIds).toHaveLength(presented + 1); });
+    if (view === 'widget') {
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-widget-row-0000"]')?.textContent).toContain(reply);
+      });
+    } else {
+      const search = document.querySelector('[data-testid="channels-column-search"]');
+      if (!(search instanceof HTMLInputElement)) throw new Error('Column search was not mounted');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (setValue === undefined) throw new Error('Browser input value setter missing');
+      await act(async () => {
+        setValue.call(search, 'Conversation 0000');
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('[data-testid^="channels-column-row-"]')).toHaveLength(1);
+        expect(watchedIds.slice(presented)).toEqual(['session-0000']);
+      });
+      const readsAfterFilter = readIds.length;
+      await act(async () => { surface.invalidateSession('session-0001', `sha256:${'f'.repeat(64)}`); });
+      expect(readIds).toHaveLength(readsAfterFilter);
+    }
+  });
+
   it.each(['connections-v1', 'bindings-v1'])('settles a completed %s refusal while the other Resource is still pending', async (refusedResource) => {
     let refuse!: (cause: unknown) => void;
     let finishOther!: (value: ResourceContent) => void;

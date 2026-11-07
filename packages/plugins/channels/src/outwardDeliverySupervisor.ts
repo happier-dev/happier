@@ -4,6 +4,7 @@ import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/col
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
+  CHANNEL_DELIVERIES_INDEX_ID,
   CHANNEL_STATE_COLLECTION,
   CHANNEL_STATE_FIELD,
   CHANNEL_STATE_INDEX_ID,
@@ -81,21 +82,19 @@ type PermissionWaitMediationSnapshot = Readonly<{
 /**
  * The one generation-local retention pass, carried between wakes.
  *
- * `updatedAt` is not part of the terminal custody index, so a pass has to walk
- * every terminal row to find the ones past the window. That is fine while a
- * pass is running — `cursor` carries it — but an exhausted pass used to be
- * restarted by the very next one-second wake, so an Account with a long
- * delivery history paged its whole terminal index over the network forever to
- * keep discovering that nothing had aged yet.
+ * The terminal/update-time index selects only expired rows. `cutoff` stays
+ * fixed while `cursor` continues a pass, as Collection cursors bind to the
+ * query range. One future row supplies the finished pass's next deadline.
  *
  * `notBefore` is the exact wall clock at which that answer can first change:
  * the earliest terminal-entry `updatedAt` the finished pass retained plus the
- * retention window. An empty pass parks until a Collection invalidation;
+ * retention window. An empty pass parks until a terminal-index invalidation;
  * failed retirement instead uses the existing recovery interval. No deadline
- * is invented for storage that contains nothing eligible to age.
+ * is invented for empty terminal history.
  */
 export type ConversationOutwardRetentionSweepState = Readonly<{
   cursor?: string;
+  cutoff?: number;
   notBefore?: number;
   earliestRetainedAt?: number;
 }>;
@@ -178,11 +177,13 @@ function earliestRetentionDeadlineAnchor(
  */
 function advanceRetentionSweep(input: Readonly<{
   scanned: Readonly<{ nextCursor?: string }>;
+  cutoff: number;
   earliestRetainedAt: number | undefined;
 }>): ConversationOutwardRetentionSweepState {
   if (input.scanned.nextCursor !== undefined) {
     return {
       cursor: input.scanned.nextCursor,
+      cutoff: input.cutoff,
       ...(input.earliestRetainedAt === undefined ? {} : { earliestRetainedAt: input.earliestRetainedAt }),
     };
   }
@@ -813,12 +814,14 @@ export async function runConversationOutwardDeliveryCycle(
   // an absolute wall-clock reading against a thirty-day DURATION, so the branch
   // was true for every wake after 1970-01-31 and could not refuse anything.
   const retentionAt = now();
-  if (input.retentionSweep?.notBefore !== undefined && retentionAt < input.retentionSweep.notBefore) {
+  if (input.retentionSweep !== undefined && input.retentionSweep.cursor === undefined
+    && (input.retentionSweep.notBefore === undefined || retentionAt < input.retentionSweep.notBefore)) {
     return cycleResult();
   }
+  const cutoff = input.retentionSweep?.cutoff ?? retentionAt - OUTWARD_DELIVERY_RETENTION_MS;
   try {
     const scanned = await scanner.scanRetention({
-      cutoff: retentionAt - OUTWARD_DELIVERY_RETENTION_MS,
+      cutoff,
       limit: MAX_DELIVERIES_PER_WAKE,
       ...(input.retentionSweep?.cursor === undefined ? {} : { cursor: input.retentionSweep.cursor }),
     });
@@ -832,7 +835,7 @@ export async function runConversationOutwardDeliveryCycle(
         scanned.earliestRetainedUpdatedAt,
       );
       if (context.signal.aborted) {
-        nextRetentionSweep = advanceRetentionSweep({ scanned, earliestRetainedAt });
+        nextRetentionSweep = advanceRetentionSweep({ scanned, cutoff, earliestRetainedAt });
         return cycleResult();
       }
       if (scanned.records.length > 0) {
@@ -866,7 +869,7 @@ export async function runConversationOutwardDeliveryCycle(
           );
         }
       }
-      nextRetentionSweep = advanceRetentionSweep({ scanned, earliestRetainedAt });
+      nextRetentionSweep = advanceRetentionSweep({ scanned, cutoff, earliestRetainedAt });
     }
   } catch (error) {
     workFailed('delivery-retention', { error });
@@ -917,6 +920,7 @@ export function createConversationOutwardDeliverySupervisor(
       wake.wake();
     });
     let discoveryInvalidated = false;
+    let retentionInvalidated = false;
     const invalidate = () => {
       discoveryInvalidated = true;
       wake.wake();
@@ -940,6 +944,9 @@ export function createConversationOutwardDeliverySupervisor(
           order: 'asc',
         }, () => { discoverBindings = true; invalidate(); }));
         observations.push(account.collection(CHANNEL_DELIVERIES_COLLECTION).watch({ kind: 'collection' }, invalidate));
+        observations.push(account.collection(CHANNEL_DELIVERIES_COLLECTION).watch({
+          index: CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt, prefix: [true], order: 'asc',
+        }, () => { retentionInvalidated = true; invalidate(); }));
         while (!supervisorController.signal.aborted) {
           // Retirement and delivery writes emit the same hints as foreign
           // changes. Finish the current keyset pass before replaying them,
@@ -948,7 +955,10 @@ export function createConversationOutwardDeliverySupervisor(
           if (discoveryInvalidated && deliveryCursor === undefined && retentionSweep?.cursor === undefined) {
             discoveryInvalidated = false;
             if (retryBindingIds.size === 0) deliveryDeadline = undefined;
-            retentionSweep = undefined;
+            // Delivery writes discover live work, but cannot make existing
+            // terminal rows cross their already-known retention deadline.
+            if (retentionInvalidated && retentionSweep?.notBefore === undefined) retentionSweep = undefined;
+            retentionInvalidated = false;
           }
           const fullBindingDiscovery = discoverBindings;
           discoverBindings = false;

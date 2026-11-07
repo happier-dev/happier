@@ -515,13 +515,12 @@ export interface ConversationOutwardDeliveryCollectionScanner {
       records: readonly ConversationOutwardDeliveryRecord[];
       nextCursor?: string;
       /**
-       * The smallest terminal-entry `updatedAt` this page retained only
-       * because it has not reached the cutoff yet. Its owner adds the
-       * recovery window to learn the exact wall clock at which the page can
-       * first reclaim anything, so an exhausted sweep does not have to walk
-       * the whole terminal index again to discover that nothing changed.
-       * Custody that never expires by time — unresolved ambiguity — is not a
-       * candidate and deliberately contributes nothing.
+       * The first terminal-entry `updatedAt` beyond the cutoff, read as one
+       * deadline anchor after the expired pass exhausts. Its owner adds the
+       * retention window to schedule the next sweep without paging healthy
+       * terminal history.
+       * An unresolved terminal row can supply this scheduling anchor, but
+       * remains ineligible for retirement when its deadline arrives.
        */
       earliestRetainedUpdatedAt?: number;
     }>
@@ -1545,10 +1544,9 @@ export function createConversationOutwardDeliveryCollectionStore(
 }
 
 /**
- * Enumerates only durable work from the existing `byRetryDue` projection. It
- * parses rows through the exact custody parser above, skips corrupt/terminal or
- * not-yet-due rows, and hands its opaque keyset cursor to the generation-owned
- * supervisor. It is deliberately not another delivery queue or registry.
+ * Enumerates live work from `byRetryDue` and expired terminal custody from
+ * `byTerminalUpdatedAt`. Both paths use the exact custody parser above and hand
+ * their opaque keyset cursors to the generation-owned supervisor.
  */
 export function createConversationOutwardDeliveryCollectionScanner(
   input: ConversationOutwardDeliveryCollectionScannerInput,
@@ -1624,8 +1622,9 @@ export function createConversationOutwardDeliveryCollectionScanner(
       }
       try {
         const page = await input.deliveriesCollection.query({
-          index: collections.CHANNEL_DELIVERIES_INDEX_ID.byRetryDue,
+          index: collections.CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt,
           prefix: [true],
+          range: { upper: scanInput.cutoff },
           order: 'asc',
           limit: scanInput.limit,
           ...(scanInput.cursor === undefined ? {} : { cursor: scanInput.cursor }),
@@ -1634,19 +1633,23 @@ export function createConversationOutwardDeliveryCollectionScanner(
         let earliestRetainedUpdatedAt: number | undefined;
         for (const row of page.rows) {
           const storedRow = row as unknown as StoredCollectionRow;
-          const updatedAt = isJsonRecord(storedRow.value)
-            ? storedRow.value[collections.CHANNEL_DELIVERIES_FIELD.updatedAt]
-            : undefined;
-          if (!isNonNegativeSafeInteger(updatedAt)) continue;
           const record = readConversationOutwardDeliveryRecord({ collections, row: storedRow });
           if (record === null || !isConversationDeliveryRetentionEligible(record.custody)) continue;
-          if (updatedAt > scanInput.cutoff) {
-            earliestRetainedUpdatedAt = earliestRetainedUpdatedAt === undefined
-              ? updatedAt
-              : Math.min(earliestRetainedUpdatedAt, updatedAt);
-            continue;
-          }
           records.push(record);
+        }
+        if (page.nextCursor === undefined) {
+          // One next row supplies the exact deadline; healthy history is never
+          // paged merely to discover that it has not aged out yet.
+          const retained = await input.deliveriesCollection.query({
+            index: collections.CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt,
+            prefix: [true],
+            range: { lower: scanInput.cutoff + 1 },
+            order: 'asc',
+            limit: 1,
+          }, { signal: input.signal });
+          const first = retained.rows[0];
+          const updatedAt = first?.value[collections.CHANNEL_DELIVERIES_FIELD.updatedAt];
+          if (isNonNegativeSafeInteger(updatedAt)) earliestRetainedUpdatedAt = updatedAt;
         }
         return {
           kind: 'ready',
@@ -1881,7 +1884,7 @@ export async function readConversationOutwardDeliveryConnectionAttention(
     connectionIds.map((connectionId) => [connectionId, emptyAttention]),
   );
 
-  for (const connectionId of connectionIds) {
+  if (connectionIds.length > 0) {
     let cursor: string | undefined;
     do {
       if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
@@ -1889,7 +1892,7 @@ export async function readConversationOutwardDeliveryConnectionAttention(
       try {
         page = await input.deliveriesCollection.query({
           index: collections.CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention,
-          prefix: [connectionId, true],
+          prefixes: connectionIds.map((connectionId) => [connectionId, true]),
           order: 'asc',
           limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
           ...(cursor === undefined ? {} : { cursor }),
@@ -1902,6 +1905,8 @@ export async function readConversationOutwardDeliveryConnectionAttention(
       }
 
       for (const row of page.rows) {
+        const connectionId = row.value[collections.CHANNEL_DELIVERIES_FIELD.connectionId];
+        if (typeof connectionId !== 'string' || !attentionByConnection.has(connectionId)) continue;
         const record = readConversationOutwardDeliveryRecord({
           collections,
           row: row as unknown as StoredCollectionRow,

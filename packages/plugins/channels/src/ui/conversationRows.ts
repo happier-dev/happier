@@ -119,7 +119,7 @@ export type ResourcePresentation = Readonly<{
   pending: 'idle' | 'initial' | 'refresh';
   freshness: 'unknown' | 'fresh' | 'stale';
   subscription: 'unsupported' | 'establishing' | 'live' | 'reconnecting' | 'ended';
-  error?: Readonly<{ message: string }>;
+  error?: PluginUiResourceSnapshot['error'];
 }>;
 
 export type ChannelStateCollection = PluginUiAccountCollectionForDefinition<typeof CHANNEL_STATE_COLLECTION>;
@@ -215,7 +215,8 @@ export function parseIngressConflict(value: unknown): ConnectionIngressConflict 
   if (!isRecord(value) || value.kind !== 'occurrenceEvidenceMismatch' || Object.keys(value).length !== 1) {
     return undefined;
   }
-  return { kind: 'occurrenceEvidenceMismatch' };
+  // Read old Resource snapshots without reviving the retired replay latch.
+  return null;
 }
 
 /** The Resource emits this derived custody field for every connection row. */
@@ -697,31 +698,19 @@ export function providerReadinessLabel(
  */
 export function connectionStatus(connection: ChannelsConnection, t: Translate) {
   if (connection.deletionState === 'pendingStopReconciliation') {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.stopPending', 'Stop reconciliation pending') };
+    return { tone: 'attention' as const, label: t('plugins.channels.surface.deleteRecoveryRequired', 'Delete again to finish cleanup') };
   }
   if (connection.deletionState === 'finalizingDelete') {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.deleteFinalizing', 'Deletion cleanup in progress') };
   }
-  if (connection.attention.historyGap !== null) {
-    return { tone: 'danger' as const, label: t('plugins.channels.surface.historyGap', 'History gap needs attention') };
-  }
-  if (connection.attention.ingressConflict !== null) {
-    return { tone: 'danger' as const, label: t('plugins.channels.surface.ingressOccurrenceConflict', 'Incoming occurrence conflict needs attention') };
-  }
   if (connection.attention.providerReadiness !== null) {
     return { tone: 'attention' as const, label: providerReadinessLabel(connection.attention.providerReadiness, t) };
   }
-  if (connection.attention.endpointRetargetOwed) {
-    return { tone: 'attention' as const, label: t('plugins.channels.surface.endpointRetargetOwed', 'Delivery target needs repair') };
-  }
-  if (connection.attention.oldTransportStopUnconfirmed) {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.oldTransportStopUnconfirmed', 'Old transport stop is unconfirmed') };
-  }
   if (connection.attention.pollFailure?.phase === 'blocked') {
-    return { tone: 'attention' as const, label: t('plugins.channels.surface.pollBlocked', 'Polling needs attention') };
+    return { tone: 'attention' as const, label: t('plugins.channels.surface.pollBlocked', 'Connection needs attention') };
   }
   if (connection.attention.pollFailure?.phase === 'retryDue') {
-    return { tone: 'warning' as const, label: t('plugins.channels.surface.pollRetryDue', 'Polling will retry') };
+    return { tone: 'warning' as const, label: t('plugins.channels.surface.pollRetryDue', 'Connection will retry') };
   }
   if (connection.attention.outwardDelivery.outcomeUnknown) {
     return { tone: 'danger' as const, label: t('plugins.channels.surface.deliveryOutcomeUnknown', 'Delivery outcome needs attention') };
@@ -734,6 +723,9 @@ export function connectionStatus(connection: ChannelsConnection, t: Translate) {
   }
   if (connection.attention.outwardDelivery.retryDue) {
     return { tone: 'warning' as const, label: t('plugins.channels.surface.deliveryRetryDue', 'Delivery is waiting to retry') };
+  }
+  if (connection.attention.historyGap !== null) {
+    return { tone: 'neutral' as const, label: t('plugins.channels.surface.historyGap', 'Conversation history may be incomplete') };
   }
   // A paused connection is not delivering, so the live-admission disclosure
   // below has nothing to warn about; the pause itself is reported as policy.
@@ -1001,13 +993,12 @@ export function readChannelsPageLocation(subPath: string | undefined): Readonly<
   return step === 'edit' ? { bindingId, step: 'edit' } : { bindingId };
 }
 
-/** One read of the Account's conversations and bots, whichever owner served it. */
+/** Conversation and bot metadata; each surface demands Session state only after selecting its rows. */
 export type ChannelsConversationSnapshot = Readonly<{
   state: 'loading' | 'error' | 'ready';
   bindings: readonly ChannelsBinding[];
   connections: readonly ChannelsConnection[];
   refresh: () => void;
-  sessionStates?: ReadonlyMap<string, SessionStateReadV1<ChannelsConversationSessionState>>;
 }>;
 
 /** A conversation needs its binding and bot; all surfaces use the same verdict. */
@@ -1071,10 +1062,9 @@ export function useDaemonConversationSnapshot(): Readonly<{
   // sit under a placeholder group and move when the bot arrives.
   const bindings = state === 'ready' && parsedBindings?.kind === 'ready' ? parsedBindings.bindings : NO_BINDINGS;
   const connections = parsedConnections?.kind === 'ready' ? parsedConnections.connections : NO_CONNECTIONS;
-  const sessionStates = useConversationSessionStates(bindings);
   const snapshot = React.useMemo<ChannelsConversationSnapshot>(
-    () => ({ state, bindings, connections, refresh, sessionStates }),
-    [bindings, connections, refresh, state, sessionStates],
+    () => ({ state, bindings, connections, refresh }),
+    [bindings, connections, refresh, state],
   );
   return {
     snapshot,
@@ -1108,9 +1098,8 @@ export function useAccountConversationSnapshot(signal: AbortSignal): ChannelsCon
   // sit under a placeholder group and move when the bot arrives.
   const bindings = state === 'ready' ? bindingsRead.bindings ?? NO_BINDINGS : NO_BINDINGS;
   const connections = connectionsRead.connections ?? NO_CONNECTIONS;
-  const sessionStates = useConversationSessionStates(bindings);
   return React.useMemo(
-    () => ({ state, bindings, connections, refresh, sessionStates }),
-    [bindings, connections, refresh, state, sessionStates],
+    () => ({ state, bindings, connections, refresh }),
+    [bindings, connections, refresh, state],
   );
 }

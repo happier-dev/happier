@@ -1,6 +1,5 @@
 import { realpath, stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 import { createJiti } from 'jiti';
@@ -9,6 +8,7 @@ import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPat
 
 import type { CommittedPluginExecutionAuthorization, PluginActivationSource } from './activationSources';
 import type { PluginRuntimeSourceAuthority } from './sourceAuthority';
+import { PluginModuleLoadError, type PluginModuleLoadErrorCode, type PluginFailurePhase } from './moduleFailure';
 
 export type PluginModuleNamespace = Readonly<Record<string, unknown>> & Readonly<{
     default?: unknown;
@@ -16,14 +16,7 @@ export type PluginModuleNamespace = Readonly<Record<string, unknown>> & Readonly
 
 type NativeFileUrlMode = 'generation-keyed' | 'canonical';
 
-type PluginModuleLoadErrorCode =
-    | 'PLUGIN_DAEMON_ENTRY_MISSING'
-    | 'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED'
-    | 'PLUGIN_DAEMON_MODULE_LOAD_FAILED'
-    | 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED';
-
 const moduleLoadCache = new Map<string, Promise<PluginModuleNamespace>>();
-const requirePluginModule = createRequire(import.meta.url);
 type TypeScriptGenerationLoaderState = Readonly<{
     loader: ReturnType<typeof createJiti>;
     moduleLoadCache: Map<string, Promise<PluginModuleNamespace>>;
@@ -63,20 +56,25 @@ export function isSupportedPluginAuthorSourceExtension(entryPath: string): boole
     );
 }
 
-async function importMutablePluginAuthorSourceModule(
-    loader: ReturnType<typeof createJiti>,
-    entryPath: string,
-): Promise<PluginModuleNamespace> {
-    const extension = extname(entryPath).toLowerCase();
-    const forceTranspile = 'forceTranspile' in loader.options
-        && loader.options.forceTranspile === true;
-    // Patched development candidates keep recursive ESM imports in Jiti and
-    // preserve top-level await. Keep the existing synchronous JavaScript path
-    // for other loads and until the pinned patch is installed.
-    if ((extension === '.js' || extension === '.mjs') && !forceTranspile) {
-        return loader(entryPath) as PluginModuleNamespace;
-    }
-    return await loader.import(entryPath) as PluginModuleNamespace;
+function createPluginSourceLoader(options: Readonly<{
+    aliases?: Readonly<Record<string, string>>;
+    forceTranspile?: boolean;
+}> = {}): ReturnType<typeof createJiti> {
+    return createJiti(import.meta.url, {
+        // Cached transforms remain source-validated; module identity still
+        // belongs to the admitted graph. Only imports get Node CJS namespaces.
+        fsCache: true,
+        // Published Protocol and Zod are executable dependencies, not mutable author source.
+        // Workspace aliases resolve outside node_modules and still use Jiti.
+        nativeModules: ['@happier-dev/protocol', 'zod'],
+        moduleCache: true,
+        interopDefault: false,
+        nodeImportInterop: true,
+        forceTranspile: options.forceTranspile ?? false,
+        ...(options.aliases && Object.keys(options.aliases).length > 0
+            ? { alias: { ...options.aliases } }
+            : {}),
+    });
 }
 
 export async function loadPluginAuthorSourceModule(
@@ -106,17 +104,18 @@ export async function loadPluginAuthorSourceModule(
             `Plugin author source entry is not a regular file: '${resolvedEntryPath}'`,
         );
     }
-    const loader = createJiti(import.meta.url, {
-        // Jiti validates transforms against current source bytes. This cache
-        // saves compilation without changing module identity or eviction.
-        fsCache: true,
-        moduleCache: true,
-        interopDefault: false,
-        ...(options.aliases && Object.keys(options.aliases).length > 0
-            ? { alias: { ...options.aliases } }
-            : {}),
+    const loader = createPluginSourceLoader({
+        ...options,
+        // Mutable JS author entries need the same asynchronous transform as TS;
+        // synchronous require cannot expose a native CJS import namespace.
+        forceTranspile: extension === '.js' || extension === '.mjs',
     });
-    return await importMutablePluginAuthorSourceModule(loader, resolvedEntryPath);
+    try {
+        return await loader.import(resolvedEntryPath) as PluginModuleNamespace;
+    } catch (error) {
+        throw createModuleLoadError('PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+            'Failed to load plugin author source module', error);
+    }
 }
 
 export function resolvePluginModuleLoadMode(input: Readonly<{
@@ -162,13 +161,8 @@ export function resolvePluginModuleCandidatePaths(input: Readonly<{
         )),
     ]);
 }
-function createModuleLoadError(code: PluginModuleLoadErrorCode, message: string, cause?: unknown): Error {
-    const error = new Error(message) as Error & { code?: PluginModuleLoadErrorCode; cause?: unknown };
-    error.code = code;
-    if (cause !== undefined) {
-        error.cause = cause;
-    }
-    return error;
+function createModuleLoadError(code: PluginModuleLoadErrorCode, message: string, cause?: unknown, phase?: PluginFailurePhase): Error {
+    return new PluginModuleLoadError(code, message, cause, phase);
 }
 
 function stableCacheKey(cacheKey: string | undefined, fallback: string): string {
@@ -181,6 +175,15 @@ function buildFileBackedCacheKey(params: Readonly<{
     nativeFileUrlMode: NativeFileUrlMode;
 }>): string {
     return `file:${params.entryPath}::${params.nativeFileUrlMode}::${params.cacheKey}`;
+}
+
+/** The immutable module is already held in this process under this exact content identity. */
+export function isImmutablePluginModuleLoaded(params: Readonly<{ entryPath: string; cacheKey: string }>): boolean {
+    return moduleLoadCache.has(buildFileBackedCacheKey({
+        entryPath: resolve(params.entryPath),
+        cacheKey: params.cacheKey,
+        nativeFileUrlMode: 'generation-keyed',
+    }));
 }
 
 function buildBundledCacheKey(params: Readonly<{ moduleId: string; cacheKey?: string }>): string {
@@ -205,11 +208,7 @@ function resolveTypeScriptGenerationLoaderState(
     const current = typescriptGenerationLoaderStates.get(generationScope);
     if (current) return current;
     const created = Object.freeze({
-        loader: createJiti(import.meta.url, {
-            fsCache: true,
-            moduleCache: true,
-            interopDefault: false,
-        }),
+        loader: createPluginSourceLoader(),
         moduleLoadCache: new Map<string, Promise<PluginModuleNamespace>>(),
     });
     typescriptGenerationLoaderStates.set(generationScope, created);
@@ -221,14 +220,7 @@ export function createPluginTypeScriptGenerationScope(options: Readonly<{
 }> = {}): object {
     const generationScope = Object.freeze({});
     typescriptGenerationLoaderStates.set(generationScope, Object.freeze({
-        loader: createJiti(import.meta.url, {
-            fsCache: true,
-            moduleCache: true,
-            interopDefault: false,
-            ...(options.aliases && Object.keys(options.aliases).length > 0
-                ? { alias: { ...options.aliases } }
-                : {}),
-        }),
+        loader: createPluginSourceLoader(options),
         moduleLoadCache: new Map<string, Promise<PluginModuleNamespace>>(),
     }));
     return generationScope;
@@ -342,11 +334,11 @@ async function importFileBackedModule(params: Readonly<{
     nativeFileUrlMode: NativeFileUrlMode;
 }>): Promise<PluginModuleNamespace> {
     if (params.resolvedEntryPath.endsWith('.cjs.bundle')) {
-        // Portable artifacts are compiler-produced, self-contained CommonJS.
-        // Reuse Node's native module host after the same source admission as
-        // every other executable; this owner retains generation cache identity.
-        delete requirePluginModule.cache[params.resolvedEntryPath];
-        return requirePluginModule(params.resolvedEntryPath) as PluginModuleNamespace;
+        // The same portable artifact runs in the app and the CLI. Supply its
+        // shared SDK/Zod imports from this host, including native payloads that
+        // have no artifact-adjacent node_modules. Keep this graph demand-loaded.
+        const { loadPortableCommonJsModule } = await import('./portableCommonJs');
+        return loadPortableCommonJsModule(params.resolvedEntryPath);
     }
     if (params.isTypeScriptDevEntry) {
         const generationScope = params.generationScope;
@@ -368,10 +360,7 @@ async function importFileBackedModule(params: Readonly<{
         if (cachedModule?.loaded) {
             return cachedModule.exports as PluginModuleNamespace;
         }
-        return await importMutablePluginAuthorSourceModule(
-            generationState.loader,
-            graphModulePath,
-        );
+        return await generationState.loader.import(graphModulePath) as PluginModuleNamespace;
     }
 
     return await import(resolveNativePluginModuleUrl({
@@ -415,7 +404,8 @@ export async function loadVerifiedPluginModule(params: Readonly<{
                 error,
             );
         }
-        throw error;
+        throw createModuleLoadError('PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+            'Failed to inspect plugin daemon entry', error, 'resolve');
     }
 
     if (!daemonEntryStats.isFile()) {
@@ -522,9 +512,9 @@ async function loadBundledModule<TModule extends PluginModuleNamespace>(params: 
         `bundled:${params.moduleId}::`,
         cacheEntryKey,
     );
-    const modulePromise = params.load() as Promise<PluginModuleNamespace>;
-    moduleLoadCache.set(cacheEntryKey, modulePromise);
     try {
+        const modulePromise = params.load() as Promise<PluginModuleNamespace>;
+        moduleLoadCache.set(cacheEntryKey, modulePromise);
         return await (modulePromise as Promise<TModule>);
     } catch (error) {
         moduleLoadCache.delete(cacheEntryKey);
@@ -563,7 +553,12 @@ export async function loadPluginModule<TModule extends PluginModuleNamespace>(pa
         // A serving registry can retain its generation across disable/enable;
         // the process-wide bundled cache would then resurrect an older graph.
         await assertTrusted(undefined, params.source.sourceAuthority);
-        return await params.source.load();
+        try {
+            return await params.source.load();
+        } catch (error) {
+            throw createModuleLoadError('PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+                'Failed to load development plugin daemon module', error);
+        }
     }
 
     return await loadBundledModule({

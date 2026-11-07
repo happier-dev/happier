@@ -40,11 +40,13 @@ const BINARY_INDEX_COLLECTION_MANIFEST = {
                     second: { type: "string", maxLength: 256 },
                     third: { type: "string", maxLength: 256 },
                     fourth: { type: "string", maxLength: 256 },
+                    terminal: { type: "boolean" },
+                    updatedAt: { type: "number" },
                 },
                 required: ["id", "first", "second", "third", "fourth"],
                 additionalProperties: false,
             },
-            serverReadable: ["first", "second", "third", "fourth"],
+            serverReadable: ["first", "second", "third", "fourth", "terminal", "updatedAt", "id"],
             indexes: [{
                 id: "by-four-strings",
                 fields: [
@@ -52,6 +54,13 @@ const BINARY_INDEX_COLLECTION_MANIFEST = {
                     { field: "second", direction: "asc" },
                     { field: "third", direction: "asc" },
                     { field: "fourth", direction: "asc" },
+                ],
+            }, {
+                id: "by-terminal-updated-id",
+                fields: [
+                    { field: "terminal", direction: "asc" },
+                    { field: "updatedAt", direction: "asc" },
+                    { field: "id", direction: "asc" },
                 ],
             }],
             uiQueries: [{ id: "all", indexId: "by-four-strings", parameters: {}, prefix: [],
@@ -249,14 +258,17 @@ async function seedBinaryIndexCollectionAccount(accountId: string): Promise<Read
             },
         });
         await db.pluginCollectionProjection.createMany({
-            data: ["first", "second", "third", "fourth"].map((fieldId) => ({
+            data: Object.entries({
+                first: allNul, second: allNul, third: allNul, fourth: row.fourth,
+                terminal: false, updatedAt: 0, id: row.rowId,
+            }).map(([fieldId, value]) => ({
                 rowDbId: stored.id,
                 accountId,
                 pluginId: ref.pluginId,
                 collectionId: ref.collectionId,
                 rowId: row.rowId,
                 fieldId,
-                typedEncodedValue: JSON.stringify(fieldId === "fourth" ? row.fourth : allNul),
+                typedEncodedValue: JSON.stringify(value),
                 rowRevision: row.revision,
             })),
         });
@@ -445,18 +457,10 @@ describe("PluginCollectionIndexEntry binary compound-key DB contract", () => {
                 await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: readerContext.pluginId } }, data: { enabled: false } });
                 await expect(read()).rejects.toMatchObject({ code: "collection_unavailable" });
                 await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: readerContext.pluginId } }, data: { enabled: true } });
-                // Commit a valid mode transition after materialization, before
-                // the public reader's final currentness check may disclose it.
-                db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
-                    const callback = args[0];
-                    if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
-                    return Reflect.apply(target, receiver, [async (tx: Tx) => {
-                        const result = await callback(tx);
-                        await db.account.update({ where: { id: accountId }, data: {
-                            encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
-                        } });
-                        return result;
-                    }, ...args.slice(1)]);
+                // An admitted read finishes; the mode transition refuses the next request.
+                await read();
+                await db.account.update({ where: { id: accountId }, data: {
+                    encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
                 } });
                 await expect(read()).rejects.toMatchObject({ code: "collection_content_mode_mismatch" });
             } finally {
@@ -470,6 +474,74 @@ describe("PluginCollectionIndexEntry binary compound-key DB contract", () => {
             }
         },
     );
+
+    it("pages an inclusive numeric age range under a boolean prefix and finds the next future anchor", async () => {
+        const accountId = `collection-age-range-${randomUUID()}`;
+        try {
+            const { readerContext } = await seedBinaryIndexCollectionAccount(accountId);
+            const contract = await db.pluginCollectionContract.findFirstOrThrow({
+                where: { ...readerContext }, select: { id: true },
+            });
+            const indexState = await db.pluginCollectionIndexState.create({
+                data: {
+                    accountId, pluginId: readerContext.pluginId, collectionId: readerContext.collectionId,
+                    indexId: "by-terminal-updated-id", contractId: contract.id,
+                    contractDigest: readerContext.contractDigest, buildState: "ready", indexedThroughRevision: 6,
+                },
+            });
+            const rows = [
+                { id: "old", terminal: true, updatedAt: 999 },
+                { id: "cutoff-a", terminal: true, updatedAt: 1000 },
+                { id: "cutoff-b", terminal: true, updatedAt: 1000 },
+                { id: "future", terminal: true, updatedAt: 1001 },
+                { id: "later", terminal: true, updatedAt: 1002 },
+                { id: "active", terminal: false, updatedAt: 1 },
+            ];
+            for (const [i, row] of rows.entries()) {
+                const revision = i + 1;
+                const stored = await db.pluginCollectionRow.create({ data: {
+                    accountId, pluginId: readerContext.pluginId, collectionId: readerContext.collectionId,
+                    rowId: row.id, schemaVersion: readerContext.schemaVersion, revision,
+                    contractId: contract.id, contractDigest: readerContext.contractDigest,
+                    contentEnvelope: toPrismaJson({ t: "plain", v: row }),
+                } });
+                await db.pluginCollectionProjection.createMany({ data: Object.entries({
+                    first: "", second: "", third: "", fourth: "", ...row,
+                }).map(([fieldId, value]) => ({
+                    rowDbId: stored.id, accountId, pluginId: readerContext.pluginId,
+                    collectionId: readerContext.collectionId, rowId: row.id, fieldId,
+                    typedEncodedValue: JSON.stringify(value), rowRevision: revision,
+                })) });
+                await db.pluginCollectionIndexEntry.create({ data: {
+                    indexStateId: indexState.id, rowId: row.id, rowRevision: revision,
+                    encodedSortKey: copyBytes(encodePluginCollectionIndexSortKeyV1({ fields: [
+                        { kind: "boolean", value: row.terminal },
+                        { kind: "finiteNumber", value: row.updatedAt },
+                        { kind: "string", value: row.id },
+                    ], rowId: row.id })),
+                } });
+            }
+            const expiredRequest = {
+                indexId: "by-terminal-updated-id", prefix: [true], range: { upper: 1000 },
+                order: "asc" as const, limit: 2,
+            };
+            const first = await queryPluginCollection({ accountId, request: binaryIndexQueryRequest(readerContext, expiredRequest) });
+            expect(first.rows.map(row => row.rowId)).toEqual(["old", "cutoff-a"]);
+            expect(first.nextCursor).toEqual(expect.any(String));
+            const second = await queryPluginCollection({ accountId, request: binaryIndexQueryRequest(readerContext, {
+                ...expiredRequest, cursor: first.nextCursor,
+            }) });
+            expect(second.rows.map(row => row.rowId)).toEqual(["cutoff-b"]);
+            expect(second.nextCursor).toBeUndefined();
+            const future = await queryPluginCollection({ accountId, request: binaryIndexQueryRequest(readerContext, {
+                indexId: "by-terminal-updated-id", prefix: [true], range: { lower: 1001 }, order: "asc", limit: 1,
+            }) });
+            expect(future.rows.map(row => row.rowId)).toEqual(["future"]);
+            expect(future.nextCursor).toEqual(expect.any(String));
+        } finally {
+            await db.account.deleteMany({ where: { id: accountId } });
+        }
+    });
 
     it("persists raw ordinal compound keys byte-for-byte through the canonical reader", async () => {
         const suffix = randomUUID();

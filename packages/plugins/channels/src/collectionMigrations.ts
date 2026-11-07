@@ -415,5 +415,11 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Current writers omit retired fields; retained readers accept them. This
     // contract adoption must not rewrite retained delivery custody.
     migrate: (value) => value,
+  }, {
+    id: 'channel-deliveries-v5-to-v6',
+    fromSchemaVersion: 5,
+    toSchemaVersion: 6,
+    // Adopt the terminal/update-time index without rewriting delivery custody.
+    migrate: (value) => value,
   }],
 } satisfies Readonly<Record<string, readonly PluginAccountCollectionMigration[]>>;

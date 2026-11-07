@@ -3307,6 +3307,12 @@ and real activity changes wake the existing managed policy feed; a nonpersisted
 activity-change hint is not activity authority. The rule still reads a current,
 installation-signed activity proof before native effects. Equal/stale state and
 ordinary liveness do not publish managed-resource changes.
+Runtime demand, Pending activation and retained-power presentation consume
+`resolveManagedMachineRuntimeV1` in Protocol's managed domain for native
+availability, guest readiness and whether wake needs Inspect. Native power owns
+that fresh provider Inspect; passive reads do not wake. Home's admitted Pending
+record owns input activation: retiring the scheduler's compute-wake job cannot
+fail that independently admitted input.
 These are unreleased 0.3 source contracts. Final integrated validation,
 loaded-stack validation and final UI composition remain tracked in the VD-DELEG
 and VD-GUEST lane reports; no released availability is claimed.
@@ -4749,6 +4755,12 @@ continues across pending and failed presentation states, so opening a picker
 can reacquire a failed answer. Failures schedule no picker retry; a new demand
 or canonical currentness change owns the next read. Portable-release admission
 and exact source, occurrence, trust and Account fences remain unchanged.
+
+An Account's plugin-delivered Voice conversation adapters come only from the
+selected Voice execution Machine's plugin projection. Voice readiness
+(`apps/ui/sources/voice/registry/readiness.ts`) therefore requires that Machine
+for every non-built-in conversation provider, so Settings never reports Ready
+while Start would fail with `voice_provider_adapter_not_registered`.
 
 AppShell reconciles client Action and Voice executables against the latest exact
 target set before waiting for Artifact preparation or foreign plugin cleanup.

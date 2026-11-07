@@ -29,6 +29,8 @@ import {
   readChannelsPageLocation,
   useAccountConversationSnapshot,
   useDaemonConversationSnapshot,
+  useConversationSessionStates,
+  type ChannelsBinding,
   type ChannelsConversationIndexGroup,
   type ChannelsConversationIndexRow,
   type ChannelsConversationSnapshot,
@@ -100,11 +102,11 @@ function ChannelsColumn(props: Readonly<{
   const providerName = useProviderName(t);
   const navigation = useOpenChannels();
   const [query, setQuery] = React.useState('');
-  const { bindings, connections, sessionStates } = props.snapshot;
+  const { bindings, connections } = props.snapshot;
   const { locale } = useSurfaceContext();
   const groups = React.useMemo(
-    () => buildChannelsConversationIndex({ bindings, connections, providerName, t, ...(sessionStates === undefined ? {} : { sessionStates }) }),
-    [bindings, connections, providerName, sessionStates, t],
+    () => buildChannelsConversationIndex({ bindings, connections, providerName, t }),
+    [bindings, connections, providerName, t],
   );
   const selectedBindingId = readChannelsPageLocation(props.subPath).bindingId;
   // A router's threads are listed on its own page, so only the rows the column shows count.
@@ -116,6 +118,8 @@ function ChannelsColumn(props: Readonly<{
     : groups
       .map((group) => ({ ...group, rows: group.rows.filter((row) => row.title.toLocaleLowerCase().includes(needle)) }))
       .filter((group) => group.rows.length > 0)), [groups, needle]);
+  const visibleBindings = React.useMemo(() => visibleGroups.flatMap((group) => group.rows.map((row) => row.binding)), [visibleGroups]);
+  const sessionStates = useConversationSessionStates(visibleBindings);
   const hasBots = connections.some((connection) => connection.deletionState === 'none');
 
   return (
@@ -181,7 +185,8 @@ function ChannelsColumn(props: Readonly<{
           })}
         >
           {group.rows.map((row) => {
-            const activity = channelsConversationActivity(row.session);
+            const activity = channelsConversationActivity(row.binding.target.kind === 'session'
+              ? sessionStates.get(row.binding.target.sessionId ?? '') : undefined);
             // Work that needs the reader is the row's state; otherwise its end says when the Session last replied.
             const workNeedsYou = activity?.work !== undefined && activity.work.tone !== 'neutral' ? activity.work : undefined;
             const statusLabel = rowStatusLabel(row, t) ?? workNeedsYou?.word;
@@ -214,8 +219,8 @@ type WidgetRow = Readonly<{
   bindingId: string;
   title: string;
   subtitle: string;
-  /** The latest reply's own time, when there is one. */
-  detail?: string;
+  /** Only ordinary conversation rows consume the Session's latest reply. */
+  binding?: ChannelsBinding;
   attention: boolean;
 }>;
 
@@ -228,7 +233,6 @@ function buildWidgetRows(
   groups: readonly ChannelsConversationIndexGroup[],
   providerName: (id: string) => string,
   t: Translate,
-  locale: string,
 ): readonly WidgetRow[] {
   const causes: WidgetRow[] = [];
   const paused: WidgetRow[] = [];
@@ -258,14 +262,12 @@ function buildWidgetRows(
           attention: false,
         });
       } else if (row.status === undefined) {
-        // The latest shareable reply says more than the provider name once the host has read one.
-        const preview = channelsConversationActivity(row.session)?.preview;
         rest.push({
           key: row.binding.bindingId,
           bindingId: row.binding.bindingId,
           title: row.title,
-          subtitle: preview?.kind === 'ready' ? preview.text : provider,
-          ...(preview?.kind === 'ready' ? { detail: formatConversationTime(preview.createdAt, locale) } : {}),
+          subtitle: provider,
+          binding: row.binding,
           attention: false,
         });
       }
@@ -278,17 +280,18 @@ function ChannelsHomeWidget(props: Readonly<{ snapshot: ChannelsConversationSnap
   const t = usePluginTranslation();
   const providerName = useProviderName(t);
   const navigation = useOpenChannels();
-  const { bindings, connections, sessionStates } = props.snapshot;
+  const { bindings, connections } = props.snapshot;
   const { locale } = useSurfaceContext();
   const rows = React.useMemo(
     () => buildWidgetRows(
-      buildChannelsConversationIndex({ bindings, connections, providerName, t, ...(sessionStates === undefined ? {} : { sessionStates }) }),
+      buildChannelsConversationIndex({ bindings, connections, providerName, t }),
       providerName,
       t,
-      locale,
     ),
-    [bindings, connections, locale, providerName, sessionStates, t],
+    [bindings, connections, providerName, t],
   );
+  const visibleBindings = React.useMemo(() => rows.flatMap((row) => row.binding === undefined ? [] : [row.binding]), [rows]);
+  const sessionStates = useConversationSessionStates(visibleBindings);
 
   if (props.snapshot.state === 'loading' && bindings.length === 0) {
     return (
@@ -315,20 +318,24 @@ function ChannelsHomeWidget(props: Readonly<{ snapshot: ChannelsConversationSnap
   }
   return (
     <ItemGroup testID="channels-widget-rows">
-      {rows.map((row) => (
-        <Item
-          key={row.key}
-          testID={`channels-widget-row-${row.key}`}
-          title={row.title}
-          titleNumberOfLines={1}
-          subtitle={row.subtitle}
-          subtitleNumberOfLines={1}
-          {...(row.detail === undefined ? {} : { detail: row.detail })}
-          {...(row.attention ? { icon: <Icon name="warning" size="small" tone="attention" />, tone: 'attention' as const } : {})}
-          density="compact"
-          onPress={() => navigation.openConversation(row.bindingId)}
-        />
-      ))}
+      {rows.map((row) => {
+        const preview = channelsConversationActivity(row.binding?.target.kind === 'session'
+          ? sessionStates.get(row.binding.target.sessionId ?? '') : undefined)?.preview;
+        return (
+          <Item
+            key={row.key}
+            testID={`channels-widget-row-${row.key}`}
+            title={row.title}
+            titleNumberOfLines={1}
+            subtitle={preview?.kind === 'ready' ? preview.text : row.subtitle}
+            subtitleNumberOfLines={1}
+            {...(preview?.kind === 'ready' ? { detail: formatConversationTime(preview.createdAt, locale) } : {})}
+            {...(row.attention ? { icon: <Icon name="warning" size="small" tone="attention" />, tone: 'attention' as const } : {})}
+            density="compact"
+            onPress={() => navigation.openConversation(row.bindingId)}
+          />
+        );
+      })}
     </ItemGroup>
   );
 }

@@ -9,7 +9,7 @@ import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
 } from '@happier-dev/plugin-sdk/manifest';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginActionHandlerUnavailableFixture } from '@happier-dev/plugin-sdk/testing';
 import type {
   TargetedContributionSnapshot,
   TargetedContributionsService,
@@ -186,7 +186,7 @@ function sessionProjectionRecord(): ConversationOutwardDeliveryRecord {
       endpoint,
       content: { text: 'The final answer is ready.' },
       deliveryKey: 'channels:delivery:v1:session-projection-custody-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     },
     custody: { state: 'ready', attemptCount: 0, providerMessageIds: [] },
@@ -256,7 +256,6 @@ class MemoryDeliveryStore implements ConversationOutwardDeliveryStore {
     records: readonly Readonly<{
       custodyId: string;
       expectedRevision: number;
-      physicallyForget: boolean;
     }>[];
   }>) {
     for (const record of input.records) {
@@ -278,14 +277,17 @@ class MemoryAccountCollection {
     deleted?: boolean;
   }>>();
 
-  async get(rowId: string) {
+  async get(rowId: string, options?: Readonly<{ signal?: AbortSignal }>) {
+    options?.signal?.throwIfAborted();
     const row = this.rows.get(rowId);
     return row?.deleted === true ? null : row ?? null;
   }
 
   async put(value: Record<string, JsonValue>, input: Readonly<{
     expectedRevision: number | 'absent';
+    signal?: AbortSignal;
   }>) {
+    input.signal?.throwIfAborted();
     const rowId = value.id;
     if (typeof rowId !== 'string') throw new Error('row id is required');
     const current = this.rows.get(rowId);
@@ -356,15 +358,20 @@ class BindingIndexedAccountCollection extends MemoryAccountCollection {
   override async query(request?: Readonly<{
     index?: string;
     prefix?: readonly (string | number | boolean | null)[];
+    prefixes?: readonly (readonly (string | number | boolean | null)[])[];
     cursor?: string;
     limit?: number;
   }>) {
     assertChannelsTestCollectionQueryLimit(request?.limit);
     const matching = [...this.rows.values()]
       .filter((row) => {
+        if (row.deleted) return false;
+        if (request?.index === 'by-connection-attention') return (request.prefixes ?? [request.prefix ?? []])
+          .some(prefix => row.value['connection-id'] === prefix[0] && row.value.attention === prefix[1]);
         if (request?.index !== 'by-owner-attention') return true;
         return row.value['connection-id'] === request.prefix?.[0]
-          && row.value['binding-id'] === request.prefix?.[1];
+          && (request.prefix?.[1] === undefined || (row.value['binding-id'] ?? null) === request.prefix[1])
+          && (request.prefix?.[2] === undefined || row.value.attention === request.prefix[2]);
       })
       .sort((left, right) => left.rowId.localeCompare(right.rowId));
     const start = request?.cursor === undefined
@@ -394,7 +401,7 @@ function obligation(): ConversationOutwardDeliveryObligation {
     endpoint,
     content: { text: 'Another /new command is already in progress.' },
     deliveryKey: 'control:ingress-1',
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -410,6 +417,27 @@ function currentAuthority() {
 }
 
 describe('Channels control-response outward custody', () => {
+  it('rejoins terminal delivery identity without retaining a content fingerprint or restoring content', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal: new AbortController().signal, now: () => 100 });
+    const request = obligation();
+    const created = await store.ensure(request);
+    if (created.kind !== 'created') throw new Error('Expected ready custody');
+    const recovered = await store.compareAndSwap({ custodyId: created.record.custodyId,
+      expectedRevision: created.record.revision, custody: { state: 'outcomeUnknown', attemptCount: 1,
+        attemptId: 'original-attempt', providerMessageIds: [] } });
+    if (recovered.kind !== 'updated') throw new Error('Expected unknown custody');
+    expect(recovered.record.obligation.content).toBeNull();
+    expect([...deliveries.rows.values()][0]?.value.payload).not.toHaveProperty('contentFingerprint');
+    const before = structuredClone([...deliveries.rows]);
+    await expect(store.ensure({ ...request, content: { text: 'changed replay' } }))
+      .resolves.toMatchObject({ kind: 'rejoined', record: { custody: { state: 'outcomeUnknown' } } });
+    expect([...deliveries.rows]).toEqual(before);
+  });
+
   it.each(['unavailable', 'missing'] as const)('distinguishes a %s provider snapshot from transient Account reads', async availability => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
@@ -432,7 +460,7 @@ describe('Channels control-response outward custody', () => {
       attemptId: 'provider-snapshot', now: () => 100, signal,
     })).resolves.toMatchObject(availability === 'unavailable'
       ? { kind: 'settled', custody: { state: 'retryDue', retryNotBefore: 1_100 } }
-      : { kind: 'suppressed', custody: { state: 'suppressed' } });
+      : { kind: 'suppressed', custody: { state: 'notSent', reason: 'policySuppressed' } });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
@@ -745,9 +773,37 @@ describe('Channels control-response outward custody', () => {
     ]);
   });
 
+  it('reads only owner-attention bodies beside healthy retained deliveries', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new BindingIndexedAccountCollection();
+    const signal = new AbortController().signal;
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal, now: () => 100 });
+    // CH-IDLEPERF observed 6,000 healthy bodies per scan. A representative
+    // nonempty prefix distinguishes the same body-read cost contract without
+    // spending the test on thousands of unrelated custody admissions.
+    for (let index = 0; index < 32; index += 1) {
+      const created = await store.ensure({ ...obligation(), deliveryKey: `healthy-attention-${index}`,
+        source: { kind: 'controlResponse', controlId: `healthy-attention-${index}`, controlKind: 'recovery' } });
+      if (created.kind !== 'created') throw new Error('Expected canonical custody seed.');
+    }
+    const created = await store.ensure({ ...obligation(), deliveryKey: 'unknown-attention',
+      source: { kind: 'controlResponse', controlId: 'unknown-attention', controlKind: 'recovery' } });
+    if (created.kind !== 'created') throw new Error('Expected canonical custody seed.');
+    await store.compareAndSwap({ custodyId: created.record.custodyId, expectedRevision: created.record.revision,
+      custody: { state: 'outcomeUnknown', attemptCount: 1, providerMessageIds: [] } });
+    const query = vi.spyOn(deliveries, 'query');
+    const result = await readConversationOutwardDeliveryConnectionAttention({ deliveriesCollection: deliveries as never,
+      signal, connectionIds: ['connection-1'] });
+    expect(result).toMatchObject({ kind: 'ready', attentionByConnection: new Map([['connection-1', expect.objectContaining({ outcomeUnknown: true })]]) });
+    const bodiesRead = (await Promise.all(query.mock.results.map(result => result.value))).reduce((count, page) => count + page.rows.length, 0);
+    expect(bodiesRead).toBe(1);
+  });
+
   it('degrades one unparsable custody row to unknown attention for its own connection only', async () => {
     const state = new MemoryAccountCollection();
-    const deliveries = new MemoryAccountCollection();
+    const deliveries = new BindingIndexedAccountCollection();
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
     const signal = new AbortController().signal;
     const store = createConversationOutwardDeliveryCollectionStore({
@@ -769,12 +825,18 @@ describe('Channels control-response outward custody', () => {
       custody: { state: 'retryDue', attemptCount: 1, providerMessageIds: [], retryNotBefore: 200 },
     });
     if (retryDue.kind !== 'updated') throw new Error('Expected canonical custody lifecycle update.');
+    // Retained writers indexed scheduled retries as attention. The current
+    // reader must preserve their shape without reviving owner intervention.
+    const retainedRetry = deliveries.rows.get(readable.record.custodyId)!;
+    deliveries.rows.set(readable.record.custodyId, { ...retainedRetry,
+      value: { ...retainedRetry.value, attention: true } });
     deliveries.rows.set(corruptCustodyId, {
       rowId: corruptCustodyId,
       revision: 1,
       value: {
         id: corruptCustodyId,
         'connection-id': 'connection-1',
+        attention: true,
         custody: { state: 'not-a-custody-state' },
       },
     });
@@ -788,7 +850,7 @@ describe('Channels control-response outward custody', () => {
     expect(attention).toEqual({
       kind: 'ready',
       attentionByConnection: new Map([['connection-1', {
-        retryDue: true,
+        retryDue: false,
         notDelivered: false,
         partial: false,
         outcomeUnknown: true,
@@ -868,7 +930,7 @@ describe('Channels control-response outward custody', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'attempt-1',
-        startedAt: 1,
+
         providerMessageIds: [],
       },
     });
@@ -894,7 +956,7 @@ describe('Channels control-response outward custody', () => {
     ]));
   });
 
-  it('CAS-claims a stale attempting delivery before optional provider reconciliation and never sends it again', async () => {
+  it('settles optional provider reconciliation against the original attempt without an age threshold or resend', async () => {
     const store = new MemoryDeliveryStore();
     const record: ConversationOutwardDeliveryRecord = {
       custodyId: 'stale-custody-1',
@@ -905,7 +967,7 @@ describe('Channels control-response outward custody', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'delivery-attempt-1',
-        startedAt: 100,
+
         providerMessageIds: [],
       },
     };
@@ -918,9 +980,7 @@ describe('Channels control-response outward custody', () => {
     await expect(reconcileConversationOutwardDeliveryAttempt({
       store,
       record,
-      recoveryAttemptId: 'reconcile-attempt-1',
-      staleAfterMs: 30,
-      now: () => 130,
+      now: () => 100,
       signal: new AbortController().signal,
       authority: {
         checkCurrentness: async () => ({ kind: 'current' as const }),
@@ -938,7 +998,7 @@ describe('Channels control-response outward custody', () => {
     });
 
     expect(reconcile).toHaveBeenCalledOnce();
-    expect(store.events).toEqual(['cas:attempting', 'cas:delivered']);
+    expect(store.events).toEqual(['cas:delivered']);
     expect(store.rows.get(record.custodyId)?.custody).toEqual({
       state: 'delivered',
       attemptCount: 1,
@@ -949,6 +1009,16 @@ describe('Channels control-response outward custody', () => {
   it('keeps an attempted effect unknown when Account currentness is unavailable during recovery', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
+    // Persistence is the boundary: validate each actual serialized write with
+    // the declared Collection schema, not just the custody decoder on read.
+    const validateDeliveryRow = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
+    const persist = deliveries.put.bind(deliveries);
+    deliveries.put = async (value, input) => {
+      if (!isValidPluginJsonSchemaValue(validateDeliveryRow, value)) {
+        throw new PluginError({ code: 'plugin_collection_value_invalid', message: 'Delivery row violates its declared Collection schema.' });
+      }
+      return persist(value, input);
+    };
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
     const signal = new AbortController().signal;
     const store = createConversationOutwardDeliveryCollectionStore({
@@ -970,10 +1040,15 @@ describe('Channels control-response outward custody', () => {
       await expect(reconcileConversationOutwardDeliveryAttemptThroughProviderAction({
         stateCollection: state as never, targetedContributions: targetedProviderDeliveryContributions(),
         actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never, store, record: claimed.record,
-        recoveryAttemptId: 'recovery', staleAfterMs: 10, now: () => 100, signal,
+        now: () => 100, signal,
       })).resolves.toMatchObject({ kind: 'settled', custody: { state: 'outcomeUnknown', attemptCount: 1 } });
       const recovered = await store.lookup(request);
       if (recovered.kind !== 'rejoined') throw new Error('Expected retained attempted custody');
+      expect(recovered.record.custody).toMatchObject({ state: 'outcomeUnknown' });
+      expect(recovered.record.custody).not.toHaveProperty('attemptId');
+      expect(deliveries.rows.get(recovered.record.custodyId)?.value).toMatchObject({
+        payload: { state: 'outcomeUnknown', attemptId: null },
+      });
       await redriveConversationOutwardDeliveryThroughProviderAction({
         stateCollection: state as never, targetedContributions: targetedProviderDeliveryContributions(),
         actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never, store, record: recovered.record,
@@ -1049,6 +1124,8 @@ describe('Channels control-response outward custody', () => {
     { name: 'delivered', secondOutcome: 'delivered', body: '😀'.repeat(70_000), sizes: [65_536, 4_464] },
     { name: 'refused', secondOutcome: 'notDelivered', body: '😀'.repeat(70_000), sizes: [65_536, 4_464] },
     { name: 'unknown', secondOutcome: 'outcomeUnknown', body: '😀'.repeat(70_000), sizes: [65_536, 4_464] },
+    { name: 'host refuses handler', secondOutcome: 'hostRefused', body: '😀'.repeat(70_000), sizes: [65_536, 4_464] },
+    { name: 'host invocation fails', secondOutcome: 'hostFailed', body: '😀'.repeat(70_000), sizes: [65_536, 4_464] },
     { name: 'grapheme boundary', secondOutcome: 'delivered',
       body: `${'x'.repeat(65_535)}👩‍💻${'x'.repeat(4_462)}`, sizes: [65_535, 4_465] },
   ] as const)(
@@ -1075,6 +1152,8 @@ describe('Channels control-response outward custody', () => {
     ) => {
       comments.push(input.content.text);
       if (comments.length === 2 && secondOutcome !== 'delivered') {
+        if (secondOutcome === 'hostRefused') throw createPluginActionHandlerUnavailableFixture();
+        if (secondOutcome === 'hostFailed') throw new Error('Provider invocation failed after admission');
         return { result: secondOutcome === 'notDelivered'
           ? { kind: 'notDelivered', retry: 'safe' }
           : { kind: 'outcomeUnknown' }, executionOrigin: providerTransportOrigin };
@@ -1088,7 +1167,7 @@ describe('Channels control-response outward custody', () => {
       signal: new AbortController().signal,
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never,
     })).resolves.toMatchObject({ kind: 'settled', custody: { state: secondOutcome === 'delivered'
-      ? 'delivered' : secondOutcome === 'notDelivered' ? 'partial' : 'outcomeUnknown',
+      ? 'delivered' : secondOutcome === 'notDelivered' || secondOutcome === 'hostRefused' ? 'partial' : 'outcomeUnknown',
       providerMessageIds: secondOutcome === 'delivered' ? ['comment-1', 'comment-2'] : ['comment-1'],
     } });
     expect(comments.map(comment => [...comment].length)).toEqual(sizes);
@@ -1100,6 +1179,75 @@ describe('Channels control-response outward custody', () => {
       input.chunkIndex)).toEqual([0, 1]);
     expect(store.rows.size).toBe(1);
   });
+
+  it.each(['delivered', 'notDelivered', 'outcomeUnknown', 'authorityLost', 'missingEndpoint', 'wrongEndpoint'] as const)(
+    'retains the created endpoint across split conversation starts (%s)', async outcome => {
+      const state = new MemoryAccountCollection();
+      const connection = providerConnectionRow();
+      await state.put({ ...connection, payload: { ...connection.payload,
+        outboundTextLimit: { maximum: 2, unit: 'unicodeCodePoints' },
+      } }, { expectedRevision: 'absent' });
+      const router = { id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1', 'binding-id': 'binding-1',
+        payload: { authorityEpoch: 7, enabled: true, deletionState: 'none', endpoint,
+          allowedPrincipalIds: ['principal-1'],
+          target: { kind: 'threadRouter', principalGroups: [{ id: 'brief', principalIds: ['principal-1'] }], routes: [] },
+          linkPreviewPolicy: 'suppress' } };
+      await state.put(router, { expectedRevision: 'absent' });
+      const existing = sessionProjectionRecord();
+      const record: ConversationOutwardDeliveryRecord = { ...existing,
+        obligation: { ...existing.obligation,
+          source: { kind: 'conversationStart', sessionId: 'session-1', requestId: 'start-request' },
+          newThread: { recipients: ['principal-1'], subject: 'Brief' }, content: { text: 'abcdef' },
+        }, custody: { state: 'ready', attemptCount: 0, providerMessageIds: [], threadBindingPending: true },
+      };
+      const store = new MemoryDeliveryStore();
+      store.rows.set(record.custodyId, record);
+      const createdEndpoint = { kind: 'thread', audience: 'shared', id: 'created-thread', parentId: endpoint.id } as const;
+      const sends: ConversationDeliveryInputV1[] = [];
+      const result = await redriveConversationOutwardDeliveryThroughProviderAction({
+        stateCollection: state as never, targetedContributions: targetedProviderDeliveryContributions(),
+        store, record, attemptId: 'split-start', now: () => 100, signal: new AbortController().signal,
+        // External provider Action boundary. Canonical currentness, splitting and custody remain real.
+        actions: { async executeAdmittedTargetedOperationWithExecutionOrigin(_operation: unknown, value: unknown) {
+          const request = ConversationDeliveryInputV1Schema.parse(value);
+          sends.push(request);
+          if (sends.length === 1) {
+            if (outcome === 'authorityLost') await state.put({ ...router, payload: { ...router.payload, enabled: false } }, { expectedRevision: 1 });
+            return { result: { kind: 'delivered', providerMessageIds: ['message-1'],
+              ...(outcome === 'missingEndpoint' ? {} : { endpoint: outcome === 'wrongEndpoint'
+                ? { ...createdEndpoint, parentId: 'foreign-parent' } : createdEndpoint }),
+            }, executionOrigin: providerTransportOrigin };
+          }
+          return { result: sends.length === 2 && outcome === 'notDelivered'
+            ? { kind: 'notDelivered', retry: 'safe' }
+            : sends.length === 2 && outcome === 'outcomeUnknown' ? { kind: 'outcomeUnknown' }
+            : { kind: 'delivered', providerMessageIds: [`message-${sends.length}`] }, executionOrigin: providerTransportOrigin };
+        } } as never,
+      });
+      const invalidEndpoint = outcome === 'missingEndpoint' || outcome === 'wrongEndpoint';
+      const completed = outcome === 'delivered' || outcome === 'authorityLost';
+      const acceptedIds = completed ? ['message-1', 'message-2', 'message-3'] : ['message-1'];
+      expect(result).toMatchObject({ kind: 'settled', custody: {
+        state: completed ? 'delivered' : 'outcomeUnknown', providerMessageIds: acceptedIds,
+        ...(invalidEndpoint ? {} : { endpoint: createdEndpoint }),
+      } });
+      if (result.kind !== 'settled') throw new Error('Expected settled custody');
+      if (invalidEndpoint) expect(result.custody.endpoint).toBeUndefined();
+      expect(sends).toHaveLength(completed ? 3 : outcome === 'notDelivered' || outcome === 'outcomeUnknown' ? 2 : 1);
+      expect(sends.filter(request => request.newThread !== undefined)).toHaveLength(1);
+      expect(sends[0]?.endpoint).toEqual(endpoint);
+      expect(sends.slice(1).every(request => JSON.stringify(request.endpoint) === JSON.stringify(createdEndpoint))).toBe(true);
+      // Replay of either an accepted start or an ambiguous partial start must not create again.
+      await redriveConversationOutwardDeliveryThroughProviderAction({
+        stateCollection: state as never, targetedContributions: targetedProviderDeliveryContributions(), store,
+        record: store.rows.get(record.custodyId)!, attemptId: 'must-not-resend', now: () => 101,
+        signal: new AbortController().signal, actions: { async executeAdmittedTargetedOperationWithExecutionOrigin() {
+          throw new Error('A settled start must not be resent');
+        } } as never,
+      });
+      expect(store.rows.size).toBe(1);
+    },
+  );
 
   it.each([
     { name: 'paragraph before word', maximum: 20, body: 'alpha\n\nbeta gamma delta', expected: ['alpha\n\n', 'beta gamma delta'] },
@@ -1143,7 +1291,7 @@ describe('Channels control-response outward custody', () => {
       } } as never,
     });
     if (refused) {
-      expect(result).toMatchObject({ kind: 'settled', custody: { state: 'notDelivered' } });
+      expect(result).toMatchObject({ kind: 'settled', custody: { state: 'notSent', reason: 'providerRefused' } });
       expect(sends).toEqual([]);
       return;
     }
@@ -1169,8 +1317,8 @@ describe('Channels control-response outward custody', () => {
     }
   });
 
-  it.each(['paused', 'target changed', 'epoch changed', 'unavailable', 'provider retired', 'provider unavailable'] as const)(
-    'retains partial delivery attention when authority is %s between native chunks', async change => {
+  it.each(['paused', 'connection disabled', 'target changed', 'projection delivery mode changed', 'unavailable', 'provider retired', 'provider unavailable'] as const)(
+    'finishes the claimed send and rechecks the next delivery when authority is %s between native chunks', async change => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
     const connection = providerConnectionRow();
@@ -1189,12 +1337,18 @@ describe('Channels control-response outward custody', () => {
     const request = { ...sessionProjectionRecord().obligation, content: { text: 'abcdef' } };
     const created = await store.ensure(request);
     if (created.kind !== 'created') throw new Error('Expected ready custody');
+    const nextRequest = { ...request, source: {
+      kind: 'sessionProjection' as const, sessionId: 'session-1', semanticItemId: 'semantic-next',
+    }, deliveryKey: 'channels:delivery:v1:next-projection' };
+    const nextCreated = await store.ensure(nextRequest);
+    if (nextCreated.kind !== 'created') throw new Error('Expected next ready custody');
     const comments: string[] = [];
     const get = state.get.bind(state);
-    let unavailable = change === 'unavailable';
+    let claimedSendPending = true;
+    let ownerReadsAfterFirstChunk = 0;
     const read = vi.spyOn(state, 'get').mockImplementation(async rowId => {
-      if (unavailable && comments.length > 0) {
-        unavailable = false;
+      if (comments.length > 0 && claimedSendPending) ownerReadsAfterFirstChunk++;
+      if (rowId === 'binding-1' && change === 'unavailable' && comments.length > 0) {
         throw new Error('Account transport disconnected');
       }
       return await get(rowId);
@@ -1207,40 +1361,104 @@ describe('Channels control-response outward custody', () => {
     ) => {
       const input = ConversationDeliveryInputV1Schema.parse(value);
       comments.push(input.content.text);
-      if (comments.length === 1 && (change === 'paused' || change === 'target changed' || change === 'epoch changed')) {
+      if (comments.length === 3) claimedSendPending = false;
+      if (comments.length === 1 && change === 'connection disabled') {
+        await state.put({ ...connection, payload: { ...connection.payload, enabled: false,
+          outboundTextLimit: { maximum: 2, unit: 'unicodeCodePoints' },
+        } }, { expectedRevision: 1 });
+      }
+      if (comments.length === 1 && (change === 'paused' || change === 'target changed' || change === 'projection delivery mode changed')) {
         await state.put({ ...binding.value, payload: {
-          authorityEpoch: change === 'epoch changed' ? 8 : 7,
+          authorityEpoch: change === 'projection delivery mode changed' ? 8 : 7,
           enabled: change !== 'paused', deletionState: 'none', endpoint,
-          target: change === 'target changed' ? { ...sessionTarget, sessionId: 'session-2' } : sessionTarget,
+          target: change === 'target changed' ? { ...sessionTarget, sessionId: 'session-2' }
+            : change === 'projection delivery mode changed'
+              ? { ...sessionTarget, policy: { ...sessionTarget.policy, deliveryMode: 'repliesOnly' } }
+              : sessionTarget,
           linkPreviewPolicy: 'suppress',
         } }, { expectedRevision: binding.revision });
       }
       return { result: { kind: 'delivered', providerMessageIds: [`comment-${comments.length}`] },
         executionOrigin: providerTransportOrigin };
     };
-    const result = await redriveConversationOutwardDeliveryThroughProviderAction({
+    const targetedContributions = targetedProviderDeliveryContributions(() => comments.length === 0 ? 'current'
+      : change === 'provider retired' ? 'missing' : change === 'provider unavailable' ? 'unavailable' : 'current');
+    const delivery = {
       stateCollection: state as never,
-      targetedContributions: targetedProviderDeliveryContributions(() => comments.length === 0 ? 'current'
-        : change === 'provider retired' ? 'missing' : change === 'provider unavailable' ? 'unavailable' : 'current'),
-      store, record: created.record, attemptId: 'authority-change-between-chunks', now: () => 100, signal,
+      targetedContributions, store, now: () => 100, signal,
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never,
-    });
-    read.mockRestore();
-    expect(result).toMatchObject({ kind: 'settled', custody: {
-      state: 'partial', attemptCount: 1, providerMessageIds: ['comment-1'], failedChunk: 1,
-    } });
-    expect(comments).toEqual(['ab']);
+    };
+    try {
+      const result = await redriveConversationOutwardDeliveryThroughProviderAction({
+        ...delivery, record: created.record, attemptId: 'authority-change-between-chunks',
+      });
+      claimedSendPending = false;
+      expect(result).toMatchObject({ kind: 'settled', custody: {
+        state: 'delivered', attemptCount: 1, providerMessageIds: ['comment-1', 'comment-2', 'comment-3'],
+      } });
+      expect(comments).toEqual(['ab', 'cd', 'ef']);
+      expect(read.mock.calls.filter(([id]) => id === 'connection-1')).toHaveLength(1);
+      expect(read.mock.calls.filter(([id]) => id === 'binding-1')).toHaveLength(1);
+      expect(ownerReadsAfterFirstChunk).toBe(0);
+      await expect(redriveConversationOutwardDeliveryThroughProviderAction({
+        ...delivery, record: nextCreated.record, attemptId: 'next-natural-delivery-boundary',
+      })).resolves.toMatchObject({ kind: change === 'unavailable' || change === 'provider unavailable' ? 'settled' : 'suppressed', custody: {
+        state: change === 'unavailable' || change === 'provider unavailable' ? 'retryDue' : 'notSent',
+        providerMessageIds: [],
+      } });
+      expect(comments).toEqual(['ab', 'cd', 'ef']);
+    } finally {
+      read.mockRestore();
+    }
     await expect(store.lookup(request)).resolves.toMatchObject({ kind: 'rejoined', record: { custody: {
-      state: 'partial', providerMessageIds: ['comment-1'], failedChunk: 1,
+      state: 'delivered', providerMessageIds: ['comment-1', 'comment-2', 'comment-3'],
     } } });
-    const attention = await readConversationOutwardDeliveryConnectionAttention({
-      deliveriesCollection: deliveries as never, connectionIds: ['connection-1'], signal,
+  });
+
+  it.each([true, false])('checks the current conversation-start recipients at claim (recipient allowed: %s)', async allowed => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const principals = allowed ? ['principal-1'] : ['principal-2'];
+    await state.put({
+      id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1', 'binding-id': 'binding-1',
+      payload: { authorityEpoch: 7, enabled: true, deletionState: 'none', endpoint,
+        allowedPrincipalIds: principals,
+        target: { kind: 'threadRouter', principalGroups: [{ id: 'brief', principalIds: principals }], routes: [] },
+        linkPreviewPolicy: 'suppress' },
+    }, { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never, deliveriesCollection: deliveries as never, signal, now: () => 100,
     });
-    expect(attention.kind).toBe('ready');
-    if (attention.kind !== 'ready') throw new Error('Expected delivery attention');
-    expect(attention.attentionByConnection.get('connection-1')).toMatchObject({
-      partial: true, retryDue: false, outcomeUnknown: false,
-    });
+    const request: ConversationOutwardDeliveryObligation = {
+      ...sessionProjectionRecord().obligation,
+      content: { text: 'Recipient brief.' },
+      routeAuthority: {},
+      source: { kind: 'conversationStart', sessionId: 'session-1', requestId: 'recipient-policy' },
+      newThread: { recipients: ['principal-1'], subject: 'Brief' },
+    };
+    const ready = await store.ensure(request);
+    if (ready.kind !== 'created') throw new Error('Expected ready conversation-start custody');
+    const reads = vi.spyOn(state, 'get');
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: { kind: 'delivered', providerMessageIds: ['native-1'],
+        endpoint: { kind: 'thread', audience: 'shared', id: 'child', parentId: endpoint.id } },
+      executionOrigin: providerTransportOrigin,
+    }));
+    try {
+      const result = await redriveConversationOutwardDeliveryThroughProviderAction({
+        stateCollection: state as never, targetedContributions: targetedProviderDeliveryContributions(),
+        actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never,
+        store, record: ready.record, attemptId: 'recipient-claim', now: () => 100, signal,
+      });
+      expect(result).toMatchObject(allowed
+        ? { kind: 'settled', custody: { state: 'delivered' } }
+        : { kind: 'suppressed', reason: 'audienceChanged', custody: { state: 'notSent' } });
+      expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      expect(reads.mock.calls.filter(([id]) => id === 'connection-1')).toHaveLength(1);
+      expect(reads.mock.calls.filter(([id]) => id === 'binding-1')).toHaveLength(1);
+    } finally { reads.mockRestore(); }
   });
 
   it('stops at the refused first native chunk while retaining the complete custody body', async () => {
@@ -1296,7 +1514,8 @@ describe('Channels control-response outward custody', () => {
       attemptSettlement: { custodyId: record.custodyId, operation: 'deliver',
         providerResult: { kind: 'notDelivered', retry: 'never' } },
       custody: {
-        state: 'notDelivered',
+        state: 'notSent',
+        reason: 'providerRefused',
         attemptCount: 1,
         providerMessageIds: [],
       },
@@ -1309,23 +1528,26 @@ describe('Channels control-response outward custody', () => {
     expect(store.rows.get(record.custodyId)?.obligation.content?.text).toBe('x'.repeat(65));
   });
 
-  it('constructs new Session projection custody from the canonical binding and its opaque delivery identity', async () => {
+  it('constructs Session projection custody after a harmless binding edit and checks policy once at claim', async () => {
     const state = new MemoryAccountCollection();
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
-    await state.put({
+    const bindingPayload = {
+      authorityEpoch: 7,
+      enabled: true,
+      deletionState: 'none',
+      endpoint,
+      target: sessionTarget,
+      linkPreviewPolicy: 'suppress',
+    };
+    const binding = await state.put({
       id: 'binding-1',
       'record-kind': 'binding',
       'connection-id': 'connection-1',
       'binding-id': 'binding-1',
-      payload: {
-        authorityEpoch: 7,
-        enabled: true,
-        deletionState: 'none',
-        endpoint,
-        target: sessionTarget,
-        linkPreviewPolicy: 'suppress',
-      },
+      payload: bindingPayload,
     }, { expectedRevision: 'absent' });
+    await state.put({ ...binding.value, payload: { ...bindingPayload, linkPreviewPolicy: 'providerDefault' } },
+      { expectedRevision: binding.revision });
     const frontier = await state.put(createConversationSessionProjectionFrontierRow({
       bindingId: 'binding-1', targetSessionId: 'session-1', transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0,
     }), { expectedRevision: 'absent' });
@@ -1373,12 +1595,8 @@ describe('Channels control-response outward custody', () => {
         sessionId: 'session-1',
         semanticItemId: 'semantic-2',
       },
-      routeAuthority: {
-        connectionAuthorityEpoch: 4,
-        bindingRevision: 1,
-        bindingAuthorityEpoch: 7,
-      },
-      linkPreviewPolicy: 'suppress',
+      routeAuthority: {},
+      linkPreviewPolicy: 'providerDefault',
     });
   });
 
@@ -1406,7 +1624,7 @@ describe('Channels control-response outward custody', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'lost-attempt-1',
-        startedAt: 1,
+
         providerMessageIds: [],
       },
     };
@@ -1426,8 +1644,6 @@ describe('Channels control-response outward custody', () => {
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as never,
       store,
       record,
-      recoveryAttemptId: 'recovery-attempt-1',
-      staleAfterMs: 10,
       now: () => 100,
       signal: new AbortController().signal,
     })).resolves.toMatchObject({
@@ -1538,10 +1754,7 @@ describe('Channels control-response outward custody', () => {
       } as const;
       if (options.expectedExecutionRouting === undefined
         || !arePluginMachineExecutionRoutingsEqual(options.expectedExecutionRouting, getPluginMachineExecutionRouting(currentExecutionOrigin))) {
-        throw createPluginActionHandlerNotStartedError({
-          code: 'plugin_action_handler_missing',
-          message: 'No committed target handler exists',
-        });
+        throw createPluginActionHandlerUnavailableFixture();
       }
       return {
         result: await providerHandler(),
@@ -1650,7 +1863,7 @@ describe('Channels control-response outward custody', () => {
     })).resolves.toMatchObject({
       kind: 'suppressed',
       reason: 'targetChanged',
-      custody: { state: 'suppressed' },
+      custody: { state: 'notSent', reason: 'policySuppressed' },
     });
 
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
@@ -1666,7 +1879,7 @@ describe('Channels control-response outward custody', () => {
       endpoint,
       content: { text: 'Your pairing request is ready.' },
       deliveryKey: 'pairing:pairing-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     } as unknown as ConversationOutwardDeliveryObligation;
 
@@ -1712,7 +1925,7 @@ describe('Channels control-response outward custody', () => {
       endpoint,
       content: { text: 'The Automation completed.' },
       deliveryKey: 'automation:result-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     } as unknown as ConversationOutwardDeliveryObligation;
 
@@ -1780,15 +1993,14 @@ describe('Channels control-response outward custody', () => {
         routeAuthority: projected.routeAuthority,
         endpoint,
         content: projected.content,
-        contentFingerprint: null,
         deliveryKey: projected.deliveryKey,
         replyContext: null,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
         state: 'ready',
         attemptCount: 0,
         attemptId: null,
-        startedAt: null,
+
         providerMessageIds: [],
         failedChunk: null,
         archiveRecovery: null,
@@ -1809,7 +2021,7 @@ describe('Channels control-response outward custody', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'attempt-1',
-        startedAt: 101,
+
         providerMessageIds: [],
       },
     });
@@ -1821,13 +2033,12 @@ describe('Channels control-response outward custody', () => {
           state: 'attempting',
           attemptCount: 1,
           attemptId: 'attempt-1',
-          startedAt: 101,
         },
       },
     });
   });
 
-  it('compacts a non-attention terminal body in the custody CAS while preserving exact idempotency', async () => {
+  it('compacts a non-attention terminal body in the custody CAS while preserving delivery identity', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
@@ -1876,7 +2087,6 @@ describe('Channels control-response outward custody', () => {
       payload: {
         state: 'delivered',
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
       },
     });
     expect(JSON.stringify(stored?.value)).not.toContain(projected.content.text);
@@ -1896,7 +2106,9 @@ describe('Channels control-response outward custody', () => {
       deliver,
     })).resolves.toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
     await expect(store.ensure({ ...projected, content: { text: 'different retained body' } }))
-      .resolves.toEqual({ kind: 'conflict' });
+      .resolves.toMatchObject({ kind: 'rejoined', record: {
+        custodyId: stored.rowId, revision: stored.revision, custody: { state: 'delivered' },
+      } });
     expect(providerCalls).toBe(1);
   });
 
@@ -1943,7 +2155,6 @@ describe('Channels control-response outward custody', () => {
       payload: {
         state: 'partial',
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
         providerMessageIds: ['provider-message-1'],
         failedChunk: 2,
       },
@@ -1996,7 +2207,7 @@ describe('Channels control-response outward custody', () => {
       linkPreviewPolicy: 'providerDefault',
       routeAuthority: {
         connectionAuthorityEpoch: projected.routeAuthority.connectionAuthorityEpoch,
-        bindingRevision: projected.routeAuthority.bindingRevision + 1,
+        bindingRevision: (projected.routeAuthority.bindingRevision ?? 0) + 1,
         bindingAuthorityEpoch: projected.routeAuthority.bindingAuthorityEpoch,
       },
     };
@@ -2034,7 +2245,7 @@ describe('Channels control-response outward custody', () => {
       linkPreviewPolicy: 'providerDefault',
       routeAuthority: {
         connectionAuthorityEpoch: live.routeAuthority.connectionAuthorityEpoch,
-        bindingRevision: live.routeAuthority.bindingRevision + 1,
+        bindingRevision: (live.routeAuthority.bindingRevision ?? 0) + 1,
         bindingAuthorityEpoch: live.routeAuthority.bindingAuthorityEpoch,
       },
     })).resolves.toEqual({ kind: 'conflict' });
@@ -2468,7 +2679,6 @@ describe('Channels control-response outward custody', () => {
       payload: {
         state: 'partial',
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
         providerMessageIds: ['provider-message-private'],
         failedChunk: 1,
       },
@@ -2510,9 +2720,9 @@ describe('Channels control-response outward custody', () => {
       terminal: true,
       'updated-at': 200,
       payload: {
-        state: 'resolvedAccepted',
+        state: 'resolved',
+        outcome: 'accepted',
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
         providerMessageIds: ['provider-message-private'],
         failedChunk: 1,
       },
@@ -2552,9 +2762,9 @@ describe('Channels control-response outward custody', () => {
     expect(deliveries.rows.get(unknown.record.custodyId)?.value).toMatchObject({
       attention: false,
       payload: {
-        state: 'resolvedDiscarded',
+        state: 'resolved',
+        outcome: 'discarded',
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
       },
     });
 
@@ -2589,7 +2799,7 @@ describe('Channels control-response outward custody', () => {
     });
   });
 
-  it('offers and performs owner-led archive recovery through the one custody transition owner', async () => {
+  it('reads retained archive evidence without reopening the delivery', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
@@ -2643,7 +2853,7 @@ describe('Channels control-response outward custody', () => {
       payload: {
         state: 'notDelivered',
         archiveRecovery: 'unarchiveAndRetry',
-        content: { text: 'Archived destination delivery body.' },
+        content: null,
       },
     });
     expect(plainStored).toMatchObject({
@@ -2651,7 +2861,6 @@ describe('Channels control-response outward custody', () => {
         state: 'notDelivered',
         archiveRecovery: null,
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
       },
     });
     expect(isValidPluginJsonSchemaValue(validateDeliveryRow, archivedStored)).toBe(true);
@@ -2683,8 +2892,7 @@ describe('Channels control-response outward custody', () => {
         revision: archived.record.revision, createdAt: archived.record.createdAt,
         state: 'archiveRecoverable',
         acceptedPartCount: 0,
-        recommendedRecovery: { action: { pluginId: 'happier.channels', localId: 'delivery/resolve-v1' },
-          input: { custodyId: recoverable.record.custodyId, expectedRevision: archived.record.revision, resolution: 'retryAfterUnarchive' }, reason: 'endpointArchived' },
+        recommendedRecovery: null,
       }],
     });
 
@@ -2693,15 +2901,10 @@ describe('Channels control-response outward custody', () => {
       deliveriesCollection: deliveries as never,
       custodyId: recoverable.record.custodyId,
       expectedRevision: archived.record.revision,
-      resolution: 'retryAfterUnarchive',
+      resolution: 'accepted',
       signal,
       now: () => 500,
-    })).resolves.toEqual({
-      kind: 'resolved',
-      custodyId: recoverable.record.custodyId,
-      revision: archived.record.revision + 1,
-      resolution: 'retryAfterUnarchive',
-    });
+    })).rejects.toMatchObject({ code: 'channels_delivery_resolve_not_resolvable' });
     // The reopened obligation returns to the ordinary due scan, so the existing
     // supervisor sends it again with no new owner.
     const scanner = createConversationOutwardDeliveryCollectionScanner({
@@ -2710,17 +2913,14 @@ describe('Channels control-response outward custody', () => {
     });
     const rescanned = await scanner.scan({ now: 600, limit: 10 });
     if (rescanned.kind !== 'ready') throw new Error('Expected a canonical delivery scan.');
-    expect(rescanned.records).toEqual([expect.objectContaining({
-      custodyId: recoverable.record.custodyId,
-      custody: expect.objectContaining({ state: 'ready' }),
-    })]);
+    expect(rescanned.records).toEqual([]);
 
     await expect(resolveConversationOutwardDeliveryCustodyInAccountCollection({
       stateCollection: state as never,
       deliveriesCollection: deliveries as never,
       custodyId: refused.record.custodyId,
       expectedRevision: plain.record.revision,
-      resolution: 'retryAfterUnarchive',
+      resolution: 'accepted',
       signal,
     })).rejects.toMatchObject({ code: 'channels_delivery_resolve_not_resolvable' });
   });
@@ -2765,7 +2965,6 @@ describe('Channels control-response outward custody', () => {
         state: 'notDelivered',
         archiveRecovery: 'ownerMustUnarchiveOrRebind',
         content: null,
-        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
       },
     });
     expect(JSON.stringify(stored)).not.toContain('A delivery body only rebinding can replace.');
@@ -2774,9 +2973,8 @@ describe('Channels control-response outward custody', () => {
     // settlement can never commit.
     const validateDeliveryRow = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
     expect(isValidPluginJsonSchemaValue(validateDeliveryRow, stored)).toBe(true);
-    // The recoverable arm still requires its body: the same compiled schema
-    // refuses a body-free row an owner could still unarchive and resend, so
-    // the body-free predicate cannot silently drop retry input.
+    // Retained archive hints remain readable even after body compaction;
+    // neither historical hint can reopen this terminal delivery.
     if (stored === undefined) throw new Error('Expected the settled custody row.');
     const storedPayload = stored.payload;
     if (storedPayload === null || Array.isArray(storedPayload) || typeof storedPayload !== 'object') {
@@ -2785,7 +2983,7 @@ describe('Channels control-response outward custody', () => {
     expect(isValidPluginJsonSchemaValue(validateDeliveryRow, {
       ...stored,
       payload: { ...storedPayload, archiveRecovery: 'unarchiveAndRetry' },
-    })).toBe(false);
+    })).toBe(true);
   });
 
   it('preserves exact opaque custody IDs across connection, binding, and closed source arms', async () => {
@@ -2803,7 +3001,7 @@ describe('Channels control-response outward custody', () => {
           endpoint,
           content: { text: 'Your pairing request is ready.' },
           deliveryKey: 'control:connection',
-          mentionPolicy: 'suppress',
+
           linkPreviewPolicy: 'suppress',
         },
         expectedCustodyId: 'nb9mAR3GL5O-YiIW5YggljJk_lM7nGUDsjXLwiUjtqg',
@@ -3116,7 +3314,7 @@ describe('Channels control-response outward custody', () => {
       endpoint,
       content: { text: 'Your pairing request is ready.' },
       deliveryKey: 'pairing:pairing-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     };
 
@@ -3134,7 +3332,7 @@ describe('Channels control-response outward custody', () => {
       stateCollection: state as never,
       signal,
       obligation: connectionOnly,
-    })).resolves.toEqual({ kind: 'suppressed', reason: 'staleAuthority' });
+    })).resolves.toMatchObject({ kind: 'ready' });
   });
 
   it('fails closed before provider I/O when the current transport origin is not canonical', async () => {
@@ -3166,7 +3364,7 @@ describe('Channels control-response outward custody', () => {
       endpoint,
       content: { text: 'Your pairing request is ready.' },
       deliveryKey: 'pairing:pairing-origin-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     };
     let providerCalls = 0;
@@ -3210,7 +3408,7 @@ describe('Channels control-response outward custody', () => {
       endpoint,
       content: { text: 'Your pairing request is ready.' },
       deliveryKey: 'pairing:malformed-connection',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     };
     const record: ConversationOutwardDeliveryRecord = {
@@ -3242,7 +3440,7 @@ describe('Channels control-response outward custody', () => {
     })).resolves.toMatchObject({
       kind: 'suppressed',
       reason: 'currentnessUnavailable',
-      custody: { state: 'suppressed' },
+      custody: { state: 'notSent', reason: 'policySuppressed' },
     });
 
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
@@ -3296,7 +3494,7 @@ describe('Channels control-response outward custody', () => {
       content: { text: 'The Automation completed.' },
       deliveryKey: `automation:${resultId}`,
       replyContext: { replyToMessageId: 'message-1' },
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     });
     const firstStore = createConversationOutwardDeliveryCollectionStore({
@@ -3328,7 +3526,7 @@ describe('Channels control-response outward custody', () => {
       stateCollection: state as never,
       signal,
       obligation: obligationFor('handoff-ready-revision'),
-    })).resolves.toEqual({ kind: 'suppressed', reason: 'staleAuthority' });
+    })).resolves.toMatchObject({ kind: 'ready' });
     const restartedStore = createConversationOutwardDeliveryCollectionStore({
       stateCollection: state as never,
       deliveriesCollection: deliveries as never,
@@ -3405,7 +3603,7 @@ describe('Channels control-response outward custody', () => {
     await expect(restartedAuthority.checkCurrentness({
       record: authorityChanged.record,
       signal,
-    })).resolves.toEqual({ kind: 'suppressed', reason: 'staleAuthority' });
+    })).resolves.toEqual({ kind: 'current' });
   });
 
   it('uses the one custody path for a canonical Session projection source', async () => {
@@ -3542,56 +3740,82 @@ describe('Channels control-response outward custody', () => {
       'ensure',
       'cas:attempting',
       'currentness:connectionDisabled',
-      'cas:suppressed',
+      'cas:notSent',
     ]);
     expect(result).toEqual({
       kind: 'suppressed',
       reason: 'connectionDisabled',
       custody: {
-        state: 'suppressed',
+        state: 'notSent',
+        reason: 'policySuppressed',
         attemptCount: 1,
         providerMessageIds: [],
       },
     });
   });
 
-  it('settles cancellation that wins after the currentness read without crossing provider I/O', async () => {
-    const store = new MemoryDeliveryStore();
+  it.each(['currentness', 'providerAdmission'] as const)('returns a pre-I/O cancellation at %s to ready and delivers once in the next generation', async (boundary) => {
+    const state = new MemoryAccountCollection();
     const abort = new AbortController();
+    let abortAfterClaim = boundary === 'currentness';
+    const deliveries = new class extends MemoryAccountCollection {
+      override async put(value: Record<string, JsonValue>, options: Parameters<MemoryAccountCollection['put']>[1]) {
+        const stored = await super.put(value, options);
+        const payload = value.payload;
+        if (abortAfterClaim && payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+          && 'state' in payload && payload.state === 'attempting') {
+          abortAfterClaim = false;
+          abort.abort();
+        }
+        return stored;
+      }
+    }();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    await state.put({ id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1', 'binding-id': 'binding-1',
+      payload: { authorityEpoch: 7, enabled: true, deletionState: 'none', endpoint, target: sessionTarget,
+        linkPreviewPolicy: 'suppress' } }, { expectedRevision: 'absent' });
+    const storeFor = (signal: AbortSignal) => createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never, deliveriesCollection: deliveries as never, signal, now: () => 100,
+    });
     let providerCalls = 0;
 
     const result = await deliverConversationOutwardDelivery({
-      store,
+      store: storeFor(abort.signal),
       obligation: obligation(),
       attemptId: 'attempt-1',
       now: () => 100,
-      ...currentAuthority(),
       signal: abort.signal,
-      authority: {
-        checkCurrentness: async () => {
-          store.events.push('currentness:current');
-          abort.abort();
-          return { kind: 'current' };
-        },
-      },
+      authority: createConversationOutwardDeliveryCollectionAuthority({ stateCollection: state as never }),
       deliver: async () => {
+        if (boundary === 'providerAdmission') {
+          return { kind: 'suppressedBeforeProviderEffect', reason: 'cancelled' };
+        }
         providerCalls += 1;
         return { kind: 'delivered', providerMessageIds: ['must-not-exist'] };
       },
     });
 
     expect(result).toMatchObject({
-      kind: 'suppressed',
+      kind: 'notAttempted',
       reason: 'cancelled',
-      custody: { state: 'suppressed' },
     });
-    expect(store.events).toEqual([
-      'ensure',
-      'cas:attempting',
-      'currentness:current',
-      'cas:suppressed',
-    ]);
     expect(providerCalls).toBe(0);
+    const store = storeFor(new AbortController().signal);
+    await expect(store.lookup(obligation())).resolves.toMatchObject({ kind: 'rejoined', record: { custody: { state: 'ready' } } });
+    const nextGeneration = {
+      store, obligation: obligation(), attemptId: 'attempt-2', now: () => 200,
+      ...currentAuthority(),
+      authority: createConversationOutwardDeliveryCollectionAuthority({ stateCollection: state as never }),
+      deliver: async () => {
+        providerCalls += 1;
+        return { kind: 'delivered' as const, providerMessageIds: ['provider-message-1'] };
+      },
+    };
+    await expect(deliverConversationOutwardDelivery(nextGeneration))
+      .resolves.toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
+    await expect(deliverConversationOutwardDelivery({ ...nextGeneration, attemptId: 'attempt-3' }))
+      .resolves.toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
+    expect(providerCalls).toBe(1);
   });
 
   it.each([true, false])('durably creates the canonical obligation and wins CAS before provider I/O (native limit: %s)', async (hasNativeLimit) => {

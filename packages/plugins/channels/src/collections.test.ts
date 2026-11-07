@@ -433,8 +433,8 @@ describe('Channels collection declarations', () => {
     const before = JSON.stringify(retained);
     const migration = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find((edge) => edge.fromSchemaVersion === 2);
     expect(migration).toMatchObject({ toSchemaVersion: 3 });
-    expect(CHANNEL_DELIVERIES_COLLECTION.schemaVersion).toBe(5);
-    expect(CHANNEL_DELIVERIES_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4]);
+    expect(CHANNEL_DELIVERIES_COLLECTION.schemaVersion).toBe(6);
+    expect(CHANNEL_DELIVERIES_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5]);
     const migrated = await migration?.migrate(retained, { currentRevision: 1 });
     expect(migrated).toEqual({ ...retained, payload: {
       ...(retained.payload as Readonly<Record<string, JsonValue>>), content: fixture.targetContent,
@@ -455,8 +455,11 @@ describe('Channels collection declarations', () => {
     const contraction = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find(edge => edge.fromSchemaVersion === 4);
     expect(contraction).toMatchObject({ toSchemaVersion: 5 });
     if (!contraction) throw new Error('Missing retained delivery dead-field migration');
+    const retentionIndex = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find(edge => edge.fromSchemaVersion === 5);
+    expect(retentionIndex).toMatchObject({ toSchemaVersion: 6 });
+    if (!retentionIndex) throw new Error('Missing delivery retention index migration');
     const declared = CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS.find(collection => collection.id === 'channel-deliveries');
-    expect(declared).toMatchObject({ schemaVersion: 5, readableSchemaVersions: [1, 2, 3, 4] });
+    expect(declared).toMatchObject({ schemaVersion: 6, readableSchemaVersions: [1, 2, 3, 4, 5] });
     const validate = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
     const base = { attemptCount: 1, providerMessageIds: [] };
     const custodies = {
@@ -506,7 +509,8 @@ describe('Channels collection declarations', () => {
         const before = JSON.stringify(retained);
         const migrated = await migration.migrate(retained, { currentRevision: 7 });
         expect(migrated).toEqual(retained);
-        const current = await contraction.migrate(migrated, { currentRevision: 7 });
+        const contracted = await contraction.migrate(migrated, { currentRevision: 7 });
+        const current = await retentionIndex.migrate(contracted, { currentRevision: 7 });
         expect(isValidPluginJsonSchemaValue(validate, current), custody.state).toBe(true);
         const payload = current.payload;
         expect(current).toEqual(retained);
