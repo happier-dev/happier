@@ -89,6 +89,7 @@ import { isSessionContentUnsettled } from '@/sync/domains/session/encryptedConte
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { Icon } from '@/components/ui/icons/Icon';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { resolveMachineDisplayNames, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { transcriptSearchUnavailableHint } from './transcriptSearchUnavailableHint';
@@ -1300,11 +1301,25 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     const activeFilters = terminalJump ? terminalScopeChrome.filters : combinedFilters;
     // Aa and .* read as the Find bar's toggles (lab G1s): quiet mono glyphs, no well at rest, the accent ink when on.
     const optionGlyph = (glyph: string, on: boolean) => <Text style={[Typography.mono(), Typography.variant('meta'), { fontWeight: '600', color: on ? theme.colors.state.active.foreground : theme.colors.text.secondary }]}>{glyph}</Text>;
-    const inputSuffix = source === 'fileContent' && !terminalJump ? <View style={{ flexDirection: 'row', gap: theme.space.s4 }}>
+    // One find over a project (Code's Go to file, Text in files): Files and Text switch in place, keeping the folder and the query.
+    // A phone's band keeps the field wide: the same glyphs as the source token, the words as their names.
+    const findModeIcons = deviceType === 'phone';
+    const findModeTabs = React.useMemo(() => [
+        { id: 'files' as const, label: t('universalSearch.content.findFiles'),
+            ...(findModeIcons ? { icon: <Icon name="file" size={14} color={theme.colors.text.secondary} /> } : {}) },
+        { id: 'fileContent' as const, label: t('universalSearch.content.findText'),
+            ...(findModeIcons ? { icon: <Icon name="text-aa" size={14} color={theme.colors.text.secondary} /> } : {}) },
+    ], [findModeIcons, theme.colors.text.secondary]);
+    const findModeSwitch = !terminalJump && workspaceScope && (source === 'files' || source === 'fileContent')
+        ? <SegmentedTabBar<'files' | 'fileContent'> compact segmentSizing="content" accessibilityLabel={t('universalSearch.content.findMode')}
+            tabs={findModeTabs} activeTabId={source} onSelectTab={selectSource} testIDPrefix="universal-search:find-mode" />
+        : null;
+    const textOptions = source === 'fileContent' && !terminalJump;
+    const inputSuffix = findModeSwitch || textOptions ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 }}>{findModeSwitch}{textOptions ? <>
         <IconButton testID="universal-search:match-case" variant="plain" icon={optionGlyph('Aa', matchCase)} minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)} interactiveTargetGapPx={4} accessibilityRole="switch" accessibilityLabel={t('universalSearch.content.matchCase')} tooltip={t('universalSearch.content.matchCase')} checked={matchCase} onPress={() => setMatchCase((value) => !value)} />
         <IconButton testID="universal-search:regex" variant="plain" icon={optionGlyph('.*', regex)} minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)} interactiveTargetGapPx={4} accessibilityRole="switch" accessibilityLabel={t('universalSearch.content.regex')} tooltip={t('universalSearch.content.regex')} checked={regex} onPress={() => setRegex((value) => !value)} />
         {replaceOpen ? null : <IconButton testID="universal-search:replace-toggle" variant="plain" icon={<Icon name="arrows-left-right" size={14} color={theme.colors.text.secondary} />} minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)} interactiveTargetGapPx={4} accessibilityLabel={t('universalSearch.replace.show')} tooltip={t('universalSearch.replace.show')} onPress={() => { replaceToggledOpen.current = true; setReplaceOpen(true); }} />}
-    </View> : null;
+    </> : null}</View> : null;
     const replaceField = source === 'fileContent' && replaceOpen && !terminalJump
         // Return in the field never applies (a danger write); ⌥⌘↵ or the button does, after the review.
         ? <ReplaceField value={replacement} onChangeText={setReplacement} onHide={() => setReplaceOpen(false)} autoFocus={replaceToggledOpen.current} />

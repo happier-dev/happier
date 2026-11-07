@@ -307,6 +307,9 @@ const fileContentSearchTranslations = { "ca": {
         findMode: "Cerca a",
         findFiles: "Fitxers",
         findText: "Text",
+        findMode: "Cerca a",
+        findFiles: "Fitxers",
+        findText: "Text",
     } };
 
 return { fileContentSearchTranslations };

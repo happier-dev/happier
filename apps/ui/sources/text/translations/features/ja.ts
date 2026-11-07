@@ -307,6 +307,9 @@ const fileContentSearchTranslations = { "ja": {
         findMode: "検索対象",
         findFiles: "ファイル",
         findText: "テキスト",
+        findMode: "検索対象",
+        findFiles: "ファイル",
+        findText: "テキスト",
     } };
 
 return { fileContentSearchTranslations };

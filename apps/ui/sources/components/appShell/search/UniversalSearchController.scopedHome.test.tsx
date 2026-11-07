@@ -1699,6 +1699,29 @@ describe('UniversalSearchController exact Home scope', () => {
         } finally { invalid.resolve({ ok: false, code: 'invalid_pattern' }); }
     });
 
+    it('switches a project find between Files and Text without leaving the project or the query', async () => {
+        fixture.singleHome = true;
+        fixture.workspaceRefs = [{ id: 'ws-files', serverId: HOME_B, machineId: 'machine-b', rootPath: '/repo/happier', label: 'happier', createdAtMs: 1 }];
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        const screen = await renderScreen(<UniversalSearchController commands={[]} initialSource="files"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-b', rootPath: '/repo/happier' }}
+            presentation="modal" onRequestClose={vi.fn()} />);
+        await act(async () => { selectionListProps()?.onChangeInputValue?.('hello'); });
+        const sections = () => selectionListProps()?.rootStep.sections.map(section => section.id);
+        const sourceLabel = () => selectionListProps()?.filters?.find(filter => filter.id === 'source')?.valueLabel;
+        expect(sections()).toEqual(['files']);
+
+        await screen.pressByTestIdAsync('universal-search:find-mode:fileContent');
+        expect(sections()).toEqual(['fileContent']);
+        expect(sourceLabel()).toContain('happier');
+        expect(selectionListProps()?.inputValue).toBe('hello');
+
+        await screen.pressByTestIdAsync('universal-search:find-mode:files');
+        expect(sections()).toEqual(['files']);
+        expect(sourceLabel()).toContain('happier');
+        expect(selectionListProps()?.inputValue).toBe('hello');
+    });
+
     it('opens the Files scope and reserves @ for Symbols, with Backspace returning through Files to everything', async () => {
         fixture.singleHome = true;
         fixture.workspaceRefs = [{ id: 'ws-files', serverId: HOME_B, machineId: 'machine-b', rootPath: '/repo/happier', label: 'happier', createdAtMs: 1 }];

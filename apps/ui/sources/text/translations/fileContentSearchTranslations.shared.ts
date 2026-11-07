@@ -18,4 +18,7 @@ export const fileContentSearchTranslationsEnglish = { "en": {
         placeholder: "Search files, messages, commits, sessions, settings and actions",
         matchCase: "Match case",
         regex: "Regular expression",
+        findMode: "Find in",
+        findFiles: "Files",
+        findText: "Text",
     } };

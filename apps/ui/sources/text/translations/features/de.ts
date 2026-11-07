@@ -301,6 +301,9 @@ const fileContentSearchTranslations = { "de": {
         findMode: "Suchen in",
         findFiles: "Dateien",
         findText: "Text",
+        findMode: "Suchen in",
+        findFiles: "Dateien",
+        findText: "Text",
     } };
 
 return { fileContentSearchTranslations };

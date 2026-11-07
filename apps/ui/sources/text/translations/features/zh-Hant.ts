@@ -307,6 +307,9 @@ const fileContentSearchTranslations = { "zh-Hant": {
         findMode: "尋找範圍",
         findFiles: "檔案",
         findText: "文字",
+        findMode: "尋找範圍",
+        findFiles: "檔案",
+        findText: "文字",
     } };
 
 return { fileContentSearchTranslations };

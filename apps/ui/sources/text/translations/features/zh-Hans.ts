@@ -307,6 +307,9 @@ const fileContentSearchTranslations = { "zh-Hans": {
         findMode: "查找范围",
         findFiles: "文件",
         findText: "文本",
+        findMode: "查找范围",
+        findFiles: "文件",
+        findText: "文本",
     } };
 
 return { fileContentSearchTranslations };
