@@ -67,7 +67,7 @@ export async function executeServiceCommandStream(input: Readonly<{
             }
         })();
         const consumerExit = consumer.handle.wait();
-        const prematureExit = consumerExit.then(() => { throw new Error('Service stream consumer exited before producer success'); });
+        const prematureExit = consumer.handle.waitForExit().then(() => { throw new Error('Service stream consumer exited before producer success'); });
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) onAbort();
         const [, produced] = await Promise.race([Promise.all([transfer, producer.handle.wait()]), prematureExit, cancelled]);

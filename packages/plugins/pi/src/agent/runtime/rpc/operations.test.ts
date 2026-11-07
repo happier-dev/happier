@@ -110,6 +110,7 @@ function createRuntimeContext(capture: Capture) {
       pid: 123,
       write: async () => undefined,
       closeStdin: async () => undefined,
+      async waitForExit() { return (await this.wait()).termination; },
       wait: () => exit,
       onOutput: () => ({ dispose: () => undefined }),
       dispose: async () => undefined,

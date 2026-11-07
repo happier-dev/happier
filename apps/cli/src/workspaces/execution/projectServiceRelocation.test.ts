@@ -32,7 +32,8 @@ async function harness(stopStatus: 'stopped' | 'accepted' | 'unsupported' | 'ter
   const effects: string[] = [];
   let nativeStopStatus = stopStatus;
   // Exec/native callbacks are OS boundaries. The supervisor and relocation logic remain real.
-  const process: PluginProcessHandle = { write: async () => {}, closeStdin: async () => {}, wait: async () => cleanExit,
+  const process: PluginProcessHandle = { write: async () => {}, closeStdin: async () => {}, async waitForExit() { return (await this.wait()).termination; },
+  wait: async () => cleanExit,
     onOutput: () => ({ dispose: () => {} }), dispose: async () => {} };
   associateSupervisedPluginProcessHandleForHost(process, { pid: 42 });
   const supervisor = createManagedServiceProcessSupervisorHost({}).bind({ occurrenceId: 'occurrence', pluginId: 'fixture.plugin',

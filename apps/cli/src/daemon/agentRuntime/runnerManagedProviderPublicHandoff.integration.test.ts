@@ -383,6 +383,7 @@ function createPendingProcess(
     const handle = Object.freeze({
         write: vi.fn(async () => undefined),
         closeStdin: vi.fn(async () => undefined),
+        async waitForExit() { return (await this.wait()).termination; },
         wait: () => wait,
         onOutput: vi.fn(() => Object.freeze({ dispose() {} })),
         dispose,

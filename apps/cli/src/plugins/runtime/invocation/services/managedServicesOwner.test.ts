@@ -377,6 +377,7 @@ function createLifecycleProcess(
     const process = Object.freeze({
         write: vi.fn(async () => undefined),
         closeStdin: vi.fn(async () => undefined),
+        async waitForExit() { return (await this.wait()).termination; },
         wait: vi.fn(async () => await exit.promise),
         onOutput: vi.fn(() => Object.freeze({ dispose() {} })),
         dispose,
@@ -5343,6 +5344,7 @@ describe('managed-services SVC09 owner', () => {
         const process = Object.freeze({
             write: vi.fn(async () => undefined),
             closeStdin: vi.fn(async () => undefined),
+            async waitForExit() { return (await this.wait()).termination; },
             wait: vi.fn(async () => await exit.promise),
             onOutput: vi.fn(() => Object.freeze({ dispose() {} })),
             dispose: vi.fn()
@@ -5816,6 +5818,7 @@ describe('managed-services SVC09 owner', () => {
         const firstProcess = Object.freeze({
             write: vi.fn(async () => undefined),
             closeStdin: vi.fn(async () => undefined),
+            async waitForExit() { return (await this.wait()).termination; },
             wait: vi.fn(async () => MANAGED_SERVICE_CLEAN_EXIT),
             onOutput: vi.fn(() => Object.freeze({ dispose() {} })),
             dispose: vi.fn(async () => {

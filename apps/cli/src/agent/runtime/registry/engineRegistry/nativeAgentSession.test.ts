@@ -1247,7 +1247,8 @@ describe('native Agent session host adapter', () => {
                         subscribe(listener) { sdkListeners.add(listener); return { dispose() { sdkListeners.delete(listener); } }; },
                         dispose: disposeSdk,
                     },
-                    process: { async write() {}, async closeStdin() {}, wait: () => sdkExit, onOutput: () => ({ dispose() {} }), dispose: disposeSdk },
+                    process: { async write() {}, async closeStdin() {}, async waitForExit() { return (await this.wait()).termination; },
+                    wait: () => sdkExit, onOutput: () => ({ dispose() {} }), dispose: disposeSdk },
                     wait: () => sdkExit, dispose: disposeSdk,
                 };
             };
@@ -6850,6 +6851,7 @@ describe('native Agent session host adapter', () => {
             process: {
                 async write() {},
                 async closeStdin() {},
+                async waitForExit() { return (await this.wait()).termination; },
                 wait: () => exit,
                 onOutput: () => ({ dispose: () => undefined }),
                 async dispose() {},
@@ -9258,6 +9260,7 @@ describe('native Agent session host adapter', () => {
             process: {
                 async write() {},
                 async closeStdin() {},
+                async waitForExit() { return (await this.wait()).termination; },
                 wait: () => processExit,
                 onOutput: () => ({ dispose: () => undefined }),
                 async dispose() {},

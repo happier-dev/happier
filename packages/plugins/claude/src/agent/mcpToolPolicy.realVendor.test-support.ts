@@ -130,7 +130,8 @@ export async function createClaudeMcpRealVendorBoundary(input: Readonly<{
         return { wait: () => terminal, dispose,
           client: { subscribe(listener: (value: unknown) => void | Promise<void>) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; },
             write: (record: unknown) => write(new TextEncoder().encode(`${JSON.stringify(record)}\n`)) },
-          process: { write, wait: () => terminal, dispose, closeStdin: async () => { child.stdin.end(); }, onOutput: () => ({ dispose() {} }) } };
+          process: { write, async waitForExit() { return (await this.wait()).termination; },
+          wait: () => terminal, dispose, closeStdin: async () => { child.stdin.end(); }, onOutput: () => ({ dispose() {} }) } };
       },
     },
   } as unknown as ExecService; // The OS process/stream transport is the external boundary.

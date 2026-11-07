@@ -61,14 +61,17 @@ describe.skipIf(!nativeBinary || process.platform === 'win32')('real native Code
       child.stdout.on('data', (bytes: Buffer) => stdout.push(bytes));
       child.stderr.on('data', (bytes: Buffer) => stderr.push(bytes));
       let disposed = false;
-      const result = once(child, 'exit').then(([code, signal]): PluginProcessResult => ({
+      const termination = once(child, 'exit').then(([code, signal]): PluginProcessResult['termination'] => ({
+        requestedBy: disposed ? { kind: 'dispose', reason: 'caller' } : { kind: 'none' },
+        observed: signal ? { kind: 'signal', signal } : { kind: 'exit', exitCode: code ?? 1 },
+      }));
+      const result = once(child, 'close').then(async (): Promise<PluginProcessResult> => ({
         stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdoutTruncated: false, stderrTruncated: false,
-        termination: { requestedBy: disposed ? { kind: 'dispose', reason: 'caller' } : { kind: 'none' },
-          observed: signal ? { kind: 'signal', signal } : { kind: 'exit', exitCode: code ?? 1 } },
+        termination: await termination,
       }));
       const handle: PluginProcessHandle = {
         write: async bytes => { child.stdin.write(bytes); }, closeStdin: async () => { child.stdin.end(); },
-        onOutput: () => ({ dispose() {} }), wait: () => result,
+        onOutput: () => ({ dispose() {} }), waitForExit: () => termination, wait: () => result,
         dispose: async () => { disposed = true; if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await result; },
       };
       children.push(handle);
@@ -91,7 +94,7 @@ describe.skipIf(!nativeBinary || process.platform === 'win32')('real native Code
         const connection = await createManagedJsonRpcTestClient({ cwd: root, command: nativeBinary!, environment: env,
           args: ['app-server', 'proxy', '--sock', socketPath],
           maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs });
-        return { client: connection.client, wait: () => connection.wait(),
+        return { client: connection.client, process: connection.process, wait: () => connection.wait(),
           dispose: async () => { await connection.dispose(); await processHandle.dispose(); } };
       } },
     } as unknown as ExecService;

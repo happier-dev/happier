@@ -275,7 +275,7 @@ export function createServerSession(options: CreateServerSessionOptions): Server
                         } };
                     invalidateProcessLaunchDiscovery();
                 }
-                void opened.wait().then(() => {
+                void opened.process.waitForExit().then(() => {
                     if (protocol === opened) {
                         processRoot = undefined;
                         invalidateProcessLaunchDiscovery();

@@ -594,6 +594,7 @@ function createClaudeExecBoundaryContext(input: Readonly<{
         process: {
             async write() {},
             async closeStdin() {},
+            async waitForExit() { return (await this.wait()).termination; },
             wait: () => processExit,
             onOutput: () => ({ dispose: () => undefined }),
             async dispose() {},
@@ -868,6 +869,7 @@ function createPiExecBoundaryContext(input: Readonly<{
         process: {
             async write() {},
             async closeStdin() {},
+            async waitForExit() { return (await this.wait()).termination; },
             wait: () => processExit,
             onOutput: () => ({ dispose: () => undefined }),
             async dispose() {},

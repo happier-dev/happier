@@ -175,7 +175,7 @@ export async function startPrivateProjectSyncProcess(input: PrivateProjectNative
     try {
       send({ kind: 'run', id: input.prepared.workspaceRefId,
         context: { kind: 'native_sync', checkout: input.effect, memberHome: input.memberRoot.identity.home }, services: services.description });
-      const native = await Promise.race([ready, process.handle.wait().then(() => {
+      const native = await Promise.race([ready, process.handle.waitForExit().then(() => {
         throw new PluginError({ code: 'workspace_effect_outcome_unknown', message: 'The private workspace process ended before readiness' });
       })]);
       let closing: Promise<void> | undefined;

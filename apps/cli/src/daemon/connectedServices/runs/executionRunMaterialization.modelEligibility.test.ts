@@ -127,6 +127,7 @@ function createCodexProcessBoundary(rejectStart: boolean) {
     };
     const handle: PluginProtocolClientHandle<'jsonRpc'> = { client,
         process: { write: async () => undefined, closeStdin: async () => undefined,
+            async waitForExit() { return (await this.wait()).termination; },
             wait: () => exit, onOutput: () => ({ dispose() {} }), dispose: async () => { settleExit(result); } },
         wait: () => exit, dispose: async () => { settleExit(result); } };
     return {

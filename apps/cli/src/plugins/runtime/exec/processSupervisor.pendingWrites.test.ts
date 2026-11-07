@@ -71,8 +71,8 @@ describe('Exec JSON-RPC pending startup writes', () => {
 
                     await vi.waitFor(() => expect(outcome).toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_EXITED' }));
                     await pending;
-                    await expect(handle.wait()).resolves.toMatchObject({
-                        termination: { observed: { kind: 'exit', exitCode: 17 } },
+                    await expect(handle.process.waitForExit()).resolves.toMatchObject({
+                        observed: { kind: 'exit', exitCode: 17 },
                     });
                     await handle.dispose();
                     expect(child.kill).not.toHaveBeenCalled();

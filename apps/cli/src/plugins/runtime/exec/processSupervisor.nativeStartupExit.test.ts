@@ -60,7 +60,7 @@ vi.mock('node:child_process', async importOriginal => {
 });
 
 describe.skipIf(process.platform === 'win32')('native startup launcher exit', () => {
-    it.each(['feature probe', 'app-server'] as const)('settles startup without retaining admission when the %s exits before stdio closes', async phase => {
+    it.each(['feature probe', 'app-server'] as const)('drains the finite feature probe and observes app-server exit before stdio closes (%s)', async phase => {
         await withTempDir('codex-startup-exit-', async directory => {
             boundary.home = directory;
             boundary.holdProbe = phase === 'feature probe';
@@ -85,6 +85,16 @@ describe.skipIf(process.platform === 'win32')('native startup launcher exit', ()
                 else expect(existsSync(lockPath)).toBe(false);
                 child.exitCode = 17;
                 child.emit('exit', 17, null);
+                if (phase === 'feature probe') {
+                    // PERF ORCH: a finite probe owns its complete output; only
+                    // native server startup consumes the earlier exit fact.
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    expect(failure).toBeUndefined();
+                    expect(boundary.children).toHaveLength(1);
+                    child.stdout.end();
+                    child.stderr.end();
+                    child.emit('close', 17, null);
+                }
                 await vi.waitFor(() => expect(failure).toMatchObject({ code: 'agent_startup_transport_failed',
                     startupFailure: { reason: 'process_exited', nativeExitCode: 17 } }));
                 await opening;

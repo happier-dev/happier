@@ -83,6 +83,7 @@ function createProcess(
     const process = Object.freeze({
         write: vi.fn(async () => undefined),
         closeStdin: vi.fn(async () => undefined),
+        async waitForExit() { return (await this.wait()).termination; },
         wait: vi.fn(async () => await result.promise),
         onOutput: vi.fn(() => Object.freeze({ dispose: () => undefined })),
         dispose,
@@ -2181,6 +2182,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         const process: PluginProcessHandle = Object.freeze({
             write: vi.fn(async () => undefined),
             closeStdin: vi.fn(async () => undefined),
+            async waitForExit() { return (await this.wait()).termination; },
             wait: vi.fn(async () => await terminal.promise),
             onOutput: vi.fn(() => Object.freeze({ dispose: () => undefined })),
             dispose: vi.fn(async () => {
@@ -2953,6 +2955,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         const process: PluginProcessHandle = Object.freeze({
             write: vi.fn(async () => undefined),
             closeStdin: vi.fn(async () => undefined),
+            async waitForExit() { return (await this.wait()).termination; },
             wait: vi.fn(async () => await processResult.promise),
             onOutput: vi.fn(() => Object.freeze({ dispose: () => undefined })),
             dispose: vi.fn(async () => {

@@ -115,7 +115,8 @@ async function piFixture(): Promise<NativeFixture> {
       },
       dispose: async () => {},
     },
-    process: { pid: 123, write: async () => {}, closeStdin: async () => {}, wait: () => exit,
+    process: { pid: 123, write: async () => {}, closeStdin: async () => {}, async waitForExit() { return (await this.wait()).termination; },
+    wait: () => exit,
       onOutput: () => ({ dispose() {} }), dispose: async () => {} },
     wait: () => exit, dispose: async () => {},
   };

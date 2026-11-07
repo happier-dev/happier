@@ -164,13 +164,13 @@ async function createInitialClientWhenReady(params: Readonly<{
   const signal = params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal;
   let active = true;
   let processFailure: CodexSharedAppServerStartupError | undefined;
-  const fail = (reason: StartupFailureReason, result?: PluginProcessResult, cause?: unknown) => {
+  const fail = (reason: StartupFailureReason, result?: Pick<PluginProcessResult, 'termination'>, cause?: unknown) => {
     if (!active) return;
     processFailure = new CodexSharedAppServerStartupError(reason, result, cause);
     controller.abort(processFailure);
   };
-  void params.process.wait().then(
-    result => fail('process_exited', result),
+  void params.process.waitForExit().then(
+    termination => fail('process_exited', { termination }),
     error => fail('process_observation_failed', undefined, error),
   );
   try {
@@ -197,19 +197,19 @@ export class CodexSharedAppServerStartupError extends Error {
   readonly startupFailure: CodexSharedAppServerStartupFailure;
   readonly stderrPreview?: string;
 
-  constructor(reason: StartupFailureReason, result?: PluginProcessResult, cause?: unknown) {
+  constructor(reason: StartupFailureReason, result?: Pick<PluginProcessResult, 'termination'> & Partial<PluginProcessResult>, cause?: unknown) {
     super('Codex shared app-server did not become ready.', { cause });
     this.name = 'CodexSharedAppServerStartupError';
     const observed = result?.termination.observed;
     // Exec sanitizes native output at its boundary; redact again before this
     // retained error can cross the public Session diagnostic boundary.
-    this.stderrPreview = result ? redactBugReportSensitiveText(new TextDecoder().decode(result.stderr))
+    this.stderrPreview = result?.stderr ? redactBugReportSensitiveText(new TextDecoder().decode(result.stderr))
       .trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined : undefined;
     this.startupFailure = Object.freeze({
       phase: 'socket_wait', reason,
       ...(observed ? { terminationKind: observed.kind } : {}),
-      ...(result ? { terminationRequestedBy: result.termination.requestedBy.kind,
-        stderrPresent: result.stderr.byteLength > 0, stderrTruncated: result.stderrTruncated } : {}),
+      ...(result ? { terminationRequestedBy: result.termination.requestedBy.kind } : {}),
+      ...(result?.stderr ? { stderrPresent: result.stderr.byteLength > 0, stderrTruncated: result.stderrTruncated } : {}),
       ...(observed?.kind === 'exit' && Number.isSafeInteger(observed.exitCode) ? { nativeExitCode: observed.exitCode } : {}),
       ...(observed?.kind === 'signal' && Object.hasOwn(constants.signals, observed.signal) ? { nativeSignal: observed.signal } : {}),
     });
@@ -264,9 +264,9 @@ async function waitForSocket(
   process: PluginProcessHandle,
   signal?: AbortSignal,
 ): Promise<void> {
-  let result: PluginProcessResult | undefined;
+  let result: Pick<PluginProcessResult, 'termination'> | undefined;
   let observationFailure: CodexSharedAppServerStartupError | undefined;
-  void process.wait().then(value => { result = value; }, error => {
+  void process.waitForExit().then(termination => { result = { termination }; }, error => {
     observationFailure = new CodexSharedAppServerStartupError('process_observation_failed', undefined, error);
   });
   // A cold native home backfills its history before publishing the socket.

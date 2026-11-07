@@ -155,7 +155,8 @@ async function spawnPi(spec: Extract<PluginProtocolClientSpec, { kind: 'jsonStre
     await write(new TextEncoder().encode(`${JSON.stringify(record)}\n`));
   },
     subscribe(listener) { subscribers.add(listener); return { dispose() { subscribers.delete(listener); } }; }, dispose },
-    process: { write, closeStdin: async () => { child.stdin.end(); }, wait: () => terminal, onOutput: () => ({ dispose() {} }), dispose },
+    process: { write, closeStdin: async () => { child.stdin.end(); }, async waitForExit() { return (await this.wait()).termination; },
+    wait: () => terminal, onOutput: () => ({ dispose() {} }), dispose },
     wait: () => terminal, dispose };
 }
 

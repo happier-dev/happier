@@ -237,7 +237,7 @@ function toJsonValue(value: unknown): JsonValue {
     return createCircularSafeJsonClone(value) as JsonValue;
 }
 
-function toNativeExit(result: PluginProcessResult): Readonly<{
+function toNativeExit(result: Pick<PluginProcessResult, 'termination'>): Readonly<{
     exitCode: number | null;
     signal: string | null;
 }> {
@@ -251,7 +251,7 @@ function toNativeExit(result: PluginProcessResult): Readonly<{
 }
 
 function wrapNativeCodexAppServerClient(
-    handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'> | PluginJsonRpcConnection,
+    handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'process' | 'dispose'> | PluginJsonRpcConnection,
     env: CodexAppServerEnv,
     launchFeatures: DisposableCodexAppServerClient['launchFeatures'],
 ): DisposableCodexAppServerClient {
@@ -272,7 +272,7 @@ function wrapNativeCodexAppServerClient(
     });
     const closed = 'closed' in handle
         ? handle.closed.then(() => ({ exitCode: null, signal: null }))
-        : handle.wait().then(toNativeExit);
+        : handle.process.waitForExit().then(termination => toNativeExit({ termination }));
     void closed.then((result) => {
         settledExit = result;
         for (const listener of [...exitListeners]) listener(settledExit);
@@ -478,7 +478,7 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
         : prepared?.realtimeConversationAdvertised === true;
     const proxyTransport = isCodexProxyTransport(params.transport);
     const enableRealtimeConversation = !proxyTransport && realtimeConversationAdvertised;
-    let handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'wait' | 'dispose'> | PluginJsonRpcConnection;
+    let handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'process' | 'dispose'> | PluginJsonRpcConnection;
     try {
         handle = params.transport?.kind === 'unixWebSocket' && !params.transport.nativeProxy
             ? await params.exec.clients.connectJsonRpc({

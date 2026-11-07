@@ -44,6 +44,7 @@ function createHarness(write: (value: JsonValue) => Promise<void>) {
     process: {
       async write() {},
       async closeStdin() {},
+      async waitForExit() { return (await this.wait()).termination; },
       wait,
       onOutput: () => ({ dispose() {} }),
       async dispose() {},

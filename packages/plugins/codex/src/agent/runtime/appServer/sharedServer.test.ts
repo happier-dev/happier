@@ -53,7 +53,8 @@ describe('createCodexSharedAppServer', () => {
             if (message.method === 'initialize') return { userAgent: 'happier_cli/0.162.1 (fixture)' };
             return message.id === undefined ? undefined : {};
           });
-          return { wait: async () => await new Promise<PluginProcessResult>(() => undefined), dispose: async () => { await peer?.close(); } };
+          return { async waitForExit() { return (await this.wait()).termination; },
+          wait: async () => await new Promise<PluginProcessResult>(() => undefined), dispose: async () => { await peer?.close(); } };
         },
       } as unknown as ExecService;
       const server = await createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux', dependencies: {
@@ -132,7 +133,8 @@ describe('createCodexSharedAppServer', () => {
           if (message.method === 'initialize') { entered(); await held; }
           return message.id === undefined ? undefined : {};
         });
-        return { wait: () => exited, dispose: async () => { await peer?.close(); } };
+        return { async waitForExit() { return (await this.wait()).termination; },
+        wait: () => exited, dispose: async () => { await peer?.close(); } };
       },
     } as unknown as ExecService; // A process can exit while a descendant retains the transport.
     const server = await createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux' });
@@ -180,7 +182,8 @@ describe('createCodexSharedAppServer', () => {
           message.method === 'initialize' ? {} : message.id === undefined ? undefined : { pong: true });
         let finish!: (value: PluginProcessResult) => void;
         const ended = new Promise<PluginProcessResult>(resolve => { finish = resolve; });
-        return { wait: () => ended, dispose: async () => { await peer.close(); finish(result); } };
+        return { async waitForExit() { return (await this.wait()).termination; },
+        wait: () => ended, dispose: async () => { await peer.close(); finish(result); } };
       },
     } as unknown as ExecService;
     const servers: NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>[] = [];
@@ -260,7 +263,8 @@ describe('createCodexSharedAppServer', () => {
         const unpublishedListener = join(dirname(endpoint), 'pending-native-listener.sock');
         await writeFile(unpublishedListener, '');
         await symlink(unpublishedListener, endpoint);
-        return { wait: () => exited, dispose: async () => { await nativePeer?.close(); nativePeer = undefined; finish(result); } };
+        return { async waitForExit() { return (await this.wait()).termination; },
+        wait: () => exited, dispose: async () => { await nativePeer?.close(); nativePeer = undefined; finish(result); } };
       },
       clients: { connectJsonRpc: async (request: Parameters<typeof connectFixtureClient>[0], options?: { signal?: AbortSignal }) => {
         connected += 1;
@@ -382,7 +386,8 @@ describe('createCodexSharedAppServer', () => {
           }
         }, 10);
         return { write: async () => undefined, closeStdin: async () => undefined,
-          onOutput: () => ({ dispose: () => undefined }), wait: () => exited, dispose };
+          onOutput: () => ({ dispose: () => undefined }), async waitForExit() { return (await this.wait()).termination; },
+          wait: () => exited, dispose };
       },
     } as unknown as ExecService; // Only the native process boundary is substituted.
     let server: Awaited<ReturnType<typeof createCodexSharedAppServer>> = null;
@@ -475,7 +480,8 @@ describe('createCodexSharedAppServer', () => {
         const exited = new Promise<PluginProcessResult>(resolve => { settleExit = resolve; });
         return {
           pid: process.pid, write: async () => undefined, closeStdin: async () => undefined,
-          onOutput: () => ({ dispose: () => undefined }), wait: async () => await exited,
+          onOutput: () => ({ dispose: () => undefined }), async waitForExit() { return (await this.wait()).termination; },
+          wait: async () => await exited,
           dispose: async () => {
             if (shouldFailInitialize) {
               let observedOwner: string | null = null;
@@ -565,6 +571,7 @@ describe('createCodexSharedAppServer', () => {
   it('keeps one private socket server while its published socket becomes connectable', async () => {
     const processHandle = {
       dispose: vi.fn(async () => undefined),
+      async waitForExit() { return (await this.wait()).termination; },
       wait: vi.fn(async () => await new Promise<PluginProcessResult>(() => undefined)),
     };
     const spawn = vi.fn(async () => processHandle);

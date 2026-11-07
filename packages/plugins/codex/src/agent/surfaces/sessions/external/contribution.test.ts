@@ -144,6 +144,7 @@ function createThreadListingExec(
       pid: 123,
       write: async () => undefined,
       closeStdin: async () => undefined,
+      async waitForExit() { return (await this.wait()).termination; },
       wait: () => never,
       onOutput: () => ({ dispose: () => undefined }),
       dispose: async () => undefined,

@@ -441,6 +441,7 @@ function createSerializedAgentSessionRpcBridge(
       pid: 41_446,
       write: async () => undefined,
       closeStdin: async () => undefined,
+      async waitForExit() { return (await this.wait()).termination; },
       wait: () => exit,
       onOutput: () => ({ dispose: () => undefined }),
       dispose: async () => undefined,

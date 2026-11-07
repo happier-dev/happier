@@ -46,7 +46,7 @@ export function openDockerEngineEvents(launch: HostAuthorizedPluginExecLaunch, p
         try {
             await new Promise<void>((resolve, reject) => {
                 request.once('error', reject);
-                void process.handle.wait().then(() => reject(new Error('docker_events_disconnected')), reject);
+                void process.handle.waitForExit().then(() => reject(new Error('docker_events_disconnected')), reject);
                 request.once('response', response => {
                     if (response.statusCode !== 200) { response.resume(); reject(new Error('docker_events_unavailable')); return; }
                     lines = createInterface({ input: response, crlfDelay: Infinity });
@@ -57,7 +57,7 @@ export function openDockerEngineEvents(launch: HostAuthorizedPluginExecLaunch, p
                     response.once('error', () => { if (!closed) disconnected(); });
                     response.once('end', () => { if (!closed) disconnected(); });
                     request.on('error', () => { if (!closed) disconnected(); });
-                    void process.handle.wait().then(() => { if (!closed) disconnected(); }, () => { if (!closed) disconnected(); });
+                    void process.handle.waitForExit().then(() => { if (!closed) disconnected(); }, () => { if (!closed) disconnected(); });
                     resolve();
                 });
                 request.end();

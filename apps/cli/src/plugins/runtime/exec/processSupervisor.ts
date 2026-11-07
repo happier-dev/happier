@@ -269,11 +269,11 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     let observed: PluginProcessObservedTermination | null = null;
     let terminalResult: PluginProcessResult | null = null;
     let resolveWait!: (result: PluginProcessResult) => void;
-    let resolveObserved!: () => void;
+    let resolveObserved!: (termination: PluginProcessResult['termination']) => void;
     const waitPromise = new Promise<PluginProcessResult>((resolve) => {
         resolveWait = resolve;
     });
-    const observedPromise = new Promise<void>((resolve) => {
+    const observedPromise = new Promise<PluginProcessResult['termination']>((resolve) => {
         resolveObserved = resolve;
     });
     let resolveSettlement!: (result: SupervisedProcessSettlement) => void;
@@ -354,8 +354,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     const freezeObserved = (next: PluginProcessObservedTermination): void => {
         if (observed) return;
         observed = next;
-        resolveObserved();
         requestedBy ??= Object.freeze({ kind: 'none' as const });
+        resolveObserved(Object.freeze({ observed, requestedBy }));
         if (timeout) {
             clearTimeout(timeout);
             timeout = null;
@@ -375,7 +375,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
 
     child.once('error', (error) => {
         freezeObserved(failedTermination(error, classifySpawnFailure(error, { syscall: 'spawn', limits: input.readSpawnFailureLimits?.() })));
-        seal();
         if (!child.pid) confirmSettlement();
     });
     child.once('exit', (exitCode, signal) => {
@@ -405,12 +404,11 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             // The native tool owns its daemon after successful startup. This is
             // not a Job release or a running-process detachment: accepted abort,
             // timeout and early disposal requests still use normal tree cleanup.
-            seal();
             confirmSettlement();
             return Promise.resolve();
         }
         if (observed && input.rootExitObservation) {
-            return Promise.resolve(rootExitObservation).then(() => { seal(); confirmSettlement(); });
+            return Promise.resolve(rootExitObservation).then(() => { confirmSettlement(); });
         }
         if (terminationPromise) return terminationPromise;
         const attempt = (async () => {
@@ -461,7 +459,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                         // The original root ended, but no subtree is known. A
                         // shared tag or recycled numeric group is not custody.
                         // Settle the lease without signalling or claiming cleanup.
-                        seal();
                         confirmSettlement('unobserved');
                         return;
                     }
@@ -495,7 +492,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                     await terminate(child);
                 } else await terminate(child);
                 await observedPromise;
-                seal();
                 confirmSettlement();
             })();
             // Only an explicit caller budget can end observation before native
@@ -519,7 +515,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 if (!observed && (child.exitCode !== null || child.signalCode !== null)) {
                     freezeObserved(observedTermination(child.exitCode, child.signalCode));
                 }
-                if (observed) seal();
                 throw terminationIncompleteError(error);
             } finally {
                 if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -528,7 +523,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 // A join deadline is a bounded caller wait, not evidence that
                 // the OS-owned containment is absent. Keep host-private custody
                 // even when the root process itself already exited.
-                if (observed) seal();
                 throw terminationIncompleteError();
             }
         })();
@@ -599,10 +593,14 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             });
         },
         async closeStdin() {
+            // A finite child can exit before an asynchronous caller closes input.
+            // Ending an already destroyed stream can reject or never call back.
+            if (child.stdin.destroyed || child.stdin.writableEnded) return;
             await new Promise<void>((resolve, reject) => {
                 child.stdin.end((error?: Error | null) => error ? reject(error) : resolve());
             });
         },
+        waitForExit: () => observedPromise,
         wait: () => waitPromise,
         onOutput(listener: (chunk: PluginProcessOutput) => void) {
             outputListeners.add(listener);

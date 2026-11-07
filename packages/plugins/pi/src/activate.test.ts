@@ -111,6 +111,7 @@ function createContext(
       pid: 123,
       write: async () => undefined,
       closeStdin: async () => undefined,
+      async waitForExit() { return (await this.wait()).termination; },
       wait: () => processExit,
       onOutput: () => ({ dispose: () => undefined }),
       dispose: async () => undefined,

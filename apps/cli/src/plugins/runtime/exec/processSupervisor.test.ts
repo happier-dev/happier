@@ -19,6 +19,63 @@ import { createDaemonizingProcessFixture } from '@/testkit/process/daemonizingPr
 import { waitForProcessExit } from '@/testkit/process/spawn';
 
 describe('spawnSupervisedPluginProcess', () => {
+    it.each([0, 17])('drains finite stdout and stderr delivered after exit %s before returning the result', async exitCode => {
+        const stdout = Buffer.from([0x00, 0xff, 0x41, 0x0a]);
+        const stderr = Buffer.from([0x80, 0x42, 0x00, 0x0a]);
+        const supervised = spawnSupervisedPluginProcess({
+            command: process.execPath,
+            args: ['-e', `process.stdout.write(Buffer.from([0,255,65,10])); process.stderr.write(Buffer.from([128,66,0,10])); process.exitCode = ${exitCode};`],
+            env: {},
+            // Only the OS termination boundary is substituted; the actual finite
+            // child has already exited when cleanup joins it.
+            terminateProcessTree: async () => {},
+        });
+        const held: (() => void)[] = [];
+        let released = false;
+        const spies = [supervised.child.stdout, supervised.child.stderr, supervised.child].map(emitter => {
+            const emit = emitter.emit.bind(emitter);
+            return vi.spyOn(emitter, 'emit').mockImplementation((event, ...args) => {
+                // Model legal OS ordering: pipe bytes and close follow root exit.
+                if (!released && (event === 'data' || event === 'end' || event === 'close')) {
+                    held.push(() => { emit(event, ...args); });
+                    return true;
+                }
+                return emit(event, ...args);
+            });
+        });
+        supervised.child.once('exit', () => setImmediate(() => {
+            released = true;
+            for (const deliver of held) deliver();
+        }));
+        try {
+            await supervised.handle.closeStdin();
+            const termination = await supervised.handle.waitForExit();
+            expect(termination).toEqual({ observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } });
+            const result = await supervised.handle.wait();
+            expect(result.termination.observed).toEqual({ kind: 'exit', exitCode });
+            expect(Buffer.from(result.stdout)).toEqual(stdout);
+            expect(Buffer.from(result.stderr)).toEqual(stderr);
+        } finally {
+            await supervised.dispose();
+            for (const spy of spies) spy.mockRestore();
+        }
+    });
+
+    it('closes stdin after a finite child has already exited without rejecting its successful result', async () => {
+        expect.assertions(5);
+        const supervised = spawnSupervisedPluginProcess({
+            command: process.execPath, args: ['-e', 'process.stdout.write("done", () => process.exit(0))'], env: {},
+        });
+        try {
+            const result = await supervised.handle.wait();
+            expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+            expect(Buffer.from(result.stdout).toString()).toBe('done');
+            expect(supervised.child.stdin.destroyed).toBe(true);
+            await expect(supervised.handle.closeStdin()).resolves.toBeUndefined();
+            await expect(supervised.handle.closeStdin()).resolves.toBeUndefined();
+        } finally { await supervised.dispose(); }
+    });
+
     it('bounds an unanswered graceful protocol stop inside the existing termination grace and removes the child', async () => {
         const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: ['-e', `
             process.on('SIGTERM', () => {});
@@ -54,7 +111,7 @@ describe('spawnSupervisedPluginProcess', () => {
             try {
                 const pid = await fixture.ready({ timeoutMs: task.timeout });
                 await fixture.release();
-                expect((await supervised.handle.wait()).termination).toEqual({ observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } });
+                expect(await supervised.handle.waitForExit()).toEqual({ observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } });
                 await supervised.dispose();
                 await supervised.waitForSettlement();
                 expect(await waitForProcessExit(pid, { timeoutMs: 200 })).toBe(descendantDisposition === undefined);
@@ -426,11 +483,9 @@ describe('spawnSupervisedPluginProcess', () => {
             ]);
 
             expect(outcome).toBe('disposed');
-            expect(await supervised.handle.wait()).toMatchObject({
-                termination: {
-                    observed: { kind: 'exit', exitCode: 0 },
-                    requestedBy: { kind: 'none' },
-                },
+            expect(await supervised.handle.waitForExit()).toMatchObject({
+                observed: { kind: 'exit', exitCode: 0 },
+                requestedBy: { kind: 'none' },
             });
             expect(terminateProcessTree).toHaveBeenCalledOnce();
         } finally {

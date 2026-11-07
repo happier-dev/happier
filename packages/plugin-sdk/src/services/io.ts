@@ -115,6 +115,9 @@ export type PluginProcessResult = Readonly<{
 export interface PluginProcessHandle extends Disposable {
     write(data: Uint8Array): Promise<void>;
     closeStdin(): Promise<void>;
+    /** Root exit or spawn failure; inherited pipes may still be open. */
+    waitForExit(): Promise<PluginProcessResult['termination']>;
+    /** Complete captured output, after stdout and stderr close. */
     wait(): Promise<PluginProcessResult>;
     onOutput(listener: (chunk: PluginProcessOutput) => void): Disposable;
     dispose(): Promise<void>;

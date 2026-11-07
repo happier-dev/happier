@@ -31,7 +31,8 @@ describe('Claude SDK turn failure diagnostics', () => {
                 };
                 return { client: { async write(value) { await handle.client.writeRecord(value); },
                     subscribe(listener) { return { dispose: handle.client.subscribe(listener) }; }, dispose: () => handle.dispose() },
-                    process: { write: data => handle.process.writeStdin(data), closeStdin: async () => {}, wait,
+                    process: { write: data => handle.process.writeStdin(data), closeStdin: async () => {}, async waitForExit() { return (await this.wait()).termination; },
+                    wait,
                         onOutput: () => ({ dispose() {} }), dispose: () => handle.dispose() }, wait, dispose: () => handle.dispose(),
                 } satisfies PluginProtocolClientHandle<'jsonStream'>;
             } },

@@ -317,6 +317,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       if (options.nativeProcessResult || options.nativeProcessFailure) return {
         write: async () => undefined, closeStdin: async () => undefined,
         onOutput: () => ({ dispose() {} }), dispose: async () => undefined,
+        async waitForExit() { return (await this.wait()).termination; },
         wait: async () => {
           if (options.nativeProcessFailure) throw options.nativeProcessFailure;
           return options.nativeProcessResult!;
