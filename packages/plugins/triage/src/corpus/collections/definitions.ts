@@ -3,7 +3,6 @@ import { CORPUS_COLLECTION_MIGRATIONS } from './migrations.js';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TriageConfiguredSourceInstanceV1JsonSchema,
     TriageEntryRefV1JsonSchema,
 } from '@happier-dev/triage-protocol/v1';
@@ -60,7 +59,8 @@ const IDENTIFIER_SCHEMA = boundedText(MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
 // Canonical public Plugin and contribution-local ids are each at most 256
 // ASCII bytes; the slash-qualified projection therefore reaches 513 bytes.
 const SOURCE_QUALIFIED_ID_SCHEMA = boundedText(513);
-const TEXT_SCHEMA = boundedText(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+// Durable displays use the Collection's measured private-value envelope.
+const TEXT_SCHEMA: PluginJsonSchema = { type: 'string', minLength: 1 };
 
 const CORPUS_MIGRATION_ARTIFACT = {
     artifactId: 'triage-collection-migrations',
@@ -225,6 +225,14 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
             [CORPUS_USER_MARKS_FIELD.markedAtMs]: TIMESTAMP_MS_SCHEMA,
             [CORPUS_USER_MARKS_FIELD.entryRef]: TriageEntryRefV1JsonSchema,
             [CORPUS_USER_MARKS_FIELD.displayAtMark]: MARK_DISPLAY_SCHEMA,
+            // Optional private intent widens the existing contract; no new index
+            // or row migration is needed for retained marks without an origin.
+            [CORPUS_USER_MARKS_FIELD.originError]: {
+                type: 'object',
+                properties: { entryRef: TriageEntryRefV1JsonSchema, display: MARK_DISPLAY_SCHEMA },
+                required: ['entryRef', 'display'],
+                additionalProperties: false,
+            },
             // The reader's fix-PR choice (`design/FIX-LINK.md`). Private payload:
             // never projected, never indexed, sealed on an E2EE Account. Durable
             // intent is retained independently of relationship query page sizes.
