@@ -20,7 +20,8 @@ import { PLUGIN_MANIFEST as TELEGRAM_PLUGIN_MANIFEST } from '@happier-dev/plugin
 import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '@happier-dev/plugins-scm-github';
 import { PLUGIN_MANIFEST as TRIAGE_PLUGIN_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
 import { createTriageListEntriesActionHandler } from '../../../../../../../packages/plugins/triage/src/actions/listEntries';
-import { TriageListEntriesResultV1Schema } from '../../../../../../../packages/plugins/triage/src/actions/listEntriesProtocol';
+import type { TriageDataActionContext } from '../../../../../../../packages/plugins/triage/src/actions/dataContext';
+import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../../../../../../packages/plugins/triage/src/actions/listEntriesProtocol';
 import { createTestkitCorpusCollections } from '../../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support';
 import {
     defineContributionProtocol,
@@ -389,6 +390,39 @@ async function triageListRegistry(includeContributor: boolean): Promise<Resolved
     });
 }
 
+/** Empty Account storage is the transport boundary in the admission tests below. */
+function emptyTriageDataContext(
+    signal: AbortSignal,
+    targetedContributions: TriageDataActionContext['services']['targetedContributions'],
+    beforeQuery: () => Promise<void>,
+): TriageDataActionContext {
+    const { watchableCollections } = createTestkitCorpusCollections();
+    const unusedBoundary = (): never => { throw new Error('Unexpected Account service in list admission fixture'); };
+    return {
+        plugin: { id: TRIAGE_PLUGIN_MANIFEST.id, version: TRIAGE_PLUGIN_MANIFEST.version },
+        contribution: { id: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+            qualifiedId: `${TRIAGE_PLUGIN_MANIFEST.id}/${TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1}` },
+        surface: 'cli', invokedAtMs: 0, signal,
+        services: {
+            get http() { return unusedBoundary(); },
+            get secrets() { return unusedBoundary(); },
+            get connectedAccounts() { return unusedBoundary(); },
+            get settings() { return unusedBoundary(); },
+            get actions() { return unusedBoundary(); },
+            targetedContributions,
+            storage: { account: {
+                get kv() { return unusedBoundary(); },
+                collection: () => ({
+                    ...watchableCollections.sourceInstances,
+                    async get() { return null; },
+                    async put() { return unusedBoundary(); },
+                    async query() { await beforeQuery(); return { rows: [], changeCursor: 0 }; },
+                }),
+            } },
+        },
+    };
+}
+
 describe('targeted contribution observation service', () => {
     it.each(['allConfigured', 'selected'] as const)(
         'handles a fenced contributor during durable uninstall while the %s list storage read is pending',
@@ -408,21 +442,8 @@ describe('targeted contribution observation service', () => {
             const storageGate = deferred<void>();
             const publicationGate = deferred<void>();
             const publicationEntered = deferred<void>();
-            const { collections } = createTestkitCorpusCollections();
             // Only the network-backed Collection boundary is held pending.
-            const context = {
-                signal: target.signal,
-                services: {
-                    targetedContributions: service,
-                    storage: { account: { collection: () => ({
-                        ...collections.sourceInstances,
-                        async query(...args: Parameters<typeof collections.sourceInstances.query>) {
-                            await storageGate.promise;
-                            return await collections.sourceInstances.query(...args);
-                        },
-                    }) } },
-                },
-            } as unknown as PluginInvocationContext;
+            const context = emptyTriageDataContext(target.signal, service, async () => { await storageGate.promise; });
             let adoption: ReturnType<typeof controller.adoptPreparedRuntimeRegistry> | undefined;
             try {
                 const initial = await observation.readCurrent();
@@ -505,18 +526,8 @@ describe('targeted contribution observation service', () => {
             signal: target.signal,
             isCurrent: () => !target.signal.aborted,
         });
-        const { collections } = createTestkitCorpusCollections();
         const storageFailure = new Error('Account Collection is unavailable');
-        const context = {
-            signal: target.signal,
-            services: {
-                targetedContributions: service,
-                storage: { account: { collection: () => ({
-                    ...collections.sourceInstances,
-                    async query() { throw storageFailure; },
-                }) } },
-            },
-        } as unknown as PluginInvocationContext;
+        const context = emptyTriageDataContext(target.signal, service, async () => { throw storageFailure; });
         const unhandled: unknown[] = [];
         const recordUnhandled = (reason: unknown) => { unhandled.push(reason); };
         process.on('unhandledRejection', recordUnhandled);

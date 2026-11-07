@@ -4,7 +4,7 @@ import { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH } from './walkthroughSpecimen
 /** Dev illustration only; the real hosted capture owner supplies these facts. */
 const id = 'specimen-pull-request';
 const ref = (value: string) => `${id}:${value}`;
-export const PR_SPECIMEN_COMPARISON: ScmComparison = {
+export const PR_SPECIMEN_COMPARISON = {
     ...SPECIMEN_COMPARISON, id,
     source: { kind: 'pullRequest', locator: { providerId: 'github', repository: 'happier-dev/happier', number: 2481,
         baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } },
@@ -12,7 +12,7 @@ export const PR_SPECIMEN_COMPARISON: ScmComparison = {
     inventory: { ...SPECIMEN_COMPARISON.inventory, files: SPECIMEN_COMPARISON.inventory.files.map((file) => ({
         ...file, occurrences: file.occurrences.map((occurrence) => ({ ...occurrence, id: ref(occurrence.id) })),
     })) },
-};
+} satisfies ScmComparison;
 export const PR_SPECIMEN_WALKTHROUGH: ScmDiffSummaryWalkthrough = {
     ...SPECIMEN_WALKTHROUGH,
     stops: SPECIMEN_WALKTHROUGH.stops.map((stop) => ({ ...stop, changeRefs: stop.changeRefs.map(ref) })),
