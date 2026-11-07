@@ -96,7 +96,7 @@ type LibraryRowCommands = Readonly<{
     exportJson: (definitionId: string) => void;
     /** Opens the one document share sheet (INT I2) for a workflow the caller owns (07 S7 Share). */
     share: (definition: WorkflowLibraryDefinition, anchor?: ShareSheetAnchor) => void;
-    remove: (definitionId: string) => void;
+    remove: (definition: WorkflowLibraryDefinition) => void;
 }>;
 
 const LibraryRowCommandsContext = React.createContext<LibraryRowCommands | null>(null);
@@ -479,7 +479,7 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
             if (id === 'run' && !unavailable) commands.run(definitionId);
             else if (id === 'share') commands.share(row.definition, resolvePressTriggerAnchor({ currentTarget: selection?.anchorRef?.current }));
             else if (id === 'export') commands.exportJson(definitionId);
-            else if (id === 'delete') commands.remove(definitionId);
+            else if (id === 'delete') commands.remove(row.definition);
         },
     };
 }
@@ -529,7 +529,8 @@ function useLibraryRowCommands(deletedDefinitionId: string | null): LibraryRowCo
             // "Send a copy instead" is the existing JSON export (INT I2).
             onSendCopy: () => { void exportDefinition(definition.definitionId); },
         }),
-        remove: (definitionId) => {
+        remove: (definition) => {
+            const definitionId = definition.definitionId;
             const admissions = admitted.current;
             if (admissions.has(definitionId)) return;
             admissions.add(definitionId);
@@ -545,10 +546,12 @@ function useLibraryRowCommands(deletedDefinitionId: string | null): LibraryRowCo
                         setDeleting(previous => previous.size === 0 ? previous : new Set());
                         setFocusRequest(undefined);
                     });
-                    await deleteWorkflowDefinition({ definitionId, onTransportIssued: () => {
-                        if (!lifetime.isCurrent()) return;
-                        if (deletedDefinitionId !== null) dismissWorkflowLibraryDeletionReceipt(deletedDefinitionId);
-                        setDeleting(previous => new Set([...previous, definitionId]));
+                    await deleteWorkflowDefinition({ definitionId,
+                        ...(definition.metadata?.title === undefined ? {} : { title: definition.metadata.title }),
+                        onTransportIssued: () => {
+                            if (!lifetime.isCurrent()) return;
+                            if (deletedDefinitionId !== null) dismissWorkflowLibraryDeletionReceipt(deletedDefinitionId);
+                            setDeleting(previous => new Set([...previous, definitionId]));
                     } });
                 } catch (error) {
                     // Deletion never retries by itself; the row stays and the person decides.

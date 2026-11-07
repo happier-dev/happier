@@ -55,6 +55,7 @@ async function callDefinitionAction<TResult>(params: Readonly<{
     parseResult: (value: unknown) => TResult;
     signal?: AbortSignal;
     deletedArtifactId?: string;
+    deletedArtifactTitle?: string;
     context?: WorkflowActionCallerContext;
     accountLifetime?: ServerAccountScopeLifetime | null;
 }>): Promise<TResult> {
@@ -68,7 +69,10 @@ async function callDefinitionAction<TResult>(params: Readonly<{
         // once for every client, including the client that saved them.
         publishHomeAccountChange(lifetime.scope.serverId, undefined,
             { workflowDefinitionsAffect: false,
-                ...(params.deletedArtifactId === undefined ? {} : { deletedArtifactIds: [params.deletedArtifactId] }) });
+                ...(params.deletedArtifactId === undefined ? {} : { deletedArtifactIds: [params.deletedArtifactId],
+                    ...(params.deletedArtifactTitle === undefined ? {} : {
+                        deletedArtifactTitles: { [params.deletedArtifactId]: params.deletedArtifactTitle },
+                    }) }) });
     }
     return result;
 }
@@ -186,6 +190,8 @@ export async function updateWorkflowDefinition(params: Readonly<{
  */
 export async function deleteWorkflowDefinition(params: Readonly<{
     definitionId: string;
+    /** The saved title the caller already read, for local landing feedback after the row disappears. */
+    title?: string;
     signal?: AbortSignal;
     onTransportIssued?: () => void;
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -195,6 +201,7 @@ export async function deleteWorkflowDefinition(params: Readonly<{
         actionId: 'workflow.definition.delete',
         input,
         deletedArtifactId: input.definitionId,
+        ...(params.title === undefined ? {} : { deletedArtifactTitle: params.title }),
         parseResult: (value) => WorkflowDefinitionDeleteResultV1Schema.parse(value),
         ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
         ...signalOption(params.signal),

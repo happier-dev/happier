@@ -1571,6 +1571,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         const lifetime = accountLifetime;
         if (lifetime === null) return;
         const sourceIsCurrent = captureSourceGeneration();
+        const savedTitle = savedDraftRef.current?.name;
         deletePendingRef.current = true;
         const controller = new AbortController();
         deleteAbortRef.current = controller;
@@ -1582,7 +1583,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         });
         try {
             // The delete Action owns the order (this workflow's triggers first, 03 §5.5).
-            await deleteWorkflowDefinition({ definitionId: saved.definitionId, signal: controller.signal, accountLifetime,
+            await deleteWorkflowDefinition({ definitionId: saved.definitionId,
+                ...(savedTitle === undefined ? {} : { title: savedTitle }),
+                signal: controller.signal, accountLifetime,
                 onTransportIssued: () => {
                     if (lifetime.isCurrent() && sourceIsCurrent()) setDeletePending(true);
                 } });

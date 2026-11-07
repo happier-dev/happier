@@ -682,8 +682,14 @@ describe('workflow library page anatomy', () => {
         expect(menu.props.items?.find((item: { id: string }) => item.id === 'delete')?.destructive).toBe(true);
         expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000001')).not.toBeNull();
         expect(row().findByType(ContextMenu).props.disabled).toBe(true);
+        // The committed feed can reach the list before this caller receives its delete response.
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         await act(async () => {
             deleted.add(ids[0]!);
+            publishHomeAccountChange(storage.getState().profileScope!.serverId, undefined, { workflowDefinitionsAffect: true });
+        });
+        await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${ids[0]}`)).toBeNull());
+        await act(async () => {
             settleDelete({ ok: true, result: { definitionId: '10000000-0000-4000-8000-000000000001', deleted: true } });
             await Promise.resolve(); await Promise.resolve();
         });
@@ -692,6 +698,9 @@ describe('workflow library page anatomy', () => {
             expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000001')).toBeNull();
             expect(screen.findHostByTestId('workflows-home:deleted')).not.toBeNull();
         });
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
+            .toBe('Saved workflow');
         // A prior completion must not masquerade as the next confirmed deletion's outcome.
         deletion = new Promise(resolve => { settleDelete = resolve; });
         await act(async () => { row(ids[1]).findByType(ContextMenu).props.onSelect('delete'); await Promise.resolve(); });
@@ -704,7 +713,6 @@ describe('workflow library page anatomy', () => {
         });
         expect(screen.findHostByTestId('workflows-home:deleted')).not.toBeNull();
         expect(nativeAlert).toHaveBeenCalledTimes(2);
-        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
         expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
             .toBe('Saved workflow');
         // Both deletions used the real Action/HTTP path. Let the reader's acknowledgement expire

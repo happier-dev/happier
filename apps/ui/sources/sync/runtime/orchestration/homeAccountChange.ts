@@ -121,8 +121,10 @@ export type HomeAccountChangeEvent = Readonly<{
     changedWorkflowDefinitionIds?: readonly string[];
     /** Present when Automation rows are the only saved-definition change: the rows showing them re-read. */
     workflowDefinitionAutomationIds?: readonly string[];
-    /** An acknowledged local Artifact deletion; no private content or replay guarantee. */
+    /** An acknowledged local Artifact deletion; no replay guarantee. */
     deletedArtifactIds?: readonly string[];
+    /** Already-readable titles for client-local feedback only; never sent to the server. */
+    deletedArtifactTitles?: Readonly<Record<string, string>>;
 }>;
 
 type HomeAccountChangeDetails = Readonly<{
@@ -157,6 +159,7 @@ type HomeAccountChangeDetails = Readonly<{
     workflowPluginSourcesAffect?: boolean;
     workflowDefinitionAutomationIds?: readonly string[];
     deletedArtifactIds?: readonly string[];
+    deletedArtifactTitles?: Readonly<Record<string, string>>;
 }>;
 
 /** An Artifact receipt wakes its readers, without invalidating unrelated mutable domain work. */
@@ -342,8 +345,9 @@ export function subscribeHomeAccountChange(
     options?: Readonly<{
         /** 'recovery' hears unscoped blocked-cursor recovery, leaving ordinary changes to the feed. */
         includeCatchUpPending?: boolean | 'recovery';
+        /** Declares Home demand and scopes delivery; omitted or empty observes every Home. */
         serverIds?: readonly string[];
-        /** Select exact source facts and recovery; serverIds also scopes delivery for this topic. */
+        /** Select exact source facts and recovery within the subscribed Homes. */
         usageSourcesMachineIds?: readonly string[];
         /** Exact Artifact kind hints selected by this reader; recovery and absent hints stay coarse. */
         artifactKinds?: readonly string[];
@@ -554,14 +558,15 @@ export function publishHomeAccountChangeForRouting(
             && workflowDefinitionAutomationIds?.length
             ? { workflowDefinitionAutomationIds: Object.freeze([...new Set(workflowDefinitionAutomationIds)]) } : {}),
         ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
+        ...(details?.deletedArtifactTitles ? { deletedArtifactTitles: Object.freeze({ ...details.deletedArtifactTitles }) } : {}),
     });
     for (const [observer, { includeCatchUpPending, serverIds, usageSourcesMachineIds, reconnect, artifactKinds }] of [...homeAccountChangeObservers]) {
+        if (serverIds.length > 0 && !serverIds.some(serverId => areServerProfileIdentifiersEquivalent(serverId, event.serverId))) continue;
         if (event.source === 'catch-up-pending' && !includeCatchUpPending) continue;
         if (includeCatchUpPending === 'recovery' && ((event.source === 'catch-up-pending' && event.entityIds !== undefined)
             || (event.source === 'socket' && event.changesCatchUp === true))) continue;
         if (artifactKinds !== undefined && !homeAccountChangeAffectsArtifactKinds(event, artifactKinds)) continue;
         if (usageSourcesMachineIds !== undefined) {
-            if (serverIds.length > 0 && !serverIds.some(serverId => areServerProfileIdentifiersEquivalent(serverId, event.serverId))) continue;
             if (event.source !== 'connected' && event.source !== 'snapshot'
                 && !event.usageSourcesMachineIds?.some(machineId => usageSourcesMachineIds.includes(machineId))) continue;
         }

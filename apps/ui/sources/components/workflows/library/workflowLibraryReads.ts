@@ -162,7 +162,8 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                     const current = cached.scopeKey === scopeKey ? cached : { ...INITIAL_DEFINITIONS, scopeKey };
                     disposeDeletionReceipt();
                     definitionsCell.set({ ...current, deletedDefinitionId,
-                        deletedDefinitionTitle: current.definitions.find(row => row.definitionId === deletedDefinitionId)?.metadata?.title ?? null,
+                        deletedDefinitionTitle: event.deletedArtifactTitles?.[deletedDefinitionId]
+                            ?? current.definitions.find(row => row.definitionId === deletedDefinitionId)?.metadata?.title ?? null,
                         definitions: current.definitions.filter(row => !event.deletedArtifactIds?.includes(row.definitionId)) });
                     deletionRetirement = lifetime.onRetire(() => dismissDeletion(deletedDefinitionId));
                     deletionExpiry = setTimeout(() => dismissDeletion(deletedDefinitionId), DELETION_RECEIPT_VISIBLE_MS);
