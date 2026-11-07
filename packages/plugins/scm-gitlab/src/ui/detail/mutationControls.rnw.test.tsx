@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -110,6 +110,7 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+let nextError: PluginError | null = null;
 let completedMutations = 0;
 
 async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTestkit> {
@@ -131,6 +132,7 @@ async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTe
       handlers: {
         executeAction: async ({ action, input: dispatched }) => {
           recorded.push({ action, input: dispatched });
+          if (nextError !== null) throw nextError;
           return nextResult;
         },
       },
@@ -159,10 +161,20 @@ afterEach(async () => {
   recorded.splice(0);
   completedMutations = 0;
   nextResult = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+  nextError = null;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
 describe('the mounted GitLab merge-request writes', () => {
+  it('shows a declined host confirmation without reporting a provider mutation', async () => {
+    nextError = new PluginError({ code: 'denied',
+      diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }] });
+    const detail = await mountDetail();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Merge' })); });
+    await expect(detail.getByText('You declined the confirmation, so nothing was written.')).resolves.toBeDefined();
+    expect(completedMutations).toBe(0);
+  });
+
   it('offers all three writes on an open merge request', async () => {
     const detail = await mountDetail();
 

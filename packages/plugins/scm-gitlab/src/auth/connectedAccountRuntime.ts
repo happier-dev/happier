@@ -1,3 +1,4 @@
+import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 /**
  * The `gitlab-account` Connected Account runtime (`SCM.md` §4.1).
  *
@@ -283,7 +284,7 @@ async function readHealth(
     : { status: 'unavailable', diagnostic: confirmation.diagnostic };
 }
 
-const gitlabConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
+export const gitlabPortableAuthentication = Object.freeze({
   authentication: {
     modes: {
       [GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID]: {
@@ -295,17 +296,6 @@ const gitlabConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
         complete: completeManualConnection,
       },
     },
-  },
-  async refresh(context, options) {
-    // A pasted personal access token has no refresh exchange. Reporting current
-    // health is the honest answer rather than a rotation it never has.
-    return readHealth(context, options);
-  },
-  async revoke() {
-    return { status: 'remoteUnsupported' };
-  },
-  async status(context, options) {
-    return readHealth(context, options);
   },
   async materialize(request, context, options) {
     if (request.kind !== 'httpHeaders') {
@@ -324,7 +314,22 @@ const gitlabConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
       throw new Error('GitLab connected-account credentials are unavailable');
     }
     return { kind: 'httpHeaders', headers: { Authorization: `Bearer ${token}` } };
+  }
+} satisfies ConnectedAccountPortableRuntime);
+
+const gitlabConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
+  ...gitlabPortableAuthentication,
+  async refresh(context, options) {
+    // A pasted personal access token has no refresh exchange. Reporting current
+    // health is the honest answer rather than a rotation it never has.
+    return readHealth(context, options);
   },
+  async revoke() {
+    return { status: 'remoteUnsupported' };
+  },
+  async status(context, options) {
+    return readHealth(context, options);
+  }
 };
 
 export const gitlabConnectedAccountRuntime = Object.freeze(

@@ -14,7 +14,7 @@
  * are summoned to code the acting user never saw.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { buildGitlabGraphqlUrl, requestGitlabJson } from '../http/gitlabClient.js';
 import { projectGitlabSourceFailure } from '../sourceFailure.js';
 import {
@@ -45,7 +45,7 @@ const SET_DRAFT_DOCUMENT = `mutation HappierMergeRequestSetDraft($projectPath: I
 
 export async function markGitlabMergeRequestReady(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMergeRequestMarkReadyResultV1> {
   const parsed = GitlabMergeRequestMarkReadyInputV1Schema.safeParse(input);
   if (!parsed.success) {

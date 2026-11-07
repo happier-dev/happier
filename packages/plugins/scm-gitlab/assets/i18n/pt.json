@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} em andamento até agora",
   "plugins.triage.detailStory.runningSoFar.many": "{count} em andamento até agora",
   "plugins.triage.detailStory.runningSoFar.other": "{count} em andamento até agora",
+  "plugins.gitlab.ui.changedFiles": "Ficheiros alterados",
   "plugins.gitlab.ui.readFailed": "O GitLab não conseguiu concluir esta leitura.",
   "plugins.gitlab.ui.copyValue": "Copiar {item}",
   "plugins.gitlab.ui.openOnGitlab": "Abrir {item} no GitLab",

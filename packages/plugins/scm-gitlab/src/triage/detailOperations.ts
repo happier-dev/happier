@@ -18,7 +18,7 @@
  * answers, and each panel is given the one that is true.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceEntryLocalRefV1,
@@ -97,7 +97,7 @@ type GitlabApprovalRulesResultV1 = Extract<
 
 export async function readGitlabOverview(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabOverviewResultV1> {
   const parsed = GitlabOverviewInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -146,7 +146,7 @@ function unavailable(failure: TriageSourceFailureV1): Readonly<{
 }
 
 /** Expanded-row demand reuses the exact Overview read and its admitted request closure. */
-export async function readGitlabPullRequestStatus(input: unknown, context: PluginInvocationContext): Promise<TriagePullRequestStatusResultV1> {
+export async function readGitlabPullRequestStatus(input: unknown, context: PluginAccountActionContext): Promise<TriagePullRequestStatusResultV1> {
   const parsed = TriageGetInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const identity = admitGitlabItemIdentity({ localRef: parsed.data.localRef, admissibleKinds: ['merge-request'] });
@@ -206,6 +206,7 @@ export async function readGitlabPullRequestStatus(input: unknown, context: Plugi
   }
   const base: TriagePullRequestStatusV1 = {
     kind: 'status', observedAtMs: Date.now(), checks, review,
+    ...(read.result.locator.webUrl === undefined ? {} : { sourceUrl: read.result.locator.webUrl }),
     merge: read.pullRequest.merge, branch: read.pullRequest.branch, facts: read.result.snapshot.facts,
   };
   const candidates = [
@@ -321,7 +322,7 @@ function shapeWalkPosition(
  */
 async function listGitlabNotesUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabNotesResultV1> {
   const parsed = GitlabNotesInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -373,7 +374,7 @@ async function listGitlabNotesUnbounded(
  */
 async function listGitlabActivityEventsUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabActivityEventsResultV1> {
   const parsed = GitlabActivityEventsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -424,7 +425,7 @@ async function listGitlabActivityEventsUnbounded(
 /** One bounded page of the discussion threads of a merge request. */
 async function listGitlabDiscussionsUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabDiscussionsResultV1> {
   const parsed = GitlabDiscussionsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -478,7 +479,7 @@ async function listGitlabDiscussionsUnbounded(
  */
 async function readGitlabApprovalsUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabApprovalsResultV1> {
   const parsed = GitlabApprovalsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -575,7 +576,7 @@ async function readGitlabApprovalsUnbounded(
  */
 async function listGitlabPipelinesUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabPipelinesResultV1> {
   const parsed = GitlabPipelinesInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -636,7 +637,7 @@ async function listGitlabPipelinesUnbounded(
  */
 async function listGitlabChangesUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabChangesResultV1> {
   const parsed = GitlabChangesInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
@@ -691,7 +692,7 @@ async function listGitlabChangesUnbounded(
  */
 async function readGitlabRawDiffUnbounded(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabRawDiffResultV1> {
   const parsed = GitlabRawDiffInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);

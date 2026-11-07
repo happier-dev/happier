@@ -114,6 +114,7 @@ import {
   TriageDetailStory,
   type TriageActivityEventV1,
   type TriageActivityKindV1,
+  useTriagePageRefresh,
 } from '@happier-dev/triage-sources/ui';
 import { GitlabDiscussionResolutionControl, GitlabMutationControls } from './detail/mutationControls.js';
 import {
@@ -214,14 +215,15 @@ function ReadSummary({
   summaryValues,
 }: Readonly<{
   state: GitlabPagedStateV1<unknown>;
-  summary: string;
-  summaryKey: string;
-  summaryValues: Readonly<Record<string, string | number>>;
+  /** Absent where the section header already carries the count. */
+  summary?: string;
+  summaryKey?: string;
+  summaryValues?: Readonly<Record<string, string | number>>;
 }>): React.ReactElement {
   const incomplete = incompleteDescription(state.incomplete);
   return (
     <Stack gap="small">
-      <Text variant="micro" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />
+      {summary === undefined ? null : <Text variant="micro" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />}
       {state.omittedRowCount === 0 ? null : (
         <Text
           variant="micro"
@@ -257,15 +259,17 @@ function PagedFooter({
   state: GitlabPagedStateV1<unknown>;
   loadMoreTitle: string;
   onLoadMore: () => void;
-  onRefresh: () => void;
-  refreshLabel: string;
-  summary: string;
-  summaryKey: string;
-  summaryValues: Readonly<Record<string, string | number>>;
+  /** Absent where the page's one refresh re-reads this panel (`useTriagePageRefresh`). */
+  onRefresh?: () => void;
+  refreshLabel?: string;
+  summary?: string;
+  summaryKey?: string;
+  summaryValues?: Readonly<Record<string, string | number>>;
 }>): React.ReactElement {
   return (
     <Stack gap="small">
-      <ReadSummary state={state} summary={summary} summaryKey={summaryKey} summaryValues={summaryValues} />
+      <ReadSummary state={state}
+        {...(summary === undefined ? {} : { summary, ...(summaryKey === undefined ? {} : { summaryKey }), ...(summaryValues === undefined ? {} : { summaryValues }) })} />
       {state.canLoadMore
         ? (
           <Button
@@ -276,7 +280,8 @@ function PagedFooter({
           />
         )
         : null}
-      <RefreshRow onRefresh={onRefresh} pending={state.pending} accessibilityLabel={refreshLabel} />
+      {onRefresh === undefined || refreshLabel === undefined ? null
+        : <RefreshRow onRefresh={onRefresh} pending={state.pending} accessibilityLabel={refreshLabel} />}
     </Stack>
   );
 }
@@ -769,6 +774,9 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   const rawDiff = useGitlabRawDiff(input);
   const { state } = controller;
   const changesUrl = gitlabChangesEvidenceUrlV1(input.observation.locator.webUrl);
+  const { locale } = useSurfaceContext();
+  // The page's one refresh re-reads these files; the panel draws no refresh of its own.
+  useTriagePageRefresh(controller.refresh);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading the changed files from GitLab" titleKey="plugins.gitlab.ui.readingFiles" />;
@@ -793,6 +801,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
       keyForItem={(row) => row.path}
       header={(
         <Stack gap="small">
+          <Text variant="label" value={`${text('plugins.gitlab.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(state.rows.length)}`} />
           <PageFailureBanner state={state} />
           <Button
             title="Load raw diff evidence"
@@ -860,11 +869,6 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
           state={state}
           loadMoreTitle={text('plugins.gitlab.ui.showMoreFiles', 'Show more files')}
           onLoadMore={controller.loadMore}
-          onRefresh={controller.refresh}
-          refreshLabel={text('plugins.gitlab.ui.rereadFiles', 'Re-read the changed files from GitLab')}
-          summary={`${String(state.rows.length)} file(s) read.`}
-          summaryKey="plugins.gitlab.ui.filesRead"
-          summaryValues={{ count: state.rows.length }}
         />
       )}
       renderItem={(row) => (
@@ -1322,6 +1326,7 @@ function GitlabDetailBody({
     return (
       <Screen safeArea>
         <TriageDetailPanel
+          scrollOwner={input.panelScrollOwner}
           panel={input.panel}
           ariaLabel={text('plugins.gitlab.ui.detailLabel', 'GitLab entry detail')}
           retention={Object.fromEntries(visible

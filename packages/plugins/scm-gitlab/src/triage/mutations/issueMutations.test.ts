@@ -1,3 +1,7 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { GITLAB_PLUGIN } from '../../manifest.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
 /**
  * The GitLab issue state Actions.
  *
@@ -421,4 +425,31 @@ describe('an issue write whose answer this source’s deadline took', () => {
       failure: { class: 'transient', code: 'deadline-exceeded' },
     });
   });
+});
+
+it.each(['effect', 'wrong-account', 'cancelled'] as const)('runs the registered Account issue effect (%s) without a Machine', async scenario => {
+  const transport = scriptedTransport({
+    [`GET ${ISSUE_URL}`]: [{ status: 200, body: issueBody() }, { status: 200, body: issueBody({ state: 'closed' }) }],
+    [`PUT ${ISSUE_URL}`]: [{ status: 200, body: issueBody({ state: 'closed' }) }],
+  });
+  const kit = await createPluginTestkit({ manifest: GITLAB_PLUGIN.manifest,
+    module: { activate: GITLAB_PLUGIN.activate, activateAccount }, services: transport.context.services });
+  const controller = new AbortController();
+  if (scenario === 'cancelled') controller.abort(new DOMException('cancelled', 'AbortError'));
+  const instance = gitlabTestConfiguredInstance();
+  const input = issueInput(scenario === 'wrong-account' ? { instance: { ...instance, binding: {
+    ...instance.binding, account: { service: { pluginId: GITLAB_PLUGIN.manifest.id, localId: 'gitlab-account' }, accountId: 'other' },
+  } } } : {});
+  try {
+    // The fixture crosses the public JSON input boundary; the original handler validates it.
+    const result = await kit.invokeAction('gitlab/issue/close', input as JsonValue, { signal: controller.signal }).catch((error: unknown) => error);
+    if (scenario === 'effect') {
+      expect(result).toMatchObject({ kind: 'closed', item: { state: 'closed' } });
+      expect(transport.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+      expect(transport.requests).toHaveLength(3);
+    } else {
+      expect(result).not.toMatchObject({ kind: 'closed' });
+      expect(transport.requests).toHaveLength(0);
+    }
+  } finally { await kit.dispose(); }
 });

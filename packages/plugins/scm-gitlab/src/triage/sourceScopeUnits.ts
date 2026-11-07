@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
   TriageSourceConnectedAccountInputsV1, TriageListScopeUnitsResultV1Schema, TriageSourceScopeUnitV1Schema,
@@ -13,7 +13,7 @@ import { selectGitlabNextPageUrl } from './http/gitlabLink.js';
 import { projectGitlabSourceFailure } from './sourceFailure.js';
 import { boundGitlabText } from './mapping/bounded.js';
 
-export async function listGitlabScopeUnitsAction(input: unknown, context: PluginInvocationContext): Promise<TriageListScopeUnitsResultV1> {
+export async function listGitlabScopeUnitsAction(input: unknown, context: PluginAccountActionContext): Promise<TriageListScopeUnitsResultV1> {
   const parsed = TriageSourceConnectedAccountInputsV1.listScopeUnits.safeParse(input);
   const invalid = { kind: 'failed', failure: { class: 'unsupportedContract', code: 'gitlab_scope_directory_input_invalid' } } as const;
   if (!parsed.success) return invalid;

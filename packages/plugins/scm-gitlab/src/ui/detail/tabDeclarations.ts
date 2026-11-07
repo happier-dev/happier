@@ -1,3 +1,4 @@
+import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protocol/v1';
 import type { GitlabKindId } from '../../triage/types.js';
 
 /**
@@ -54,7 +55,7 @@ export type GitlabDetailTabDeclarationV1 = Readonly<{
   retainedState: string;
   readPlane: GitlabDetailTabReadPlaneV1;
   /** The single component that owns this panel's vertical scrolling. */
-  scrollOwner: 'scrollArea' | 'list';
+  scrollOwner: TriageDetailPanelScrollOwnerV1;
   /** The entry kinds this tab is present for. */
   kinds: readonly GitlabKindId[];
 }>;

@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "目前 {count} 项进行中",
   "plugins.triage.detailStory.runningSoFar.many": "目前 {count} 项进行中",
   "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 项进行中",
+  "plugins.gitlab.ui.changedFiles": "已更改文件",
   "plugins.gitlab.ui.readFailed": "GitLab 无法完成此次读取。",
   "plugins.gitlab.ui.copyValue": "复制 {item}",
   "plugins.gitlab.ui.openOnGitlab": "在 GitLab 上打开 {item}",

@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../../../scripts/testing/readPluginTranslationResources.js';
+
 /**
  * Every string the write controls can show must exist in every locale this
  * plugin ships.
@@ -17,8 +19,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from '../additionalTranslations.js';
-import { GITLAB_RENDER_UI_TRANSLATIONS } from '../renderTranslations.js';
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../../', import.meta.url));
+
 
 const CONTROL_SOURCE = readFileSync(new URL('./mutationControls.tsx', import.meta.url), 'utf8');
 
@@ -59,16 +61,11 @@ function keyFallbackPairsInControlSource(): readonly (readonly [string, string])
   return [...pairs.entries()].sort((left, right) => left[0].localeCompare(right[0]));
 }
 
-const LOCALES = Object.keys(GITLAB_RENDER_UI_TRANSLATIONS) as
-  readonly (keyof typeof GITLAB_RENDER_UI_TRANSLATIONS)[];
+const LOCALES = Object.keys(PACKAGED_UI_TRANSLATIONS) as
+  readonly (keyof typeof PACKAGED_UI_TRANSLATIONS)[];
 
-function messagesFor(locale: keyof typeof GITLAB_RENDER_UI_TRANSLATIONS): Readonly<Record<string, string>> {
-  return {
-    ...GITLAB_RENDER_UI_TRANSLATIONS[locale],
-    ...GITLAB_ADDITIONAL_UI_TRANSLATIONS[
-      locale as keyof typeof GITLAB_ADDITIONAL_UI_TRANSLATIONS
-    ],
-  };
+function messagesFor(locale: keyof typeof PACKAGED_UI_TRANSLATIONS): Readonly<Record<string, string>> {
+  return PACKAGED_UI_TRANSLATIONS[locale];
 }
 
 describe('GitLab write control translations', () => {

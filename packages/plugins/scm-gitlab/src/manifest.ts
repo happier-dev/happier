@@ -1,6 +1,8 @@
+import { gitlabPortableAuthentication } from './auth/connectedAccountRuntime.js';
+import { GITLAB_ACCOUNT_ACTIONS, readGitlabActionDeclaration } from './accountActions.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
+
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -8,8 +10,8 @@ import {
 
 import { GITLAB_SCM_HOSTING_PROVIDER_LOCAL_ID, gitlabHostingProviderAdapter } from './adapter.js';
 import { gitlabRestPullRequestAdapter } from './pullRequests/index.js';
-import { GITLAB_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
-import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
+
+
 
 import {
   GITLAB_ORIGIN_CONFIGURATION_FIELD,
@@ -18,77 +20,16 @@ import {
   GITLAB_TOKEN_CREDENTIAL_KEY,
   gitlabConnectedAccountRuntime,
 } from './auth/connectedAccountRuntime.js';
-import {
-  GITLAB_CONNECTED_ACCOUNT_ID,
-  GITLAB_CONNECTED_ACCOUNT_PURPOSE,
-  GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
-  GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
-  GITLAB_TRIAGE_ACTION_DECLARATIONS,
-  GITLAB_TRIAGE_ACTION_IDS,
-  GITLAB_TRIAGE_CONTRIBUTION_DECLARATION,
-  GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID,
-  GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS,
-  GITLAB_TRIAGE_DETAIL_ACTION_IDS,
-  GITLAB_TRIAGE_DETAIL_ARTIFACT_ID,
-  GITLAB_TRIAGE_DETAIL_RENDERER_ID,
-  GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS,
-  GITLAB_TRIAGE_MUTATION_ACTION_IDS,
-  GITLAB_PLUGIN_ID,
-  GITLAB_TRIAGE_SETTINGS_ARTIFACT_ID,
-  GITLAB_TRIAGE_SETTINGS_GROUP_ID,
-  GITLAB_TRIAGE_SETTINGS_PAGE_ID,
-  GITLAB_TRIAGE_SETTINGS_RENDERER_ID,
-} from './triage/contribution.js';
+import { GITLAB_CONNECTED_ACCOUNT_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE, GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID, GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID, GITLAB_TRIAGE_ACTION_IDS, GITLAB_REVIEW_WORKSPACE_EXECUTION, GITLAB_TRIAGE_CONTRIBUTION_DECLARATION, GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID, GITLAB_TRIAGE_DETAIL_ARTIFACT_ID, GITLAB_TRIAGE_DETAIL_RENDERER_ID, GITLAB_PLUGIN_ID, GITLAB_TRIAGE_SETTINGS_ARTIFACT_ID, GITLAB_TRIAGE_SETTINGS_GROUP_ID, GITLAB_TRIAGE_SETTINGS_PAGE_ID, GITLAB_TRIAGE_SETTINGS_RENDERER_ID } from './triage/contribution.js';
 import { GITLAB_PUBLIC_ORIGIN } from './triage/origin.js';
-import { listGitlabScopeUnitsAction } from './triage/sourceScopeUnits.js';
-import {
-  listGitlabActivityEvents,
-  listGitlabChanges,
-  listGitlabDiscussions,
-  listGitlabNotes,
-  listGitlabPipelines,
-  readGitlabRawDiff,
-  readGitlabApprovals,
-  readGitlabOverview,
-  readGitlabPullRequestStatus,
-} from './triage/detailOperations.js';
-import {
-  getGitlabSourceEntryAction,
-  listGitlabInstancesAction,
-  prepareGitlabReviewWorkspaceAction,
-  scanGitlabSourceAction,
-  verifyGitlabReviewWorkspaceAction,
-} from './triage/operations.js';
-import {
-  assignGitlabIssue,
-  changeGitlabIssueLabels,
-  changeGitlabMergeRequestReviewers,
-  closeGitlabIssue,
-  closeGitlabMergeRequest,
-  markGitlabMergeRequestReady,
-  mergeGitlabMergeRequest,
-  publishGitlabIssueComment,
-  publishGitlabMergeRequestReview,
-  publishGitlabMergeRequestReviewComment,
-  publishGitlabMergeRequestThreadReply,
-  reopenGitlabIssue,
-  reopenGitlabMergeRequest,
-  resolveGitlabMergeRequestDiscussion,
-} from './triage/mutations/operations.js';
 
-const GITLAB_ACTION_DECLARATIONS = [
-  ...GITLAB_TRIAGE_ACTION_DECLARATIONS,
-  ...GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS,
-  ...GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS,
-];
 
-function readGitlabActionDeclaration(id: string) {
-  const declaration = GITLAB_ACTION_DECLARATIONS.find((candidate) => candidate.id === id);
-  if (declaration === undefined) {
-    throw new TypeError(`gitlab_action_declaration_missing:${id}`);
-  }
-  return declaration;
-}
+import { prepareGitlabReviewWorkspaceAction, verifyGitlabReviewWorkspaceAction } from './triage/operations.js';
+
+
+
+
+
 
 export const GITLAB_PLUGIN = definePlugin({
   id: GITLAB_PLUGIN_ID,
@@ -98,8 +39,19 @@ export const GITLAB_PLUGIN = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -165,10 +117,17 @@ export const GITLAB_PLUGIN = definePlugin({
         title: 'GitLab account',
         description: 'GitLab deployment and personal access token used to read merge requests and issues.',
         authentication: {
+          account: { artifactId: 'gitlab-account-runtime', exportName: 'activate' },
           defaultModeId: GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID,
           modes: [{
             id: GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID,
             kind: 'manual',
+            setup: {
+              url: 'https://gitlab.com/-/user_settings/personal_access_tokens',
+              checklist: ['Create a legacy personal access token in your GitLab.com profile settings.', 'Select read_api for reads or api for mutations, and choose an expiration.', 'Copy the generated token and paste it here.'],
+              createKeyTitle: 'Open GitLab.com access tokens',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: 'GitLab.com personal access token',
             outcomeReconciliation: 'none',
@@ -198,6 +157,12 @@ export const GITLAB_PLUGIN = definePlugin({
           }, {
             id: GITLAB_SELF_HOSTED_PERSONAL_ACCESS_TOKEN_MODE_ID,
             kind: 'manual',
+            setup: {
+              url: 'https://docs.gitlab.com/user/profile/personal_access_tokens/',
+              checklist: ['On your own GitLab deployment, open your profile settings and create a personal access token.', 'Select read_api for reads or api for mutations, and choose an expiration.', 'Paste the token here and enter the URL of that same deployment, including any path prefix.'],
+              createKeyTitle: 'Read GitLab access token instructions',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: 'Self-managed GitLab personal access token',
             outcomeReconciliation: 'none',
@@ -225,125 +190,21 @@ export const GITLAB_PLUGIN = definePlugin({
         },
       },
       runtime: gitlabConnectedAccountRuntime,
+      accountRuntime: gitlabPortableAuthentication,
     },
   },
   actions: {
-    [GITLAB_TRIAGE_ACTION_IDS.listScopeUnits]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.listScopeUnits),
-      run: listGitlabScopeUnitsAction,
-    },
-    [GITLAB_TRIAGE_ACTION_IDS.listInstances]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.listInstances),
-      run: listGitlabInstancesAction,
-    },
-    [GITLAB_TRIAGE_ACTION_IDS.scan]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.scan),
-      run: scanGitlabSourceAction,
-    },
-    [GITLAB_TRIAGE_ACTION_IDS.get]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.get),
-      run: getGitlabSourceEntryAction,
-    },
-    [GITLAB_TRIAGE_ACTION_IDS.readPullRequestStatus]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.readPullRequestStatus),
-      run: readGitlabPullRequestStatus,
-    },
+    ...GITLAB_ACCOUNT_ACTIONS,
     [GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
+      execution: GITLAB_REVIEW_WORKSPACE_EXECUTION,
       run: prepareGitlabReviewWorkspaceAction,
     },
     [GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace),
+      execution: GITLAB_REVIEW_WORKSPACE_EXECUTION,
       run: verifyGitlabReviewWorkspaceAction,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes),
-      run: listGitlabNotes,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview),
-      run: readGitlabOverview,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listActivityEvents]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listActivityEvents),
-      run: listGitlabActivityEvents,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listDiscussions]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listDiscussions),
-      run: listGitlabDiscussions,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.readApprovals]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.readApprovals),
-      run: readGitlabApprovals,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines),
-      run: listGitlabPipelines,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges),
-      run: listGitlabChanges,
-    },
-    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff),
-      run: readGitlabRawDiff,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge),
-      run: mergeGitlabMergeRequest,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady),
-      run: markGitlabMergeRequestReady,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose),
-      run: closeGitlabMergeRequest,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReopen]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReopen),
-      run: reopenGitlabMergeRequest,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueClose]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueClose),
-      run: closeGitlabIssue,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueReopen),
-      run: reopenGitlabIssue,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewerChange]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewerChange),
-      run: changeGitlabMergeRequestReviewers,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestDiscussionResolution]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestDiscussionResolution),
-      run: resolveGitlabMergeRequestDiscussion,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueAssign),
-      run: assignGitlabIssue,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel),
-      run: changeGitlabIssueLabels,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview),
-      run: publishGitlabMergeRequestReview,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate),
-      run: publishGitlabMergeRequestReviewComment,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply),
-      run: publishGitlabMergeRequestThreadReply,
-    },
-    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment]: {
-      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment),
-      run: publishGitlabIssueComment,
-    },
+    }
   },
   ui: {
       renderers: [{
@@ -380,20 +241,20 @@ export const GITLAB_PLUGIN = definePlugin({
         defaultRank: 10,
         renderer: GITLAB_TRIAGE_SETTINGS_RENDERER_ID,
       }],
-      translations: withTriageSourceSettingsTranslationsV1([
-        { locale: 'en', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["en"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PRs & Issues', 'plugins.gitlab.settings.sources.subtitle': 'Choose which GitLab accounts and projects appear in PRs & Issues.' } },
-        { locale: 'ru', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["ru"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR и задачи', 'plugins.gitlab.settings.sources.subtitle': 'Выберите учетные записи и проекты GitLab, которые будут отображаться в разделе PR и задач.' } },
-        { locale: 'pl', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["pl"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR-y i zgłoszenia', 'plugins.gitlab.settings.sources.subtitle': 'Wybierz konta i projekty GitLab wyświetlane w sekcji PR-ów i zgłoszeń.' } },
-        { locale: 'es', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["es"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["es"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR e incidencias', 'plugins.gitlab.settings.sources.subtitle': 'Elige qué cuentas y proyectos de GitLab aparecen en PR e incidencias.' } },
-        { locale: 'fr', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["fr"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["fr"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR et tickets', 'plugins.gitlab.settings.sources.subtitle': 'Choisis les comptes et projets GitLab affichés dans PR et tickets.' } },
-        { locale: 'it', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["it"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["it"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR e segnalazioni', 'plugins.gitlab.settings.sources.subtitle': 'Scegli gli account e i progetti GitLab da mostrare in PR e segnalazioni.' } },
-        { locale: 'pt', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["pt"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["pt"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PRs e problemas', 'plugins.gitlab.settings.sources.subtitle': 'Escolha as contas e os projetos GitLab apresentados em PRs e problemas.' } },
-        { locale: 'de', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["de"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["de"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PRs & Tickets', 'plugins.gitlab.settings.sources.subtitle': 'Wähle aus, welche GitLab-Konten und -Projekte unter PRs & Tickets angezeigt werden.' } },
-        { locale: 'ca', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["ca"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["ca"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR i incidències', 'plugins.gitlab.settings.sources.subtitle': 'Tria els comptes i projectes de GitLab que es mostren a PR i incidències.' } },
-        { locale: 'zh-Hans', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["zh-Hans"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR 和问题', 'plugins.gitlab.settings.sources.subtitle': '选择要在 PR 和问题中显示的 GitLab 帐户和项目。' } },
-        { locale: 'zh-Hant', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["zh-Hant"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR 與問題', 'plugins.gitlab.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 GitLab 帳戶和專案。' } },
-        { locale: 'ja', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["ja"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR と課題', 'plugins.gitlab.settings.sources.subtitle': 'PR と課題に表示する GitLab アカウントとプロジェクトを選択します。' } },
-      ]),
+      translations: [
+        { locale: "en", resourceId: "i18n-en" },
+        { locale: "ru", resourceId: "i18n-ru" },
+        { locale: "pl", resourceId: "i18n-pl" },
+        { locale: "es", resourceId: "i18n-es" },
+        { locale: "fr", resourceId: "i18n-fr" },
+        { locale: "it", resourceId: "i18n-it" },
+        { locale: "pt", resourceId: "i18n-pt" },
+        { locale: "de", resourceId: "i18n-de" },
+        { locale: "ca", resourceId: "i18n-ca" },
+        { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+        { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+        { locale: "ja", resourceId: "i18n-ja" },
+      ],
   },
   contributesTo: {
     [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: {

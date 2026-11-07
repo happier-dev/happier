@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 
 import { buildGitlabItemUrl } from '../detail/routes.js';
 import { requestGitlabJson } from '../http/gitlabClient.js';
@@ -12,7 +12,7 @@ import { GITLAB_MUTATION_INPUT_INVALID_FAILURE } from './preflight.js';
 
 export async function changeGitlabIssueLabels(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabIssueLabelResultV1> {
   const parsed = GitlabIssueLabelInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'unavailable', failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE };

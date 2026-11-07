@@ -13,7 +13,9 @@ import {
   GITLAB_TRIAGE_DETAIL_RENDERER_ID,
   GITLAB_TRIAGE_MUTATION_ACTION_IDS,
 } from './triage/contribution.js';
-import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST);
 
 const INSTANCE_ACCOUNT_BINDING = {
   path: 'instance.binding.account',
@@ -299,7 +301,7 @@ describe('GitLab merge-request mutation Actions', () => {
   });
 
   it('resolves every confirmation key in every locale the plugin ships', () => {
-    const locales = PLUGIN_MANIFEST.contributes.ui.translations.map(({ locale }) => locale);
+    const locales = (PLUGIN_MANIFEST.contributes.ui?.translations ?? []).map(({ locale }) => locale);
     expect(locales.length).toBeGreaterThan(1);
 
     const keys = Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).flatMap((id) => {
@@ -315,8 +317,8 @@ describe('GitLab merge-request mutation Actions', () => {
     expect(keys).toHaveLength(Object.keys(GITLAB_TRIAGE_MUTATION_ACTION_IDS).length * 3);
 
     for (const locale of locales) {
-      const messages = GITLAB_ADDITIONAL_UI_TRANSLATIONS[
-        locale as keyof typeof GITLAB_ADDITIONAL_UI_TRANSLATIONS
+      const messages = PACKAGED_UI_TRANSLATIONS[
+        locale as keyof typeof PACKAGED_UI_TRANSLATIONS
       ];
       for (const key of keys) {
         // A referenced-but-undefined key renders the fallback in one language

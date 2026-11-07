@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "現時点で {count} 件実行中",
   "plugins.triage.detailStory.runningSoFar.many": "現時点で {count} 件実行中",
   "plugins.triage.detailStory.runningSoFar.other": "現時点で {count} 件実行中",
+  "plugins.gitlab.ui.changedFiles": "変更されたファイル",
   "plugins.gitlab.ui.readFailed": "GitLab はこの読み取りを完了できませんでした。",
   "plugins.gitlab.ui.copyValue": "{item} をコピー",
   "plugins.gitlab.ui.openOnGitlab": "GitLab で {item} を開く",

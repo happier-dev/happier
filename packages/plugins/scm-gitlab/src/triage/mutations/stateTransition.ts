@@ -25,7 +25,7 @@
  * lost step 5 is the one that tells a user nothing happened to a close that did.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
@@ -82,7 +82,7 @@ export async function runGitlabStateTransition<TRow extends GitlabIdentifiedRow>
     expectedRevision?: string;
     transition: GitlabStateTransitionV1<TRow>;
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabStateTransitionOutcomeV1<TRow>> {
   const preflight = await preflightGitlabItemMutation({
     instance: input.instance,

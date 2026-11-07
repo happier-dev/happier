@@ -1,5 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { createHash } from 'node:crypto';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   createReviewCommentPublicationSettlementRequestV1,
   parseReviewCommentPublicationPlanV1,
@@ -226,13 +225,13 @@ type SummaryEntrySpec = Readonly<{
 }>;
 type EntrySpec = DraftSpec | SummaryEntrySpec;
 
-function projectEntry(
+async function projectEntry(
   entry: ReviewCommentPublicationEntryV1,
   plan: ReviewCommentPublicationPlanV1,
   startRevision: string,
   correlationId: string,
   route: 'inline' | 'summary',
-): EntrySpec | null {
+): Promise<EntrySpec | null> {
   if (route === 'summary') {
     const marker = formatReviewCommentPublicationMarkerV1('entry', correlationId);
     return {
@@ -252,7 +251,8 @@ function projectEntry(
   if (entry.anchor.kind !== 'line' && entry.anchor.kind !== 'range' && entry.anchor.kind !== 'file') return null;
   const side = entry.anchor.kind === 'file' ? diff.side : entry.anchor.side ?? diff.side;
   const lineKey = side === 'before' ? 'old_line' : 'new_line';
-  const pathHash = createHash('sha1').update(entry.anchor.filePath, 'utf8').digest('hex');
+  const pathDigest = await globalThis.crypto.subtle.digest('SHA-1', new TextEncoder().encode(entry.anchor.filePath));
+  const pathHash = Array.from(new Uint8Array(pathDigest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   const lineRange = entry.anchor.kind !== 'range'
     ? undefined
     : {
@@ -330,7 +330,7 @@ async function sendJson(
 
 async function claimPublication(
   plan: ReviewCommentPublicationPlanV1,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
   signal: AbortSignal,
 ): Promise<ReviewCommentClaimPublicationDispatchResponseV1 | null> {
   try {
@@ -367,7 +367,7 @@ async function reportPublication(
   plan: ReviewCommentPublicationPlanV1,
   claim: ReviewCommentClaimPublicationDispatchResponseV1,
   result: ReviewCommentPublicationResultV1,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
   signal: AbortSignal,
 ): Promise<TriageSourceFailureV1 | null> {
   try {
@@ -539,7 +539,7 @@ async function ensureGitlabVerdictSummary(input: Readonly<{
 /** GitLab orderedPartial review publication through draft notes and a last verdict. */
 export async function publishGitlabMergeRequestReview(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabReviewPublicationResultV1> {
   const parsed = GitlabMergeRequestReviewPublicationInputV1Schema.safeParse(input);
   if (!parsed.success) return rejected('invalid_input', { failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE });
@@ -573,13 +573,13 @@ export async function publishGitlabMergeRequestReview(
   if (revisions.base !== plan.baseRevision) return rejected('base_advanced', { observed: current.row });
   if (revisions.head !== plan.headRevision) return rejected('head_advanced', { observed: current.row });
   if (revisions.start === null) return rejected('start_advanced', { observed: current.row });
-  const preclaimProjections = plan.entries.map((entry, index) => projectEntry(
+  const preclaimProjections = await Promise.all(plan.entries.map((entry, index) => projectEntry(
     entry,
     plan,
     revisions.start!,
     'A'.repeat(43),
     routing.verdictSummaryEntryIndexes.includes(index) ? 'summary' : 'inline',
-  ));
+  )));
   if (preclaimProjections.some((entry) => entry === null)) {
     return rejected('unsupported_anchor', { observed: current.row });
   }
@@ -623,13 +623,13 @@ export async function publishGitlabMergeRequestReview(
       failure ?? settlementFailure ?? undefined,
     );
   };
-  const projectedEntries = plan.entries.map((entry, index) => projectEntry(
+  const projectedEntries = await Promise.all(plan.entries.map((entry, index) => projectEntry(
     entry,
     plan,
     revisions.start!,
     claim.entries[index]!.publicationCorrelationId,
     routing.verdictSummaryEntryIndexes.includes(index) ? 'summary' : 'inline',
-  ));
+  )));
   if (projectedEntries.some((entry) => entry === null)) {
     // This branch is reachable only if the generic claim owner accepted a plan
     // whose provider projection changed between checks. It still performs no
@@ -935,14 +935,14 @@ function singleEntryPublication(
 
 async function publishSingleComment<TRow extends PublicationObservedRow>(options: Readonly<{
   plan: ReviewCommentPublicationPlanV1;
-  context: PluginInvocationContext;
+  context: PluginAccountActionContext;
   preflight: Extract<GitlabMutationPreflight<TRow>, Readonly<{ ok: true }>>;
   readUrl: string;
   requireCollection?: (collection: Extract<RawCollectionRead, { ok: true }>) => boolean;
   buildWrite: (markedBody: string, correlationId: string) => Readonly<{
     url: string;
     body: unknown;
-  }> | null;
+  }> | null | Promise<Readonly<{ url: string; body: unknown }> | null>;
 }>): Promise<GitlabReviewPublicationResultV1> {
   const before = await readRawCollection(options.readUrl, options.preflight);
   if (!before.ok) {
@@ -996,7 +996,7 @@ async function publishSingleComment<TRow extends PublicationObservedRow>(options
     return await settlePublication(publication);
   }
 
-  const write = options.buildWrite(bodyWithMarker(options.plan.entries[0]!.body, marker), correlationId);
+  const write = await options.buildWrite(bodyWithMarker(options.plan.entries[0]!.body, marker), correlationId);
   if (write === null) return rejected('unsupported_anchor', { observed: options.preflight.row });
   const sent = await sendJson(options.preflight, { url: write.url, method: 'POST', body: write.body });
   if (sent.kind === 'failed' && !gitlabWriteAnswerLost(sent)) {
@@ -1036,7 +1036,7 @@ function parsePublicationPlan(input: unknown): ReviewCommentPublicationPlanV1 | 
 /** Publish one revision-pinned merge-request discussion note. */
 export async function publishGitlabMergeRequestReviewComment(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabReviewPublicationResultV1> {
   const parsed = GitlabMergeRequestReviewCommentCreateInputV1Schema.safeParse(input);
   if (!parsed.success) return rejected('invalid_input', { failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE });
@@ -1066,7 +1066,7 @@ export async function publishGitlabMergeRequestReviewComment(
   if (revisions.base !== plan.baseRevision) return rejected('base_advanced', { observed: current.row });
   if (revisions.head !== plan.headRevision) return rejected('head_advanced', { observed: current.row });
   if (revisions.start === null) return rejected('start_advanced', { observed: current.row });
-  const mapped = projectEntry(plan.entries[0]!, plan, revisions.start, 'A'.repeat(43), 'inline');
+  const mapped = await projectEntry(plan.entries[0]!, plan, revisions.start, 'A'.repeat(43), 'inline');
   if (mapped === null || mapped.kind !== 'entry') {
     return rejected('unsupported_anchor', { observed: current.row });
   }
@@ -1075,8 +1075,8 @@ export async function publishGitlabMergeRequestReviewComment(
     context,
     preflight: current,
     readUrl: discussionsUrl(current),
-    buildWrite: (_markedBody, correlationId) => {
-      const spec = projectEntry(plan.entries[0]!, plan, revisions.start!, correlationId, 'inline');
+    buildWrite: async (_markedBody, correlationId) => {
+      const spec = await projectEntry(plan.entries[0]!, plan, revisions.start!, correlationId, 'inline');
       return spec === null || spec.kind !== 'entry' ? null : {
         url: `${buildGitlabItemUrl(current.route)}/discussions`,
         body: { body: spec.body, position: spec.position },
@@ -1088,7 +1088,7 @@ export async function publishGitlabMergeRequestReviewComment(
 /** Publish one reply into one exact merge-request discussion. */
 export async function publishGitlabMergeRequestThreadReply(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabReviewPublicationResultV1> {
   const parsed = GitlabMergeRequestThreadReplyInputV1Schema.safeParse(input);
   if (!parsed.success) return rejected('invalid_input', { failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE });
@@ -1126,7 +1126,7 @@ export async function publishGitlabMergeRequestThreadReply(
 /** Publish one canonical issue comment without inventing an issue revision. */
 export async function publishGitlabIssueComment(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabReviewPublicationResultV1> {
   const parsed = GitlabIssueCommentInputV1Schema.safeParse(input);
   if (!parsed.success) return rejected('invalid_input', { failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE });

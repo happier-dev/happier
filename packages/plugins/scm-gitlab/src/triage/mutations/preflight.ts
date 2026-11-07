@@ -25,7 +25,7 @@
  * later lost the identity check would be the one nobody reread.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { admitGitlabItemInvocation } from '../admission.js';
@@ -161,7 +161,7 @@ export async function preflightGitlabItemMutation<TRow extends GitlabIdentifiedR
     subject: GitlabMutationSubjectV1<TRow>;
     expectedRevision?: string;
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMutationPreflight<TRow>> {
   const admitted = await admitGitlabItemInvocation({
     instance: input.instance,

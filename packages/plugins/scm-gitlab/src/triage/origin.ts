@@ -6,6 +6,8 @@
  * never defaulted to gitlab.com because a host looked familiar.
  */
 
+import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
+
 import type { GitlabFailure } from './types.js';
 
 /** The public SaaS deployment, separately granted without private-network reach. */
@@ -81,5 +83,5 @@ export function admitGitlabV1Deployment(baseUrl: string): GitlabDeploymentAdmiss
 
 /** `base64url` of the normalized configured origin — the identity scope component. */
 export function encodeGitlabConfiguredOriginScope(origin: GitlabConfiguredOrigin): string {
-  return Buffer.from(origin.normalized, 'utf8').toString('base64url');
+  return encodeBase64(new TextEncoder().encode(origin.normalized), 'base64url');
 }

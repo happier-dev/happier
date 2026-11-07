@@ -1,3 +1,4 @@
+import { gitlabDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
 /**
  * The one Triage boundary for this provider.
  *
@@ -218,10 +219,10 @@ export const GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
         // r0.42: the Triage detail frame draws these tabs and asks this source
         // for each as a panel; the writes render as the header `actions` panel.
         detailTabs: [
-          { kind: 'shared', id: 'overview' },
-          { kind: 'shared', id: 'activity' },
-          { kind: 'shared', id: 'files' },
-          { kind: 'shared', id: 'checks' },
+          { kind: 'shared', id: 'overview', scrollOwner: gitlabDetailTabDeclaration('overview').scrollOwner },
+          { kind: 'shared', id: 'activity', scrollOwner: gitlabDetailTabDeclaration('activity').scrollOwner },
+          { kind: 'shared', id: 'files', scrollOwner: gitlabDetailTabDeclaration('changes').scrollOwner },
+          { kind: 'shared', id: 'checks', scrollOwner: gitlabDetailTabDeclaration('pipelines').scrollOwner },
         ],
         detailActions: true,
       },
@@ -230,8 +231,8 @@ export const GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
         ...KIND_DISPLAY.issue,
         // Files and Checks for an issue come from its linked fix PR.
         detailTabs: [
-          { kind: 'shared', id: 'overview' },
-          { kind: 'shared', id: 'activity' },
+          { kind: 'shared', id: 'overview', scrollOwner: gitlabDetailTabDeclaration('overview').scrollOwner },
+          { kind: 'shared', id: 'activity', scrollOwner: gitlabDetailTabDeclaration('activity').scrollOwner },
         ],
         detailActions: true,
       },
@@ -274,6 +275,10 @@ const INSTANCE_ACCOUNT_BINDINGS = Object.freeze([Object.freeze({
   purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
 })]);
 
+export const GITLAB_REVIEW_WORKSPACE_EXECUTION = { target: 'daemon' } as const;
+
+export const GITLAB_ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'gitlab-account-runtime', exportName: 'activate' } } as const;
+
 type TriageActionDeclaration = Readonly<{
   id: string;
   title: string;
@@ -283,7 +288,7 @@ type TriageActionDeclaration = Readonly<{
     PluginActionInvocationSurfaceV2,
     ...PluginActionInvocationSurfaceV2[],
   ];
-  execution: Readonly<{ target: 'daemon' }>;
+  execution: typeof GITLAB_ACCOUNT_EXECUTION | Readonly<{ target: 'daemon' }>;
   dangerLevel: 'safe' | 'writesLocal';
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
@@ -304,7 +309,7 @@ type GitlabMutationActionDeclaration = Readonly<{
   scopes: readonly ['global'];
   surfaces: readonly ['ui', 'agent', 'mcp', 'cli'];
   placementBindings: readonly ['detailsPanel'];
-  execution: Readonly<{ target: 'daemon' }>;
+  execution: typeof GITLAB_ACCOUNT_EXECUTION;
   dangerLevel: 'destructive' | 'externalSideEffect' | 'writesRemote';
   confirmation: Readonly<{
     title: Readonly<{ key: string; fallback: string }>;
@@ -337,7 +342,9 @@ function declareOperationAction(input: Readonly<{
     description: input.description,
     scopes: input.scopes,
     surfaces: declaration.surfaces,
-    execution: { target: 'daemon' },
+    execution: input.role === 'prepareReviewWorkspace' || input.role === 'verifyReviewWorkspace'
+      ? GITLAB_REVIEW_WORKSPACE_EXECUTION
+      : GITLAB_ACCOUNT_EXECUTION,
     dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
     inputSchema: TriageSourceConnectedAccountInputsV1[input.role].jsonSchema,
     resultSchema: declaration.resultSchema.jsonSchema,
@@ -485,7 +492,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
     ...declaration,
     scopes: ['global'] as const,
     surfaces: ['ui', 'agent', 'mcp', 'cli'] as const,
-    execution: { target: 'daemon' as const },
+    execution: GITLAB_ACCOUNT_EXECUTION,
     dangerLevel: 'safe' as const,
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -761,7 +768,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
     scopes: ['global'] as const,
     surfaces: ['ui', 'agent', 'mcp', 'cli'] as const,
     placementBindings: ['detailsPanel'] as const,
-    execution: { target: 'daemon' as const },
+    execution: GITLAB_ACCOUNT_EXECUTION,
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   })));

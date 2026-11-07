@@ -14,7 +14,8 @@ import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
-import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import { projectPluginActionRejectionV1, type PluginActionExecution } from '@happier-dev/plugin-ui';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { GITLAB_CONNECTED_ACCOUNT_PURPOSE } from '../../triage/contribution.js';
 import {
@@ -348,6 +349,16 @@ describe('projectGitlabWriteOutcomeV1', () => {
       message: 'declined',
       retryable: false,
     })).toEqual({ kind: 'declined' });
+  });
+
+  it('preserves the mounted host confirmation decline through the public SDK settlement', () => {
+    const execution = projectPluginActionRejectionV1(new PluginError({
+      code: 'denied',
+      diagnostics: [{ code: GITLAB_CURRENT_INTENT_REJECTED_CODE, severity: 'error' }],
+    }), (_key, fallback) => fallback ?? 'Host refusal');
+    const outcome = projectGitlabWriteOutcomeV1('reviewerChange', execution);
+    expect(outcome).toEqual({ kind: 'declined' });
+    expect(gitlabWriteMayHaveChangedProviderStateV1(outcome)).toBe(false);
   });
 
   it('does not claim any other host error wrote nothing', () => {

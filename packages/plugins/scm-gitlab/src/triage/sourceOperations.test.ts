@@ -12,6 +12,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate } from '../activate.js';
+import { activate as activateAccount } from '../accountRuntime.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 import issueList from './__fixtures__/issueList.json' with { type: 'json' };
@@ -124,10 +125,10 @@ function harness(
 
 type ScanSeam = ReturnType<typeof harness>;
 
-it('searches projects on the exact self-managed base and keeps pagination bound to that directory', async () => {
+it('searches the exact self-managed base through Account activation without a Machine and keeps pagination bound to that directory', async () => {
   const seam = harness({});
   const requested: string[] = [];
-  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
     connectedAccounts: seam.connectedAccounts,
     http: { request: async ({ url }) => {
       requested.push(url);
@@ -155,6 +156,7 @@ it('searches projects on the exact self-managed base and keeps pagination bound 
       v: 1, draft, query: 'platform', cursor: first.nextCursor,
     }, { surface: 'agent', sessionId: 'directory-session' })).toMatchObject({ kind: 'page', status: 'complete', units: [{ id: '22' }] });
     const count = requested.length;
+    expect(count).toBe(2);
     expect(await plugin.invokeAction('triage/list-gitlab-scope-units', {
       v: 1, draft, query: 'different query', cursor: first.nextCursor,
     }, { surface: 'agent', sessionId: 'directory-session' })).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
@@ -163,7 +165,7 @@ it('searches projects on the exact self-managed base and keeps pagination bound 
 });
 
 it('projects configured GitLab projects through its admitted Action without credential or provider reads', async () => {
-  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
   const selection = { kind: 'selected', unitIds: ['11', '22'] };
   const units = [{ id: '11', label: 'group/app' }, { id: '22', label: 'group/api' }];
   try {

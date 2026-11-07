@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "Dotąd w toku: {count}",
   "plugins.triage.detailStory.runningSoFar.many": "Dotąd w toku: {count}",
   "plugins.triage.detailStory.runningSoFar.other": "Dotąd w toku: {count}",
+  "plugins.gitlab.ui.changedFiles": "Zmienione pliki",
   "plugins.gitlab.ui.readFailed": "GitLab nie zdołał ukończyć odczytu.",
   "plugins.gitlab.ui.copyValue": "Kopiuj {item}",
   "plugins.gitlab.ui.openOnGitlab": "Otwórz {item} w GitLab",

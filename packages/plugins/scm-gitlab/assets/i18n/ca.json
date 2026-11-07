@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} en curs de moment",
   "plugins.triage.detailStory.runningSoFar.many": "{count} en curs de moment",
   "plugins.triage.detailStory.runningSoFar.other": "{count} en curs de moment",
+  "plugins.gitlab.ui.changedFiles": "Fitxers modificats",
   "plugins.gitlab.ui.readFailed": "GitLab no ha pogut completar aquesta lectura.",
   "plugins.gitlab.ui.copyValue": "Copia {item}",
   "plugins.gitlab.ui.openOnGitlab": "Obre {item} a GitLab",

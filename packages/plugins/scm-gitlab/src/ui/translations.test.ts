@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,19 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from './additionalTranslations.js';
-import { GITLAB_RENDER_UI_TRANSLATIONS } from './renderTranslations.js';
 
-const LOCALES = Object.keys(GITLAB_RENDER_UI_TRANSLATIONS) as readonly
-  (keyof typeof GITLAB_RENDER_UI_TRANSLATIONS)[];
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../', import.meta.url));
+
+const LOCALES = Object.keys(PACKAGED_UI_TRANSLATIONS) as readonly
+  (keyof typeof PACKAGED_UI_TRANSLATIONS)[];
 
 type Messages = Readonly<Record<string, string | undefined>>;
 
 function messages(locale: (typeof LOCALES)[number]): Messages {
-  return {
-    ...GITLAB_RENDER_UI_TRANSLATIONS[locale],
-    ...GITLAB_ADDITIONAL_UI_TRANSLATIONS[locale],
-  };
+  return PACKAGED_UI_TRANSLATIONS[locale];
 }
 
 const ENGLISH = messages('en');

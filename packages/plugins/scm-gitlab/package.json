@@ -16,6 +16,10 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./happier-plugin-ui/gitlab-account-runtime": {
+      "happier-source": "./src/accountRuntime.ts",
+      "default": "./dist/accountRuntime.js"
+    },
     "./happier-plugin-ui/gitlab-detail-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/gitlab-triage-sources-native": "./src/ui/settings/renderSettingsSurface.tsx"
   },

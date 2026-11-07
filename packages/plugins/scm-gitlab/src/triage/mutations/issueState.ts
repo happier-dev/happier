@@ -20,7 +20,7 @@
  * merge-request state Actions.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 
 import {
   GitlabIssueCloseInputV1Schema,
@@ -52,7 +52,7 @@ const REOPEN_TRANSITION: GitlabStateTransitionV1<GitlabIssueStateRowV1> = Object
 
 export async function closeGitlabIssue(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabIssueCloseResultV1> {
   const parsed = GitlabIssueCloseInputV1Schema.safeParse(input);
   if (!parsed.success) {
@@ -73,7 +73,7 @@ export async function closeGitlabIssue(
 
 export async function reopenGitlabIssue(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabIssueReopenResultV1> {
   const parsed = GitlabIssueReopenInputV1Schema.safeParse(input);
   if (!parsed.success) {

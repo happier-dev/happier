@@ -17,7 +17,6 @@
  * admission rule and every later request. This source adds no second timer.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
@@ -28,7 +27,7 @@ import {
   isGitlabIdentityWithinOrigin,
   readGitlabRepositoryRoutingToken,
 } from './identity.js';
-import { createGitlabHttpFetcher, readGitlabConnectedAccounts } from './invocation.js';
+import { createGitlabHttpFetcher, readGitlabConnectedAccounts, type GitlabHostReadContext } from './invocation.js';
 import { projectGitlabSourceFailure } from './sourceFailure.js';
 import type { GitlabKindId } from './types.js';
 
@@ -146,7 +145,7 @@ export async function admitGitlabItemInvocation(
     /** The kinds this caller can answer for at all. */
     admissibleKinds: readonly GitlabKindId[];
   }>,
-  context: PluginInvocationContext,
+  context: GitlabHostReadContext,
 ): Promise<GitlabAdmittedInvocation> {
   const identity = admitGitlabItemIdentity(input);
   if (!identity.ok) return identity;

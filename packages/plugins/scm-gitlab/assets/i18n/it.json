@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "{count} in corso finora",
   "plugins.triage.detailStory.runningSoFar.many": "{count} in corso finora",
   "plugins.triage.detailStory.runningSoFar.other": "{count} in corso finora",
+  "plugins.gitlab.ui.changedFiles": "File modificati",
   "plugins.gitlab.ui.readFailed": "GitLab non ha potuto completare questa lettura.",
   "plugins.gitlab.ui.copyValue": "Copia {item}",
   "plugins.gitlab.ui.openOnGitlab": "Apri {item} su GitLab",

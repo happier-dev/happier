@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { GitlabRequestResult } from '../http/gitlabClient.js';
@@ -60,7 +60,7 @@ export async function runGitlabMemberDelta<TRow extends NamedRow>(
     >;
     mutationErrors?: (body: unknown) => readonly string[];
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMemberDeltaResult<TRow>> {
   const preflight = await preflightGitlabItemMutation({
     instance: input.instance,

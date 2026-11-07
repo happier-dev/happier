@@ -23,6 +23,7 @@ import type {
   TriageSourceFailureV1,
   TriagePullRequestStatusV1,
 } from '@happier-dev/triage-protocol/v1';
+import { TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
 import {
@@ -68,7 +69,8 @@ function unresolved(
 
 async function executeGitlabTriageEntry(
   input: GitlabGetOperationInput,
-  captureDescription?: (description: string | null, entry: GitlabMappedEntry, readContext: GitlabOverviewReadContext) => void,
+  captureDescription?: (description: string | null, entry: GitlabMappedEntry, readContext: GitlabOverviewReadContext,
+    native: Readonly<Record<string, unknown>>) => void,
 ): Promise<TriageGetResultV1> {
   const localRef = input.get.localRef;
   const identity = admitGitlabItemIdentity({
@@ -146,7 +148,7 @@ async function executeGitlabTriageEntry(
     captureDescription(typeof body.description === 'string' ? body.description : null, entry, {
       route: routed.route,
       dependencies: { invocation, fetcher: input.fetcher, signal: input.signal, nowMs: input.nowMs },
-    });
+    }, body);
   }
 
   const viewer = await readGitlabViewerIdentity({
@@ -203,7 +205,7 @@ export async function readGitlabTriageEntryForOverview(
   let description: string | null = null;
   let readContext: GitlabOverviewReadContext | null = null;
   let pullRequest: Awaited<ReturnType<typeof readGitlabTriageEntryForOverview>>['pullRequest'] = null;
-  const result = await executeGitlabTriageEntry(input, (value, entry, admitted) => {
+  const result = await executeGitlabTriageEntry(input, (value, entry, admitted, native) => {
     description = value;
     readContext = admitted;
     if (entry.identity.kindId !== 'merge-request') return;
@@ -211,12 +213,28 @@ export async function readGitlabTriageEntryForOverview(
     const base = entry.snapshot.branches?.target;
     const boundedHead = head ? boundGitlabText(head) : null;
     const boundedBase = base ? boundGitlabText(base) : null;
+    const revision = TriageIdentifierV1ProtocolSchema.safeParse(entry.snapshot.nativeRevision);
+    const nativeState = entry.snapshot.detailedMergeStatus === null ? null : boundGitlabText(entry.snapshot.detailedMergeStatus);
     pullRequest = {
-      branch: boundedHead && boundedBase ? { head: boundedHead.text, base: boundedBase.text } : null,
-      merge: projectGitlabMergeStatus(entry.snapshot.detailedMergeStatus),
+      branch: boundedHead || boundedBase || revision.success ? {
+        ...(boundedHead ? { head: boundedHead.text } : {}),
+        ...(boundedBase ? { base: boundedBase.text } : {}),
+        ...(revision.success ? { headRevision: revision.data } : {}),
+      } : null,
+      merge: { ...projectGitlabMergeStatus(entry.snapshot.detailedMergeStatus),
+        ...(entry.snapshot.draft === true ? { state: 'blocked' as const, blocker: 'draft_status' } : {}),
+        draft: entry.snapshot.draft,
+        // GitLab reports has_conflicts:false while mergeability is still being
+        // computed. Only its settled native answer proves conflict freedom.
+        conflicts: native.has_conflicts === true || entry.snapshot.detailedMergeStatus === 'conflict' ? true
+          : native.has_conflicts === false && (native.merge_status === 'can_be_merged'
+            || entry.snapshot.detailedMergeStatus === 'mergeable') ? false : null,
+        nativeState: nativeState === null || nativeState.truncated ? null : nativeState.text,
+      },
       reviewers: entry.snapshot.reviewers.map((reviewer) => reviewer.username),
       changesRequested: entry.snapshot.detailedMergeStatus === 'requested_changes',
-      projectionTruncated: (boundedHead?.truncated ?? false) || (boundedBase?.truncated ?? false),
+      projectionTruncated: (boundedHead?.truncated ?? false) || (boundedBase?.truncated ?? false)
+        || (nativeState?.truncated ?? false) || (entry.snapshot.nativeRevision !== null && !revision.success),
     };
   });
   return Object.freeze({ result, description, pullRequest, readContext });

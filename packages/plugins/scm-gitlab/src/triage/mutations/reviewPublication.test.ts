@@ -944,8 +944,8 @@ describe('GitLab single-comment publication Actions', () => {
       old_path: 'src/index.ts', new_path: 'src/index.ts',
       base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD, start_sha: OBSERVED_START,
       line_range: {
-        start: { type: 'new', new_line: 12 },
-        end: { type: 'new', new_line: 14 },
+        start: { type: 'new', new_line: 12, line_code: 'c5fb850250c7443c48a6c12b5cf6916773da31f1_0_12' },
+        end: { type: 'new', new_line: 14, line_code: 'c5fb850250c7443c48a6c12b5cf6916773da31f1_0_14' },
       },
     } });
   });

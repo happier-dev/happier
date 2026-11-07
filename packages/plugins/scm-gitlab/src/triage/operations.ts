@@ -10,6 +10,7 @@
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   TriageGetInputV1Schema,
   TriageGetResultV1Schema,
@@ -54,7 +55,7 @@ function requireOperationInput<T>(
 
 export async function listGitlabInstancesAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageListInstancesResultV1> {
   requireOperationInput(TriageListInstancesInputV1Schema.safeParse(input), 'listInstances');
   const result = await listGitlabTriageInstances({
@@ -66,7 +67,7 @@ export async function listGitlabInstancesAction(
 
 export async function scanGitlabSourceAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageScanResultV1> {
   const scan = requireOperationInput(TriageScanInputV1Schema.safeParse(input), 'scan');
   const result = await scanGitlabTriageSource({
@@ -81,7 +82,7 @@ export async function scanGitlabSourceAction(
 
 export async function getGitlabSourceEntryAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageGetResultV1> {
   const get = requireOperationInput(TriageGetInputV1Schema.safeParse(input), 'get');
   const result = await getGitlabTriageEntry({

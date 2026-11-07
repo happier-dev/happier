@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { buildGitlabItemUrl } from '../detail/routes.js';
@@ -43,7 +43,7 @@ function discussionUrl(itemUrl: string, discussionId: string): string {
 
 export async function resolveGitlabMergeRequestDiscussion(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMergeRequestDiscussionResolutionResultV1> {
   const parsed = GitlabMergeRequestDiscussionResolutionInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'unavailable', failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE };

@@ -126,6 +126,7 @@
   "plugins.triage.detailStory.runningSoFar.few": "Пока выполняется: {count}",
   "plugins.triage.detailStory.runningSoFar.many": "Пока выполняется: {count}",
   "plugins.triage.detailStory.runningSoFar.other": "Пока выполняется: {count}",
+  "plugins.gitlab.ui.changedFiles": "Изменённые файлы",
   "plugins.gitlab.ui.readFailed": "GitLab не удалось завершить чтение.",
   "plugins.gitlab.ui.copyValue": "Копировать {item}",
   "plugins.gitlab.ui.openOnGitlab": "Открыть {item} на GitLab",

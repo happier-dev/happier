@@ -88,6 +88,60 @@ function pathOf(request: RecordedGitlabRequest): string {
 }
 
 describe('GitLab shared pull request status', () => {
+  it.each([
+    { has_conflicts: true, merge_status: 'cannot_be_merged', expected: true },
+    { has_conflicts: false, merge_status: 'can_be_merged', expected: false },
+    { has_conflicts: false, merge_status: 'checking', expected: null },
+    { has_conflicts: undefined, merge_status: 'unchecked', expected: null },
+  ])('retains only native GitLab conflict evidence ($merge_status) without inventing thread coverage', async ({ has_conflicts, merge_status, expected }) => {
+    const stub = createStubGitlabTransport({ respond: request => {
+      const path = pathOf(request);
+      if (path.endsWith('/merge_requests/7')) return ok({ ...mergeRequest, has_conflicts, merge_status });
+      if (path.endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      if (path.endsWith('/approvals')) return ok({ approvals_left: 0, approved_by: [] });
+      if (path.endsWith('/approval_rules')) return { status: 403 };
+      if (path.endsWith('/merge_requests/7/pipelines')) return ok([]);
+      return undefined;
+    } });
+    const status = TriagePullRequestStatusResultV1Schema.parse(await readGitlabPullRequestStatus({
+      v: 1, instance: gitlabTestConfiguredInstance(), localRef: MERGE_REQUEST_REF,
+      lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN },
+    }, stub.context));
+    expect(status).toMatchObject({ kind: 'status', branch: { headRevision: 'a'.repeat(40) },
+      merge: { conflicts: expected } });
+    if (status.kind !== 'status') throw new Error('expected status');
+    expect(status.review?.threads).toBeUndefined();
+    expect(stub.requests.filter(request => pathOf(request).endsWith('/merge_requests/7'))).toHaveLength(1);
+    expect(stub.requests.some(request => pathOf(request).includes('/discussions'))).toBe(false);
+  });
+
+  it.each([true, false])('retains only observed readiness destinations (available=%s)', async (available) => {
+    const sourceUrl = `${GITLAB_TEST_ORIGIN}/${ROUTING_TOKEN}/-/merge_requests/7`;
+    const detailsUrl = `${GITLAB_TEST_ORIGIN}/${ROUTING_TOKEN}/-/jobs/1`;
+    const stub = createStubGitlabTransport({ respond: (request) => {
+      const path = pathOf(request);
+      if (path.endsWith('/merge_requests/7')) return ok({ ...mergeRequest, web_url: available ? sourceUrl : undefined });
+      if (path.endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      if (path.endsWith('/approvals')) return { status: 403 };
+      if (path.endsWith('/merge_requests/7/pipelines')) return ok([{ id: 91, status: 'failed' }]);
+      if (path.endsWith('/pipelines/91/jobs')) return ok([{ id: 1, name: 'unit', status: 'failed',
+        web_url: available ? detailsUrl : '/relative/jobs/1' }]);
+      return undefined;
+    } });
+    const result = TriagePullRequestStatusResultV1Schema.parse(await readGitlabPullRequestStatus({
+      v: 1, instance: gitlabTestConfiguredInstance(), localRef: MERGE_REQUEST_REF,
+      lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN },
+    }, stub.context));
+    if (result.kind !== 'status' || !result.checks) throw new Error('fixture status missing');
+    if (available) expect(result).toMatchObject({ sourceUrl, checks: { rows: [{ id: '1', detailsUrl }] } });
+    else {
+      expect(Object.hasOwn(result, 'sourceUrl')).toBe(false);
+      expect(Object.hasOwn(result.checks.rows[0]!, 'detailsUrl')).toBe(false);
+    }
+    expect(stub.requests.filter((request) => pathOf(request).endsWith('/merge_requests/7'))).toHaveLength(1);
+    expect(stub.requests.filter((request) => pathOf(request).endsWith('/pipelines/91/jobs'))).toHaveLength(1);
+  });
+
   const mergeRequest = {
     id: 700, project_id: 3, iid: 7,
     references: { full: `${ROUTING_TOKEN}!7` },
@@ -111,8 +165,41 @@ describe('GitLab shared pull request status', () => {
       fetcher: createGitlabHttpFetcher(stub.context), signal: stub.context.signal, nowMs: Date.now(),
     })).toMatchObject({ result: { kind: 'present' }, pullRequest: {
       branch: { head: 'feature/status', base: 'main' },
-      merge: { state: 'blocked', blocker: 'not_approved' },
+      merge: { state: 'blocked', blocker: 'not_approved', draft: false, nativeState: 'not_approved' },
     } });
+  });
+
+  it('keeps explicit GitLab drafts blocked even while native merge status is mergeable', async () => {
+    const stub = createStubGitlabTransport({ respond: (request) => {
+      if (pathOf(request).endsWith('/merge_requests/7')) return ok({ ...mergeRequest, draft: true, detailed_merge_status: 'mergeable' });
+      if (pathOf(request).endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      return undefined;
+    } });
+    expect(await readGitlabTriageEntryForOverview({
+      get: { v: 1, instance: gitlabTestConfiguredInstance(), localRef: MERGE_REQUEST_REF,
+        lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN } },
+      connectedAccounts: readGitlabConnectedAccounts(stub.context), fetcher: createGitlabHttpFetcher(stub.context),
+      signal: stub.context.signal, nowMs: Date.now(),
+    })).toMatchObject({ pullRequest: {
+      merge: { state: 'blocked', draft: true, nativeState: 'mergeable' },
+      branch: { headRevision: 'a'.repeat(40) },
+    } });
+  });
+
+  it('retains the observed native head when GitLab branch display labels are unavailable', async () => {
+    const stub = createStubGitlabTransport({ respond: (request) => {
+      if (pathOf(request).endsWith('/merge_requests/7')) return ok({ ...mergeRequest, source_branch: null, target_branch: null });
+      if (pathOf(request).endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      return undefined;
+    } });
+    const read = await readGitlabTriageEntryForOverview({
+      get: { v: 1, instance: gitlabTestConfiguredInstance(), localRef: MERGE_REQUEST_REF,
+        lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN } },
+      connectedAccounts: readGitlabConnectedAccounts(stub.context), fetcher: createGitlabHttpFetcher(stub.context),
+      signal: stub.context.signal, nowMs: Date.now(),
+    });
+    expect(read.pullRequest?.branch).toEqual({ headRevision: 'a'.repeat(40) });
+    expect(stub.requests).toHaveLength(2);
   });
 
   it('publishes real job counts and rows across pages, approval facts and branch', async () => {

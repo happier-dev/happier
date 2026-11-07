@@ -523,8 +523,10 @@ export function projectGitlabPipelineJobs(body: unknown): Readonly<{
           : status === 'canceled' || status === 'skipped' || status === 'manual' ? 'neutral' : 'unknown';
     const startedAtMs = readTimestampMs(candidate.started_at);
     const completedAtMs = readTimestampMs(candidate.finished_at);
+    const detailsUrl = boundedWebUrl(candidate.web_url, GITLAB_DETAIL_BOUNDS_V1);
     projectionTruncated ||= name.truncated;
     rows.push({ id, name: name.value, state,
+      ...(detailsUrl === null ? {} : { detailsUrl }),
       ...(startedAtMs === null ? {} : { startedAtMs }),
       ...(completedAtMs === null ? {} : { completedAtMs }),
     });

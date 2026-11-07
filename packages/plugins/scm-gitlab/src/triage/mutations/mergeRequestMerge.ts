@@ -19,7 +19,7 @@
  * happens at the provider rather than in this process.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 
 import { buildGitlabMergeRequestMergeUrl } from '../detail/routes.js';
 import { requestGitlabJson } from '../http/gitlabClient.js';
@@ -46,7 +46,7 @@ const MERGE_REFUSAL_BY_STATUS: Readonly<Record<number, 'shaRequired' | 'notMerge
 
 export async function mergeGitlabMergeRequest(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMergeRequestMergeResultV1> {
   const parsed = GitlabMergeRequestMergeInputV1Schema.safeParse(input);
   if (!parsed.success) {

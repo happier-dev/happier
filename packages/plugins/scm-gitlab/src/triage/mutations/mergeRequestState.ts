@@ -14,7 +14,7 @@
  * it refuses from and why, and what its confirming read must prove.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 
 import {
   GitlabMergeRequestCloseInputV1Schema,
@@ -54,7 +54,7 @@ const REOPEN_TRANSITION: GitlabStateTransitionV1<GitlabMergeRequestStateRowV1> =
 
 export async function closeGitlabMergeRequest(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMergeRequestCloseResultV1> {
   const parsed = GitlabMergeRequestCloseInputV1Schema.safeParse(input);
   if (!parsed.success) {
@@ -74,7 +74,7 @@ export async function closeGitlabMergeRequest(
 
 export async function reopenGitlabMergeRequest(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMergeRequestReopenResultV1> {
   const parsed = GitlabMergeRequestReopenInputV1Schema.safeParse(input);
   if (!parsed.success) {

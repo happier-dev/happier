@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   admitGitlabV1Deployment,
@@ -72,6 +72,17 @@ describe('admitGitlabV1Deployment', () => {
 });
 
 describe('encodeGitlabConfiguredOriginScope', () => {
+  it('keeps configured identity stable when the invoking host has no Node Buffer', () => {
+    const origin = normalizeGitlabConfiguredBaseUrl('https://forge.example/Corp/GitLab');
+    if (!origin) throw new Error('expected a normalized origin');
+    vi.stubGlobal('Buffer', undefined);
+    try {
+      expect(encodeGitlabConfiguredOriginScope(origin)).toBe('aHR0cHM6Ly9mb3JnZS5leGFtcGxlL0NvcnAvR2l0TGFi');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('encodes the normalized origin as unpadded base64url', () => {
     const origin = normalizeGitlabConfiguredBaseUrl('https://gitlab.com');
     if (!origin) throw new Error('expected a normalized origin');

@@ -5,7 +5,6 @@ import mergeRequestList from '../__fixtures__/mergeRequestList.json' with { type
 import mergeRequestVariants from '../__fixtures__/mergeRequestVariants.json' with { type: 'json' };
 import { normalizeGitlabConfiguredBaseUrl } from '../origin.js';
 import {
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
 } from '@happier-dev/triage-protocol/v1';
@@ -53,11 +52,8 @@ describe('merge-request mapping', () => {
     expect(entry.snapshot.reviewers.map((actor) => actor.username)).toEqual(['example-reviewer']);
     expect(entry.snapshot.sourceUpdatedAtMs).toBe(Date.parse('2026-08-09T08:46:00Z'));
     expect(entry.viewer.involvement).toEqual(['author']);
-    // This row carries five projectable facts and the contract projects four, so the
-    // entry says so. `projectionTruncated` is the contract's own signal that the
-    // projection dropped something; suppressing it to keep it rare would make the four
-    // facts look like the whole row.
-    expect(entry.projectionTruncated).toBe(true);
+    expect(entry.rowFacts.length).toBeGreaterThan(4);
+    expect(entry.projectionTruncated).toBe(false);
   });
 
   it('reads the draft flag and never the title prefix', () => {
@@ -243,10 +239,11 @@ describe('semantic bounds', () => {
   });
 
   it('keeps an oversize valid entry visible, bounded, and flagged rather than dropping it', () => {
+    const labelSuffix = 'l'.repeat(Math.ceil(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 / 300));
     const entry = mapMergeRequest({
       ...rowOf(mergeRequestList[0]),
-      title: '\u{1F680}'.repeat(4_000),
-      labels: Array.from({ length: 300 }, (_, index) => `label-${index}`),
+      title: '\u{1F680}'.repeat(Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 4) + 1),
+      labels: Array.from({ length: 300 }, (_, index) => `label-${index}-${labelSuffix}`),
     });
     // Identity and locator survive intact.
     expect(entry.identity.entryId).toBe('7');
@@ -259,7 +256,7 @@ describe('semantic bounds', () => {
     // Truncation lands on a code-point boundary, never mid-surrogate.
     expect(entry.snapshot.title).not.toContain('�');
     expect([...entry.snapshot.title].every((c) => c === '\u{1F680}' || c === '…')).toBe(true);
-    expect(entry.rowFacts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(entry.rowFacts.length).toBeGreaterThan(4);
     for (const fact of entry.rowFacts) {
       const text = fact.value.kind === 'text'
         ? fact.value.text
@@ -273,10 +270,7 @@ describe('semantic bounds', () => {
     expect(entry.projectionTruncated).toBe(true);
   });
 
-  it('keeps the provider-native state a reader acts on when the fact bound drops one', () => {
-    // Four projected facts is the whole budget, so which four survive is a decision, not
-    // a side effect of push order. A merge request's conflict status outranks its
-    // supplementary counts.
+  it('keeps provider-native state and supplementary facts together', () => {
     const entry = mapMergeRequest({
       ...rowOf(mergeRequestList[0]),
       detailed_merge_status: 'conflict',
@@ -289,8 +283,9 @@ describe('semantic bounds', () => {
       'gitlab/merge-status',
       'gitlab/author',
       'gitlab/comments',
+      'gitlab/labels',
     ]);
-    expect(entry.projectionTruncated).toBe(true);
+    expect(entry.projectionTruncated).toBe(false);
   });
 
   it('collapses a control character rather than emitting a string the target rejects', () => {

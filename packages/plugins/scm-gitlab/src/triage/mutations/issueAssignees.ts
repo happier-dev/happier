@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { buildGitlabGraphqlUrl, requestGitlabJson } from '../http/gitlabClient.js';
 import {
   GitlabIssueAssignInputV1Schema,
@@ -17,7 +17,7 @@ const DOCUMENT = `mutation HappierIssueSetAssignees($projectPath: ID!, $iid: Str
 
 export async function assignGitlabIssue(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabIssueAssignResultV1> {
   const parsed = GitlabIssueAssignInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'unavailable', failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE };

@@ -11,7 +11,7 @@
  * large.
  */
 
-import { MAX_TRIAGE_ROW_FACTS_V1, type TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import { buildGitlabEntryIdentity } from '../identity.js';
 import type { GitlabConfiguredOrigin } from '../origin.js';
@@ -181,28 +181,6 @@ export function projectGitlabMergeStatus(status: string | null): NonNullable<Tri
   }
 }
 
-/**
- * The contract's own display weight decides which facts survive its count bound.
- *
- * A row carries at most `MAX_TRIAGE_ROW_FACTS_V1` projected facts, so the selection is
- * a real decision rather than an accident of push order: importance first, then the
- * order this mapper declared them. Slicing raw declaration order instead drops the
- * provider-native state a triage reader acts on — a merge request's conflict status —
- * in favour of whatever happened to be appended earlier.
- */
-const ROW_FACT_IMPORTANCE_RANK: Readonly<Record<GitlabRowFact['importance'], number>> =
-  Object.freeze({ primary: 0, secondary: 1, supplementary: 2 });
-
-function selectBoundedRowFacts(facts: readonly GitlabRowFact[]): readonly GitlabRowFact[] {
-  return facts
-    .map((fact, index) => ({ fact, index }))
-    .sort((left, right) =>
-      ROW_FACT_IMPORTANCE_RANK[left.fact.importance] - ROW_FACT_IMPORTANCE_RANK[right.fact.importance]
-      || left.index - right.index)
-    .slice(0, MAX_TRIAGE_ROW_FACTS_V1)
-    .map((entry) => entry.fact);
-}
-
 export type GitlabRowDecodeInput = Readonly<{
   kindId: GitlabKindId;
   origin: GitlabConfiguredOrigin;
@@ -266,8 +244,7 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
   // The projected fact list carries only what the observation's own dedicated fields
   // do NOT already carry. The project path is `snapshot.scopeLabel` and the update time
   // is `sourceUpdatedAtMs`; repeating either as a row fact is a second owner of one
-  // displayed fact, and at four projected facts that duplicate costs a slot the
-  // provider-native state needs.
+  // displayed fact.
   const facts: GitlabRowFact[] = [
     {
       id: 'gitlab/iid',
@@ -298,8 +275,6 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
     facts.push({ id: 'gitlab/labels', importance: 'supplementary', value: { kind: 'text', text: labelSummary.text } });
   }
 
-  const boundedFacts = selectBoundedRowFacts(facts);
-
   return {
     kind: 'mapped',
     entry: {
@@ -329,9 +304,9 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
         commentCount,
       },
       viewer: { involvement },
-      rowFacts: boundedFacts,
+      rowFacts: facts,
       projectionTruncated:
-        title.truncated || labelSummary.truncated || facts.length > boundedFacts.length,
+        title.truncated || labelSummary.truncated,
     },
   };
 }

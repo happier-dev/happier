@@ -7,7 +7,7 @@
  * headers stay inside the operation that requested them.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 
 import {
   buildGitlabApiUrl,
@@ -21,8 +21,13 @@ import type { GitlabFailure } from './types.js';
 
 const HTTP_TEXT_DECODER = new TextDecoder();
 
+export type GitlabHostReadContext = Readonly<{
+  signal: PluginAccountActionContext['signal'];
+  services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
+}>;
+
 /** Adapts the host HTTP service to the client's narrow fetcher seam. */
-export function createGitlabHttpFetcher(context: PluginInvocationContext): GitlabHttpFetcher {
+export function createGitlabHttpFetcher(context: GitlabHostReadContext): GitlabHttpFetcher {
   return async (url, init) => {
     const response = await context.services.http.request({
       url,
@@ -41,7 +46,7 @@ export function createGitlabHttpFetcher(context: PluginInvocationContext): Gitla
 }
 
 export function readGitlabConnectedAccounts(
-  context: PluginInvocationContext,
+  context: GitlabHostReadContext,
 ): GitlabConnectedAccounts {
   return context.services.connectedAccounts;
 }

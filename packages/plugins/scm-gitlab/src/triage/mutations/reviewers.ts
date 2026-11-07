@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { buildGitlabGraphqlUrl, requestGitlabJson } from '../http/gitlabClient.js';
 import {
   GitlabMergeRequestReviewerChangeInputV1Schema,
@@ -17,7 +17,7 @@ const DOCUMENT = `mutation HappierMergeRequestSetReviewers($projectPath: ID!, $i
 
 export async function changeGitlabMergeRequestReviewers(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<GitlabMergeRequestReviewerChangeResultV1> {
   const parsed = GitlabMergeRequestReviewerChangeInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'unavailable', failure: GITLAB_MUTATION_INPUT_INVALID_FAILURE };

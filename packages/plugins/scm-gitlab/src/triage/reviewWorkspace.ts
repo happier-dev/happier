@@ -346,7 +346,7 @@ export async function prepareGitlabReviewWorkspace(
 
 /**
  * Reauthorizes and rereads the selected merge request, then asks the canonical
- * SCM owner to compare the already prepared checkout's current local HEAD with
+ * SCM owner to compare the prepared or accepted checkout's current local HEAD with
  * the same provider-authoritative source tip. No provider or Git command is
  * reconstructed in Triage or in this source boundary.
  */
