@@ -50,15 +50,16 @@ async function readTags(destination: LazyActionAccountContext): Promise<readonly
     return received && snapshot ? snapshot.tags : null;
 }
 
-function readHeldTag(destination: LazyActionAccountContext, tagId: string): UiSessionOrganizationTag | undefined {
-    return getStorage().getState().sessionOrganizationTagsByTagKey[buildSessionOrganizationServerKey(destination.serverId, tagId)];
+async function readAssociatedTag(destination: LazyActionAccountContext, tagId: string): Promise<UiSessionOrganizationTag | undefined> {
+    const held = getStorage().getState().sessionOrganizationTagsByTagKey[buildSessionOrganizationServerKey(destination.serverId, tagId)];
+    return held ?? (await readTags(destination))?.find(tag => tag.tagId === tagId);
 }
 
 async function ensureTag(target: SessionSpaceMembershipTargetV1, space: CollectionSpaceV1<'sessionWork'>,
     catalog: LazyActionAccountContext, destination: LazyActionAccountContext): Promise<Readonly<{ ok: true; tagId: string }> | Failure> {
     const association = space.membership?.tags.find(tag => tag.accountId === destination.accountId
         && sameHome(tag.serverId, destination.serverId));
-    let tag = association ? readHeldTag(destination, association.tagId) : undefined;
+    let tag = association ? await readAssociatedTag(destination, association.tagId) : undefined;
     // An association to unavailable or mismatched content cannot become an ordinary tag write.
     if (association && (!tag || !ownsCatalogTag(tag, target))) return unavailable();
     let tags: readonly UiSessionOrganizationTag[] = [];
@@ -156,7 +157,7 @@ export async function setSessionSpaceMembership(args: Readonly<{ input: SessionS
             if (!space || input.operation === 'move' && !source) return unavailable('space_not_found');
             const sourceAssociation = source?.membership?.tags.find(tag => tag.accountId === ownDestination.accountId
                 && sameHome(tag.serverId, ownDestination.serverId));
-            const sourceTag = sourceAssociation ? readHeldTag(ownDestination, sourceAssociation.tagId) : undefined;
+            const sourceTag = sourceAssociation ? await readAssociatedTag(ownDestination, sourceAssociation.tagId) : undefined;
             if (sourceAssociation && (!sourceTag || !ownsCatalogTag(sourceTag, { ...input, spaceId: source!.id }))) return unavailable();
             const added = input.operation === 'remove' ? null : await ensureTag(input, space, catalog, ownDestination);
             if (added && !added.ok) return added;

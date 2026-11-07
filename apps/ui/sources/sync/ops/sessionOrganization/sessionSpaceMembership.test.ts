@@ -1,26 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import axios, { type AxiosAdapter } from 'axios';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { CreateOrUpdateSessionOrganizationTagRequestSchema, MutateSessionTagAssignmentsRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import { CreateOrUpdateSessionOrganizationTagRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import type { SessionOrganizationTag } from '@happier-dev/protocol/sessions/organization/tags';
-import { CollectionSpacesV1Schema, createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
-import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { CollectionSpacesV1Schema } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-// Only HTTP and device credentials are replaced; catalog CAS, Action policy, encryption,
-// organization projection and the membership owner run through their shipped implementations.
-const homes = createHomeGovernanceHarness();
-installHomeGovernanceBoundaries(homes);
-vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
-installDisconnectedServerSocketBoundary();
+import { fixture, homes } from './sessionSpaceMembership.testHelpers';
+
 await loadSyncSingletonForTests();
 // Load the real executor graph during collection, rather than charging its cold transform
 // time to the first operation's timeout.
-const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+await import('@/sync/ops/actions/scopedHomeActionExecutor');
 await import('@/sync/ops/actions/defaultActionExecutor');
 const [{ createClientActionReverseDispatcher }, { createCliActionExecutorFromCredentials }, { createActionSettingsProvider },
     { createUiClientActionReverseHandler }] = await Promise.all([
@@ -29,61 +22,6 @@ const [{ createClientActionReverseDispatcher }, { createCliActionExecutorFromCre
     import('../../../../../cli/src/settings/actionsSettingsProvider'),
     import('@/sync/ops/actions/clientActionReverseDispatch'),
 ]);
-beforeEach(async () => homes.reset());
-afterEach(() => standardCleanup());
-
-let fixtureNumber = 0;
-async function fixture() {
-    const accountId = `owner-${++fixtureNumber}`;
-    const serverId = await homes.addHome({ name: 'Membership', serverUrl: 'https://membership.example', accountId, active: false });
-    let raw: Record<string, unknown> = { collectionSpacesV1: { v: 1, spaces: ['a', 'b', 'c'].map(id => ({
-        ...createDefaultCollectionSpaceV1('sessionWork'), id, name: id,
-    })) } };
-    let version = 1;
-    homes.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { version, content: { t: 'plain', v: raw } } }) });
-    homes.answer(serverId, 'POST /v2/account/settings', { select: input => {
-        const body = AccountSettingsV2UpdateRequestSchema.parse(input);
-        if (body.content?.t !== 'plain') throw new Error('Expected plain Account settings');
-        if (body.expectedVersion !== version) return { body: { success: false, error: 'version-mismatch',
-            currentVersion: version, currentContent: { t: 'plain', v: raw } } };
-        raw = body.content.v;
-        return { body: { success: true, version: ++version } };
-    } });
-    let tags: SessionOrganizationTag[] = [{ tagId: 'ordinary', tagKey: 'ordinary', sortKey: null,
-        display: { t: 'plain', v: { label: 'Visible' } }, archivedAt: null, createdAt: 1, updatedAt: 1 }];
-    let assigned = ['ordinary'];
-    homes.answer(serverId, 'GET /v2/session-organization', { select: () => ({ body: { snapshot: {
-        schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], orderEntries: [], labels: [], tags,
-        tagAssignments: [{ sessionId: 's', tagIds: assigned }],
-    } } }) });
-    homes.answer(serverId, 'POST /v2/session-organization/tags', { select: input => {
-        const request = CreateOrUpdateSessionOrganizationTagRequestSchema.parse(input);
-        if (!request.tagId) throw new Error('Missing allocated tag');
-        const tag: SessionOrganizationTag = { ...request, tagId: request.tagId, sortKey: request.sortKey ?? null,
-            display: request.display ?? null, archivedAt: null, createdAt: 1, updatedAt: 1 };
-        tags = [...tags, tag];
-        return { body: { tag } };
-    } });
-    homes.answer(serverId, 'PUT /v2/session-organization/tag-assignments/s', { select: input => {
-        const request = MutateSessionTagAssignmentsRequestSchema.parse(input);
-        assigned = 'tagIds' in request ? request.tagIds
-            : [...new Set([...assigned.filter(id => !request.removeTagIds.includes(id)), ...request.addTagIds])];
-        return { body: { sessionId: 's', tagIds: assigned } };
-    } });
-    const execute = scopedHomeActionExecutor({ serverId, accountId });
-    const context = { serverId, expectedAccountId: accountId, surface: 'ui' as const, authority: 'present_user' as const };
-    const target = { serverId, accountId };
-    const input = (spaceId: string, operation: 'add' | 'move' | 'remove' = 'add', sourceSpaceId?: string) => ({
-        sessionId: 's', spaceId, operation, spaceSettingsTarget: target, ...(sourceSpaceId ? { sourceSpaceId } : {}),
-    });
-    return { serverId, accountId, execute, context, target, input, read: () => ({ assigned, tags, raw }),
-        seedPrivate: () => {
-            tags.push({ tagId: 'private', tagKey: 'private', sortKey: null, archivedAt: null, createdAt: 1, updatedAt: 1,
-                display: { t: 'plain', v: { kind: 'space_membership', spaceId: 'a', spaceSettingsTarget: target } } });
-            assigned.push('private');
-        }, seedUnknown: () => { assigned.push('unavailable-display'); } };
-}
-
 describe('Space membership through the Action front door', () => {
     it('uses held membership tags for repeated Add, Move, Remove and New without snapshot reads', async () => {
         const f = await fixture();
