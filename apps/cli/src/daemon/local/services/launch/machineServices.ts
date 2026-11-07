@@ -50,7 +50,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     let reconciled: Intent | null | undefined;
     let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let reconciliation: Promise<void> | undefined;
-    const intentListeners = new Set<() => void>();
+    const intentListeners = new Set<(intent: Intent | null) => void>();
     const adoptedHandles = new Map<string, MachineManagedServiceHandle>();
     const readIntent = () => {
         const metadata = input.readMetadata();
@@ -152,9 +152,11 @@ export function createMachineServicesRuntime(input: Readonly<{
                     // Saved intent stays visible as unknown; no failed or healthy native fact is invented.
                 }
             }
+            // The first reconciliation establishes the subscribing read's
+            // baseline; only a later intent change invalidates that baseline.
+            if (changed && reconciled !== undefined) for (const listener of intentListeners) listener(intent);
             reconciled = intent;
             registry = lease.registry;
-            if (changed) for (const listener of intentListeners) listener();
         } finally { await lease.release(); }
     }
     async function reconcile(serviceId?: string): Promise<void> {
@@ -182,7 +184,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             handles.push(...await selectVisibleMachineProjectServices(target, environmentId
                 ? projects.filter(handle => handle.kind === 'environment' && handle.environmentId === environmentId) : projects, request, serviceId));
             const readRow = async (handle: ServiceHandle) => {
-                // An explicit list read samples existing native accounting; observation itself never polls.
+                // Explicit list demand samples accounting; Resource snapshots project retained facts.
                 if (request.actionId === 'machines.services.list' && !request.context.machineServicesListResource && handle.readAccounting) {
                     await accounting(handle, request.signal);
                 }
@@ -280,14 +282,15 @@ export function createMachineServicesRuntime(input: Readonly<{
             if (request.actionId === 'machines.services.list' || request.actionId === 'machines.services.detail') {
                 const serviceId = 'serviceId' in parsed.data ? parsed.data.serviceId : undefined;
                 const environmentId = 'environmentId' in parsed.data ? parsed.data.environmentId : undefined;
-                const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource : undefined;
+                const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource?.observation : undefined;
                 if (observation) {
                     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
                     if (!lease || observation.signal.aborted) { await lease?.release(); return unavailable(); }
                     try {
                         const owner = lease.registry.projectManagedServices;
                         const homeServerIdentityId = await resolveServerProfileHomeIdentityId(target.serverId);
-                        const invalidate = () => { if (!observation.signal.aborted) observation.invalidate(); };
+                        const invalidate = (digest: string) => { if (!observation.signal.aborted) observation.invalidate(digest); };
+                        const intentChanged = (intent: Intent | null) => invalidate(`sha256:${revision(intent?.watches ?? [])}`);
                         // Demand-time baseline only. Subscribe before the admitted read so creation/retirement cannot fall in a read→watch gap.
                         const initial = [...owner.listMachineServices(), ...owner.listProjectServices()].filter(handle =>
                             (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === target.machineId
@@ -295,16 +298,20 @@ export function createMachineServicesRuntime(input: Readonly<{
                         const subscription = owner.machineServiceRows.subscribe(target.machineId, initial, change => {
                             if ((!environmentId || change.handle.kind === 'environment' && change.handle.environmentId === environmentId)
                                 && (target.serverId === change.serverId
-                                    || homeServerIdentityId !== null && homeServerIdentityId === change.homeServerIdentityId)) invalidate();
+                                    || homeServerIdentityId !== null && homeServerIdentityId === change.homeServerIdentityId)) {
+                                // The transport needs a digest hint, not another
+                                // list snapshot: hash only this producer's change.
+                                invalidate(`sha256:${revision([change.handle.serviceId, change.row])}`);
+                            }
                         });
-                        if (!environmentId) intentListeners.add(invalidate);
+                        if (!environmentId) intentListeners.add(intentChanged);
                         let released = false;
                         let accessSubscription: { dispose(): Promise<void> } | undefined;
                         const dispose = async () => {
                             if (released) return;
                             released = true;
                             observation.signal.removeEventListener('abort', dispose);
-                            intentListeners.delete(invalidate);
+                            intentListeners.delete(intentChanged);
                             subscription.dispose();
                             await accessSubscription?.dispose();
                         };

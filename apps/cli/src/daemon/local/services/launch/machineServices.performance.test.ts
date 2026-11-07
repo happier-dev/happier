@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import axios from 'axios';
+import axios, { AxiosHeaders } from 'axios';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { buildAccountIdentitiesChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -16,8 +16,141 @@ import type { ProjectNativeRuntimeFacts } from '@/plugins/runtime/invocation/ser
 import { createDeploymentSourceMaterializationPort } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createMachineServicesRuntime } from './machineServices';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
+import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handlers/daemonContributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonPluginUiResourceReadResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import type { RpcHandler } from '@/api/rpc/types';
 
 describe('Machine Services exact demand cost', () => {
+    it('opens a cold Machine Resource quietly and consumes changed rows and intent without speculative reads or accounting', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const target = { serverId: 'home', machineId: 'machine' };
+        let metadata: MachineMetadataFieldReadV1 = { status: 'ready', metadataVersion: 1,
+            metadata: { serviceWatchesV1: { v: 1, watches: [] } } };
+        const runtime = createMachineServicesRuntime({ target, readMetadata: () => metadata,
+            captureMetadataPort() { throw new Error('Resource projections cannot write metadata'); } });
+        const owner = fixture.registry.projectManagedServices;
+        const document = 'services:\n  web:\n    image: example/web\n  worker:\n    image: example/worker\n';
+        const materializer = createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]), async admit() {
+            return { environmentId: 'environment', environmentInstanceId: 'instance', deploymentId: 'deployment',
+                machineId: target.machineId, installationId: 'installation', deploymentRoot: join(fixture.happyHomeDir, 'deployments'),
+                artifactDirectory: join(fixture.happyHomeDir, 'artifacts'), definition: { kind: 'stored' as const, contentRevision: 1,
+                    document, composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
+                    profiles: [], services: ['web', 'worker'] }, async assertCurrent() {} };
+        } });
+        const release = await materializer.materialize({ environmentId: 'environment', deploymentId: 'deployment' });
+        await release.commit();
+        let phase: 'running' | 'stopped' = 'stopped';
+        let accountingSamples = 0;
+        const handles = [];
+        for (const composeService of ['web', 'worker']) handles.push(await owner.superviseProject({ kind: 'environment', ...target,
+            environmentId: release.environmentId, environmentInstanceId: release.environmentInstanceId, deploymentId: release.deploymentId,
+            release, composeService, serviceId: `instance/${composeService}`, specIdentity: composeService,
+            isCurrent: () => true, releaseObservation: async () => {}, nativeEffects: { keys: [] },
+            // Substitute native IO only; Resource transport, Action admission,
+            // visibility, supervision and row publication remain real.
+            processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                async inspect() { return { phase, readiness: 'not_reported', endpoint: null }; },
+                async readAccounting() { accountingSamples++; return { kind: 'sample', samples: [
+                    { nativeResourceId: composeService, cpuPercent: null, memoryBytes: 256 },
+                ] }; },
+                async stop() { throw new Error('Resource reads cannot stop native work'); },
+            } } },
+        }));
+        const accountId = 'services-resource-reader';
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const serverBaseUrl = 'https://services-resource.invalid';
+        const releaseHome = publishServerHttpRuntimeOrigin(serverBaseUrl, 'https');
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const accessHttp = vi.spyOn(axios, 'request').mockImplementation(async () => ({ status: 200, statusText: 'OK',
+            headers: {}, config: { headers: new AxiosHeaders() }, data: { ok: true, items: [{ environmentId: 'environment', read: true, deploy: false }] },
+        }));
+        const currentnessHttp = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+            if (new URL(url).pathname === '/v1/account/encryption/currentness') return { status: 200,
+                data: { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null } };
+            if (new URL(url).pathname === '/v2/changes') return { status: 200, data: { changes: [], nextCursor: 0 } };
+            throw new Error('Unexpected Resource currentness HTTP read');
+        });
+        const account = acquireRequesterAccountEncryptionCurrentness({ accountId, token, serverBaseUrl });
+        const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, mode: 'plain', ctx: null,
+            sessionId: 'cli-global', serverId: target.serverId, serverHttpBaseUrl: serverBaseUrl,
+            actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+            machineActionDirectTargetTransport: { machineId: target.machineId, machineServiceAction: runtime.execute,
+                invoke: async () => { throw new Error('Local Resource reads cannot re-enter Machine RPC'); } },
+        });
+        const actions = vi.spyOn(executor, 'execute');
+        const listReads = () => actions.mock.calls.filter(([actionId]) => actionId === 'machines.services.list').length;
+        const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+        registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) {
+            handlers.set(method, handler as RpcHandler<unknown, unknown>);
+        } }, { resolveRuntimeRegistry: async () => fixture.registry, resolveHostActionExecutor: () => executor,
+            readHostResourceAccountId: () => accountId });
+        const open = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)!;
+        const next = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT)!;
+        const close = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE)!;
+        const read = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)!;
+        const listInput = target;
+        const request = { machineId: target.machineId, resource: { hostRead: 'machines.services.list', input: listInput },
+            subscriptionId: 'services-resource-cost' };
+        const readRequest = { machineId: target.machineId, resource: request.resource };
+        const context = { surface: 'cli' as const, authority: 'present_user' as const };
+        const ingress = { signal: new AbortController().signal, localActionContext: context };
+        try {
+            await account.read(); await channel.settleTransport();
+            expect(await open(request, ingress)).toMatchObject({ ok: true });
+            expect(await next({ ...request, waitMs: DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS }, ingress),
+                'initial Machine intent belongs to the OPEN baseline, not a second consumer read')
+                .toMatchObject({ ok: true, status: 'idle' });
+            expect(accountingSamples, 'opening a projection does not sample accounting').toBe(0);
+            const baseline = listReads();
+            for (let index = 0; index < 100; index++) await handles[0]!.inspectCurrentOccurrence();
+            expect(listReads(), 'equal producer observations do not reread Services').toBe(baseline);
+            phase = 'running';
+            await handles[0]!.inspectCurrentOccurrence();
+            expect(await next({ ...request, waitMs: DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS }, ingress))
+                .toMatchObject({ ok: true, status: 'event', event: { kind: 'invalidated' } });
+            expect.soft(listReads(), 'a changed fact requires no speculative list read or full-list hash').toBe(baseline);
+            const snapshot = DaemonPluginUiResourceReadResponseSchema.parse(await read(readRequest, ingress));
+            expect(snapshot).toMatchObject({ ok: true });
+            if (!snapshot.ok) throw new Error('Expected admitted Services projection');
+            expect(MachineServicesListResultV1Schema.parse(JSON.parse(Buffer.from(snapshot.bytesBase64, 'base64').toString('utf8'))))
+                .toMatchObject({ kind: 'snapshot', services: expect.arrayContaining([
+                    expect.objectContaining({ serviceId: 'instance/web', state: 'running' }),
+                ]) });
+            expect.soft(listReads(), 'one consumed change needs one admitted list Action').toBe(baseline + 1);
+            expect.soft(accountingSamples, 'push projections do not sample unrelated native accounting').toBe(0);
+            expect(await executor.execute('machines.services.list', listInput, context)).toMatchObject({ ok: true,
+                result: { kind: 'snapshot', services: expect.arrayContaining([expect.objectContaining({ serviceId: 'instance/web', state: 'running' })]) } });
+            expect(accountingSamples, 'explicit accounting demand still samples each visible handle').toBe(2);
+            expect(listReads(), 'accounting publication does not recursively reread Services').toBe(baseline + 2);
+            metadata = { status: 'ready', metadataVersion: 2, metadata: { serviceWatchesV1: { v: 1, watches: [{
+                v: 1, watchId: 'unavailable-watch', name: 'Unavailable native service',
+                adapter: { pluginId: 'example.native', localId: 'systemd' }, nativeResourceId: 'example.service', lifecyclePurpose: 'infrastructure',
+            }] } } };
+            await runtime.reconcile();
+            expect(await next({ ...request, waitMs: DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS }, ingress))
+                .toMatchObject({ ok: true, status: 'event', event: { kind: 'invalidated' } });
+            expect(listReads(), 'a later intent change remains a producer fact, not a speculative read').toBe(baseline + 2);
+            const changedIntent = DaemonPluginUiResourceReadResponseSchema.parse(await read(readRequest, ingress));
+            expect(changedIntent).toMatchObject({ ok: true });
+            if (!changedIntent.ok) throw new Error('Expected admitted changed Services intent');
+            expect(MachineServicesListResultV1Schema.parse(JSON.parse(Buffer.from(changedIntent.bytesBase64, 'base64').toString('utf8'))))
+                .toMatchObject({ kind: 'snapshot', services: expect.arrayContaining([
+                    expect.objectContaining({ serviceId: 'unavailable-watch', state: 'unknown' }),
+                ]) });
+            expect(listReads()).toBe(baseline + 3);
+            expect(accountingSamples).toBe(2);
+        } finally {
+            await close(request, ingress); await account.dispose(); await channel.close();
+            actions.mockRestore(); accessHttp.mockRestore(); currentnessHttp.mockRestore(); releaseHome();
+            for (const handle of handles) await handle.dispose();
+            await runtime.dispose(); await fixture.dispose();
+        }
+    });
+
     it('feeds exact Environment health rows from native pushes without unrelated reads or clock-only publications', async () => {
         const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
         const target = { serverId: 'home', machineId: 'machine' };
@@ -67,10 +200,10 @@ describe('Machine Services exact demand cost', () => {
             reads++;
             return MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list',
                 input: { ...target, environmentId: 'environment' }, canReadEnvironments: async ids => new Set(ids),
-                context: { ...context, ...(observe ? { machineServicesListResource: {
+                context: { ...context, ...(observe ? { machineServicesListResource: { observation: {
                     signal: demand.signal, invalidate() { publications++; }, retire() { demand.abort(); },
                     accept(subscription: { dispose(): void | Promise<void> }) { retained = subscription; },
-                } } : {}) },
+                } } } : {}) },
             }));
         };
         try {
@@ -207,7 +340,7 @@ describe('Machine Services exact demand cost', () => {
             const demand = new AbortController();
             let retired = 0;
             let held: { dispose(): void | Promise<void> } | undefined;
-            const observation: NonNullable<ActionExecutorContext['machineServicesListResource']> = {
+            const observation: NonNullable<NonNullable<ActionExecutorContext['machineServicesListResource']>['observation']> = {
                 signal: demand.signal, invalidate() {},
                 retire() { retired++; demand.abort(); }, accept(subscription) { held = subscription; },
             };
@@ -216,7 +349,7 @@ describe('Machine Services exact demand cost', () => {
                 await channel.settleTransport();
                 const samplesBeforeWatchAdmission = samples;
                 const result = await runtime.execute({ actionId: 'machines.services.list', input: target,
-                    context: { ...context, machineServicesListResource: observation }, canReadEnvironments,
+                    context: { ...context, machineServicesListResource: { observation } }, canReadEnvironments,
                     async observeEnvironmentAccessChanges(listener) {
                         const unsubscribe = account.subscribeEnvironmentAccess(listener);
                         return { async dispose() { unsubscribe(); } };

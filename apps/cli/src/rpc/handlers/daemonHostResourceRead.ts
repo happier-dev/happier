@@ -17,7 +17,7 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/run
 
 type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
 type ReadObservation = NonNullable<NonNullable<ActionExecutorContext['machineServiceLogsResource']>['observation']>
-    & Readonly<{ invalidate(): void }>;
+    & Readonly<{ invalidate(digest: string): void }>;
 
 /** Host references borrow Action admission; this adapter owns no log source or policy. */
 export function createDaemonHostResourceRead(input: Readonly<{
@@ -106,7 +106,9 @@ export function createDaemonHostResourceRead(input: Readonly<{
                 machineServiceLogsResource: { expectedGeneration: reference.hostRead === 'deployments.logs' ? reference.sourceRevision : reference.expectedGeneration,
                     sourceRevision: reference.sourceRevision,
                     ...(observation ? { observation } : {}) },
-            } : observation ? { machineServicesListResource: observation } : {}),
+            } : reference.hostRead === 'machines.services.list' ? { machineServicesListResource: {
+                ...(observation ? { observation } : {}),
+            } } : {}),
         });
         await current(context);
         if (!result.ok) throw new PluginError({ code: result.errorCode, message: result.error });
@@ -161,12 +163,11 @@ export function createDaemonHostResourceRead(input: Readonly<{
             context?.signal.addEventListener('abort', cancelled, { once: true });
             try {
                 const initial = await read(reference, machineId, context, { signal, retire,
-                    invalidate() {
+                    invalidate(digest) {
                         if (signal.aborted) return;
-                        // A real row/intent change re-enters the SAME list Action and its current ACL read.
-                        void read(reference, machineId, context, undefined, retire).then(value => {
-                            if (!signal.aborted) emit(value.digest);
-                        }).catch(unavailable);
+                        // The producer already established the changed fact. The
+                        // consumer re-enters the same admitted list Action once.
+                        emit(digest);
                     },
                     emit(value) {
                         if (signal.aborted) return;

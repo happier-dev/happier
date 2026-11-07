@@ -999,10 +999,13 @@ export type ActionExecutorContext = Readonly<{
   }>;
 
   machineServicesListResource?: Readonly<{
-    signal: AbortSignal;
-    invalidate(): void;
-    retire(): void;
-    accept(subscription: Readonly<{ dispose(): void | Promise<void> }>): void;
+    /** Resource reads project retained facts; only a watch additionally establishes observation. */
+    observation?: Readonly<{
+      signal: AbortSignal;
+      invalidate(digest: string): void;
+      retire(): void;
+      accept(subscription: Readonly<{ dispose(): void | Promise<void> }>): void;
+    }>;
   }>;
   /** Host-only presentation constraint for this invocation; never grants authority or waives policy. */
   interactivePresentation?: 'unavailable';
