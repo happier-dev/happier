@@ -11,9 +11,9 @@ import {
     type SessionAuthoringControlFacts,
     type SessionAuthoringFieldId,
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
-import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -51,6 +51,7 @@ import { workflowEditorStyles } from './workflowEditorStyles';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { WorkflowRecentRuns } from './WorkflowRecentRuns';
 
 /**
  * The one content owner for workflow and step settings (04 §5.2): one
@@ -76,6 +77,8 @@ export type WorkflowInspectorSubject =
 export type WorkflowInspectorPresentation = 'pane' | 'popover';
 
 export type WorkflowInspectorProps = Readonly<{
+    /** Saved source only; an unsaved draft has no run history. */
+    workflowDefinitionId?: string;
     subject: WorkflowInspectorSubject;
     presentation: WorkflowInspectorPresentation;
     draft: WorkflowEditorDraft;
@@ -243,6 +246,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 <SessionAuthoringControls
                     disabled={readOnly}
                     presentation="fields"
+                    engineFieldTitle={null}
                     fields={WORKFLOW_AGENT_FIELDS}
                     values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
                     onChangeEngine={(engine) => { if (!readOnly) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
@@ -358,6 +362,9 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                     </View>
                 )}
             </WorkflowInspectorGroup>
+            {props.workflowDefinitionId === undefined ? null : <WorkflowRecentRuns
+                definitionId={props.workflowDefinitionId} workflowName={draft.name}
+                {...groupProps} testIDPrefix={testIDPrefix} />}
         </>
     );
 }

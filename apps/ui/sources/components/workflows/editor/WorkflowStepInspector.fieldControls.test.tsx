@@ -7,6 +7,7 @@ import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/co
 import * as inspector from './WorkflowStepInspector';
 import * as controls from './workflowStepFieldControls';
 import * as draftModule from '@/sync/domains/workflows/workflowEditorDraft';
+import { readHostAccessibility } from '@/dev/testkit/render/readHostAccessibility';
 import * as edits from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 /**
@@ -119,8 +120,10 @@ describe('workflow step inspector field controls', () => {
         const harness = await loadHarness();
         const screen = await renderScreen(<InspectorHarness harness={harness} fields={['permissionMode']}
             draft={buildDraft(harness)} onChangeField={() => {}} />);
-        const text = screen.getTextContent();
-        expect(text.split('settingsSession.permissions.title')).toHaveLength(2);
+        // Item measures its natural label in an accessibility-hidden copy; the person sees one label.
+        expect(screen.findAll(node => typeof node.type === 'string'
+            && node.children.includes('settingsSession.permissions.title')
+            && !readHostAccessibility(node).hidden)).toHaveLength(1);
         expect(fieldRow(screen, 'permissionMode')?.props.titleMeta).toBeTruthy();
         expect(screen.findByTestId('workflow-inspector-permissionMode')).toBeNull();
         await screen.unmount();
@@ -195,7 +198,7 @@ describe('workflow step inspector field controls', () => {
         await screen.unmount();
     });
 
-    it('renders a field whose host contributed no option source as unavailable rather than omitting it', async () => {
+    it('leaves out a field whose host never contributes its option source (owner 2026-11-06)', async () => {
         const harness = await loadHarness();
         const screen = await renderScreen(
             <InspectorHarness
@@ -206,10 +209,10 @@ describe('workflow step inspector field controls', () => {
             />,
         );
 
+        // A control this host never supplies is not a decision the step has: no row says "Unavailable".
         expect(screen.findByTestId('workflow-inspector-connectedServices-state')).toBeNull();
-        expect(
-            screen.findByTestId('workflow-inspector-control-connectedServices-unavailable'),
-        ).toBeTruthy();
+        expect(screen.findByTestId('workflow-inspector-control-connectedServices-row')).toBeNull();
+        expect(screen.findByTestId('workflow-inspector-control-connectedServices-unavailable')).toBeNull();
         await screen.unmount();
     });
 
@@ -223,7 +226,7 @@ describe('workflow step inspector field controls', () => {
         const screen = await renderScreen(
             <InspectorHarness
                 harness={harness}
-                fields={['permissionMode', 'connectedServices', 'terminal', 'runtimeDescriptorV1']}
+                fields={['permissionMode', 'terminal']}
                 draft={buildDraft(harness)}
                 onChangeField={() => {}}
             />,
@@ -231,10 +234,7 @@ describe('workflow step inspector field controls', () => {
 
         const rowTitle = (field: string) => fieldRow(screen, field)?.props.title;
         expect(rowTitle('permissionMode')).toBe('settingsSession.permissions.title');
-        expect(rowTitle('connectedServices')).toBe('connectedServices.authChip.label');
         expect(rowTitle('terminal')).toBe('profiles.tmux.spawnSessionsTitle');
-        expect(rowTitle('runtimeDescriptorV1')).toBe('workflows.editor.agentRuntime');
-        expect(screen.getTextContent()).not.toContain('runtimeDescriptorV1');
         await screen.unmount();
     });
 

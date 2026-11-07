@@ -7,10 +7,10 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProje
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture, createWorkflowRunRecentSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { useWorkflowEditorHistory } from './useWorkflowEditorHistory';
@@ -85,6 +85,75 @@ beforeEach(async () => {
 afterEach(async () => { await standardCleanup(); resetWorkflowLibraryReadsForTests(); await home.reset(); });
 
 describe('workflow editor declared bindings', () => {
+    it('keeps Recent runs quiet before opening all admitted recent rows', async () => {
+        const definitionId = '00000000-0000-4000-8000-000000000029';
+        const runs = ['recent-first', 'recent-second'].map(id => createWorkflowRunSummaryFixture({
+            id, ownerAccountId: 'account-a', machineId: 'machine-a', sourceArtifactId: definitionId,
+            workflowCustodyState: null,
+        }));
+        const recent = runs.map(run => createWorkflowRunRecentSummaryFixture({ runId: run.id, state: run.state }));
+        const requests: string[] = [];
+        home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: input => {
+            if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Missing operation');
+            requests.push(String(input.operation));
+            if (input.operation === 'summaries') {
+                expect(input).toMatchObject({ request: { sourceArtifactIds: [definitionId] } });
+                return { body: { summaries: [{ sourceArtifactId: definitionId,
+                    lastRun: { ...recent[0], createdAt: runs[0]!.createdAt, startedAt: runs[0]!.createdAt, finishedAt: null },
+                    recent, needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } };
+            }
+            if (input.operation !== 'list') throw new Error('Recent running rows must not acquire Run details');
+            expect(input).toMatchObject({ request: { runIds: ['recent-first', 'recent-second'] } });
+            const continuation = 'request' in input && input.request !== null && typeof input.request === 'object' && 'cursor' in input.request;
+            return { body: { runs: [runs[continuation ? 1 : 0]], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {},
+                ...(continuation ? {} : { nextCursor: 'recent-next' }) } };
+        } });
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'recent-rows', name: 'Review changes', definition });
+        const inspector = (expanded: boolean) => <harness.WorkflowInspector workflowDefinitionId={definitionId}
+            subject={{ kind: 'workflow' }} presentation="pane" draft={draft} machineName={null} testIDPrefix="rows"
+            onChange={() => {}} groupDisclosure={new Map([['recentRuns', expanded]])} />;
+        const screen = await renderScreen(inspector(false));
+        await waitForHomeGovernance(() => expect(requests).toEqual(['summaries']));
+        expect(screen.findByTestId('rows-recent-run:recent-first')).toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.runState.running');
+        await screen.update(inspector(true));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('rows-recent-run:recent-second')).not.toBeNull());
+        expect(screen.findByTestId('rows-recent-run:recent-first')).not.toBeNull();
+        expect(requests).toEqual(['summaries', 'list', 'list']);
+    });
+    it('keeps Recent runs quiet with one Agent and model group label', async () => {
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'label', name: 'Workflow', definition });
+        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
+            draft={draft} machineName={null} testIDPrefix="label" onChange={() => {}}
+            groupDisclosure={new Map([['agent', true]])} />);
+        const agent = screen.findByTestId('label-group-agent')!;
+        expect(agent.findAll(node => String(node.type) === 'Text'
+            && node.children.includes('workflows.page.sections.agentTitle'))).toHaveLength(1);
+    });
+    it('keeps Recent runs quiet for an unsaved workflow and demands only summaries until opened', async () => {
+        const definitionId = '00000000-0000-4000-8000-000000000019';
+        const requests: string[] = [];
+        home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: input => {
+            if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Missing operation');
+            requests.push(String(input.operation));
+            return { body: { summaries: [{ sourceArtifactId: definitionId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } };
+        } });
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'recent', name: 'Review changes', definition });
+        const inspector = (saved: boolean, expanded = false) => <harness.WorkflowInspector
+            subject={{ kind: 'workflow' }} presentation="pane" draft={draft} machineName={null} testIDPrefix="recent"
+            onChange={() => {}} {...(saved ? { workflowDefinitionId: definitionId } : {})}
+            groupDisclosure={new Map([['recentRuns', expanded]])} />;
+        const screen = await renderScreen(inspector(false));
+        expect(screen.findByTestId('recent-group-recent-runs')).toBeNull();
+        expect(requests).toEqual([]);
+        await screen.update(inspector(true));
+        await waitForHomeGovernance(() => expect(requests).toEqual(['summaries']));
+        expect(screen.findByTestId('recent-group-recent-runs')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('workflows.page.inspector.noRunsYet');
+        await screen.update(inspector(true, true));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.page.inspector.noRunsYet'));
+        expect(requests).toEqual(['summaries']);
+    });
     it('names a built-in child without reading saved or plugin inventories', async () => {
         const builtin = (await import('../presentation/workflowReferenceOptions')).listBuiltinWorkflowReferenceOptions()[0]!;
         const block = { kind: 'workflow' as const, id: 'builtin', workflowRef: builtin.ref, input: {} };

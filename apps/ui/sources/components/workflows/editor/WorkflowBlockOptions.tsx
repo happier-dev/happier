@@ -505,6 +505,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const { draft, onChange, step, testIDPrefix } = props;
     const renderStepFieldControl = useWorkflowStepFieldControlRenderer({
         ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
+        engineFieldTitle: null,
         testIDPrefix: `${testIDPrefix}-control`,
     });
     const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
@@ -517,6 +518,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
         </SectionContentRow></ItemGroup>
         <ItemGroup title={t('workflows.page.sections.agentTitle')}>
             <SessionAuthoringControls presentation="fields" disabled fields={SESSION_AUTHORING_CONTROL_FIELD_IDS}
+                engineFieldTitle={null}
                 values={effectiveExecution} engine={step.execution?.engine ?? draft.defaults.engine} workflowRoles={draft.roles}
                 onChangeField={() => {}} onChangeFields={() => {}} onChangeEngine={() => {}}
                 facts={props.authoringFacts} testIDPrefix={`${testIDPrefix}-control`} />

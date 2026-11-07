@@ -64,6 +64,65 @@ describe('workflow library run summaries', () => {
     const item = { sourceArtifactId, lastRun: null, recent: [], needsYouCount: 1, needsYouRunId: 'private-run-a' };
     const reply = { ok: true, result: { summaries: [item], remainingSourceArtifactIds: [] } };
 
+    it('reads the editor Home summaries without borrowing the focused Home', async () => {
+        const serverB = await home.addHome({ name: 'B summaries', serverUrl: 'https://workflow-summaries-b.test',
+            accountId: 'account-b', active: false, currentAccount: true });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        home.answer(serverB, '/v3/automations/runs/workflow-storage', { body: reply.result });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverB);
+        try {
+            const hook = await renderHook(() => useWorkflowLibrarySummaries([sourceArtifactId], { accountLifetime: account.accountLifetime }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().summaries?.get(sourceArtifactId)).toEqual(item));
+            expect(executeMock).not.toHaveBeenCalled();
+            expect(home.requests.filter(request => request.serverId === serverB && request.path.includes('workflow-storage'))).toHaveLength(1);
+        } finally { account.dispose(); }
+    });
+
+    it('uses the started Run summary for Habit age without an Automation timestamp', async () => {
+        const startedAt = '2026-10-30T08:01:00.000Z';
+        const lastRun = lastRunSummary({ id: 'failed-started-run', state: 'failed',
+            createdAt: '2026-10-30T08:00:00.000Z', startedAt });
+        executeMock.mockResolvedValue({ ok: true, result: { automationSummaries: [
+            { automationId: 'habit-started', lastRun }, { automationId: 'habit-unstarted', lastRun: null },
+        ], remainingAutomationIds: [] } });
+        const hook = await renderHook(() => useSessionTriggerLastRuns(['habit-started', 'habit-unstarted']));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().lastRunsByAutomationId['habit-started']).toEqual(lastRun));
+        expect(hook.getCurrent()).toMatchObject({ lastRunAtByAutomationId: {
+            'habit-started': Date.parse(startedAt),
+        } });
+        expect(executeMock.mock.calls).toHaveLength(1);
+    });
+
+    it('Retry supersedes a held summary batch and the last borrower cancels its read', async () => {
+        const held = createDeferred<void>();
+        const signals: (AbortSignal | null | undefined)[] = [];
+        const old = { automationId: 'habit-a', lastRun: null };
+        const latest = lastRunSummary({ id: 'new-run', state: 'succeeded' });
+        home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: (_input, request) => {
+            signals.push(request.signal);
+            return signals.length === 1
+                ? { respondAfter: held.promise, body: { automationSummaries: [old], remainingAutomationIds: [] } }
+                : { body: { automationSummaries: [{ ...old, lastRun: latest }], remainingAutomationIds: [] } };
+        } });
+        const hook = await renderHook(() => useWorkflowAutomationSummaries(['habit-a']));
+        await waitForHomeGovernance(() => expect(signals).toHaveLength(1));
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().summaries?.get('habit-a')?.lastRun?.id).toBe('new-run'));
+        expect(signals).toHaveLength(2);
+        expect(signals[0]?.aborted).toBe(true);
+        await act(async () => held.resolve());
+        expect(hook.getCurrent().summaries?.get('habit-a')?.lastRun?.id).toBe('new-run');
+        home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: (_input, request) => {
+            signals.push(request.signal);
+            return { respondAfter: createDeferred<void>().promise, body: { automationSummaries: [old], remainingAutomationIds: [] } };
+        } });
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(signals).toHaveLength(3));
+        await hook.unmount();
+        expect(signals[2]?.aborted).toBe(true);
+    });
+
     it('preserves opaque Automation ids containing the former demand delimiter', async () => {
         const automationId = 'habit\u0000x';
         executeMock.mockImplementation(async (_actionId, input) => ({ ok: true, result: {
@@ -208,6 +267,42 @@ describe('workflow library run summaries', () => {
         expect(executeMock.mock.calls).toHaveLength(2);
     });
 
+    it.each(['missing', 'failed'] as const)('settles a %s source independently of successful and pending neighbors and recovers on Retry', async failure => {
+        const missingId = '00000000-0000-4000-8000-000000000002';
+        const pendingId = '00000000-0000-4000-8000-000000000003';
+        executeMock.mockResolvedValueOnce({ ok: true, result: { summaries: [item], remainingSourceArtifactIds: [missingId] } });
+        if (failure === 'missing') executeMock.mockResolvedValueOnce({ ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } });
+        else executeMock.mockRejectedValueOnce(new Error('offline'));
+        const failed = await renderHook(() => useWorkflowLibrarySummaries([sourceArtifactId, missingId]));
+        await waitForHomeGovernance(() => expect(failed.getCurrent()).toMatchObject({ failedIds: new Set([missingId]), failed: true }));
+        const answered = failed.getCurrent().summaries?.get(sourceArtifactId);
+        expect(answered).toEqual(item);
+        expect(failed.getCurrent().summaries?.has(missingId)).toBe(false);
+        const successful = await renderHook(() => useWorkflowLibrarySummaries([sourceArtifactId]));
+        const successfulRead = successful.getCurrent();
+        const held = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(held.promise);
+        const pending = await renderHook(() => useWorkflowLibrarySummaries([pendingId]));
+        const combined = await renderHook(() => useWorkflowLibrarySummaries([sourceArtifactId, missingId, pendingId]));
+        await waitForHomeGovernance(() => expect(executeMock.mock.calls).toHaveLength(3));
+        expect(combined.getCurrent().failedIds).toEqual(new Set([missingId]));
+        const failedIds = combined.getCurrent().failedIds;
+        await flushHookEffects({ cycles: 2 });
+        expect(combined.getCurrent().failedIds).toBe(failedIds);
+        expect(pending.getCurrent()).toMatchObject({ summaries: null, failed: false, failedIds: new Set() });
+        expect(successful.getCurrent()).toBe(successfulRead);
+        expect(successfulRead.failed).toBe(false);
+        executeMock.mockResolvedValueOnce({ ok: true, result: { summaries: [item, { ...item, sourceArtifactId: missingId }], remainingSourceArtifactIds: [] } });
+        await act(async () => failed.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(failed.getCurrent().summaries?.has(missingId)).toBe(true));
+        expect(failed.getCurrent().failedIds.size).toBe(0);
+        expect(combined.getCurrent().failedIds.size).toBe(0);
+        expect(combined.getCurrent().summaries?.get(sourceArtifactId)).toBe(answered);
+        expect(pending.getCurrent()).toMatchObject({ summaries: null, failed: false, failedIds: new Set() });
+        expect(successful.getCurrent()).toBe(successfulRead);
+        expect(executeMock.mock.calls).toHaveLength(4);
+    });
+
     it('renews mounted demand and wakes after the same Account becomes available again', async () => {
         executeMock.mockResolvedValue(reply);
         const hook = await renderHook(() => useWorkflowLibrarySummaries([sourceArtifactId]));
@@ -284,10 +379,12 @@ describe('workflow library run summaries', () => {
         const before = hook.getCurrent();
         executeMock.mockRejectedValueOnce(new Error('offline'));
         await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:failed-refresh']); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().failedIds).toEqual(new Set([sourceArtifactId])));
         expect(hook.getCurrent().summaries).toBe(before.summaries);
         executeMock.mockResolvedValueOnce({ ok: true, result: { summaries: [{ ...item, needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } });
         await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:recovered']); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().summaries?.get(sourceArtifactId)?.needsYouCount).toBe(0));
+        expect(hook.getCurrent().failedIds.size).toBe(0);
     });
 
     it('does not turn an unanswered continuation into known empty facts', async () => {

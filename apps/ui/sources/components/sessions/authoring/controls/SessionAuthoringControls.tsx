@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowRoleV1 } from '@happier-dev/protocol';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 import { DEFAULT_AGENT_ID, hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -240,6 +240,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                 >
                     {(state) => props.presentation === 'fields'
                         ? renderDropdownItemTriggerRightElement({
+                            leading: props.leading,
                             detail: currentLabel,
                             open,
                             detailColor: theme.colors.text.primary,
@@ -416,6 +417,8 @@ export type SessionAuthoringControlsPresentation = 'chips' | 'fields';
 export type SessionAuthoringControlsProps = Readonly<{
     metadata?: Metadata | null;
     presentation?: SessionAuthoringControlsPresentation;
+    /** A titled host section can omit the engine row's repeated title with null. */
+    engineFieldTitle?: string | null;
     /**
      * Fields this subject sets itself rather than inherits (own-property
      * presence, never equality). Their chips are bordered; `'all'` borders every
@@ -563,14 +566,12 @@ type SessionAuthoringEngine = WorkflowEngineSelectionV1 | NonNullable<WorkflowSt
  * What the Agent & model control says: a role by its name, or the Agent and its model ("Claude ·
  * Opus 5.5"). The chip and a phone's value row read it here, so they never word it two ways.
  */
-function formatSessionAuthoringEngineLabel(params: Readonly<{
+export function formatSessionAuthoringEngineLabel(params: Readonly<{
     engine: SessionAuthoringEngine | undefined;
     workflowRoles: readonly WorkflowRoleV1[] | undefined;
     agentLabel: string;
     values: WorkflowSessionAuthoringSelection;
-    controls: ReturnType<typeof useResolvedSessionAuthoringControls>['controls'];
-    facts: SessionAuthoringControlFacts;
-    agentId: ReturnType<typeof resolveSessionAuthoringAgentId>;
+    modelLabel?: string;
 }>): string {
     if (params.engine && 'role' in params.engine) return resolveRoleDisplayName(params.engine.role, params.workflowRoles);
     // An identity the Run supplies from a named input is that input's, not an unchosen Agent.
@@ -578,15 +579,7 @@ function formatSessionAuthoringEngineLabel(params: Readonly<{
         return t('workflows.page.blocks.fromInput', { name: params.engine.name });
     }
     if (!params.values.agentTarget) return t('agentInput.agent.unselected');
-    const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: params.values,
-        controls: params.controls, facts: params.facts, agentId: params.agentId });
-    // The CLI's own model is no choice to name: the summary is the agent alone ("Claude"), and
-    // names a model only when one is chosen ("Claude · Opus 5.5").
-    const modelLabel = modelControl.kind === 'options'
-        ? modelControl.selectedOptionId === 'default' ? undefined
-            : resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
-        : params.values.modelSelection?.ref.modelId;
-    return [params.agentLabel, modelLabel].filter(Boolean).join(' · ');
+    return [params.agentLabel, params.modelLabel].filter(Boolean).join(' · ');
 }
 
 /** The Agent & model summary for a host that shows it as a value row rather than the chip. */
@@ -600,8 +593,15 @@ export function useSessionAuthoringEngineSummary(params: Readonly<{
     const facts = params.facts ?? EMPTY_FACTS;
     const { agentId, controls } = useResolvedSessionAuthoringControls(params.values, facts, params.metadata);
     const enginePicker = useSessionAuthoringEnginePicker({ values: params.values, facts, disabled: true });
+    const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: params.values,
+        controls, facts, agentId });
+    // The CLI's own model is no choice to name: the summary is the Agent alone.
+    const modelLabel = modelControl.kind === 'options'
+        ? modelControl.selectedOptionId === 'default' ? undefined
+            : resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
+        : params.values.modelSelection?.ref.modelId;
     return formatSessionAuthoringEngineLabel({ engine: params.engine, workflowRoles: params.workflowRoles,
-        agentLabel: enginePicker.label, values: params.values, controls, facts, agentId });
+        agentLabel: enginePicker.label, values: params.values, modelLabel });
 }
 
 export function SessionAuthoringControls(props: SessionAuthoringControlsProps): React.ReactElement {
@@ -627,6 +627,23 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
     const presentation = props.presentation ?? 'chips';
     const isChanged = (field: SessionAuthoringFieldId) => props.overriddenFields === 'all'
         || (props.overriddenFields?.has(field) ?? false);
+    const controlFor = (field: SessionAuthoringFieldId) => resolveSessionAuthoringFieldControl({
+        field,
+        values: props.values,
+        controls,
+        facts,
+        agentId,
+    });
+    // A settings form with no Agent chosen yet says so once, where its Agent-owned fields would be,
+    // instead of a row of "Unavailable" each (owner 2026-11-06). A one-field form (a host listing its
+    // fields one by one, as Step options do) only hides the row; that host says it once.
+    const waitsOnAgent = presentation === 'fields' && props.fields.length > 1 && props.fields.some((field) => {
+        if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection'
+            || field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return false;
+        const control = controlFor(field);
+        return control.kind === 'unavailable' && control.reason === 'requires_agent_target';
+    });
+    let agentLineShown = false;
 
     return (
         <View
@@ -635,6 +652,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             style={presentation === 'fields' ? styles.fields : styles.root}
         >
             {props.fields.map((field) => {
+                if (presentation === 'fields' && field === 'profileId' && !props.values.profileId) return null;
                 if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return null;
                 if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
                     if (field !== engineField) return null;
@@ -648,18 +666,12 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         changed={isChanged('agentTarget') || isChanged('modelSelection')}
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}
                     />;
-                    return presentation === 'chips' ? <React.Fragment key={field}>{rendered}</React.Fragment>
+                    return presentation === 'chips' || props.engineFieldTitle === null ? <React.Fragment key={field}>{rendered}</React.Fragment>
                         : <Item key={field} testID={`${testIDPrefix}-${engineField}-row`}
-                            title={t('workflows.page.sections.agentTitle')} mode="info" accessoryLayout="stacked" rightElement={rendered}
+                            title={props.engineFieldTitle === undefined ? t('workflows.page.sections.agentTitle') : props.engineFieldTitle} mode="info" accessoryLayout="stacked" rightElement={rendered}
                             titleMeta={props.fieldMeta?.[engineField]} />;
                 }
-                const control = resolveSessionAuthoringFieldControl({
-                    field,
-                    values: props.values,
-                    controls,
-                    facts,
-                    agentId,
-                });
+                const control = controlFor(field);
                 const rendered = (
                     <SessionAuthoringFieldControl
                         key={field}
@@ -681,8 +693,16 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 // A settings form holds only the decisions this step has: a field the Agent or the target can
                 // never offer (a Windows-only field on Linux, an Agent with no such options) is left out rather
                 // than listed as "Unavailable". Fields that wait on something or say what to do stay.
+                // A control this host never supplies (`owned_by_host`) is not this form's decision either
+                // (owner 2026-11-06). Agent-owned fields with no Agent yet give way to one line, said where
+                // the first of them would be.
+                if (control.kind === 'unavailable' && control.reason === 'requires_agent_target' && waitsOnAgent && !agentLineShown) {
+                    agentLineShown = true;
+                    return <Text key={field} testID={`${testIDPrefix}-requires-agent`} style={styles.unavailableText}>{t('newSession.chooseAgentFirst')}</Text>;
+                }
                 if (control.kind === 'unavailable'
-                    && (control.reason === 'not_supported_on_target' || control.reason === 'agent_has_no_options')) return null;
+                    && (control.reason === 'not_supported_on_target' || control.reason === 'agent_has_no_options'
+                        || control.reason === 'requires_agent_target' || control.reason === 'owned_by_host')) return null;
                 return (
                     <Item
                         key={field}

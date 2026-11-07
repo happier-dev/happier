@@ -7,6 +7,8 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { summarizeWorkflowRuns, summarizeWorkflowAutomationRuns } from '@/sync/domains/workflows/workflowRunListActions';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
+import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
 import { WORKFLOW_RUN_STRIP_LENGTH } from './workflowRunStrip';
 
@@ -64,8 +66,8 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
             let remaining = keys.map(key => key.slice(kind.length + 1));
             while (remaining.length > 0) {
                 const page = kind === 'source'
-                    ? await summarizeWorkflowRuns({ sourceArtifactIds: remaining, recent: WORKFLOW_RUN_STRIP_LENGTH, signal: controller.signal })
-                    : await summarizeWorkflowAutomationRuns({ automationIds: remaining, signal: controller.signal });
+                    ? await summarizeWorkflowRuns({ sourceArtifactIds: remaining, recent: WORKFLOW_RUN_STRIP_LENGTH, signal: controller.signal, accountLifetime: lifetime })
+                    : await summarizeWorkflowAutomationRuns({ automationIds: remaining, signal: controller.signal, accountLifetime: lifetime });
                 if (!lifetime.isCurrent() || controller.signal.aborted) return;
                 if ('summaries' in page) {
                     for (const summary of page.summaries) collected.set(`source:${summary.sourceArtifactId}`, summary);
@@ -162,13 +164,15 @@ const owners = new WeakMap<ActiveServerAccountScopeLifetime, ReturnType<typeof c
 
 /** Concurrent mounts union their ids before transport; later mounts join in-flight ids. A single
  * Account wake refreshes current demand and equal replies retain row/map identities. */
-function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: SummarySelection<T>): SummaryRead<T> {
+function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: SummarySelection<T>, explicitLifetime?: ServerAccountScopeLifetime | null): SummaryRead<T> {
     const activeLifetime = useActiveServerAccountScopeLifetime();
+    const addressedLifetime = useWorkflowAccountLifetime(explicitLifetime);
+    const selectedLifetime = addressedLifetime === undefined ? activeLifetime : addressedLifetime;
     const uniqueIds = [...new Set(requestedIds)];
     // Source rows retain their incumbent canonical ordering; Automation demand and all
     // server continuations preserve input order.
     const key = JSON.stringify(selector.kind === 'source' ? uniqueIds.sort() : uniqueIds);
-    const lifetime = uniqueIds.length > 0 ? activeLifetime : null;
+    const lifetime = uniqueIds.length > 0 && selectedLifetime ? readServerAccountScopeOwnerLifetime(selectedLifetime) : null;
     const selection = React.useMemo(() => {
         // The key is encoded immediately above; JSON preserves opaque ids and their boundaries.
         const ids = JSON.parse(key) as string[];
@@ -207,8 +211,8 @@ function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: Summ
     return React.useSyncExternalStore(selection.owner?.subscribe ?? subscribeInactive, selection.get, selection.get);
 }
 
-export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[]): SummaryRead<WorkflowLibraryRunSummary> {
-    return useWorkflowSummaries(sourceArtifactIds, SOURCE_SELECTION);
+export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[], options?: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null }>): SummaryRead<WorkflowLibraryRunSummary> {
+    return useWorkflowSummaries(sourceArtifactIds, SOURCE_SELECTION, options?.accountLifetime);
 }
 
 export function useWorkflowAutomationSummaries(automationIds: readonly string[]): SummaryRead<WorkflowAutomationRunSummary> {

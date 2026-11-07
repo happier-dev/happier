@@ -11,7 +11,7 @@ import type {
 
 import type { WorkflowStepInspectorFieldId } from './WorkflowStepInspector';
 import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowRoleV1 } from '@happier-dev/protocol';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 /**
  * Fills the step inspector's value seam with the shared Session-authoring
@@ -40,13 +40,15 @@ export type WorkflowStepFieldControlRenderer = (params: Readonly<{
 export function useWorkflowStepFieldControlRenderer(params: Readonly<{
     /** Host-owned option sources (Agent catalog, profiles, target platform…). */
     facts?: SessionAuthoringControlFacts;
+    engineFieldTitle?: string | null;
     testIDPrefix?: string;
 }> = {}): WorkflowStepFieldControlRenderer {
-    const { facts, testIDPrefix } = params;
+    const { facts, engineFieldTitle, testIDPrefix } = params;
     return React.useCallback((renderParams) => (
         <SessionAuthoringControls
             fields={[renderParams.field]}
             presentation="fields"
+            engineFieldTitle={engineFieldTitle}
             values={renderParams.effective}
             engine={renderParams.engine} onChangeEngine={renderParams.onChangeEngine}
             onChangeFields={renderParams.onChangeFields}
@@ -56,5 +58,5 @@ export function useWorkflowStepFieldControlRenderer(params: Readonly<{
             {...(facts === undefined ? {} : { facts })}
             testIDPrefix={testIDPrefix ?? 'workflow-inspector-control'}
         />
-    ), [facts, testIDPrefix]);
+    ), [facts, engineFieldTitle, testIDPrefix]);
 }
