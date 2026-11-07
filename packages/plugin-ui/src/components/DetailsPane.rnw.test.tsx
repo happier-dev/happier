@@ -11,7 +11,7 @@ import type {
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { DetailsPane, DetailsPaneFooter } from './DetailsPane.js';
+import { DetailsPane, DetailsPaneFooter, PushedDetailHeader } from './DetailsPane.js';
 import { PluginUiProviderInternal, usePluginTheme, usePluginTranslation, useSurfaceContext } from './PluginUiProvider.js';
 import { Text } from './Text.js';
 import { ScrollArea } from './Layout.js';
@@ -180,6 +180,40 @@ describe('DetailsPane (host details pane binding)', () => {
     view.unmount();
   });
 
+  it('hands its way back to the navigation band where one is drawn, so a pushed detail has one band above it', async () => {
+    const published: ((() => void) | null)[] = [];
+    const onClose = vi.fn();
+    const view = mountWithPane(
+      <>
+        <PushedDetailHeader onClose={onClose} testID="detail" />
+        <PushedDetailHeader title="Named" onClose={onClose} testID="named" />
+      </>,
+      null,
+      { host: { pageChrome: { publishBack: (press: (() => void) | null) => { published.push(press); } } as never } },
+    );
+    await flush();
+    expect(view.container.querySelector('[data-testid="detail:back"]')).toBeNull();
+    expect(view.container.querySelector('[data-testid="named:back"]')).toBeNull();
+    published.find((press) => press !== null)?.();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    view.unmount();
+    await flush();
+    expect(published.at(-1)).toBeNull();
+  });
+
+  it('keeps its published way back when publishing it makes the navigation show a Back (no publish loop)', async () => {
+    const published: ((() => void) | null)[] = [];
+    const view = mountWithPane(
+      <PushedDetailHeader onClose={vi.fn()} testID="detail" />,
+      null,
+      { host: { pageChrome: { navigationBackSpendsStep: true, publishBack: (press: (() => void) | null) => { published.push(press); } } as never } },
+    );
+    await flush();
+    expect(published).toHaveLength(1);
+    expect(published[0]).not.toBeNull();
+    view.unmount();
+  });
+
   it('keeps the identity mark beside the title and the mark leading the line when the detail is pushed', async () => {
     const view = mountWithPane(
       <DetailsPane
@@ -228,12 +262,12 @@ describe('DetailsPane (host details pane binding)', () => {
     pushed.unmount();
 
     // On a phone the host keeps it above the keyboard; its home-indicator inset tucks under the keyboard.
-    const sticky: Array<number> = [];
+    const sticky: Array<number | undefined> = [];
     const keyboardAware = mountWithPane(detail, null, {
       context,
       host: {
         renderKeyboardStickyFooter: (input) => {
-          sticky.push(input.openedOffset);
+          sticky.push(input.offset);
           return <div data-testid="keyboard-sticky">{input.children}</div>;
         },
       },

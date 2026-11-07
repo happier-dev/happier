@@ -352,6 +352,7 @@ function createPaneHost() {
           {input.title}
         </HappierText>
         <Text testID="host-pane-subtitle">{input.subtitle}</Text>
+        {input.breadcrumb === undefined ? null : <Text testID="host-pane-breadcrumb">{input.breadcrumb.join(' › ')}</Text>}
         {input.actions}
         {input.children}
       </View>
@@ -400,6 +401,7 @@ type HarnessOptions = Readonly<{
   detailHeader?: (key: string) => Readonly<{
     title: string;
     subtitle?: string;
+    breadcrumb?: readonly string[];
     actions?: React.ReactNode;
   }>;
   useDetailHeader?: CollectionProps<Entry>['useDetailHeader'];
@@ -2651,6 +2653,7 @@ describe('detail auto beside the host details pane', () => {
       detailHeader: (key) => ({
         title: `Entry ${key}`,
         subtitle: `Source ${key}`,
+        breadcrumb: ['tidewater/checkout-web', `#${key}`],
         actions: (
           <Button
             testID="header-action"
@@ -2666,6 +2669,8 @@ describe('detail auto beside the host details pane', () => {
     await view.setOpen('b');
     expect(view.query('host-pane-title')?.textContent).toBe('Entry b');
     expect(view.query('host-pane-subtitle')?.textContent).toBe('Source b');
+    // The item's place above its title travels to the host band with the rest of its identity.
+    expect(view.query('host-pane-breadcrumb')?.textContent).toBe('tidewater/checkout-web › #b');
     act(() => {
       view.query('header-action')!.click();
     });

@@ -1,4 +1,5 @@
-import { useContext, useState, type ReactElement, type ReactNode } from 'react';
+import { useHappierMaterialColorResolver } from '../presentation/layout/Surface.js';
+import { useContext, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { resolveHappierUiPalette, useHappierUiInsets, useOptionalHappierUiPalette } from '../environment/context.js';
@@ -25,6 +26,11 @@ export type DetailsPaneProps = Readonly<{
   /** The pane's title in its header band. Omit it when the detail draws its own heading and close control. */
   title?: string;
   subtitle?: string;
+  /**
+   * Where the item lives, outermost first, above the title in the pane's band ("owner/repo › #2476"). A detail
+   * pushed as the page names its place in its facts line instead, so the pushed header does not draw it.
+   */
+  breadcrumb?: readonly string[];
   /** The item's identity mark beside the title (a kind glyph). It stands on its own: no tile, border or fill. */
   leading?: ReactNode;
   /** A mark leading the subtitle line (the source's brand mark). */
@@ -114,6 +120,7 @@ export function DetailsPane(props: DetailsPaneProps): ReactElement | null {
           ...(headingRef === undefined ? {} : { headingRef }),
           ...(props.title === undefined ? {} : { title: props.title }),
           ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
+          ...(props.breadcrumb === undefined ? {} : { breadcrumb: props.breadcrumb }),
           ...(props.leading === undefined ? {} : { leading: bridge(props.leading) }),
           ...(props.subtitleLeading === undefined ? {} : { subtitleLeading: bridge(props.subtitleLeading) }),
           ...(props.actions === undefined ? {} : { actions: bridge(props.actions) }),
@@ -138,6 +145,7 @@ export function DetailsPane(props: DetailsPaneProps): ReactElement | null {
 function PushedDetail(props: DetailsPaneProps): ReactElement {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
+  const materialColor = useHappierMaterialColorResolver();
   const translate = usePluginTranslation();
   return (
     <View
@@ -152,7 +160,7 @@ function PushedDetail(props: DetailsPaneProps): ReactElement {
         right: 0,
         bottom: 0,
         left: 0,
-        backgroundColor: palette.page,
+        backgroundColor: materialColor(palette.page, 'transparent'),
       }}
     >
       <PushedDetailHeader {...props} />
@@ -189,16 +197,29 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();
   // The navigation's own Back already returns to the list here: one way back, not two.
-  const chromeBack = useHappierPageChromeInternal()?.navigationBackSpendsStep === true;
-  const hostBack = useContext(HappierCollectionNavigationBackClosesDetailContext) || chromeBack;
+  const chrome = useHappierPageChromeInternal();
+  const chromeBack = chrome?.navigationBackSpendsStep === true;
+  const collectionBack = useContext(HappierCollectionNavigationBackClosesDetailContext);
+  const hostBack = collectionBack || chromeBack;
+  // One band above a pushed detail: where the navigation draws one, the way back joins it (lab alert-detail-pr 390).
+  // Never read from `chromeBack`: the published Back itself makes the navigation show one, and would withdraw itself.
+  const publishBack = collectionBack ? undefined : chrome?.publishBack;
+  const latestClose = useRef(props.onClose);
+  latestClose.current = props.onClose;
+  useEffect(() => {
+    if (publishBack === undefined) return undefined;
+    publishBack(() => { latestClose.current(); });
+    return () => publishBack(null);
+  }, [publishBack]);
   const back = (style?: HappierStyleProp) => <View style={style}><IconButton
     icon={<Icon name="back" tone="secondary" />}
     accessibilityLabel={translate('happier.plugin-ui.detailsPane.back', 'Back')}
     onPress={props.onClose}
     {...(props.testID === undefined ? {} : { testID: `${props.testID}:back` })}
   /></View>;
+  const backInBand = hostBack || publishBack !== undefined;
   if (props.title === undefined) {
-    if (hostBack) return <View />;
+    if (backInBand) return <View />;
     return back({
       flexDirection: 'row',
       paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
@@ -218,7 +239,7 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
         // A detail's actions are its item's own quiet controls (pin, open at the source): they hang from the title's
         // first line, as in the details pane's band, instead of wrapping onto a row of their own on a phone.
         actionsLayout="hang"
-        renderBack={hostBack ? null : back}
+        renderBack={backInBand ? null : back}
       />
     </HappierPageHeadingBindingContext.Provider>
   );
@@ -236,6 +257,7 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
 export function DetailsPaneFooter(props: Readonly<{ children: ReactNode; testID?: string | undefined }>): ReactElement {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
+  const materialColor = useHappierMaterialColorResolver();
   const { safeArea } = useHappierUiInsets();
   const host = useOptionalPluginUiPresentationHost();
   // Inside a detail's body (which pads its content) the footer still spans the detail's whole width.
@@ -247,7 +269,7 @@ export function DetailsPaneFooter(props: Readonly<{ children: ReactNode; testID?
     <View
       testID={props.testID}
       style={{
-        backgroundColor: palette.page,
+        backgroundColor: materialColor(palette.page, 'transparent'),
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: palette.rowDivider,
         paddingTop: gap,
@@ -261,5 +283,5 @@ export function DetailsPaneFooter(props: Readonly<{ children: ReactNode; testID?
   );
   return host?.renderKeyboardStickyFooter === undefined
     ? footer
-    : <>{host.renderKeyboardStickyFooter({ openedOffset: paddingBottom - gap, children: footer })}</>;
+    : <>{host.renderKeyboardStickyFooter({ offset: paddingBottom - gap, children: footer })}</>;
 }
