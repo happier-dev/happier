@@ -170,7 +170,17 @@ export function deploymentHeadline(
   receipt: DeploymentReceiptHeaderV1,
   content: DeploymentContentV1,
 ): string {
-  const sha = deploymentSourceLabel(content);
+  return deploymentReceiptTitle(receipt, deploymentSourceLabel(content));
+}
+
+/**
+ * One receipt's title from its operation, state and version label, for the receipt page and every History row
+ * (a History row carries the version as its `source`). Without a version label its state is the title.
+ */
+export function deploymentReceiptTitle(
+  receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
+  sha: string | null,
+): string {
   if (sha === null) return deploymentStateLabel(receipt.state);
   switch (receipt.state) {
     case 'queued':

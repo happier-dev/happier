@@ -28,6 +28,7 @@ import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
 import { useCollectionConditionHeader } from '@/components/ui/lists/collection/useCollectionConditionHeader';
 import {
   createDeploymentHistoryFilterRegistry,
@@ -55,12 +56,14 @@ import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { DeploymentContentV1, DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
 
 import {
   deploymentDefinitionLabel,
   deploymentDurationMs,
   deploymentHistoryLead,
+  deploymentReceiptTitle,
+  deploymentRevisionLabel,
   deploymentOperationLabel,
   deploymentSourceLabel,
   deploymentStateLabel,
@@ -823,10 +826,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                 {!activeId && detail.content.definition.kind === 'repository' && !detail.content.definition.compose && runtime?.source.kind === 'host' ? (
                   <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id} compact={props.phone} />
                 ) : null}
-                <EnvironmentDefinitionRow
-                  definition={detail.content.definition}
-                  servingSource={activeReceipt?.content.sourceIntent ?? null}
-                />
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
               {runtime && runtime.members.length > 1 ? (
@@ -843,8 +842,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                   title={t('projects.deployments.servicesTitle')}
                   titleAccessory={<ManagedSectionCount count={services.length} />}
                   description={knownMachine(machineIds[0])
-                    ? t('projects.deployments.servicesDescription', { machine: knownMachine(machineIds[0])! })
-                    : t('projects.deployments.servicesDescriptionAny')}
+                    ? t('projects.deployments.overviewStatus.servicesRun', { machine: knownMachine(machineIds[0])! })
+                    : t('projects.deployments.overviewStatus.servicesRunAny')}
                   action={machineIds.length === 1 ? (
                     <SectionActionButton
                       testID="project-deployments.environment.services.open"
@@ -880,6 +879,19 @@ export const DeploymentEnvironmentDetail = React.memo(
                   ) : null}
                 </ItemGroup>
               ) : null}
+              <DeploymentDataCard detail={detail} place={knownMachine(machineIds[0])}
+                onOpen={props.onOpenDatabase}
+                onBackups={() => openTab('settings', 'backups')}
+                // P10: the Add sheet opens over the Environment, in place; it never leaves for Store.
+                onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName }); }} />
+              {triggerSubject ? (
+                <SubjectTriggersSection subject={triggerSubject}
+                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
+                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: detail.environment.id }}
+                  deploymentSourceName={projectSource.source?.source.name}
+                  controllerMachineId={detail.environment.controllerMachineId} />
+              ) : null}
               {recentReceipts.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.recent"
@@ -895,20 +907,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                 >
                   {recentReceipts.map(receiptRow)}
                 </ItemGroup>
-              ) : null}
-              <DeploymentDataCard detail={detail} place={knownMachine(machineIds[0])}
-                onOpen={props.onOpenDatabase}
-                onVariables={() => openTab('variables')}
-                onBackups={() => openTab('settings', 'backups')}
-                // P10: the Add sheet opens over the Environment, in place; it never leaves for Store.
-                onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName }); }} />
-              {triggerSubject ? (
-                <SubjectTriggersSection subject={triggerSubject}
-                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
-                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
-                    environmentId: detail.environment.id }}
-                  deploymentSourceName={projectSource.source?.source.name}
-                  controllerMachineId={detail.environment.controllerMachineId} />
               ) : null}
             </>
           ) : tab === 'history' ? (
@@ -933,7 +931,6 @@ export const DeploymentEnvironmentDetail = React.memo(
               scope={props.lifetime?.scope ?? null}
               lifetime={props.lifetime ?? null}
               environmentId={props.environmentId}
-              machineId={machineIds.length === 1 ? machineIds[0] : null}
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}
@@ -1277,7 +1274,8 @@ export function describeReceipt(
 
 const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   props: Readonly<{
-    receipt: DeploymentReceiptHeaderV1 & Readonly<{ title?: string; failure?: DeploymentReceiptFailureV1 | null }>;
+    receipt: DeploymentReceiptHeaderV1 & Readonly<{ title?: string; failure?: DeploymentReceiptFailureV1 | null;
+      source?: DeploymentReviewRevisionV1 | null }>;
     live: boolean;
     byYou: boolean;
     phone: boolean;
@@ -1303,7 +1301,10 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
         />
       }
       // The receipt's own title names what was deployed; without one its state is the title.
-      title={receipt.title ?? deploymentStateLabel(receipt.state)}
+      // What the operation did to which version ("Rolled back to 302cf72"), so same-revision rows read apart.
+      title={receipt.source ? deploymentReceiptTitle(receipt, deploymentRevisionLabel(receipt.source))
+        : receipt.title ?? deploymentStateLabel(receipt.state)}
+      accessibilityRole="button"
       titleAccessory={
         props.live ? (
           <StatusPill
@@ -1365,6 +1366,9 @@ function DeploymentHistoryPage(
   });
   const filtered = header.tokens.length > 0;
   const receipts = history.result.items;
+  // Newest first, by local day, through the one day-grouping owner the Session lists use.
+  const days = React.useMemo(() => buildSessionListDateGroups({ items: receipts,
+    readMeaningfulActivityAt: receipt => receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs }), [receipts]);
   return (
     <>
       <View style={styles.historyFilters}>
@@ -1372,20 +1376,24 @@ function DeploymentHistoryPage(
         {header.filterButton}
       </View>
       {header.editorOverlay}
+      {days.map((day) => (
+        <ItemGroup key={day.dateKey} testID={`project-deployments.environment.history.day.${day.dateKey}`} title={day.title}>
+          {day.items.map((receipt) => (
+            <DeploymentReceiptRow
+              key={receipt.id}
+              receipt={receipt}
+              live={receipt.id === props.activeId}
+              byYou={receipt.requestedByAccountId === props.accountId}
+              phone={props.phone}
+              onOpen={props.onOpen}
+            />
+          ))}
+        </ItemGroup>
+      ))}
       <ItemGroup
         testID="project-deployments.environment.history"
         header="none"
       >
-        {receipts.map((receipt) => (
-          <DeploymentReceiptRow
-            key={receipt.id}
-            receipt={receipt}
-            live={receipt.id === props.activeId}
-            byYou={receipt.requestedByAccountId === props.accountId}
-            phone={props.phone}
-            onOpen={props.onOpen}
-          />
-        ))}
         {history.hasPreviousPage || history.hasNextPage ? (
           <View style={styles.paging}>
             {history.hasPreviousPage ? (
@@ -1802,41 +1810,6 @@ function EnvironmentServiceRow(
       />
       {feedback}
     </>
-  );
-}
-
-/**
- * What defines what runs (P1 §1 Definition): the repository's Compose file, or the definition stored in Happier with
- * its revision, saying when that revision is not the one serving. Move to a repository stays Tier 3.
- */
-function EnvironmentDefinitionRow(
-  props: Readonly<{
-    definition: DeploymentEnvironmentDetailV1['content']['definition'];
-    servingSource: DeploymentContentV1['sourceIntent'] | null;
-  }>,
-) {
-  const { definition, servingSource } = props;
-  if (definition.kind === 'repository') {
-    if (!definition.compose) return null;
-    return (
-      <Item
-        testID="project-deployments.environment.definition"
-        title={t('projects.deployments.overviewStatus.definitionTitle')}
-        subtitle={<Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>
-          {`${definition.ref} · ${definition.compose.path}`}</Text>}
-        mode="info"
-      />
-    );
-  }
-  const notDeployed = servingSource?.kind === 'stored' && servingSource.contentRevision !== definition.contentRevision;
-  return (
-    <Item
-      testID="project-deployments.environment.definition"
-      title={t('projects.deployments.overviewStatus.definitionTitle')}
-      subtitle={[t('projects.deployments.overviewStatus.definitionStored', { revision: definition.contentRevision }),
-        ...(notDeployed ? [t('projects.deployments.overviewStatus.definitionNotDeployed')] : [])].join(' · ')}
-      mode="info"
-    />
   );
 }
 

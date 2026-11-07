@@ -8,6 +8,7 @@ import type { OperationsRunOutcome } from '@/sync/domains/workflows/operationsRu
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 import { t } from '@/text';
+import { stripMarkdown } from '@/utils/sessions/messageUtils';
 
 export type OperationsOutcomeLink =
   | Readonly<{ kind: 'pullRequest'; pullRequest: ScmPullRequestSummary }>
@@ -104,8 +105,9 @@ function findingRow(
   const session = finding.session;
   const preview = finding.result?.preview;
   const value =
+    // The agent writes Markdown; a one-line row says it as plain text, the same projection message previews use.
     preview?.state === 'available'
-      ? preview.text
+      ? stripMarkdown(preview.text)
       : finding.result
         ? t('workflows.triggers.guided.outcome.reported')
         // Whether the agent finished lives in its Session; this row never guesses.

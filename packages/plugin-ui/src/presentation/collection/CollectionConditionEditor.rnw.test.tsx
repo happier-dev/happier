@@ -141,6 +141,20 @@ describe('HappierCollectionConditionEditor', () => {
     mount.unmount();
   });
 
+  it('draws no empty footer band when it has no count and no action to show', () => {
+    const registry = createWorkflowListFilterRegistryV1([stageField()]);
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionConditionEditor
+        host={host}
+        labels={labels}
+        model={conditionModelFromFilter(registry, { view: 'all' as const }, { fields: {} })}
+        onChange={() => {}}
+      />,
+    );
+    expect(mount.container.querySelector('[data-testid="collection-filter-count"]')).toBeNull();
+    mount.unmount();
+  });
+
   it('adds, narrows, flips and removes a plugin-owned condition as edits its owner applies', async () => {
     const stage = stageField();
     const registry = createWorkflowListFilterRegistryV1([stage]);

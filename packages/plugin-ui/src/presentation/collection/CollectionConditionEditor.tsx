@@ -717,6 +717,8 @@ export const HappierCollectionConditionEditor = memo(
             </HappierPressable>
           ) : null}
         </ScrollView>
+        {/* Nothing to count and nothing to press: no footer, so the editor never ends in an empty band. */}
+        {countLabel || props.onSaveAsSpace || props.onDone ? (
         <View
           style={[
             styles.footer,
@@ -752,6 +754,7 @@ export const HappierCollectionConditionEditor = memo(
             />
           ) : null}
         </View>
+        ) : null}
       </View>
     );
   },

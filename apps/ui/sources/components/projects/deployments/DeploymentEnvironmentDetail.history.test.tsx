@@ -158,6 +158,36 @@ async function renderHistory(
 }
 
 describe('Environment → History', () => {
+  it('leads each row with what the operation did to which version, groups rows by day, and rows are buttons', async () => {
+    const environmentId = createDeploymentEnvironmentDetailV1().environment.id;
+    const source = { kind: 'repository' as const, sha: 'c'.repeat(40) };
+    const day = 24 * 60 * 60 * 1000;
+    // The same revision, rolled back to today and deployed two days ago: the titles must still tell them apart.
+    const now = Date.now();
+    const items = [
+      { ...createDeploymentReceiptHeaderV1({ id: 'receipt-rollback', environmentId, operation: 'rollback', state: 'succeeded',
+        requestedAtMs: now - 3_000, startedAtMs: now - 2_000, settledAtMs: now - 1_000 }), source },
+      { ...createDeploymentReceiptHeaderV1({ id: 'receipt-deploy', environmentId, operation: 'deploy', state: 'succeeded',
+        requestedAtMs: now - 2 * day, startedAtMs: now - 2 * day + 1, settledAtMs: now - 2 * day + 2 }), source },
+    ];
+    const { screen, controller, settle } = await renderHistory(() => ({ ok: true, items, nextCursor: null }));
+    try {
+      expect(await settle('project-deployments.receipt.row.receipt-deploy')).not.toBeNull();
+      const row = (id: string) => screen.findAll(node => node.props.testID === `project-deployments.receipt.row.${id}`
+        && typeof node.props.title === 'string')[0]!;
+      const rollback = row('receipt-rollback').props;
+      const deploy = row('receipt-deploy').props;
+      expect(rollback.title).toContain('ccccccc');
+      expect(deploy.title).toContain('ccccccc');
+      expect(rollback.title).not.toBe(deploy.title);
+      expect(rollback.accessibilityRole).toBe('button');
+      // Two days, two groups, newest first.
+      const groups = screen.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('project-deployments.environment.history.day.') && typeof node.props.title === 'string');
+      expect(groups.map(group => group.props.testID)).toHaveLength(2);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('unrelated parent renders redraw 0 unchanged receipt rows, and a row still opens its own receipt', async () => {
     const { screen, controller, settle, opened, detail, rerenderParent } =
       await renderHistory(() => ({

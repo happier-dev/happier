@@ -229,3 +229,46 @@ describe('Receipt → release cleaned up', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
+
+describe('Receipt → failed rollback (PAGE-ACCEPT-85 D11)', () => {
+  it('leads with Roll back again to the same release and says no generic remedy when the cause has none', async () => {
+    const base = createDeploymentReceiptDetailV1();
+    const failure = { code: 'deployment_failed_unclassified', phase: 'activate' as const };
+    const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, failure });
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+      id: 'failed-rollback', state: 'failed', operation: 'rollback', rollbackOfDeploymentId: 'retained',
+      predecessorDeploymentId: 'retained', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 }), content });
+    const detail = createDeploymentEnvironmentDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    // The Action owner's rollback is the boundary.
+    const rollback = vi.fn(async () => ({ ok: true as const, deploymentId: 'again' }));
+    const screen = await renderScreen(
+      <AccountNoticeInvestigationBoundary>
+        <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+          deploymentId="failed-rollback" environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+          accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}} rollback={rollback as never}
+          cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }}
+          onOpenReceipt={() => {}} />
+      </AccountNoticeInvestigationBoundary>,
+    );
+    try {
+      await act(async () => {
+        await Promise.race([
+          waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.outcome.failed'), node => node !== null),
+          new Promise(resolve => setTimeout(resolve, 5_000)),
+        ]);
+      });
+      const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.failed'
+        && node.props.title !== undefined)[0]!;
+      // The owner has no recovery for this cause, so its generic fallback is not shown as if it were one.
+      expect(String(banner.props.description ?? '')).not.toContain(readDeploymentFailureRecoveryV1('unknown_code').remedy);
+      await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
+      expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ deploymentId: 'retained' }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

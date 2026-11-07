@@ -20,7 +20,7 @@ import {
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
-import { readDeploymentFailureRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigationSessionResult } from '@/hooks/inbox/useInvestigationSessionResult';
@@ -187,7 +187,7 @@ export const DeploymentReceiptDetail = React.memo(
     const { deployment, content, facts } = value;
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
-      ? readDeploymentFailureRecoveryV1(facts.failure.code, facts.failure) : null;
+      ? readDeploymentRefusalRecoveryV1(facts.failure.code, facts.failure) : null;
     const { rollback, cancel, deploy, teardown, promote, environmentId, phone } = props;
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
@@ -263,6 +263,10 @@ export const DeploymentReceiptDetail = React.memo(
     const codeTarget = (!migrationRan || migrationPolicy === 'rollbackCodeOnly' || migrationPolicy === 'ask')
       && deployment.state === 'failed' && rollback !== null && !restored ? facts.retainedRollbackTarget : null;
     const rollbackTarget = backupTarget ?? codeTarget;
+    const retryRollbackTo = deployment.state === 'failed' && deployment.operation === 'rollback' && rollback !== null
+      && !rollbackTarget ? deployment.rollbackOfDeploymentId ?? null : null;
+    // Deploy again leads the failure when nothing better does; a phone already holds it in its pinned bar.
+    const bannerAgain = deployment.state === 'failed' && !rollbackTarget && !retryRollbackTo && againTarget !== null && !phone;
     const chooseRecovery = () => {
       if (!rollbackTarget) return;
       if (backupTarget && migrationPolicy === 'ask') {
@@ -373,7 +377,7 @@ export const DeploymentReceiptDetail = React.memo(
       <View style={styles.headerActions}>
         {rollbackButton}
         {cancelButton}
-        {againButton}
+        {bannerAgain ? null : againButton}
         {menu}
       </View>
     );
@@ -453,6 +457,19 @@ export const DeploymentReceiptDetail = React.memo(
                   loading: rollingBack,
                   disabled: rollingBack || reviewPending,
                   onPress: chooseRecovery,
+                } : retryRollbackTo ? {
+                  // A failed rollback's way forward is the same rollback again, to the release it was restoring.
+                  label: t('projects.deployments.rollbackTo', { version: deploymentSourceLabel(content) ?? retryRollbackTo.slice(0, 7) }),
+                  icon: 'arrow-arc-left',
+                  loading: rollingBack,
+                  disabled: rollingBack || reviewPending,
+                  onPress: () => rollBack(retryRollbackTo),
+                } : bannerAgain ? {
+                  label: t('projects.deployments.deployAgain'),
+                  icon: 'arrow-clockwise',
+                  loading: againPress.running,
+                  disabled: againPress.running || againPress.reviewPending,
+                  onPress: pressAgain,
                 } : null}
                 // Recovery leads when there is one; finding out why is the way forward beside it.
                 control={investigateControl}
@@ -776,8 +793,8 @@ const styles = StyleSheet.create((theme) => ({
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   phoneAction: { flexGrow: 1 },
   bar: { gap: theme.space.s12 },
+  // The strip sits in a sheetless section, so it starts on the section's own edge like the title above it.
   facts: {
-    paddingHorizontal: theme.space.s16,
     paddingBottom: theme.space.s8,
   },
   outcomeActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

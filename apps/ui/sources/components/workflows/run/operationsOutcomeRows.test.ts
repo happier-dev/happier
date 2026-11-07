@@ -69,6 +69,20 @@ describe('presentOperationsOutcomeRows', () => {
     expect(presented[0]).toMatchObject({ value: 'The migration timed out.' });
   });
 
+  it('says the agent finding as plain text: no Markdown emphasis or code marks reach the row', () => {
+    const presented = rows({
+      finding: {
+        ...started,
+        result: {
+          preview: { state: 'available', text: 'The **failed rollback** of `cmvxxre5g` left it `running`.' },
+          workflowInvocation: null,
+          completedAt: 1,
+        },
+      },
+    });
+    expect(presented[0]!.value).toBe('The failed rollback of cmvxxre5g left it running.');
+  });
+
   it('reads recovery from live health for the same Environment and target', () => {
     const presented = rows({
       subjectReceipt: { id: 'dep-1', environmentId: 'env', targetLinkId: 'link-1' } as never,
