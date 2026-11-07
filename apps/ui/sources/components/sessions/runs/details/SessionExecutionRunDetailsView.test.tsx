@@ -720,6 +720,22 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(screen.getTextContent()).toContain('req-quota-fixture');
         expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
     });
+    it('says a failed Run\'s typed cause once, with its account action, instead of a raw tool-result block', async () => {
+        const preview = 'Codex usage limit reached. Try another connected account or try again after your limit resets.';
+        runState = createRun({ status: 'failed', finishedAtMs: 2, error: { code: 'usage_limit', message: preview, runtimeIssueV1: {
+            v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1, code: 'usage_limit', source: 'usage_limit', agentId: 'codex',
+            sanitizedPreview: preview,
+            usageLimit: { v: 1, recoverability: 'switch_account', quotaScope: 'account', resetAtMs: 1794056400000, retryAfterMs: null,
+                connectedService: { serviceId: 'openai-codex', profileId: 'quota-profile', groupId: null } } } } });
+        latestToolResult = preview;
+        await mount(); await loaded();
+        expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('usage.board.plans.capacityResets');
+        expect(screen.findAllHostsByTestId('session-run-details-latest-tool-result')).toHaveLength(0);
+        await screen.pressByTestIdAsync('session-run-details-turn-failure-action');
+        const { router } = await import('expo-router');
+        expect(vi.mocked(router.push)).toHaveBeenCalledWith('/(app)/settings/connected-services');
+    });
     it('mounts the exact retained Run composer before any tool marker, with canonical queue/steer controls', async () => {
         runState = liveRun();
         await mount({ retryInputLocalId: 'first-input-1' }); await loaded();

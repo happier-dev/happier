@@ -48,6 +48,15 @@ describe('ExecutionRunRow', () => {
         standardCleanup();
     });
 
+    it('says a failed Run\'s typed cause in its row instead of only its process facts', async () => {
+        const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed', error: { code: 'usage_limit', runtimeIssueV1: {
+            v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1, code: 'usage_limit', source: 'usage_limit',
+            sanitizedPreview: 'Codex usage limit reached' } } }} subtitle="PID 123" />);
+        expect(screen.getTextContent()).toContain('Codex usage limit reached');
+        expect(screen.getTextContent()).not.toContain('PID 123');
+        standardCleanup();
+    });
+
     it('names the Run model by its Agent catalog title, not the raw model id', async () => {
         const screen = await renderScreen(<ExecutionRunRow run={{ ...run,
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -64,6 +73,20 @@ describe('ExecutionRunRow', () => {
         const row = screen.tree.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLabel === 'Reviewer A')[0]!;
         expect(row.props.role ?? row.props.accessibilityRole).toBe('button');
         expect(row.props.accessibilityHint).toBe('runs.openRun');
+        standardCleanup();
+    });
+
+    // A host's own control (Stop) is a sibling of the row's press target: a button inside a button is
+    // invalid markup on the web and steals the row's press.
+    it('keeps the host accessory outside the row press target', async () => {
+        const screen = await renderScreen(React.createElement(ExecutionRunRow, {
+            run: run as any,
+            onPress: vi.fn(),
+            rightAccessory: React.createElement('button', { 'aria-label': 'Stop run' }),
+        }));
+        const row = screen.tree.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLabel === 'Reviewer A')[0]!;
+        expect(row.findAll((node) => node.type === 'button')).toHaveLength(0);
+        expect(screen.tree.root.findAll((node) => node.type === 'button')).toHaveLength(1);
         standardCleanup();
     });
 

@@ -99,6 +99,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 type LoadState =
     | { status: 'loading' }
@@ -835,8 +836,13 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
         ? submitScmConversationMessage : props.sessionId === null ? submitDetachedMessage : undefined;
     const failedTurn = state.status === 'loaded' && state.run.status === 'running' && !state.run.inputTurns?.current && state.run.inputTurns?.last?.state === 'failed'
         ? state.run.inputTurns.last : null;
-    const turnIssue = failedTurn?.error?.runtimeIssueV1;
+    // A failed Run says its typed cause the same way a failed turn does: one line and its account action.
+    const turnIssue = failedTurn?.error?.runtimeIssueV1
+        ?? (state.status === 'loaded' && state.run.status === 'failed' ? state.run.error?.runtimeIssueV1 : undefined);
     const turnFailure = turnIssue ? presentSessionRuntimeIssue(turnIssue) : null;
+    // The failure text a Run also returned as its latest result is that failure, already said above.
+    const latestResultIsFailure = turnIssue !== undefined && state.status === 'loaded' && typeof state.latestToolResult === 'string'
+        && (state.latestToolResult === turnIssue.sanitizedPreview || state.latestToolResult === state.run.error?.message);
 
     const content = state.status === 'loading' || state.status === 'loaded' && loadedRunAddressRef.current !== runAddressKey ? (
         // A named wait (agents lab ST "opening"): what is opening and where it is read from. The
@@ -918,8 +924,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     </Text>
                 ) : null}
                 {turnFailure ? <Text testID="session-run-details-turn-failure" accessibilityRole="alert" style={{ color: theme.colors.text.secondary }}>
-                    {[turnFailure.message, turnFailure.reset, turnFailure.recovery].filter(Boolean).join(' · ')}
+                    {[turnFailure.message, turnFailure.reset].filter(Boolean).join(' · ')}
                 </Text> : null}
+                {turnFailure?.recovery ? <RoundButton testID="session-run-details-turn-failure-action" size="small" display="default"
+                    title={turnFailure.recovery} onPress={() => router.push('/(app)/settings/connected-services')} /> : null}
                 {showPreMarkerState ? (
                     <View
                         testID="session-run-details-pre-marker-state"
@@ -1026,7 +1034,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 The result is presented through the transcript's own structured
                 projection; the exact payload a plugin returned stays reachable
                 under its own disclosure rather than being the primary content. */}
-            {latestToolResultProjection !== null && !hasStructuredResult && transcriptMessage?.kind !== 'tool-call' ? (
+            {latestToolResultProjection !== null && !hasStructuredResult && transcriptMessage?.kind !== 'tool-call' && !latestResultIsFailure ? (
                 <View
                     testID="session-run-details-latest-tool-result"
                     style={{
