@@ -588,8 +588,8 @@ describe('workflow Session step executor', () => {
     { name: 'swapped Agent install operand', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install', tamper: 'operand' },
     { name: 'swapped Agent install origin request', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install', tamper: 'origin' },
     { name: 'refused Agent install before Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'refused' },
-    { name: 'pending optional Agent update does not hold Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: 'update' },
-    { name: 'optional update status review does not hold Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: 'update-status' },
+    { name: 'skipped optional Agent update does not hold Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: 'update' },
+    { name: 'skipped optional update status review does not hold Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: 'update-status' },
   ] as const)('admits native Workflow Session profile selection: $name', async testCase => {
     const { approvalProfileId, review } = testCase;
     const readinessEvents: string[] = [];
@@ -745,16 +745,18 @@ describe('workflow Session step executor', () => {
     expect(launches[0]?.approvalProfileId).toBe(approvalProfileId === undefined ? 'builtin:full-trust' : approvalProfileId);
     expect(artifacts.size).toBe(review === 'approve' ? 1 : 0);
     if ('readiness' in testCase && (testCase.readiness === 'update' || testCase.readiness === 'update-status')) {
+      expect(readiness.callMachineRpc.mock.calls.filter(([request]) =>
+        request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START || request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ)).toHaveLength(0);
       const startup = operations.store.list({ accountId: 'account-1', machineId }).items.find(
         operation => operation.requestId === `workflow:profile:${testCase.name}`);
       expect(startup).toBeDefined();
       expect(operations.store.get({ accountId: 'account-1', machineId }, startup!.operationId)).toMatchObject({
-        state: 'succeeded', result: { sessionId: 'new-session', agentUpdate: { agentId: 'claude', status: 'pending' } },
+        state: 'succeeded', result: { sessionId: 'new-session', agentUpdate: { agentId: 'claude', status: 'pending',
+          requestId: `workflow:profile:${testCase.name}` } },
       });
     }
     if ('readiness' in testCase) expect(readinessEvents).toEqual(testCase.readiness === 'install'
-      ? ['inventory', 'install', 'terminal', 'spawn'] : testCase.readiness === 'update-status'
-        ? ['inventory', 'install', 'spawn'] : ['inventory', 'spawn']);
+      ? ['inventory', 'install', 'terminal', 'spawn'] : ['inventory', 'spawn']);
   });
 
   it.each([false, true])('creates Workflow birth correspondence accepted by requester custody (miswired=%s)', async miswired => {

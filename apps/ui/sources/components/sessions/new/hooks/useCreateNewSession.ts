@@ -11,7 +11,7 @@ import { presentMachineAgentStartRefusal, presentMachineAgentUpdateNotice } from
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { confirmAgentInstallChange } from '@/components/settings/agents/install/agentInstallChangeConfirm';
 import { readMachineAgentsForScope, type MachineAgentsSnapshot } from '@/agents/machineAgents/useMachineAgents';
-import { resolveMachineAgentAcquireIntentV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { resolveMachineAgentAcquireIntentV1, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { sync } from '@/sync/sync';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -247,9 +247,10 @@ export type HandleCreateSessionOptions = Readonly<{
      */
     onAfterCreatedSettled?: (settlement: NewSessionAfterCreatedSettlement) => void;
     /**
-     * A semantic document coordinator will exact-snapshot clear after accepted
-     * create. The incumbent whole-draft clear must stay inactive so a newer
-     * document revision remains persistable.
+     * A mounted composer document owns the visible draft and clears its accepted
+     * snapshot itself; launch settlement must not switch off that document's
+     * persistence, so edits made after Send stay persistable. Settlement still
+     * retires the sent draft once its Session exists.
      */
     deferAcceptedDraftClearToDocument?: boolean;
     /**
@@ -721,7 +722,8 @@ export function useCreateNewSession(params: Readonly<{
             const definitionId = 'definitionId' in target ? target.definitionId : undefined;
             const knownAgent = knownAgents?.status === 'ready' ? knownAgents.agents.find(row =>
                 row.agentId === agent.agentId && row.definitionId === definitionId) : undefined;
-            if (knownAgent && resolveMachineAgentAcquireIntentV1(knownAgent) === null) return true;
+            if (knownAgent && (resolveMachineAgentAcquireIntentV1(knownAgent) === null
+                || resolveMachineAgentExecutionStateV1({ ...knownAgent, authenticationRequired: false }) === 'ready')) return true;
             if (!await confirmAgentInstallChange({ name: agent.title, nowMachines: [], firstUseMachines: [machineName], vendorRecipe: true })) return false;
             agentInstallConsent = { vendorRecipe: true };
             return true;
@@ -1111,9 +1113,9 @@ export function useCreateNewSession(params: Readonly<{
                                 && presentationAccountLifetime?.isCurrent() === true
                                 && launchAttemptRef.current?.attemptId === launchAttempt.attemptId,
                         }),
-                        ...(!opts.deferAcceptedDraftClearToDocument && capturedDraftScope && capturedDraftId
+                        ...(capturedDraftScope && capturedDraftId
                             ? { clearCapturedDraft: async () => {
-                                if (mountedRef.current) current.disableDraftPersistence?.();
+                                if (mountedRef.current && !opts.deferAcceptedDraftClearToDocument) current.disableDraftPersistence?.();
                                 await clearCapturedNewSessionDraftAfterLaunch({
                                     scope: capturedDraftScope,
                                     draftId: capturedDraftId,
@@ -2214,6 +2216,9 @@ export function useCreateNewSession(params: Readonly<{
                 if (agentUpdate) {
                     presentMachineAgentUpdateNotice({
                         status: agentUpdate.status,
+                        requestId: agentUpdate.requestId
+                            ?? readManualSessionSpawnOperation(executionAccountScope, launchAttempt.attemptId)?.requestId
+                            ?? launchAttempt.attemptId,
                         agentTitle: resolveAgentCatalogProjection(agentUpdate.agentId, { enabledAgentIds: [] }).title,
                         machineName: current.selectedMachine ? getMachineSentenceName(current.selectedMachine) : selectedMachineId,
                     });
@@ -2400,12 +2405,14 @@ export function useCreateNewSession(params: Readonly<{
                 const createdSessionCompletion = createCreatedNewSessionCompletion({
                     ...(current.authoringOrigin || opts?.afterCreated ? { followUp: runAfterCreatedFollowUp } : {}),
                     present: () => presentCreatedSessionRoute(),
-                    ...(!opts?.deferAcceptedDraftClearToDocument
-                        ? { clearCapturedDraft: async () => {
-                            if (mountedRef.current && submittedLaunch.isSubmittedDraftShown()) current.disableDraftPersistence?.();
-                            await clearCompletedDraft(launchAttempt.attemptId);
-                        } }
-                        : {}),
+                    // Once the Session exists the sent draft leaves Drafts on every route; only the captured
+                    // fields clear, so edits made after Send stay in the draft.
+                    clearCapturedDraft: async () => {
+                        if (!opts?.deferAcceptedDraftClearToDocument && mountedRef.current && submittedLaunch.isSubmittedDraftShown()) {
+                            current.disableDraftPersistence?.();
+                        }
+                        await clearCompletedDraft(launchAttempt.attemptId);
+                    },
                 });
 
                 const runBuiltInPostSpawnFollowUp = async (): Promise<void> => {

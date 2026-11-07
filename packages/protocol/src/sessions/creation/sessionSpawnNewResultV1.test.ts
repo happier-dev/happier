@@ -3,12 +3,21 @@ import {
   projectSessionSpawnNewActionResultV1,
   readSessionSpawnNewActionResultV1,
   SessionSpawnNewActionResultV1Schema,
+  SessionAgentUpdateNoticeV1Schema,
   SessionSpawnNewResultV1Schema,
 } from './sessionSpawnNewResultV1.js';
 import { createProviderErrorV1 } from '../../providers/errors.js';
 import { SessionSpawnNewResultV1Schema as preObservationResultSchema } from './testFixtures/sessionSpawnResultBeforeCommitObservation.js';
 
 describe('Session creation fork files', () => {
+  it('retains optional update Request IDs and accepts notices from before the diagnostic field', () => {
+    const previous = { agentId: 'codex', status: 'pending' };
+    expect(SessionAgentUpdateNoticeV1Schema.parse(previous)).toEqual(previous);
+    const current = { ...previous, requestId: 'manual:optional-update' };
+    expect(SessionAgentUpdateNoticeV1Schema.parse(current)).toEqual(current);
+    expect(SessionAgentUpdateNoticeV1Schema.safeParse({ ...current, requestId: ' ' }).success).toBe(false);
+  });
+
   it('preserves Agent setup recovery identity when an installed Agent needs attention', () => {
     const failure = { type: 'error', code: 'agent_cli_not_ready', agentId: 'fixture-agent', retryable: false };
     expect(SessionSpawnNewResultV1Schema.parse(failure)).toEqual(failure);

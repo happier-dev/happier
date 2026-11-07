@@ -14,6 +14,7 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   serverId: string;
   agentId: string;
   definitionId?: string;
+  requestId?: string;
   consent?: AgentInstallJobConsent;
   invoke: SpawnArgs['invokeAgentReadinessAction'];
   signal?: AbortSignal;
@@ -34,28 +35,27 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   const agent = facts.data.items.find(item => item.agentId === input.agentId && item.definitionId === input.definitionId);
   if (!agent) return refusal();
   const intent = resolveMachineAgentAcquireIntentV1(agent);
-  if (!intent) return null;
   // Executable prerequisites are independent of the selected credential, which
   // remains owned by native launch. An optional update cannot revoke this executable.
   const runnable = resolveMachineAgentExecutionStateV1({ ...agent, authenticationRequired: false }) === 'ready';
-  const optionalUpdate = (status: SessionAgentUpdateNoticeV1['status'], missing = false) => runnable
-    ? { agentUpdate: { agentId: input.agentId, status } } : refusal(missing);
+  // Skip the optional update: even starting or reading its job can delay birth.
+  if (runnable) return intent ? { agentUpdate: { agentId: input.agentId, status: 'pending',
+    ...(input.requestId ? { requestId: input.requestId } : {}) } } : null;
+  if (!intent) return refusal();
   const acquired = await input.invoke(children.acquire.action, { ...selection, intent,
-    ...(input.consent === undefined ? {} : { consent: input.consent }) },
-    runnable ? { result: 'optional' } : undefined);
+    ...(input.consent === undefined ? {} : { consent: input.consent }) });
   if (input.signal?.aborted) return cancelled();
-  if (!acquired.ok) return optionalUpdate('pending', !agent.installed);
+  if (!acquired.ok) return refusal(!agent.installed);
   const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(acquired.result);
-  if (deferred.success) return runnable ? optionalUpdate('pending') : { result: deferred.data };
+  if (deferred.success) return { result: deferred.data };
   const started = DaemonAgentInstallStartResponseSchema.safeParse(acquired.result);
-  if (!started.success || !started.data.ok) return optionalUpdate('pending');
+  if (!started.success || !started.data.ok) return refusal();
   const observed = await input.invoke(children.status.action, {
-    machineId: input.machineId, jobId: started.data.jobId, waitForTerminal: !runnable,
-  }, runnable ? { result: 'optional' } : undefined);
+    machineId: input.machineId, jobId: started.data.jobId, waitForTerminal: true,
+  });
   if (input.signal?.aborted) return cancelled();
-  if (!observed.ok) return optionalUpdate('pending');
+  if (!observed.ok) return refusal();
   const terminal = DaemonAgentInstallReadResponseSchema.safeParse(observed.result);
   return terminal.success && terminal.data.ok && terminal.data.done && terminal.data.outcome?.kind === 'succeeded'
-    ? null : optionalUpdate(terminal.success && terminal.data.ok && terminal.data.done
-      && terminal.data.outcome?.kind === 'failed' ? 'failed' : 'pending');
+    ? null : refusal();
 }

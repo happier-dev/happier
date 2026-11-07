@@ -2,19 +2,25 @@ import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
 /** A successful launch used the installed version while its optional update needs attention. */
 export function presentMachineAgentUpdateNotice(
-  notice: Readonly<{ status: SessionAgentUpdateNoticeV1['status']; agentTitle: string; machineName: string }>,
+  notice: Readonly<{ status: SessionAgentUpdateNoticeV1['status']; agentTitle: string; machineName: string; requestId: string }>,
 ): void {
-  Modal.alert(
-    notice.status === 'pending'
-      ? t('machineAgents.updatePendingNotice', { agent: notice.agentTitle })
-      : t('machineAgents.updateFailedNotice', { agent: notice.agentTitle }),
-    t('machineAgents.sessionStartedWithInstalledVersion', { machine: notice.machineName }),
-  );
+  publishPresentationNotice({
+    key: `machine-agent-update:${notice.requestId}`,
+    severity: 'warning',
+    message: [
+      notice.status === 'pending'
+        ? t('machineAgents.updatePendingNotice', { agent: notice.agentTitle })
+        : t('machineAgents.updateFailedNotice', { agent: notice.agentTitle }),
+      t('machineAgents.sessionStartedWithInstalledVersion', { machine: notice.machineName }),
+      t('session.startFailure.requestId', { id: notice.requestId }),
+    ].join('\n'),
+  });
 }
 
 /**

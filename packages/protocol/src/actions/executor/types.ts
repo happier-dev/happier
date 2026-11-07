@@ -1923,8 +1923,7 @@ export type ActionExecutorDeps = Readonly<{
     /** Exact admitted public intent for requester transport, before host launch expansion; never a wire field. */
     admittedInput?: SessionSpawnNewInputV2;
     /** Ordinary reviewed Actions, bound to this exact admitted Session and requester. */
-    invokeAgentReadinessAction?: (actionId: SessionAgentReadinessActionIdV1, input: unknown,
-      options?: Readonly<{ result: 'optional' }>) => Promise<ActionExecuteResult>;
+    invokeAgentReadinessAction?: (actionId: SessionAgentReadinessActionIdV1, input: unknown) => Promise<ActionExecuteResult>;
     /** Host-only invocation binding for post-commit private material preparation; never sent in the spawn payload. */
     context?: ActionExecutorContext;
     /** Complete host-resolved spawn snapshot; memory remains subject to target owner proof. */

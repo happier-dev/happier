@@ -198,6 +198,7 @@ export async function runObservedWorkflowSessionStartup(
                   machineId: host.machineId, serverId: host.serverId, agentId: selectedAgent.agentId,
                   ...(args.agentTarget.definitionId === undefined ? {} : { definitionId: args.agentTarget.definitionId }),
                   ...(args.agentInstallConsent === undefined ? {} : { consent: args.agentInstallConsent }),
+                  ...(args.actionRequestId ? { requestId: args.actionRequestId } : {}),
                   invoke: args.invokeAgentReadinessAction, signal: operation.signal,
                 });
                 if (readiness && 'result' in readiness) return readiness.result;

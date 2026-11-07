@@ -27,6 +27,7 @@ it.each([
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: null, updatePending: true },
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true, dependencyMissing: true },
+  { role: 'manage', installed: true, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', dependencyMissing: true },
 ] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated)', async testCase => {
   const { installed, outdated, acquireAllowed, refusal } = testCase;
   const terminalFailed = 'terminalFailed' in testCase && testCase.terminalFailed;
@@ -36,9 +37,11 @@ it.each([
   const accountId = 'requester';
   const machineId = 'machine-1';
   const sessionId = 'readiness-session';
+  const requestId = 'readiness-start-request';
   const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null };
   const events: string[] = [];
+  const acquisitionRequests: string[] = [];
   let bornSession: Record<string, unknown> | undefined;
   let machineBound = false;
   const facts = { installed, version: installed ? '1.2.3' : null, latestVersion: '1.2.4',
@@ -52,6 +55,9 @@ it.each([
       || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) throw new Error('Unexpected RPC');
     const decoded = await socketRpcCodec.decodeRequestParams(content, raw.params, raw.method);
     const method = raw.method.slice(raw.method.indexOf(':') + 1);
+    if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
+      acquisitionRequests.push(method);
+    }
     // Socket.IO is the genuine Home boundary. Real Home Use/Manage admission
     // is independently exercised in sessionAgentReadiness.sqlite.integration.spec.ts;
     // these granted/refused network outcomes exercise the Session owner response.
@@ -128,7 +134,11 @@ it.each([
     sessionSpawnDirectTargetTransport: { machineId, prepare: async () => ({ ok: true, directory: '/remote/project',
       directoryKind: 'path', directoryCreationRequired: false, checkout: null }), spawnedSession: {
       // The native process boundary performs birth and launch together.
-      spawn: async () => { events.push('birth', 'spawn'); return { type: 'success', sessionId,
+      spawn: async () => {
+        // Runnable installations never spend pre-birth work on an optional update,
+        // including an update that would be busy, pending, or failed.
+        if (installed && !dependencyMissing) expect(acquisitionRequests).toHaveLength(0);
+        events.push('birth', 'spawn'); return { type: 'success', sessionId,
         sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
       resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
     } },
@@ -138,16 +148,16 @@ it.each([
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false });
   const result = await executor.execute('session.spawn_new', input, { surface: 'cli', authority: 'present_user',
-    actionCaller: { kind: 'host' }, serverId: 'home-a', bypassApprovals: true });
+    actionCaller: { kind: 'host' }, serverId: 'home-a', actionRequestId: requestId, bypassApprovals: true });
   if (refusal) {
     expect(result).toMatchObject({ ok: true, result: { type: 'error', code: refusal, agentId: 'codex', retryable: false } });
     expect(events).toEqual(terminalFailed ? ['inventory', outdated ? 'update' : 'install', 'terminal'] : ['inventory']);
   } else {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
-    if (installed && outdated && (!acquireAllowed || terminalFailed || updateInUse || updatePending)) {
-      expect(result).toMatchObject({ result: { agentUpdate: { agentId: 'codex', status: terminalFailed ? 'failed' : 'pending' } } });
+    if (installed && outdated) {
+      expect(result).toMatchObject({ result: { agentUpdate: { agentId: 'codex', status: 'pending', requestId } } });
     }
-    expect(events).toEqual(['inventory', ...(!installed || outdated && acquireAllowed
+    expect(events).toEqual(['inventory', ...(!installed || dependencyMissing
       ? [outdated ? 'update' : 'install', ...(updateInUse ? [] : ['terminal'])] : []), 'birth', 'spawn']);
   }
 });

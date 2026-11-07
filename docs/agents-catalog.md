@@ -1871,17 +1871,26 @@ Ordinary Session creation checks the chosen Agent after Machine wake and setup,
 before Session birth and Agent prerequisite hooks. Managed create-and-start reaches
 that same owner through its independently admitted guest Session continuation.
 A runnable installed CLI launches with Use access on its installed version.
-A missing CLI or a known available update invokes the ordinary
-`machines.agents.install` Action, retaining its Manage admission and review, then
-observes the existing job's terminal result. When no runnable installed version
+A missing CLI invokes the ordinary `machines.agents.install` Action, retaining
+its Manage admission and review, then observes the existing job's terminal
+result. An optional update is skipped during launch: readiness invokes neither
+its acquisition nor its status Action before starting the installed version.
+When no runnable installed version
 exists, a requester without Manage receives typed Machine setup recovery;
 creation never borrows the controller's authority. A deferred, busy or failed
 optional update preserves launch and carries a typed pending/failed notice through
 Session success and the managed operation's existing domain reference. The app
-shows that notice and retains existing job progress/failure presentation without
+shows a passive notice with its Action Request ID (a skipped update is pending)
+and retains existing job progress/failure presentation without
 treating optional update status as execution readiness. The Create screen collects
-vendor-recipe consent before dispatch. Required acquisition failure keeps the
+vendor-recipe consent before dispatch when installation is required; a skipped
+optional update requires no consent prompt. Required acquisition failure keeps the
 selected Agent and actual guest identity in the existing setup recovery.
+
+The update notice is an unreleased 0.3 success-result field. Its optional Request
+ID is presentation metadata; it supplies no authority. Matching development
+Protocol, CLI/daemon, SDK and UI strict readers must reload together. The inspected
+0.2 frontier has no affected Session creation notice contract.
 
 V2 managed dependencies can declare a `githubReleaseBinary` source through that
 same projection. Release asset targets and archive layout are data consumed by

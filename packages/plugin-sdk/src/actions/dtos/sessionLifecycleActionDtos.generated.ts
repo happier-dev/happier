@@ -3201,6 +3201,11 @@ export type SessionLifecycleActionResultById = {
             reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
             cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
         };
+        agentUpdate?: undefined | {
+            agentId: string;
+            status: 'failed' | 'pending';
+            requestId?: string | undefined;
+        };
     } | {
         type: 'error';
         code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';

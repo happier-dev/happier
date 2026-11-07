@@ -834,32 +834,48 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     } finally { await hook.unmount(); }
   });
 
-  it.each(['pending', 'failed'] as const)('creates the Session and shows the optional Agent update notice (%s)', async status => {
+  it.each([
+    { status: 'pending' as const, requestId: 'manual:optional-update-pending' },
+    { status: 'failed' as const, requestId: 'manual:optional-update-failed' },
+    { status: 'pending' as const, requestId: undefined },
+  ])('creates the Session and passively shows the optional Agent update notice ($status, $requestId)', async ({ status, requestId }) => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, modalAlertSpy, scope } = await setupCurrentAccountSessionActionHarness();
+    const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+    retirePresentationNotice();
     const sessionId = `session-update-${status}`;
     storageState.applySessions([createSessionFixture({ id: sessionId, serverId: scope.serverId, encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce({ ...spawnSuccess(sessionId),
-      executionTarget: { serverId: scope.serverId, machineId: 'm1' }, agentUpdate: { agentId: 'codex', status } });
+      executionTarget: { serverId: scope.serverId, machineId: 'm1' }, agentUpdate: { agentId: 'codex', status, ...(requestId ? { requestId } : {}) } });
     const router = { push: vi.fn(), replace: vi.fn() };
+    let launchRequestId: string | null = null;
     const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, {
       router, draftScope: scope, targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+      onLaunchUserAttemptIdChange: value => { if (value) launchRequestId = value; },
     })));
     try {
       await act(async () => { await hook.getCurrent().handleCreateSession(); });
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/session/${sessionId}?serverId=${scope.serverId}`, expect.anything()));
       expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
-      expect(modalAlertSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String));
-    } finally { await hook.unmount(); }
+      expect(modalAlertSpy).not.toHaveBeenCalled();
+      const actualRequestId = requestId ?? launchRequestId;
+      expect(actualRequestId).toBeTruthy();
+      expect(readPresentationNotice()).toMatchObject({ severity: 'warning',
+        message: expect.stringContaining(`session.startFailure.requestId:${actualRequestId}`) });
+    } finally { retirePresentationNotice(); await hook.unmount(); }
   });
 
-  it('starts a current vendor Agent without install consent', async () => {
+  it.each([
+    { latestVersion: '2.0.0', signInStatus: 'signedIn' as const },
+    { latestVersion: '2.1.0', signInStatus: 'signedIn' as const },
+    { latestVersion: '2.1.0', signInStatus: 'signedOut' as const },
+  ])('starts an installed vendor Agent without install consent (latest $latestVersion, $signInStatus)', async ({ latestVersion, signInStatus }) => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, scope, modalAlertSpy, machineAccess } = await setupCurrentAccountSessionActionHarness({ accountId: 'machine-owner', displayName: 'Alex' });
     const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
     const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
     const { Modal } = await import('@/modal');
     const key = serverAccountScopedResourceKey(scope, 'machine-agents', 'm1');
-    const item = { agentId: 'claude', title: 'Claude', installed: true, version: '2.0.0', latestVersion: '2.0.0',
-      update: { supported: true, command: null }, signIn: { status: 'signedIn' as const, loginSupport: 'login_terminal' as const },
+    const item = { agentId: 'claude', title: 'Claude', installed: true, version: '2.0.0', latestVersion,
+      update: { supported: true, command: null }, signIn: { status: signInStatus, loginSupport: 'login_terminal' as const },
       platform: { supported: true as const }, install: { available: true, mode: 'vendor_recipe' as const, sizeBytes: null, guideUrl: null }, dependencies: [] };
     machineAgentInventoryStore.publish(key, { status: 'ready', items: [item], lastCheckedAt: Date.now() });
     const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, {

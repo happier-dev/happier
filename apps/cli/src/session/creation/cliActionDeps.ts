@@ -783,6 +783,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         machineId: executionTarget.machineId, serverId: executionTarget.serverId, agentId: resolvedAgentTarget.agentId,
         ...(agentTarget.definitionId === undefined ? {} : { definitionId: agentTarget.definitionId }),
         ...(input.agentInstallConsent === undefined ? {} : { consent: input.agentInstallConsent }),
+        ...(normalizedActionRequestId ? { requestId: normalizedActionRequestId } : {}),
         invoke: input.invokeAgentReadinessAction, ...(signal ? { signal } : {}),
       });
       if (agentReadiness && 'result' in agentReadiness) return agentReadiness.result;

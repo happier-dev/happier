@@ -82,6 +82,7 @@ export type SessionForkFilesNotCopiedV1 = z.infer<typeof SessionForkFilesNotCopi
 export const SessionAgentUpdateNoticeV1Schema = lazyZodSchema(() => z.strictObject({
   agentId: z.string().check(z.trim(), z.minLength(1)),
   status: z.enum(['pending', 'failed']),
+  requestId: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 export type SessionAgentUpdateNoticeV1 = z.infer<typeof SessionAgentUpdateNoticeV1Schema>;
 

@@ -616,7 +616,7 @@ describe('ordinary managed creation continuation', () => {
             agentStartFailure: { kind: 'managedAgentStart', machineId: 'guest', agentId: 'claude' } });
     });
     it.each(['pending', 'failed'] as const)('retains the optional Agent update notice from successful managed creation (%s)', async status => {
-        const agentUpdate = { agentId: 'claude', status };
+        const agentUpdate = { agentId: 'claude', status, requestId: `manual:managed-update-${status}` };
         const boundary = transport({ agentUpdate });
         expect(await boundary.run({ acquisition: { ...initial, managedId: baseMachine.id, operation: { operationId: 'install' } } }))
             .toMatchObject({ kind: 'enrolled', machine: { enrolledMachineId: 'guest' }, agentUpdate });
