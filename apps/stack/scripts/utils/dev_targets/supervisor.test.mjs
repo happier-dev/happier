@@ -48,13 +48,17 @@ test('predecessor Stack borrows the sibling sync owner without creating or relea
       await chmod(path, 0o700);
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      let reportedUnavailable = false;
       const controller = await startStackDevTargets(options, {
         // Mutagen and SSH are process boundaries; all owner/lifecycle logic is real.
         runProcess: attempt === 2 ? undefined : async (input) => {
           calls.push(input);
+          const unavailable = attempt === 0 && !reportedUnavailable
+            && input.command === 'mutagen' && input.args[0] === 'sync' && input.args[1] === 'list';
+          if (unavailable) reportedUnavailable = true;
           return { code: 0, out: JSON.stringify([{
-            name: sessionName, paused: false, status: 'watching', successfulCycles: 1,
-            alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true },
+            name: sessionName, paused: false, status: unavailable ? 'disconnected' : 'watching', successfulCycles: 1,
+            alpha: { connected: true, scanned: true }, beta: { connected: !unavailable, scanned: true },
           }]) };
         },
         spawnProcess: (input) => { calls.push(input); return { ...input, exitCode: null }; },
@@ -1426,7 +1430,7 @@ test('dev target supervisor owns Mutagen publication, remote bootstrap, auth see
   }
 });
 
-test('dev target supervisor terminates a started Mutagen project when every target flush fails', async () => {
+test('dev target supervisor terminates its project when the authoritative server sync fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-cleanup-'));
   const calls = [];
   const target = {
@@ -1450,6 +1454,7 @@ test('dev target supervisor terminates a started Mutagen project when every targ
           activeServerId: 'stack_repo-test__id_default',
           credentialPath,
           targets: [target],
+          targetPlans: [{ target, services: { server: true, expo: false, daemon: false } }],
           env: {},
         },
         {
@@ -1479,5 +1484,78 @@ test('dev target supervisor terminates a started Mutagen project when every targ
     assert.deepEqual(mutagenCommands, ['version', 'terminate', 'start', 'list', 'resume', 'flush', 'terminate']);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('optional targets recover after every initial synchronization fails', async () => {
+  for (const recover of [true, false]) {
+    const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-sync-recovery-'));
+    const credentialPath = join(root, 'access.key');
+    const calls = [];
+    const states = [];
+    let releaseRetry;
+    let notifyRunning;
+    const retryGate = new Promise((resolve) => { releaseRetry = resolve; });
+    const recovered = new Promise((resolve) => { notifyRunning = resolve; });
+    const targets = ['linux', 'mac'].map((name) => ({
+      name, platform: 'posix', ssh: name + '-ssh',
+      repoDir: '/home/dev/' + name, cliHomeDir: '/home/dev/.happier/' + name,
+    }));
+    const flushAttempts = new Map();
+    let controller;
+    await writeFile(credentialPath, '{"token":"secret"}\n', { mode: 0o600 });
+    try {
+      controller = await startStackDevTargets({
+        stackName: 'repo-test', stackBaseDir: join(root, 'stack'),
+        sourceDir: '/source/happier', localServerPort: 3005,
+        activeServerId: 'stack_repo-test__id_default', credentialPath, targets, env: {},
+        onTargetStateChange(state) {
+          states.push(state);
+          if (states.filter((entry) => entry.status === 'running').length === targets.length) notifyRunning();
+        },
+      }, {
+        // SSH and Mutagen are external process boundaries; lifecycle decisions stay real.
+        runProcess: async (input) => {
+          calls.push({ kind: 'run', ...input });
+          if (input.command === 'mutagen' && input.args.includes('flush')) {
+            const session = input.args.at(-1);
+            const count = (flushAttempts.get(session) ?? 0) + 1;
+            flushAttempts.set(session, count);
+            if (count === 1) return { code: 1 };
+          }
+          return { code: 0 };
+        },
+        spawnProcess(input) {
+          const child = { ...input, exitCode: null };
+          calls.push({ kind: 'spawn', ...input, child });
+          return child;
+        },
+        stopProcess: async (child) => { child.exitCode = 0; },
+        waitForRetry: async () => { await retryGate; },
+        logger: { error() {} },
+      });
+      assert.equal(controller.workers.length, 0);
+      assert.deepEqual(controller.targetFailures.map(({ name }) => name).sort(), ['linux', 'mac']);
+      assert.equal(calls.some((call) => call.kind === 'run' && call.args[1] === 'pause'), false);
+
+      if (recover) {
+        releaseRetry();
+        await recovered;
+        assert.deepEqual(controller.workers.map(({ label }) => label).sort(), ['remote:linux', 'remote:mac']);
+        assert.deepEqual(controller.targetFailures, []);
+        const workers = calls.filter((call) => call.kind === 'spawn' && call.label.startsWith('remote:') && !call.args.includes('-N'));
+        assert.equal(workers.length, targets.length, 'each recovered target must have one service owner');
+        assert.deepEqual([...flushAttempts.values()], [2, 2]);
+      }
+      await controller.close();
+      const workers = calls.filter((call) => call.kind === 'spawn' && call.label.startsWith('remote:') && !call.args.includes('-N'));
+      assert.equal(workers.length, recover ? targets.length : 0);
+      assert.ok(workers.every(({ child }) => child.exitCode === 0));
+      assert.equal(calls.filter((call) => call.kind === 'run' && call.args[1] === 'pause').length, 1);
+    } finally {
+      releaseRetry();
+      await controller?.close();
+      await rm(root, { recursive: true, force: true });
+    }
   }
 });
