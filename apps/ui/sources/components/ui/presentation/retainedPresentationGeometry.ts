@@ -45,12 +45,28 @@ export function readWebRetainedPresentationGeometry(node: unknown): Readonly<{
 
 /**
  * A fixed-size placeholder can move when hydration lays out an ancestor without
- * changing its parent-relative box. Observe that layout chain, not a clock.
+ * changing its parent-relative box. An enter transform also moves it without a
+ * resize: measure again when the ancestor's compositor animation settles.
  */
 export function observeWebRetainedPresentationLayout(node: unknown, measure: () => void): (() => void) | undefined {
     if (typeof HTMLElement === 'undefined' || !(node instanceof HTMLElement)
         || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(() => measure());
+    let active = true;
+    const animations = new WeakSet<Animation>();
+    const observeAnimations = () => {
+        if (!active) return;
+        for (let ancestor: HTMLElement | null = node; ancestor; ancestor = ancestor.parentElement) {
+            for (const animation of ancestor.getAnimations?.() ?? []) {
+                if (animations.has(animation)) continue;
+                animations.add(animation);
+                const settled = () => { if (active) { measure(); observeAnimations(); } };
+                void animation.finished.then(settled, settled);
+            }
+        }
+    };
+    const observer = new ResizeObserver(() => { measure(); observeAnimations(); });
     for (let ancestor: HTMLElement | null = node; ancestor; ancestor = ancestor.parentElement) observer.observe(ancestor);
-    return () => observer.disconnect();
+    // Ancestor layout effects can start the pane's animation after this child binds.
+    queueMicrotask(observeAnimations);
+    return () => { active = false; observer.disconnect(); };
 }

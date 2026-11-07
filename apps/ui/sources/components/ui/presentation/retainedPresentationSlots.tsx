@@ -13,6 +13,7 @@ import { RetainedPresentationEntryLifetime } from './retainedPresentationEntryLi
 import { intersectRetainedPresentationRects, observeWebRetainedPresentationLayout, readWebRetainedPresentationGeometry } from './retainedPresentationGeometry';
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { RetainedPresentationSlotGeometryProvider } from './retainedPresentationSlotGeometry';
+import { resolvePaneUnderlayAccessibilityProps } from '@/components/ui/panels/ModalPaneBoundary';
 export { useLayoutPresentationActive as useRetainedPresentationSlotVisible } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export type RetainedPresentationRect = Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -385,6 +386,7 @@ function RetainedPresentationPortalSlot({ entry, origin }: Readonly<{ entry: Ret
     }));
     return <Animated.View
         testID={`browser-presentation-portal-slot-${entry.slotId}`}
+        {...resolvePaneUnderlayAccessibilityProps(!visible, Platform.OS === 'web')}
         style={Platform.OS === 'web' ? resolvePortalSlotStyle(entry, origin) : [resolvePortalSlotStyle(entry, origin), animatedStyle]}
         pointerEvents={visible && motion?.overlay ? 'box-none' : visible && !entry.inputPassthrough ? 'auto' : 'none'}
     >
