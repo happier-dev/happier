@@ -53,7 +53,8 @@ export function createDeploymentApprovalScopeResolverV1(
     if (actionId === 'deployments.prepare' && !environmentId) return { scope: null };
     if (actionId === 'deployments.receipts.get' || !environmentId && typeof target.deploymentId === 'string') {
       if (typeof target.deploymentId !== 'string') return failure('invalid_parameters');
-      const loaded = await read('deployments.receipts.get', { serverId, deploymentId: target.deploymentId }, context);
+      const loaded = await read('deployments.receipts.get', { serverId, deploymentId: target.deploymentId,
+        ...(environmentId === undefined ? {} : { environmentId }) }, context);
       if ('errorCode' in loaded) return loaded;
       const receipt = DeploymentReceiptGetResultV1Schema.safeParse(loaded);
       if (!receipt.success) return failure('invalid_action_output');

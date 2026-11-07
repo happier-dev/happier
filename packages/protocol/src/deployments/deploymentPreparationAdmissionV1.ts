@@ -9,15 +9,15 @@ import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReference
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupPlanInputV1Schema } from '../machines/managed/actionsV1.js';
 import { DeploymentNewProjectV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
 
-export function deploymentPreparationOperationForActionV1(value: string): 'publish' | 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
-  return value === 'deployments.publish' ? 'publish' : value === 'deployments.prepare' ? 'prepare'
+export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
+  return value === 'deployments.prepare' ? 'prepare'
     : value === 'deployments.environments.create' ? 'create'
     : value === 'deployments.publish.prepare' ? 'catalog'
     : value === 'deployments.templates.instantiate' ? 'template'
       : value === 'machines.setup.plan' || value === 'machines.setup.apply' ? 'setup' : undefined;
 }
 /** These deployment roots require preparation; setup only carries optional app reads. */
-export function isDeploymentPreparationActionIdV1(value: string): value is 'deployments.publish' | 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.publish.prepare' {
+export function isDeploymentPreparationActionIdV1(value: string): value is 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.publish.prepare' {
   const operation = deploymentPreparationOperationForActionV1(value);
   return operation !== undefined && operation !== 'setup' && operation !== 'create';
 }
@@ -37,8 +37,6 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     environment: z.strictObject({ id, revision }), target: z.strictObject({ id, revision }),
     candidate: DeploymentArtifactContentReferenceV1Schema,
   })), catalogSources: z.optional(z.array(z.strictObject({ machineId: id, source: z.strictObject({ id }) })).check(z.minLength(1))) }),
-  z.strictObject({ operation: z.literal('publish'), source: z.optional(source),
-    environment: z.optional(z.strictObject({ id, revision })), candidate: DeploymentArtifactContentReferenceV1Schema }),
   z.strictObject({ operation: z.literal('prepare'), source,
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
   z.strictObject({ operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
@@ -137,12 +135,5 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       workspace: { kind: workspace.kind, id: workspace.id },
       ...(environmentId === undefined ? {} : { environment: { id: environmentId } }) });
   }
-  const project = readRecord(value.project);
-  const environment = readRecord(value.environment);
-  const candidate = readRecord(readRecord(value.preparedChildren).deploy);
-  return DeploymentPreparationAdmissionV1Schema.parse({ operation: 'publish',
-    ...(project.kind === 'existing' ? { source: { id: project.projectSourceId, revision: project.sourceRevision } } : {}),
-    ...(environment.kind === 'existing' ? { environment: { id: environment.environmentId, revision: environment.expectedRevision } } : {}),
-    candidate: { contentArtifactId: candidate.contentArtifactId,
-      contentHeaderVersion: candidate.contentHeaderVersion, contentBodyVersion: candidate.contentBodyVersion } });
+  return undefined;
 }

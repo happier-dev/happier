@@ -1,14 +1,23 @@
-import { DeploymentStateV1Schema, type DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol';
-import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
+    type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1,
+    type DeploymentEnvironmentGetInputV1, type DeploymentReceiptGetInputV1,
+    type DeploymentEnvironmentListInputV1, type DeploymentReceiptListInputV1, DeploymentStateV1Schema } from '@happier-dev/protocol';
+import { canTransitionDeploymentV1, projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
+    DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
-import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx,
-    type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
-import { projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
-import { projectDeploymentTargetHeader } from './deploymentTargetLinkService';
+import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,
+    canDeployDeploymentEnvironment, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
+import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
+import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
+import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+import { projectDeploymentListRow } from './deploymentListProjection';
 import { projectDeploymentReceiptHeader } from './deploymentService';
+import { admitDeploymentStoredContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
+import { readDeploymentPendingContent } from './deploymentPendingService';
 import type { MachineDeploymentReferencesInputV1, MachineDeploymentReferencesPageV1, MachineReferenceV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
@@ -17,6 +26,43 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentDomainEnvironmentIdsForMachineInTx, projectDeploymentDomainMachineReferences } from './deploymentDomainService';
+import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
+
+type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
+
+function acceptedEnvironmentRead(read: AcceptedDeploymentRead, environmentId: string, deploymentId?: string) {
+    return read && (read.environmentId === environmentId || deploymentId !== undefined && read.deploymentId === deploymentId)
+        ? { environmentId } : undefined;
+}
+
+/** Source rights only: private Artifact availability and native effects retain their own admission. */
+export async function readDeploymentEnvironmentAccessInTx(tx: Tx, actorAccountId: string,
+    input: DeploymentEnvironmentAccessInputV1, authentication: DeploymentAuthentication = {},
+): Promise<DeploymentEnvironmentAccessResultV1> {
+    const environmentIds = [...new Set(input.environmentIds)];
+    if (!environmentIds.length) return { ok: true, items: [] };
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    const environments = new Map<string, Readonly<{ id: string; projectSourceId: string; deletedAt: Date | null; deployerMode: string;
+        deployers: readonly Readonly<{ principalKind: string; principalId: string }>[] }>>();
+    for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        const rows = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...ids] } },
+            select: { id: true, projectSourceId: true, deletedAt: true, deployerMode: true,
+                deployers: { select: { principalKind: true, principalId: true } } } });
+        for (const row of rows) environments.set(row.id, row);
+    }
+    const sources = await resolveProjectSourcesAccessInTx(tx, actorAccountId,
+        [...new Set([...environments.values()].map(row => row.projectSourceId))], authentication, { includeDeleted: true });
+    const items: Extract<DeploymentEnvironmentAccessResultV1, { ok: true }>['items'] = [];
+    for (const environmentId of environmentIds) {
+        const environment = environments.get(environmentId);
+        const source = environment ? sources.get(environment.projectSourceId) : undefined;
+        // Missing, malformed and unreadable records disclose the same absence.
+        if (!environment || !source?.ok) continue;
+        items.push({ environmentId, read: true,
+            deploy: canDeployDeploymentEnvironment(projectDeploymentSourceAdmission(source), environment) });
+    }
+    return { ok: true, items };
+}
 
 function deploymentMachineReferenceWhere(machineId: string) {
     return { OR: [{ controllerMachineId: machineId }, { buildMachineId: machineId }, { edgeMachineId: machineId },
@@ -83,6 +129,61 @@ export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId
         nextCursor: rows.length > limit ? references.at(-1)?.id ?? null : null };
 }
 
+/** Header reads acquire only demanded Artifact heads; clients own all private body opening. */
+export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: string, input: DeploymentEnvironmentGetInputV1,
+    authentication: DeploymentAuthentication = {},
+    acceptedRead?: AcceptedDeploymentRead,
+) {
+    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
+        acceptedEnvironmentRead(acceptedRead, input.environmentId));
+    if (!loaded.ok) return loaded;
+    const pending = readDeploymentPendingContent(loaded.row);
+    if (!pending.ok) return pending;
+    // One Environment read includes runtime, data and retained link custody.
+    const targetRows = await loadDeploymentTargetRowsInTx(tx, loaded.row.id);
+    const targetLinks = targetRows.map(projectDeploymentTargetHeader);
+    if (loaded.row.runtimeTargetLinkId && !targetLinks.some(link => link.id === loaded.row.runtimeTargetLinkId)) return deploymentFailure('deployment_unavailable');
+    const failures = await admitDeploymentStoredContentsInTx(tx, actorAccountId, loaded.admission.owner, [
+        { reference: loaded.row, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read', pendingDeploy: pending.pendingDeploy },
+        ...targetLinks.map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
+    ]);
+    const contentFailure = failures.find(failure => failure !== null);
+    if (contentFailure) return contentFailure;
+    const retainedTargetLinkCleanupCompleteIds: string[] = [];
+    if (input.includeRetainedTargetLinkCleanup) {
+        for (const link of targetRows) {
+            if ((link.deletedAt !== null || link.detachedAt !== null || loaded.row.deletedAt !== null)
+                && await hasCompleteTeardownInTx(tx, link, undefined, loaded.row.runtimeTargetLinkId, targetLinks)) {
+                retainedTargetLinkCleanupCompleteIds.push(link.id);
+            }
+        }
+    }
+    return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
+        environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission), targetLinks,
+        ...(input.includeRetainedTargetLinkCleanup ? { retainedTargetLinkCleanupCompleteIds } : {}),
+        ...(pending.pendingDeploy ? { pendingDeploy: pending.pendingDeploy } : {}),
+        ...('pendingAdmission' in pending && pending.pendingAdmission ? { pendingAdmission: pending.pendingAdmission } : {}) });
+}
+
+export async function readDeploymentReceiptInTx(tx: Tx, actorAccountId: string,
+    input: Omit<DeploymentReceiptGetInputV1, 'environmentId'> & Readonly<{ environmentId?: string }>,
+    authentication: DeploymentAuthentication = {},
+    acceptedRead?: AcceptedDeploymentRead,
+) {
+    const row = await tx.deployment.findUnique({ where: { id: input.deploymentId } });
+    if (!row || (input.environmentId !== undefined && input.environmentId !== row.environmentId)) return deploymentFailure('deployment_unavailable');
+    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, row.environmentId, authentication,
+        acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id));
+    if (!loaded.ok) return loaded;
+    const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, row, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, 'read');
+    if (contentFailure) return contentFailure;
+    const deployment = projectDeploymentReceiptHeader(row);
+    return DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment,
+        // Same Source admission and lifecycle rule as requestCancelDeploymentInTx.
+        // This is presentation, not a second authority or an admission proof.
+        cancellable: canDeployDeploymentEnvironment(loaded.admission, loaded.row)
+            && deployment.cancelRequestedAtMs === undefined && canTransitionDeploymentV1(deployment.state, 'outcome_unknown') });
+}
 
 /** Source and exact Machine selectors reach the relational owner before pagination, never private bodies. */
 export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: string, input: DeploymentEnvironmentListInputV1,
@@ -118,7 +219,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             provider === 'mysql' ? sql.replaceAll('"', '`') : sql,
             ...(input.projectSourceId === undefined ? [] : [input.projectSourceId]));
         const sourceIds = [...new Set(rows.map(row => row.projectSourceId))].filter(id => !sources.has(id));
-        const admissions = sourceIds.length ? await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication) : null;
+        const admissions = sourceIds.length ? await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true }) : null;
         const activity = { running: false, failed: false };
         for (const row of rows) {
             if (sources.get(row.projectSourceId)?.ok !== true && admissions?.get(row.projectSourceId)?.ok !== true) continue;
@@ -189,13 +290,24 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             sources.set(row.projectSourceId, source);
         }
         if (!source.ok) { coverage = 'partial'; continue; }
-        if (row.runtimeTargetLink && row.runtimeTargetLink.environmentId !== row.id) return deploymentFailure('deployment_unavailable');
-        items.push(projectDeploymentEnvironmentHeader(row, input.serverId, source.admission));
+        if (row.runtimeTargetLink && row.runtimeTargetLink.environmentId !== row.id) { coverage = 'partial'; continue; }
+        const environment = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row, input.serverId, source.admission));
+        if (!environment) { coverage = 'partial'; continue; }
+        items.push(environment);
         // Source admission already loaded this exact name. Preserve its existing
         // disclosed-metadata contract, not a copy in Environment metadata/storage.
         projectSources.set(row.projectSourceId, { id: source.admission.source.id, name: source.admission.source.name });
-        currentDeployments.push(...(row.deployments ?? []).map(projectDeploymentReceiptHeader));
-        if (row.runtimeTargetLink) runtimeTargetLinks.push(projectDeploymentTargetHeader(row.runtimeTargetLink));
+        for (const receipt of row.deployments ?? []) {
+            const projected = projectDeploymentListRow(() => projectDeploymentReceiptHeader(receipt));
+            if (projected) currentDeployments.push(projected);
+            else coverage = 'partial';
+        }
+        if (row.runtimeTargetLink) {
+            const link = row.runtimeTargetLink;
+            const projected = projectDeploymentListRow(() => projectDeploymentTargetHeader(link));
+            if (projected) runtimeTargetLinks.push(projected);
+            else coverage = 'partial';
+        }
     }
     const last = selected.at(-1);
     const nextCursor = hasNext && last
@@ -203,4 +315,37 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         : null;
     return { ok: true as const, items, projectSources: [...projectSources.values()], currentDeployments, runtimeTargetLinks, coverage,
         nextCursor };
+}
+
+/** One newest-first Environment history window; no Artifact header or body census. */
+export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string, input: DeploymentReceiptListInputV1,
+    authentication: DeploymentAuthentication = {},
+    acceptedRead?: AcceptedDeploymentRead,
+) {
+    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
+        acceptedEnvironmentRead(acceptedRead, input.environmentId));
+    if (!loaded.ok) return loaded;
+    if (input.inProgressOnly) {
+        // The Environment lock admits one in-progress receipt, so observing
+        // that fact never needs to page settled history or fetch content.
+        const busy = await tx.deployment.findFirst({ where: { environmentId: input.environmentId,
+            state: { in: deploymentInProgressStates() } } });
+        return { ok: true as const, items: busy ? [projectDeploymentReceiptHeader(busy)] : [], nextCursor: null };
+    }
+    const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
+    const cursor = input.cursor ? await tx.deployment.findFirst({
+        where: { id: input.cursor, environmentId: input.environmentId }, select: { id: true, requestedAt: true },
+    }) : null;
+    if (input.cursor && !cursor) return deploymentFailure('deployment_invalid');
+    const rows = await tx.deployment.findMany({ where: { environmentId: input.environmentId,
+        ...(cursor ? { OR: [{ requestedAt: { lt: cursor.requestedAt } },
+            { requestedAt: cursor.requestedAt, id: { lt: cursor.id } }] } : {}) },
+    orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: limit + 1 });
+    const hasNext = rows.length > limit;
+    const selected = rows.slice(0, limit);
+    const items = selected.flatMap(row => {
+        const projected = projectDeploymentListRow(() => projectDeploymentReceiptHeader(row));
+        return projected ? [projected] : [];
+    });
+    return { ok: true as const, items, nextCursor: hasNext ? selected.at(-1)!.id : null };
 }

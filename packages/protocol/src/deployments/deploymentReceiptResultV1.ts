@@ -31,3 +31,11 @@ export const DeploymentReceiptSettlementFailureDetailsV1Schema = lazyZodSchema((
   ...DeploymentReceiptAcceptedResultV1Schema._zod.def.options[0].shape,
   ...DeploymentFailureRecoveryV1Schema.shape,
 }).check(z.refine(value => readDeploymentReceiptFailureCodeV1(value.state) !== null)));
+
+/** Retain receipt identity without copying settlement-only recovery into a strict receipt. */
+export function projectDeploymentReceiptSettlementAcceptedResultV1(
+  details: z.infer<typeof DeploymentReceiptSettlementFailureDetailsV1Schema>,
+): DeploymentReceiptAcceptedResultV1 {
+  const { requiredFact: _requiredFact, remedy: _remedy, ...receipt } = details;
+  return receipt;
+}

@@ -6,6 +6,10 @@ import { AutomationValidationError } from '@/app/automations/automationValidatio
 import { acquireWorkflowPublicationLocksInTx } from '@/app/workflows/acquireWorkflowPublicationLocksInTx';
 import { lockDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 
+/**
+ * The Source CAS calls this only for a changed repository, before publication.
+ * Throwing is intentional: a cleanup refusal must unwind the Source CAS too.
+ */
 export async function retireDeploymentPreviewsForSourceReplacementInTx(tx: Tx, input: Readonly<{
     projectSourceId: string;
 }>): Promise<void> {

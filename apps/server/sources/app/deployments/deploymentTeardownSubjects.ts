@@ -9,7 +9,6 @@ type Link = NonNullable<Awaited<ReturnType<Tx['deploymentTargetLink']['findUniqu
 
 /** Settlement and disposition read the same installation custody. Plugin account
  * targets execute on their captured controller when no scalar target is placed. */
-
 export async function readDeploymentTeardownSubjectsInTx(tx: Tx, link: Link,
     accepted: DeploymentAcceptedExecutionV1 | null, runtimeTargetLinkId: string | null,
     knownLinks?: readonly DeploymentTargetLinkHeaderV1[],

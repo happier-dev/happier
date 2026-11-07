@@ -1,7 +1,9 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { RPC_METHODS } from '../rpc/methods.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionMachineRpcSourceExecutionV1Schema } from '../actions/externalActionApi.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
+import { deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
 
 export const DeploymentArchiveOriginV1Schema = lazyZodSchema(() => z.strictObject({
     environmentId: DeploymentIdentifierV1Schema, deploymentId: DeploymentIdentifierV1Schema,
@@ -22,5 +24,16 @@ export const DeploymentChildExecutionProofV1Schema = lazyZodSchema(() => z.stric
         restorationForDeploymentId: z.optional(DeploymentIdentifierV1Schema),
         rootFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
     })),
-}));
+}).check(z.refine(value => {
+    const routing = value.externalActionExecution.deploymentChildRouting;
+    return routing !== undefined && value.method === `${routing.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
+        && value.externalActionExecution.effectActionId === routing.actionId
+        && deploymentChildEffectActionIdForRootV1(value.externalActionExecution.authorization.binding.actionId,
+            value.externalActionExecution.authorization.binding.deploymentPreparationAdmission,
+            value.externalActionExecution.effectActionId) === routing.actionId
+        && (value.archiveOrigin === undefined || routing.kind === 'build'
+            || routing.kind === 'member' && routing.phase !== 'cleanup')
+        && (value.nativeIncumbentSource === undefined || routing.kind === 'review' && value.archiveOrigin === undefined
+            && value.nativeIncumbentSource.environmentId === routing.input.environmentId);
+})));
 export type DeploymentChildExecutionProofV1 = z.infer<typeof DeploymentChildExecutionProofV1Schema>;

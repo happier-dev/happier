@@ -1,6 +1,7 @@
 import { MachineConnectorSecretGrantInputV1Schema } from '@happier-dev/deployment-protocol';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
+/** Purpose narrowing only; the installed route retains proof, access and exact grant admission. */
 export function isMachineConnectorSecretGrantHttpPurpose(
     binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,

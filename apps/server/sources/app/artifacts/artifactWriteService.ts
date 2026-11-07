@@ -1,7 +1,12 @@
-import { inReadSnapshot, inTx, isTransactionAcquisitionUnavailableError, isTransactionConflictExhaustedError, type Tx } from "@/storage/inTx";
+import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from '@happier-dev/protocol';
+import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { eventRouter } from '@/app/events/connectionEventRouter';
+import { buildAccountChangeWakeUpdate } from '@/app/events/eventPayloadBuilders';
+import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import * as privacyKit from 'privacy-kit';
 import { artifactConversionBlobKey, artifactConversionBlobCustody, type PreparedArtifactAccountEncryptionConversionBlob, type PreparedArtifactAccountEncryptionConversionBlobs } from './artifactEncryptionConversionBlobService';
-import { db } from '@/storage/db';
+import { db, getDbProviderFromEnv } from '@/storage/db';
 import { isPrismaErrorCode } from '@/storage/prisma';
 import { readArtifactStorageEnv } from '@/app/features/catalog/readFeatureEnv';
 import { deletePrivateFile } from '@/storage/blob/files';
@@ -9,6 +14,7 @@ import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifa
 import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
+import { readArtifactKindsV1 } from '@happier-dev/protocol/changes';
 import {
     deriveAccountEncryptionCurrentnessFromRow,
 } from "@/app/encryption/accountContentKeyAdmission";
@@ -41,22 +47,67 @@ import {
     resolveArtifactAccessInTx,
     resolveArtifactAudienceInTx,
     acquireArtifactPublicationLocksInTx,
+    admitArtifactMutationInTx,
+    applyArtifactPublicationGrantsInTx,
     resolveArtifactPublicationAdmissionIntent,
     applyArtifactRecipientKeyEnvelopesInTx,
     projectArtifactPublicAudience,
+    type ArtifactMutationTransactionGuard,
 } from "./artifactAccessService";
 import { admitArtifactMemoryDecisionInTx, type ArtifactMemoryDecisionWriteContext, type MemoryDecisionAdmissionError } from './artifactMemoryDecisionAdmission';
 import { artifactContextStorageAdapter, newArtifactContextStorageAdapter } from './artifactContextInjection';
+import { deriveApprovalArtifactQueryHintsV1, ApprovalArtifactQueryHintsV1Schema, type ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { readApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
+import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { InvalidApprovalTranscriptVisualPublicationError, settleSessionTranscriptApprovalVisualPublicationInTx } from '@/app/session/sessionTranscriptApprovalVisualPublication';
+import { isDeepStrictEqual } from 'node:util';
 
 type Cursor = AccountChangePublication;
 
+/** Approval reads are Session-bound; Artifact-only Account wakes cannot refresh them. */
+async function markApprovalSessionsChangedInTx(tx: Tx, accountId: string, sessionIds: readonly (string | null | undefined)[]): Promise<void> {
+    const ids = [...new Set(sessionIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    if (ids.length === 0) return;
+    // Private/opaque indexes are relationship hints, not authority to wake another
+    // Account's Session. The same Account owns this approval and its Session read.
+    const sessions = await tx.session.findMany({ where: { accountId, id: { in: ids } }, select: { id: true } });
+    for (const { id: sessionId } of sessions) {
+        const cursor = await markAccountChanged(tx, { accountId, kind: 'session', entityId: sessionId });
+        afterTx(tx, () => eventRouter.emitUpdate({
+            userId: accountId,
+            payload: buildAccountChangeWakeUpdate(cursor.resolveCursor(), randomKeyNaked(12), {
+                changeKinds: ['session'], entityIds: [sessionId],
+            }),
+            recipientFilter: { type: 'all-interested-in-session', sessionId },
+        }));
+    }
+}
+
 /** Plain writers already expose the header; opaque writers supply their search hint. */
-function artifactWriteKind(header: Uint8Array, dataEncryptionKey: Uint8Array, kind?: string): { kind: string | null } | null {
+function artifactWriteKind(header: Uint8Array, dataEncryptionKey: Uint8Array, kind?: string,
+    approvalHints: Readonly<{ approvalState?: unknown; approvalSessionId?: unknown }> = {}): ({ kind: string | null } & ApprovalArtifactQueryHintsV1) | null {
     if (kind !== undefined && !ArtifactStoredKindV1Schema.safeParse(kind).success) return null;
-    if (!isPlainArtifactDataKeyBytes(dataEncryptionKey)) return { kind: kind ?? null };
-    const value: unknown = decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(header)));
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: kind ?? null };
-    return { kind: tryDeriveArtifactStoredKindV1(value as Record<string, unknown>) ?? null };
+    const hints = ApprovalArtifactQueryHintsV1Schema.safeParse({ approvalState: approvalHints.approvalState ?? null,
+        approvalSessionId: approvalHints.approvalSessionId ?? null });
+    if (!hints.success) return null;
+    let storedKind = kind ?? null;
+    let approval = hints.data;
+    if (isPlainArtifactDataKeyBytes(dataEncryptionKey)) {
+        const value: unknown = decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(header)));
+        approval = { approvalState: null, approvalSessionId: null };
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const privateHeader = value as Record<string, unknown>;
+            storedKind = tryDeriveArtifactStoredKindV1(privateHeader) ?? null;
+            approval = deriveApprovalArtifactQueryHintsV1(privateHeader);
+        }
+    }
+    // MySQL Session.id and this optional relationship are VARCHAR(191). A longer
+    // private reference cannot identify a live MySQL Session and must not reject content.
+    const approvalSessionId = getDbProviderFromEnv(process.env, 'postgres') === 'mysql'
+        && approval.approvalSessionId !== null && Array.from(approval.approvalSessionId).length > 191
+        ? null : approval.approvalSessionId;
+    return { kind: storedKind, approvalState: approval.approvalState, approvalSessionId };
 }
 
 /** Metadata CAS opens the header only; content writes retain their complete conflict projection. */
@@ -656,6 +707,7 @@ export type CreateArtifactResult =
         error:
             | "invalid-params"
             | "conflict"
+            | "artifact_access_forbidden"
             | MemoryDecisionAdmissionError
             | "internal";
       };
@@ -677,6 +729,8 @@ type ArtifactRow = {
 export async function createArtifact(params: {
     actorUserId: string;
     artifactId: string;
+    idScope?: ArtifactIdScopeV1;
+    mutationGuard?: ArtifactMutationTransactionGuard;
     kind?: string;
     header: Uint8Array;
     body: Uint8Array;
@@ -684,7 +738,7 @@ export async function createArtifact(params: {
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
     blob?: ArtifactBlobWriteV1;
-} & ArtifactMemoryDecisionWriteContext): Promise<CreateArtifactResult> {
+} & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext): Promise<CreateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const artifactId = typeof params.artifactId === "string" ? params.artifactId : "";
     const header = params.header instanceof Uint8Array ? params.header : null;
@@ -706,7 +760,10 @@ export async function createArtifact(params: {
         const result = await inTx(async (tx) => await createArtifactTx(tx, {
             actorUserId,
             artifactId,
+            ...(params.idScope === undefined ? {} : { idScope: params.idScope }),
+            mutationGuard: params.mutationGuard,
             kind: params.kind,
+            approvalState: params.approvalState, approvalSessionId: params.approvalSessionId,
             header,
             body,
             dataEncryptionKey,
@@ -728,13 +785,13 @@ export async function createArtifact(params: {
                     return "ok" in state ? state : { ok: false as const, error: "internal" as const };
                 }, { transactionClass: "artifact-create-replay" });
             } catch (replayError) {
-                if (isTransactionConflictExhaustedError(replayError) || isTransactionAcquisitionUnavailableError(replayError)) throw replayError;
+                if (isTransactionStorageError(replayError)) throw replayError;
                 return { ok: false, error: "internal" };
             }
         }
         // inTx already owns conflict/acquisition recovery. Preserve its terminal
         // typed refusal for HTTP callers rather than starting another budget.
-        if (isTransactionConflictExhaustedError(error) || isTransactionAcquisitionUnavailableError(error)) throw error;
+        if (isTransactionStorageError(error)) throw error;
         return { ok: false, error: "internal" };
     } finally {
         if (!admitted) await discardArtifactBlobCandidate(preparedBlob);
@@ -744,6 +801,8 @@ export async function createArtifact(params: {
 type CreateArtifactTxParams = {
     actorUserId: string;
     artifactId: string;
+    idScope?: ArtifactIdScopeV1;
+    mutationGuard?: ArtifactMutationTransactionGuard;
     kind?: string;
     header: Uint8Array;
     body: Uint8Array;
@@ -757,7 +816,7 @@ type CreateArtifactTxParams = {
      * while composing its classification in this same transaction.
      */
     markChanged?: (artifactId: string) => Promise<Cursor>;
-} & ArtifactMemoryDecisionWriteContext;
+} & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext;
 
 /** Creation and a rolled-back concurrent insert use one idempotent projection. */
 async function readArtifactCreateStateInTx(tx: Tx, params: CreateArtifactTxParams): Promise<CreateArtifactResult | { mode: "plain" | "e2ee" }> {
@@ -866,6 +925,10 @@ async function readArtifactCreateStateInTx(tx: Tx, params: CreateArtifactTxParam
 }
 
 export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): Promise<CreateArtifactResult> {
+    const publication = params.mutationGuard ? await admitArtifactMutationInTx(tx, {
+        actorAccountId: params.actorUserId, artifactId: params.artifactId,
+    }, params.mutationGuard) : undefined;
+    if (publication === null) return { ok: false, error: 'artifact_access_forbidden' };
     await acquireAccountChangePublicationLocksInTx(tx, [params.actorUserId], {
         includeSingleAccount: true,
         intent: params.markChanged ? "content" : resolveArtifactPublicationAdmissionIntent(),
@@ -873,6 +936,10 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     const state = await readArtifactCreateStateInTx(tx, params);
     if ("ok" in state) return state;
     const mode = state.mode;
+    // Existing owner rows above retain exact-id retry semantics. Only new
+    // creates enter the reserved namespace, including opaque/ordinary kinds.
+    if (!artifactIdScopeMatchesAccountV1({ artifactId: params.artifactId,
+        accountId: params.actorUserId, idScope: params.idScope })) return { ok: false, error: 'invalid-params' };
 
     const decisionFailure = await admitArtifactMemoryDecisionInTx(tx, { ...params, actorAccountId: params.actorUserId,
         destinationAdapter: newArtifactContextStorageAdapter({ artifactId: params.artifactId, ownerAccountId: params.actorUserId,
@@ -891,7 +958,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     }
 
     const plain = isPlainArtifactDataKeyBytes(params.dataEncryptionKey);
-    const kind = artifactWriteKind(params.header, params.dataEncryptionKey, params.kind);
+    const kind = artifactWriteKind(params.header, params.dataEncryptionKey, params.kind, params);
     if (!kind) return { ok: false, error: 'invalid-params' };
     if (params.provenanceDataEncryptionKey && !params.provenance) return { ok: false, error: 'invalid-params' };
     if (!artifactProvenanceMatchesAccountMode({ mode,
@@ -942,6 +1009,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
             accountId: params.actorUserId,
             header: Buffer.from(storedHeader),
             kind: kind.kind,
+            approvalState: kind.approvalState, approvalSessionId: kind.approvalSessionId,
             headerVersion: 1,
             body: Buffer.from(storedBody),
             bodyVersion: 1,
@@ -974,6 +1042,10 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
         await completeArtifactBlobCandidateCustodyInTx(tx, params.preparedBlob);
     }
 
+    if (publication) await applyArtifactPublicationGrantsInTx(tx, {
+        artifactId: params.artifactId, actorAccountId: params.actorUserId, publicationGrants: publication.publicationGrants,
+    });
+
     const cursor = await (
         params.markChanged
         ?? (async (artifactId: string) =>
@@ -983,6 +1055,11 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
                 entityId: artifactId,
             }))
     )(params.artifactId);
+    if (publication) await markAccountsChanged(tx, {
+        accountIds: (await resolveArtifactAudienceInTx(tx, params.artifactId)).filter(id => id !== params.actorUserId),
+        kind: 'artifact', entityId: params.artifactId,
+    });
+    await markApprovalSessionsChangedInTx(tx, params.actorUserId, [kind.approvalSessionId]);
     return {
         ok: true,
         didWrite: true,
@@ -1017,6 +1094,7 @@ export type UpdateArtifactResult =
             | "not-found"
             | "version-mismatch"
             | "artifact_binary_content_requires_explicit_update"
+            | "artifact_access_forbidden"
             | MemoryDecisionAdmissionError
             | "internal";
         current?: {
@@ -1028,8 +1106,10 @@ export type UpdateArtifactResult =
       };
 
 export async function updateArtifact(params: {
+    transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1;
     actorUserId: string;
     artifactId: string;
+    mutationGuard?: ArtifactMutationTransactionGuard;
     kind?: string;
     expectedHeaderVersion?: number;
     header?: { bytes: Uint8Array; expectedVersion: number };
@@ -1037,7 +1117,7 @@ export async function updateArtifact(params: {
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
     blob?: ArtifactBlobWriteV1 | null;
-} & ArtifactMemoryDecisionWriteContext): Promise<UpdateArtifactResult> {
+} & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext): Promise<UpdateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const artifactId = typeof params.artifactId === "string" ? params.artifactId : "";
     const header = params.header;
@@ -1046,7 +1126,7 @@ export async function updateArtifact(params: {
     if (!actorUserId || !artifactId) {
         return { ok: false, error: "invalid-params" };
     }
-    if (!header && !body && (params.kind === undefined || params.expectedHeaderVersion === undefined)) {
+    if (!header && !body && ((params.kind === undefined && params.approvalState === undefined && params.approvalSessionId === undefined) || params.expectedHeaderVersion === undefined)) {
         return { ok: false, error: "invalid-params" };
     }
     if (params.blob !== undefined && !body) return { ok: false, error: "invalid-params" };
@@ -1074,9 +1154,12 @@ export async function updateArtifact(params: {
             preparedBlob = await prepareArtifactBlobWrite({ accountId: owner.accountId, artifactId, blob: params.blob }) ?? undefined;
         }
         const result = await inTx(async (tx) => await updateArtifactTx(tx, {
+            transcriptVisualPublication: params.transcriptVisualPublication,
             actorUserId,
             artifactId,
+            mutationGuard: params.mutationGuard,
             kind: params.kind,
+            approvalState: params.approvalState, approvalSessionId: params.approvalSessionId,
             expectedHeaderVersion: params.expectedHeaderVersion,
             header,
             body,
@@ -1089,7 +1172,8 @@ export async function updateArtifact(params: {
         if (result.ok && (header || body)) await cleanupArtifactOrphanBlobsAfterCommit(artifactId);
         return result;
     } catch (error) {
-        if (isTransactionConflictExhaustedError(error) || isTransactionAcquisitionUnavailableError(error)) throw error;
+        if (error instanceof InvalidApprovalTranscriptVisualPublicationError) return { ok: false, error: 'invalid-params' };
+        if (isTransactionStorageError(error)) throw error;
         return { ok: false, error: "internal" };
     } finally {
         if (!admitted) await discardArtifactBlobCandidate(preparedBlob);
@@ -1099,8 +1183,10 @@ export async function updateArtifact(params: {
 export async function updateArtifactTx(
     tx: Tx,
     params: {
+        transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1;
         actorUserId: string;
         artifactId: string;
+        mutationGuard?: ArtifactMutationTransactionGuard;
         kind?: string;
         expectedHeaderVersion?: number;
         header?: { bytes: Uint8Array; expectedVersion: number };
@@ -1111,14 +1197,18 @@ export async function updateArtifactTx(
         blob?: ArtifactBlobWriteV1 | null;
         preparedBlob?: PreparedArtifactBlobWrite;
         restoredBlobId?: string | null;
-    } & ArtifactMemoryDecisionWriteContext,
+    } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext,
 ): Promise<UpdateArtifactResult> {
-    const kindOnly = params.kind !== undefined && !params.header && !params.body;
+    const hasQueryHints = params.kind !== undefined || params.approvalState !== undefined || params.approvalSessionId !== undefined;
+    const kindOnly = hasQueryHints && !params.header && !params.body;
     // A hint without replacement header bytes must describe this exact header revision.
-    if (params.kind !== undefined && !params.header && params.expectedHeaderVersion === undefined && params.expectedRevision === undefined) {
+    if (hasQueryHints && !params.header && params.expectedHeaderVersion === undefined && params.expectedRevision === undefined) {
         return { ok: false, error: "invalid-params" };
     }
-    await acquireArtifactPublicationLocksInTx(tx, params.artifactId);
+    const publication = await admitArtifactMutationInTx(tx, {
+        actorAccountId: params.actorUserId, artifactId: params.artifactId,
+    }, params.mutationGuard);
+    if (!publication) return { ok: false, error: 'artifact_access_forbidden' };
     const access = await resolveArtifactAccessInTx(tx, {
         actorAccountId: params.actorUserId,
         artifactId: params.artifactId,
@@ -1159,6 +1249,7 @@ export async function updateArtifactTx(
             seq: true,
             updatedAt: true,
             kind: true,
+            approvalState: true, approvalSessionId: true,
             header: true,
             headerVersion: true,
             body: !kindOnly,
@@ -1217,10 +1308,28 @@ export async function updateArtifactTx(
     }
 
     const nextKind = params.header
-        ? artifactWriteKind(params.header.bytes, current.dataEncryptionKey, params.kind)
-        : params.kind !== undefined ? artifactWriteKind(openedCurrent.header, current.dataEncryptionKey, params.kind) : undefined;
+        ? artifactWriteKind(params.header.bytes, current.dataEncryptionKey, params.kind, params)
+        : hasQueryHints ? artifactWriteKind(openedCurrent.header, current.dataEncryptionKey, params.kind ?? current.kind ?? undefined, {
+            approvalState: params.approvalState === undefined ? current.approvalState : params.approvalState,
+            approvalSessionId: params.approvalSessionId === undefined ? current.approvalSessionId : params.approvalSessionId,
+        }) : undefined;
     if (nextKind === null) return { ok: false, error: 'invalid-params' };
-    if (!params.header && !params.body && nextKind?.kind === current.kind) {
+    if (params.transcriptVisualPublication) {
+        if (!params.header || !params.body
+            || nextKind?.approvalState !== 'executed'
+            || nextKind.approvalSessionId !== params.transcriptVisualPublication.sessionId) return { ok: false, error: 'invalid-params' };
+        if (isPlainArtifactDataKeyBytes(current.dataEncryptionKey)) {
+            const header: unknown = decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(params.header.bytes)));
+            const content: unknown = decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(params.body.bytes)));
+            const publication = header && typeof header === 'object' && !Array.isArray(header)
+                && content && typeof content === 'object' && 'body' in content && typeof content.body === 'string'
+                ? readApprovalTranscriptVisualPublicationV1({ artifactId: params.artifactId,
+                    approval: approvalArtifactBodyMatchesHeaderV1(header as Readonly<Record<string, unknown>>, content.body) }) : null;
+            if (!isDeepStrictEqual(publication, params.transcriptVisualPublication)) return { ok: false, error: 'invalid-params' };
+        }
+    }
+    if (!params.header && !params.body && nextKind?.kind === current.kind
+        && nextKind?.approvalState === current.approvalState && nextKind?.approvalSessionId === current.approvalSessionId) {
         return { ok: true, recipientUpdates: [] };
     }
 
@@ -1248,11 +1357,13 @@ export async function updateArtifactTx(
         provenance?: Uint8Array<ArrayBuffer> | null;
         provenanceDataEncryptionKey?: Uint8Array<ArrayBuffer>;
         kind?: string | null;
+        approvalState?: string | null;
+        approvalSessionId?: string | null;
     } = {
         // Prisma's @updatedAt must be set explicitly for an index-only label.
         updatedAt: kindOnly ? current.updatedAt : new Date(),
         seq: kindOnly ? current.seq : current.seq + 1,
-        ...(nextKind !== undefined ? { kind: nextKind.kind } : {}),
+        ...(nextKind !== undefined ? nextKind : {}),
     };
 
     let headerUpdate: { bytes: Uint8Array; version: number } | undefined;
@@ -1377,8 +1488,23 @@ export async function updateArtifactTx(
         provenance: current.provenance,
     });
 
+    await applyArtifactPublicationGrantsInTx(tx, { artifactId: params.artifactId,
+        actorAccountId: params.actorUserId, publicationGrants: publication.publicationGrants });
     const recipients = await resolveArtifactAudienceInTx(tx, params.artifactId);
-    const recipientCursors = await markAccountsChanged(tx, { accountIds: recipients, kind: "artifact", entityId: params.artifactId });
+    const recipientCursors = await markAccountsChanged(tx, { accountIds: recipients, kind: "artifact", entityId: params.artifactId,
+        // A type-changing header leaves its old inventory as well as entering the new one.
+        ...(nextKind !== undefined && nextKind.kind !== current.kind
+            ? { hint: { artifactKinds: readArtifactKindsV1([current.kind, nextKind.kind]) } } : {}),
+    });
+    await markApprovalSessionsChangedInTx(tx, ownerAccountId, [current.approvalSessionId,
+        nextKind === undefined ? current.approvalSessionId : nextKind.approvalSessionId]);
+    // Preserve the incumbent private-approval wake, then let the same-row transcript
+    // change retain its typed row hint in the existing coalesced Session changefeed.
+    // An admitted Artifact editor may persist the outcome, but cannot publish
+    // its owner's Session visual association through that document edit grant.
+    if (params.transcriptVisualPublication && ownerAccountId === params.actorUserId) await settleSessionTranscriptApprovalVisualPublicationInTx(tx, {
+        accountId: ownerAccountId, artifactId: params.artifactId, publication: params.transcriptVisualPublication,
+    });
     const recipientUpdates = [];
     for (const cursor of recipientCursors) {
         const { accountId } = cursor;
@@ -1438,6 +1564,7 @@ export async function deleteArtifact(params: {
                     id: true,
                     dataEncryptionKey: true,
                     deletedAt: true,
+                    approvalSessionId: true,
                     headerVersion: true,
                     bodyVersion: true,
                     blobs: { select: { id: true, storageKey: true }, orderBy: { id: 'asc' } },
@@ -1488,6 +1615,7 @@ export async function deleteArtifact(params: {
                     headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
                 }, data: { deletedAt } });
                 if (retired.count !== 1) throw new ArtifactDeleteVersionConflictError();
+                await markApprovalSessionsChangedInTx(tx, actorUserId, [artifact.approvalSessionId]);
             }
             return { ok: true as const, cursor, deletedAt, artifact };
         }, { transactionClass: "artifact-delete" });
