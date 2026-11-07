@@ -1,4 +1,3 @@
-import { admitTestExecSpawn } from './client.test-support';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,9 +18,11 @@ import type {
 import { createCodexNativeAppServerClient } from './client';
 import { openCodexNativeAppServerSession } from './native';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import { admitTestExecSpawn } from './client.test-support';
 import { buildCodexAppServerConfigOverrides } from './config/overrides';
 import { createCodexAppServerRealtimeConversation } from './realtime';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
+import { buildCodexCloudAuthFile } from '../../auth/services/openai/cloud/authFile.js';
 import { createJsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { createCodexAppServerTurnFailure, readCodexAppServerFailureCause } from './turns/failure';
 import { createStableRunnerPluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
@@ -237,6 +238,42 @@ describe('createCodexAppServerClient', () => {
         expect(capture.specs).toEqual([]);
     });
 
+    it.each(['config/read', 'auth', 'models'] as const)('releases native admission before pending %s without a first turn', async stage => {
+        let release!: () => void;
+        let enter!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const entered = new Promise<void>(resolve => { enter = resolve; });
+        const pause = async (point: typeof stage) => { if (stage === point) { enter(); await held; } };
+        const methods: string[] = [];
+        const capture = createCapturingExec({
+            async request(method): Promise<JsonValue> {
+                methods.push(method);
+                if (method === 'initialize') return { userAgent: 'happier_cli/0.162.1 (fixture)' };
+                await pause('config/read');
+                return { config: { mcp_servers: {}, features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
+            },
+        }, processResult(''));
+        capture.exec.run = async request => {
+            if (request.args.includes('models')) { await pause('models'); return processResult('{"models":[]}'); }
+            return processResult('');
+        };
+        const opening = createCodexNativeAppServerClient({ exec: capture.exec, processEnv: {}, toolRestrictionRequired: true,
+            nativeHome: { readFiles: async () => { await pause('auth'); return {}; } } });
+        let first: Awaited<typeof opening> | undefined;
+        let second: Awaited<typeof opening> | undefined;
+        try {
+            await entered;
+            await expect(access(join(osBoundary.home, '.happier-codex-native-startup.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+            second = await createCodexNativeAppServerClient({ exec: createCapturingExec().exec, processEnv: {} });
+            expect(methods).toContain('initialize');
+            expect(methods).not.toContain('turn/start');
+        } finally {
+            release();
+            first = await opening;
+            await first.dispose();
+            await second?.dispose();
+        }
+    });
 
     it('leaves cold stdio admission available during a pending feature probe and after native readiness', async () => {
         const capture = createCapturingExec();
@@ -276,6 +313,35 @@ describe('createCodexAppServerClient', () => {
         }
     });
 
+    it.each([
+        { credentialStore: 'file', env: {}, accountProof: 'selected-account' },
+        { credentialStore: 'keyring', env: {}, accountProof: undefined },
+        { credentialStore: 'file', env: { CODEX_API_KEY: 'fixture-other-auth' }, accountProof: undefined },
+    ])('binds confined model evidence to the Session materialized Account and launch environment ($credentialStore, $accountProof)', async ({ credentialStore, env, accountProof }) => {
+        const capture = createCapturingExec({
+            async request(method): Promise<JsonValue> {
+                if (method === 'initialize') return { userAgent: 'happier_cli/0.162.1 (fixture)' };
+                return { config: { cli_auth_credentials_store: credentialStore, mcp_servers: {},
+                    features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
+            },
+        }, processResult(JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: 'code_mode_only' }] })));
+        const authBytes = new TextEncoder().encode(JSON.stringify(buildCodexCloudAuthFile({
+            accessToken: 'fixture-access', idToken: null, accountId: 'selected-account', lastRefreshIso: '2026-10-26T00:00:00.000Z',
+        })));
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec, cwd: '/workspace', processEnv: { CODEX_HOME: '/session/materialized', SESSION_PROXY: 'fixture', ...env },
+            toolRestrictionRequired: true,
+            nativeHome: { readFiles: async () => ({ 'auth.json': authBytes }) },
+        });
+        try {
+            expect(client.launchFeatures.toolRestrictionAccountId).toBe(accountProof);
+            expect(client.launchFeatures.toolRestrictionSupportedModelIds).toEqual(['fixture-model']);
+            const probes = vi.mocked(capture.exec.run).mock.calls.filter(([request]) => request.args.includes('models'));
+            expect(probes).toHaveLength(1);
+            expect(probes[0]?.[0].env).toEqual(capture.specs[0]?.launch.env);
+            expect(probes[0]?.[0].env).toMatchObject({ CODEX_HOME: '/session/materialized', SESSION_PROXY: 'fixture' });
+        } finally { await client.dispose(); }
+    });
     it.skipIf(process.platform !== 'linux')('pins projected SQLite in the real stdio launch and admits both warm clients before either initializes', async () => {
         await mkdir(join(osBoundary.home, '.codex'));
         await writeFile(join(osBoundary.home, '.codex', 'config.toml'), 'cli_auth_credentials_store = "keyring"\n');
@@ -418,17 +484,17 @@ describe('createCodexAppServerClient', () => {
             return await client.request('test/ping');
         }));
         try {
-            await vi.waitFor(() => expect(debug).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(debug.mock.calls.filter(([message]) => message === 'Codex native startup is waiting for another start')).toHaveLength(1));
             releaseInitialization();
             const outcomes = await opening;
             expect(outcomes).toEqual([
                 { status: 'fulfilled', value: { ok: true } },
                 { status: 'fulfilled', value: { ok: true } },
             ]);
-            expect(debug).toHaveBeenCalledTimes(1);
+            expect(debug.mock.calls.filter(([message]) => message === 'Codex native startup is waiting for another start')).toHaveLength(1);
             // Admission can observe an occupied path before its owner record
             // is readable. The canonical reporter preserves that as null.
-            const observation = debug.mock.calls[0]?.[1];
+            const observation = debug.mock.calls.find(([message]) => message === 'Codex native startup is waiting for another start')?.[1];
             expect(debug).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
                 waitedForMs: expect.any(Number),
             }));

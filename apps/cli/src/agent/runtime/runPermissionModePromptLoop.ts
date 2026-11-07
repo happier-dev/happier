@@ -2,9 +2,11 @@ import { readQueuedPromptDeliveryIdentity, hasQueuedPromptDeliveryIdentity, conf
 import type { ManualCompactionQueue } from './queueSpecialCommands';
 import { randomUUID } from 'node:crypto';
 
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
+import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -41,7 +43,7 @@ import {
   normalizePermissionModeQueuedPromptLocalIds,
   isNextTurnContextQueuedPrompt,
 } from '@/agent/runtime/permissions/queuedPrompt';
-import { fitHappierReplaySeedWithinTotalBudget } from '@happier-dev/agents';
+import { fitHappierReplaySeedWithinTotalBudget, isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/agents';
 
 import { configuration } from '@/configuration';
 import {
@@ -62,7 +64,6 @@ import type {
   MessageBatch,
   SessionProviderInputConsumer,
 } from '@/agent/runtime/session/input/_types';
-import { PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import {
   DEFAULT_SESSION_METADATA_WAIT_RETRY_BACKOFF_MS,
   waitForSessionMetadataRetryBackoff,
@@ -76,6 +77,7 @@ import {
 import type { StructuredInputCatalogReaders, StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { prepareSessionInputForProviderDispatch, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { logger } from '@/ui/logger';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 import { createPromptCompositionScope, type PromptPlanComposition } from '@/agent/prompting/promptComposition';
@@ -288,12 +290,10 @@ function readCheckpointTurnId(message: CheckpointRuntimeMessage): string | null 
 
 function readRuntimeRestartModeHash(mode: QueuedPermissionModeMessage['mode']): string {
   return JSON.stringify({
-    permissionMode: mode.permissionMode,
     appendSystemPrompt: mode.appendSystemPrompt ?? null,
-    suppressUserEcho: mode.suppressUserEcho === true,
-    providerPromptAlreadyResolved: mode.providerPromptAlreadyResolved === true,
   });
 }
+
 
 type PreTurnFailure = Readonly<{
   code: string;
@@ -303,9 +303,12 @@ type PreTurnFailure = Readonly<{
 }>;
 
 class PreTurnPromptFailure extends Error {
-  constructor(readonly settlement: PreTurnFailure) {
+  /** A closed Provider refusal, read by the runtime-issue owner for its recovery. */
+  readonly code?: ProviderErrorCodeV1;
+  constructor(readonly settlement: PreTurnFailure, providerCode?: ProviderErrorCodeV1) {
     super(settlement.message);
     this.name = 'PreTurnPromptFailure';
+    if (providerCode) this.code = providerCode;
   }
 }
 
@@ -317,12 +320,13 @@ function createModelTransitionPreTurnFailure(
     : transition.status === 'reconciliation_required'
       ? 'runtime_config_blocked' as const
       : 'provider_rejected_before_acceptance' as const;
+  const providerCode = ProviderErrorCodeV1Schema.safeParse(transition.reason);
   return new PreTurnPromptFailure({
-    code: `session_model_transition_${transition.status}`,
+    code: providerCode.success ? providerCode.data : `session_model_transition_${transition.status}`,
     message: transition.reason ?? `Structured model transition failed: ${transition.status}`,
     retryable: reason !== 'provider_rejected_before_acceptance',
     reason,
-  });
+  }, providerCode.success ? providerCode.data : undefined);
 }
 
 function readPreTurnFailure(error: unknown): PreTurnFailure {
@@ -353,8 +357,8 @@ function readPreTurnFailure(error: unknown): PreTurnFailure {
 
 /**
  * All provider-input work before `beginTurnLifecycle` shares one durable settlement owner. It
- * may park or terminally reject the exact pending input, but never retires local custody or
- * releases identity on this dispatch-only path.
+ * may park or terminally reject the exact pending input. No native turn began, so a durable
+ * block can release local custody and let an explicit Pending action materialize it again.
  */
 async function observePreTurnFailureSettlement(params: Readonly<{
   session: ApiSessionClient;
@@ -381,6 +385,7 @@ async function observePreTurnFailureSettlement(params: Readonly<{
           message: params.error.message,
         },
         retryable: params.error.retryable,
+        retireLocalCustodyAfterDurableBlock: true,
       });
     } catch {
       // Settlement is best effort. The already-durable Message remains pending if the block
@@ -570,7 +575,7 @@ export async function runPermissionModePromptLoop(opts: {
     error: unknown;
   }>) => void | Promise<void>) | null;
   /** Host lifecycle records preparation/dispatch failures that have no native turn event. */
-  onPromptFailure?: (error: unknown) => void | Promise<void>;
+  onPromptFailure?: (error: unknown, context?: Readonly<{ beforeProviderDispatch: boolean }>) => void | Promise<void>;
   startRuntimeBeforeFirstPrompt?: boolean;
   onAfterStart?: (() => void | Promise<void>) | null;
   onBeforeReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
@@ -578,7 +583,6 @@ export async function runPermissionModePromptLoop(opts: {
   onAfterLoopBoundary?: ((params: { reason: PromptLoopBoundaryReason }) => void | Promise<void>) | null;
   checkpointLifecycle?: PromptLoopCheckpointLifecycle | null;
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
-  pendingQueueDrainMaxPopPerWake?: number;
   pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
   inputConsumer?: SessionProviderInputConsumer<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
   resolveFreshSessionSystemPrompt?: ((args: {
@@ -631,10 +635,6 @@ export async function runPermissionModePromptLoop(opts: {
     ) => Promise<void>,
   ) => Promise<SessionModelTransitionResultV1>;
   readActiveModelSelection?: () => ProviderBoundModelRef;
-  onProviderPromptDispatchPrepared?: (input: Readonly<{
-    localIds: readonly string[];
-    selection: ProviderBoundModelRef;
-  }>) => void;
   /**
    * Registers replay/Follow effects against the exact localId settled by the host's canonical
    * provider-input outcome normalizer. Transport send completion is never provider acceptance.
@@ -687,17 +687,12 @@ export async function runPermissionModePromptLoop(opts: {
     return pending;
   };
   let snapshotFreshForNextPromptBoundary = false;
-  const pendingQueueDrainMaxPopPerWake = Math.max(
-    1,
-    Math.trunc(opts.pendingQueueDrainMaxPopPerWake ?? PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE),
-  );
   const inputConsumer = opts.inputConsumer ?? createSessionProviderInputConsumer({
     messageQueue: opts.messageQueue,
     session: createSessionProviderInputConsumerSessionAdapter(opts.session),
     reconcileWhenEmpty: 'skip',
     pendingQueueDeliveryTiming: opts.pendingQueueDeliveryTiming,
     refreshBeforeQueuedBatch: false,
-    pendingDrainMaxPopPerWake: pendingQueueDrainMaxPopPerWake,
   });
   let activeTurnPendingPumpController: AbortController | null = null;
   const stopActiveTurnPendingPump = (): void => {
@@ -715,7 +710,6 @@ export async function runPermissionModePromptLoop(opts: {
     activeTurnPendingPumpController = controller;
     void inputConsumer.pumpPendingWhileActive({
       abortSignal: controller.signal,
-      maxPopPerWake: pendingQueueDrainMaxPopPerWake,
       // Once an exact provider turn exists, keep the single Pending consumer armed
       // through non-steerable settling windows. The server remains the sole owner of
       // whether a row is eligible and whether its provider action is steer or interrupt.
@@ -956,7 +950,6 @@ export async function runPermissionModePromptLoop(opts: {
             await overrideSync.flushPendingAfterStart();
           }
         },
-        pendingDrainMaxPopPerWake: pendingQueueDrainMaxPopPerWake,
         pendingQueueDeliveryTiming: opts.pendingQueueDeliveryTiming,
         inputConsumer,
       });
@@ -1059,10 +1052,22 @@ export async function runPermissionModePromptLoop(opts: {
     opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
 
     const runtimeRestartModeHash = readRuntimeRestartModeHash(message.mode);
+    const restartSettingsChanged = currentRuntimeRestartModeHash !== null
+      && runtimeRestartModeHash !== currentRuntimeRestartModeHash;
+    let permissionModeRequiresRestart = false;
+    if (wasStarted && currentRuntimeRestartModeHash !== null && !restartSettingsChanged
+      && runtimePermissionModeApplied !== message.mode.permissionMode) {
+      const outcome = await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
+      // Legacy runtimes return void; only an affirmative outcome proves that reopening is unnecessary.
+      if (outcome && isRuntimeConfigUpdateOutcomeApplied(outcome)) {
+        runtimePermissionModeApplied = message.mode.permissionMode;
+      } else {
+        permissionModeRequiresRestart = true;
+      }
+    }
     if (
       wasStarted
-      && currentRuntimeRestartModeHash
-      && runtimeRestartModeHash !== currentRuntimeRestartModeHash
+      && (restartSettingsChanged || permissionModeRequiresRestart)
     ) {
       const resumeId = opts.runtime.readSessionIdentity().sessionId;
       currentRuntimeRestartModeHash = runtimeRestartModeHash;
@@ -1188,6 +1193,7 @@ export async function runPermissionModePromptLoop(opts: {
       replaySeedSettlement = null;
       await settlement;
     };
+    let promptFailurePhase = 'runtime_start';
     try {
       const promptDeliveryIdentity = readQueuedPromptDeliveryIdentity(message.message);
       const localIds = [...promptDeliveryIdentity.localIds];
@@ -1318,6 +1324,7 @@ export async function runPermissionModePromptLoop(opts: {
         const preparationStartedAt = performance.now();
         let phaseStartedAt = preparationStartedAt;
         const recordPreparationPhase = (phase: string): void => {
+          promptFailurePhase = phase;
           const now = performance.now();
           logger.infoFile('[PermissionModePromptLoop] Turn preparation phase', {
             phase, sessionId: opts.session.sessionId, localId,
@@ -1333,6 +1340,7 @@ export async function runPermissionModePromptLoop(opts: {
         activeCheckpointFinalStatus = 'unknown';
         const nowMs = Date.now();
         const dispatchAbortSignal = opts.getAbortSignal();
+        promptFailurePhase = 'replay_seed_resolution';
         const resolvedReplaySeed = providerPromptAlreadyResolved || providerNativeCommand
           ? null
           : await resolveProviderPromptWithReplaySeed({
@@ -1359,12 +1367,14 @@ export async function runPermissionModePromptLoop(opts: {
           ...(opts.runtime.resolveComposerReference ? { resolveComposerReference: (input: Parameters<StructuredInputComposerReferenceResolver['resolve']>[0]) => opts.runtime.resolveComposerReference!(input) } : {}),
           ...(opts.resolveComposerAttachmentForDispatch ? { resolveComposerAttachmentForDispatch: opts.resolveComposerAttachmentForDispatch } : {}),
         };
+        promptFailurePhase = 'structured_input_resolution';
         const resolvedInputContext = await resolveSessionInputForProviderDispatch({
           prompt: message.message, signal: dispatchAbortSignal,
           localId: localIds.length === 1 ? localId : null, services: referenceServices,
         });
         // Replay and dispatch consume the same current projection. Only its bounded
         // context spends the existing UTF-16 reservation; upload listings remain outside.
+        promptFailurePhase = 'replay_seed_fitting';
         let replaySeedWasOmitted = false;
         const seedResolution = ((): { providerPrompt: string } => {
           if (!resolvedReplaySeed) return { providerPrompt: message.message.text };
@@ -1399,6 +1409,7 @@ export async function runPermissionModePromptLoop(opts: {
           };
         })();
         if (replaySeedWasOmitted) {
+          promptFailurePhase = 'replay_seed_release';
           await releaseReplaySeedBeforeProviderDispatch();
         }
         recordPreparationPhase('replay_seed');
@@ -1677,12 +1688,6 @@ export async function runPermissionModePromptLoop(opts: {
           runFollowDeliveries: representedFollowDeliveries,
         });
 
-        if (localIds.length > 0 && opts.readActiveModelSelection && opts.onProviderPromptDispatchPrepared) {
-          opts.onProviderPromptDispatchPrepared({
-            localIds: [...new Set([...localIds, ...representedPendingInputs.map(input => input.localId)])],
-            selection: opts.readActiveModelSelection(),
-          });
-        }
         const resolvedStructuredInput = preparedDispatch.structuredInput;
         const promptDeliveryMeta = {
           ...(message.message.discussionAddressing ? { discussionAddressing: message.message.discussionAddressing } : {}),
@@ -1833,10 +1838,20 @@ export async function runPermissionModePromptLoop(opts: {
         continue;
       }
       if (preTurnFailure) {
+        const issue = !preTurnFailure.reason
+          ? classifyPrimarySessionRuntimeIssue({
+            provider: opts.agentMessageType,
+            cause: 'session_error',
+            error,
+            beforeProviderDispatch: true,
+          })
+          : null;
         await observePreTurnFailureSettlement({
           session: opts.session,
           message: message.message,
-          error: preTurnFailure,
+          error: issue?.source === 'dependency_failure'
+            ? { ...preTurnFailure, reason: 'runtime_config_blocked' }
+            : preTurnFailure,
         });
       }
       if (
@@ -1863,7 +1878,17 @@ export async function runPermissionModePromptLoop(opts: {
         throw error;
       }
       if (!isAbortLikeError(error) && !isRuntimeTurnFailureAlreadySurfaced(error)) {
-        await opts.onPromptFailure?.(error);
+        const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+        const preparation = readStructuredInputPreparationFailure(error);
+        logger.infoFile('[PermissionModePromptLoop] Prompt failed', {
+          sessionId: opts.session.sessionId,
+          localId: normalizePermissionModeQueuedPromptLocalIds(message.message)[0] ?? null,
+          phase: promptFailurePhase,
+          errorClass: diagnostic.errorClass,
+          errorCode: preparation?.code ?? diagnostic.errorCode,
+          ...(preparation?.preparationCause ? { preparationCause: preparation.preparationCause } : {}),
+        });
+        await opts.onPromptFailure?.(error, { beforeProviderDispatch: !beganTurn });
         handledPreTurnFailure = !beganTurn;
       }
     } finally {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import type { Metadata } from '@/api/types';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -2251,17 +2252,6 @@ describe('runPermissionModePromptLoop', () => {
     const queue = createModeQueue();
     const runtime = createRuntime();
     const events: string[] = [];
-    const onProviderPromptDispatchPrepared = vi.fn((input: unknown) => {
-      events.push('dispatch-model-snapshotted');
-      expect(input).toEqual({
-        localIds: ['local-model-1'],
-        selection: {
-          agentTargetKey: 'agent:happier.agent.codex/codex',
-          providerConnectionId: 'pc_openrouter',
-          modelId: 'openrouter/model',
-        },
-      });
-    });
     const configUpdates: unknown[] = [];
     runtime.updateSessionRuntimeConfig = vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async (update) => {
       configUpdates.push(update);
@@ -2347,12 +2337,11 @@ describe('runPermissionModePromptLoop', () => {
         providerConnectionId: ProviderConnectionIdSchema.parse('pc_openrouter'),
         modelId: 'openrouter/model',
       }),
-      onProviderPromptDispatchPrepared,
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
       registerProviderAcceptedEffect: () => undefined,
     });
 
-    expect(events).toEqual(['model-transition', 'dispatch-model-snapshotted', 'provider-dispatch']);
+    expect(events).toEqual(['model-transition', 'provider-dispatch']);
     expect(runtime.updateSessionRuntimeConfig).not.toHaveBeenCalledWith({
       modelId: 'openrouter/model',
     });
@@ -2402,6 +2391,8 @@ describe('runPermissionModePromptLoop', () => {
     );
 
     let shouldExit = false;
+    let thinking = false;
+    const thinkingAtReady: boolean[] = [];
     await runPermissionModePromptLoop({
       providerName: 'Test Provider',
       agentMessageType: 'qwen',
@@ -2421,8 +2412,9 @@ describe('runPermissionModePromptLoop', () => {
       shouldExit: () => shouldExit,
       getAbortSignal: () => new AbortController().signal,
       keepAlive: () => {},
-      setThinking: () => {},
+      setThinking: value => { thinking = value; },
       sendReady: () => {
+        thinkingAtReady.push(thinking);
         shouldExit = true;
       },
       currentPermissionModeUpdatedAt: 0,
@@ -2453,6 +2445,7 @@ describe('runPermissionModePromptLoop', () => {
 
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
+    expect(thinkingAtReady).toEqual([false]);
     expect(observeProviderInputSettlement).toHaveBeenNthCalledWith(1, {
       kind: 'rejected_before_effect',
       localId: 'local-model-failed',
@@ -2464,6 +2457,7 @@ describe('runPermissionModePromptLoop', () => {
         message: `Structured model transition failed: ${transitionStatus}`,
       },
       retryable,
+      retireLocalCustodyAfterDurableBlock: true,
     });
     expect(observeProviderInputSettlement).toHaveBeenNthCalledWith(2, {
       kind: 'rejected_before_effect',
@@ -2476,7 +2470,50 @@ describe('runPermissionModePromptLoop', () => {
         message: `Structured model transition failed: ${transitionStatus}`,
       },
       retryable,
+      retireLocalCustodyAfterDurableBlock: true,
     });
+  });
+
+  it('refuses a prompt whose admitted Provider binding changed with the typed Provider recovery, not a generic Agent failure', async () => {
+    const session = createPromptLoopSession();
+    const observeProviderInputSettlement = vi.spyOn(session, 'observeProviderInputSettlement');
+    session.__setMetadata(createPromptLoopMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }));
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const selection = {
+      agentTargetKey: 'agent:happier.agent.codex/codex',
+      providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      modelId: 'current/model',
+    } as const;
+    queue.push({ text: 'next turn after endpoint re-consent', localId: 'local-binding-changed' },
+      { permissionMode: 'default', modelSelection: selection });
+    const failures: unknown[] = [];
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider', agentMessageType: 'qwen', explicitPermissionMode: undefined, session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(), shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal, keepAlive: () => {}, setThinking: () => {},
+      sendReady: () => { shouldExit = true; },
+      currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode: () => {}, setCurrentPermissionModeUpdatedAt: () => {},
+      transitionModelSelectionBeforePrompt: async () => ({ ok: false, status: 'restart_required',
+        activeSelection: selection, requestedSelection: selection, reason: 'provider_binding_changed' }),
+      onPromptFailure: (error) => { failures.push(error); },
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+      registerProviderAcceptedEffect: () => undefined,
+    });
+
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'rejected_before_effect', localId: 'local-binding-changed', retryable: false,
+      diagnostic: expect.objectContaining({ code: 'provider_binding_changed' }),
+    }));
+    expect(failures).toHaveLength(1);
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failures[0], provider: 'codex' }))
+      .toMatchObject({ code: 'provider_binding_changed' });
   });
 
   it('resolves selected attachments immediately before dispatch and settles a failed resolution without retiring durable custody', async () => {
@@ -2568,102 +2605,14 @@ describe('runPermissionModePromptLoop', () => {
       kind: 'rejected_before_effect',
       localId: 'local-attachment-preparation-unavailable',
       userMessageSeq: 42,
-      reason: 'provider_rejected_before_acceptance',
+      reason: 'runtime_config_blocked',
       diagnostic: {
         code: 'composer_attachment_resolution_failed',
         severity: 'error',
         message: 'The selected review comment no longer exists.',
       },
       retryable: false,
-    });
-  });
-
-  it('settles selected SessionMedia video as typed unsupported without a provider effect', async () => {
-    const session = createMutableApiSessionClientFixture<PromptLoopMetadata>({ sessionId: 'session-1' });
-    // Plugin material resolution is a boundary; unsupported media must fail before entering it.
-    const resolveComposerAttachmentForDispatch = vi.fn(async () => {
-      throw new Error('Unsupported video must not reach plugin material resolution');
-    });
-    const observeProviderInputSettlement = vi.spyOn(session, 'observeProviderInputSettlement').mockImplementation(
-      (() => Promise.resolve(false)) as typeof session.observeProviderInputSettlement,
-    );
-    session.__setMetadata(createPromptLoopMetadata({
-      permissionMode: 'default',
-      permissionModeUpdatedAt: 0,
-    }));
-    const queue = createModeQueue();
-    const runtime = createRuntime();
-    const media = {
-      id: 'media-review-video',
-      role: 'input' as const,
-      category: 'attachment' as const,
-      mediaKind: 'video' as const,
-      mimeType: 'video/webm' as const,
-      name: 'review.webm',
-      path: '.happier/uploads/messages/session-1/local-review-video/review.webm',
-      sizeBytes: 67,
-      sha256: 'b'.repeat(64),
-      origin: { source: 'user-upload' as const },
-    };
-    queue.push({
-      text: 'Review this recording.',
-      localId: 'local-review-video',
-      structuredInput: {
-        v: 1,
-        composerAttachments: [{
-          v: 1,
-          instanceId: 'review-video-1',
-          attachment: { pluginId: 'acme.review', localId: 'review-media' },
-          key: 'review-video',
-          value: { reviewId: 'review-1' },
-          presentation: { label: 'Review recording', typeLabel: 'Review media' },
-          content: { kind: 'sessionMedia', mediaId: media.id },
-        }],
-      },
-      sessionMedia: [media],
-    }, { permissionMode: 'default' });
-
-    let shouldExit = false;
-    await runPermissionModePromptLoop({
-      providerName: 'Test Provider',
-      agentMessageType: 'qwen',
-      explicitPermissionMode: undefined,
-      session,
-      messageQueue: queue,
-      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
-      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
-      createOverrideSynchronizer: () => ({
-        syncFromMetadata: () => {},
-        flushPendingAfterStart: async () => {},
-      }),
-      messageBuffer: new MessageBuffer(),
-      shouldExit: () => shouldExit,
-      getAbortSignal: () => new AbortController().signal,
-      keepAlive: () => {},
-      setThinking: () => {},
-      sendReady: () => { shouldExit = true; },
-      currentPermissionModeUpdatedAt: 0,
-      setCurrentPermissionMode: () => {},
-      setCurrentPermissionModeUpdatedAt: () => {},
-      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
-      registerProviderAcceptedEffect: () => undefined,
-      resolveComposerAttachmentForDispatch,
-    } as Parameters<typeof runPermissionModePromptLoop>[0]);
-
-    expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
-    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
-    expect(resolveComposerAttachmentForDispatch).not.toHaveBeenCalled();
-    expect(observeProviderInputSettlement).toHaveBeenCalledWith({
-      kind: 'rejected_before_effect',
-      localId: 'local-review-video',
-      userMessageSeq: null,
-      reason: 'provider_rejected_before_acceptance',
-      diagnostic: {
-        code: 'session_media_video_unsupported',
-        severity: 'error',
-        message: 'The current Agent runtime does not declare video input support',
-      },
-      retryable: false,
+      retireLocalCustodyAfterDurableBlock: true,
     });
   });
 
@@ -2787,7 +2736,9 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     // The Session lifecycle classifies the raw error and owns the single failed-turn publication.
-    expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ code: -32603, data: 'Prompt already in progress' }));
+    expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ code: -32603, data: 'Prompt already in progress' }), {
+      beforeProviderDispatch: false,
+    });
     expect(enqueueAgentMessageCommittedSpy).not.toHaveBeenCalled();
   });
 
@@ -2835,7 +2786,10 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     // The Session lifecycle owns the single message and failed-turn marker for this input.
-    expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Qwen CLI (qwen) is not available') }));
+    // This adapter fails inside sendTurnPrompt; the loop cannot prove it was pre-dispatch.
+    expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Qwen CLI (qwen) is not available') }), {
+      beforeProviderDispatch: false,
+    });
     expect(enqueueAgentMessageCommittedSpy).not.toHaveBeenCalled();
   });
 
@@ -3581,10 +3535,47 @@ describe('runPermissionModePromptLoop', () => {
     expect(readySpy).toHaveBeenCalledTimes(1);
   });
 
-  it('restarts when mode hash changes and replays the pending message', async () => {
+  it.each(['current_window', 'before_next_prompt'] as const)(
+    'keeps one runtime across permission changes applied in %s', async timing => {
+      const session = createPromptLoopSession();
+      const queue = createModeQueue();
+      const runtime = createRuntime();
+      runtime.updateSessionRuntimeConfig.mockResolvedValue({ status: 'applied', timing });
+      const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() };
+      for (const [index, permissionMode] of (['default', 'read-only', 'yolo'] as const).entries()) {
+        queue.push({ text: `prompt-${index}`, localId: `permission-${index}` }, { permissionMode });
+      }
+      let completed = 0;
+      await runPermissionModePromptLoop({
+        providerName: 'Test Provider', agentMessageType: 'codex', explicitPermissionMode: undefined,
+        session, messageQueue: queue, runtime,
+        permissionHandler, messageBuffer: new MessageBuffer(),
+        createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
+        shouldExit: () => completed === 3, getAbortSignal: () => new AbortController().signal,
+        keepAlive() {}, setThinking() {}, sendReady: () => { completed += 1; },
+        currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
+        formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined,
+      });
+      expect(runtime.sendTurnPrompt.mock.calls.map(([text]) => text)).toEqual(['prompt-0', 'prompt-1', 'prompt-2']);
+      expect(runtime.updateSessionRuntimeConfig.mock.calls).toEqual([
+        [{ permissionMode: 'default' }], [{ permissionMode: 'read-only' }], [{ permissionMode: 'yolo' }],
+      ]);
+      expect(runtime.resetOrDisposeRuntime).not.toHaveBeenCalled();
+      expect(permissionHandler.reset).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { name: 'legacy permission update', outcome: undefined, appendSystemPrompt: undefined },
+    { name: 'unsupported permission update', outcome: { status: 'unsupported' } as const, appendSystemPrompt: undefined },
+    { name: 'restart-required permission update', outcome: { status: 'requires_restart' } as const, appendSystemPrompt: undefined },
+    { name: 'permission update deferred past this prompt', outcome: { status: 'applied', timing: 'next_idle' } as const, appendSystemPrompt: undefined },
+    { name: 'system-prompt change despite supported permission updates', outcome: { status: 'applied', timing: 'current_window' } as const, appendSystemPrompt: 'New instructions' },
+  ])('restarts for $name and replays the pending message', async ({ outcome, appendSystemPrompt }) => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
+    runtime.updateSessionRuntimeConfig.mockResolvedValue(outcome);
     const messageBuffer = new MessageBuffer();
     const permissionReset = createDeferred<void>();
     const permissionHandler = {
@@ -3593,7 +3584,7 @@ describe('runPermissionModePromptLoop', () => {
     } as any;
 
     queue.push({ text: 'first', localId: 'local-3' }, { permissionMode: 'default' });
-    queue.push({ text: 'second', localId: 'local-4' }, { permissionMode: 'read-only' });
+    queue.push({ text: 'second', localId: 'local-4' }, { permissionMode: 'read-only', appendSystemPrompt });
 
     let readyCount = 0;
     const readySpy = vi.fn(() => {

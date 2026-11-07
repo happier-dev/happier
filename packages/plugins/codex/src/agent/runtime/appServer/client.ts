@@ -8,6 +8,7 @@ import type {
     PluginProtocolClientHandle,
     PluginJsonRpcConnection,
 } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import type { AgentSessionNativeHomeService } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     expandHomePath,
     resolveHomeDirFromEnvironment,
@@ -66,6 +67,7 @@ export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
         realtimeConversationAdvertised: boolean;
         nativeVersion?: string;
         toolRestrictionSupportedModelIds?: readonly string[];
+        toolRestrictionAccountId?: string;
     }>;
     onExit: (listener: (result: Readonly<{
         exitCode: number | null;
@@ -73,6 +75,13 @@ export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
     }>) => void) => () => void;
     dispose: () => Promise<void>;
 }>;
+
+export function assertCodexToolRestrictionAccountSupported(client: DisposableCodexAppServerClient, accountId: string | null): void {
+    if (!accountId || client.launchFeatures.toolRestrictionAccountId !== accountId) {
+        throw new PluginError({ code: 'codex_tool_restriction_unsupported_auth',
+            message: 'Codex MCP confinement requires native model evidence from the selected materialized Account.' });
+    }
+}
 
 export function assertCodexToolRestrictionModelSupported(
     client: DisposableCodexAppServerClient,
@@ -254,14 +263,31 @@ function wrapNativeCodexAppServerClient(
     handle: Pick<PluginProtocolClientHandle<'jsonRpc'>, 'client' | 'process' | 'dispose'> | PluginJsonRpcConnection,
     env: CodexAppServerEnv,
     launchFeatures: DisposableCodexAppServerClient['launchFeatures'],
+    logger?: Pick<LoggerService, 'debug'>,
+    injectedMcpServerKeys?: readonly string[],
 ): DisposableCodexAppServerClient {
     const requestHandlerDisposables = new Map<string, { dispose(): void }>();
     const notificationHandlers = new Map<string, Set<JsonRpcNotificationHandler>>();
     const nativeEventObservers = new Map<(method: string, params: unknown, receivedAtMs: number) => void, () => void>();
+    const observeNativeEvent = (method: string, params: unknown): void => {
+        if (nativeEventObservers.size === 0) return;
+        const receivedAtMs = Date.now();
+        for (const observer of nativeEventObservers.keys()) observer(method, params, receivedAtMs);
+    };
     const exitListeners = new Set<(result: Readonly<{ exitCode: number | null; signal: string | null }>) => void>();
     let settledExit: Readonly<{ exitCode: number | null; signal: string | null }> | null = null;
 
     const notificationSubscription = handle.client.onNotification(async (message) => {
+        if (message.method === 'mcpServer/startupStatus/updated' && message.params && typeof message.params === 'object') {
+            const notification = message.params as Readonly<Record<string, unknown>>;
+            const status = notification.status;
+            const serverKey = notification.name;
+            if (typeof serverKey === 'string' && injectedMcpServerKeys?.includes(serverKey)
+                && (status === 'starting' || status === 'ready' || status === 'failed' || status === 'cancelled')) {
+                // Observe before initialize; omit native error prose and configuration.
+                logger?.debug('Codex startup phase', { phase: 'mcp_startup', server: serverKey, status });
+            }
+        }
         const handlers = notificationHandlers.get(message.method);
         if (!handlers) return;
         for (const handler of [...handlers]) {
@@ -319,6 +345,7 @@ function wrapNativeCodexAppServerClient(
         registerRequestHandler(method, handler) {
             requestHandlerDisposables.get(method)?.dispose();
             const disposable = handle.client.onRequest(method, async (request) => {
+                observeNativeEvent(method, request.params);
                 const result = await handler(request.params, { id: request.id });
                 return result === undefined ? null : toJsonValue(result);
             });
@@ -392,6 +419,7 @@ type CodexNativeAppServerClientParams = Readonly<{
     disableUserMcpServers?: boolean;
     toolRestrictionRequired?: boolean;
     toolRestrictionAllowedMcpServerKeys?: readonly string[];
+    nativeHome?: AgentSessionNativeHomeService;
     signal?: AbortSignal;
     initializeRequestOptions?: CodexAppServerRequestOptions;
     /** Content-free control diagnostics distinguish transport creation from initialization. */
@@ -451,7 +479,7 @@ export async function verifyCodexNativeAppServerClient(
         const resolvedExecutable = executable ?? (await params.exec.systemTools.resolve({ toolId: 'codex-cli', purpose: 'Verify the Codex native tool catalog' })).executable;
         const evidence = await readCodexToolRestrictionEvidence({ client, exec: params.exec, executable: resolvedExecutable,
             env: buildCodexAppServerEnv(params.processEnv ?? process.env), timeoutMs: readCodexAppServerRpcTimeoutMs(params.processEnv ?? process.env), cwd: params.cwd, configOverrides: params.configOverrides,
-            allowedMcpServerKeys: params.toolRestrictionAllowedMcpServerKeys, signal: params.signal });
+            allowedMcpServerKeys: params.toolRestrictionAllowedMcpServerKeys, nativeHome: params.nativeHome, signal: params.signal });
         return { ...client, launchFeatures: { ...client.launchFeatures, ...evidence } };
     } catch (error) {
         await client.dispose().catch(() => undefined);
@@ -507,12 +535,13 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
     const launchFeatures: { realtimeConversationAdvertised: boolean; nativeVersion?: string } = {
         realtimeConversationAdvertised,
     };
-    const client = wrapNativeCodexAppServerClient(handle, env, launchFeatures);
+    const client = wrapNativeCodexAppServerClient(handle, env, launchFeatures, params.logger, params.toolRestrictionAllowedMcpServerKeys);
     try {
         const initializeRequestOptions = params.initializeRequestOptions ?? (params.signal
             ? { signal: params.signal }
             : undefined);
         params.onInitialize?.();
+        const initializeStartedAt = Date.now();
         const initialized = await initializeCodexAppServerClient({
             request: async (method, requestParams) => await client.request(
                 method,
@@ -521,6 +550,7 @@ async function createUnlockedCodexNativeAppServerClient(params: CodexNativeAppSe
             ),
             notify: async (method) => await client.notify(method),
         });
+        params.logger?.debug('Codex startup phase', { phase: 'initialize', elapsedMs: Date.now() - initializeStartedAt });
         const userAgent = initialized && typeof initialized === 'object' ? (initialized as Readonly<{ userAgent?: unknown }>).userAgent : null;
         const nativeVersion = typeof userAgent === 'string' ? /\/(\d+\.\d+\.\d+)(?:\s|$)/u.exec(userAgent)?.[1] : undefined;
         if (nativeVersion) launchFeatures.nativeVersion = nativeVersion;

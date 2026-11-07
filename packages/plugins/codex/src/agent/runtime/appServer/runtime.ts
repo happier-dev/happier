@@ -2432,6 +2432,7 @@ export function createCodexAppServerRuntime(
     assertToolRestrictionProviderSupported();
     if (client) return client;
     if (!clientPromise) {
+      const clientStartedAt = Date.now();
       const processEnv = readRuntimeProcessEnv();
       clientPromise = params.host.createClient({
         cwd: params.directory,
@@ -2447,6 +2448,7 @@ export function createCodexAppServerRuntime(
         toolRestrictionAllowedMcpServerKeys: [...mcpServerKeys.values()],
         nativeHome: requiresConfinedMcp ? params.host.nativeHome : undefined,
       }).then(async (createdClient) => {
+        params.host.logger.debug('Codex startup phase', { phase: 'configured_client_ready', elapsedMs: Date.now() - clientStartedAt });
         if (disposed) {
           void createdClient.dispose().catch(() => undefined);
           throw new Error('Codex app-server runtime has been disposed.');
@@ -2463,6 +2465,7 @@ export function createCodexAppServerRuntime(
             params.host.logger.warn('Codex session-private skills were not delivered', buildCodexAppServerSafeErrorIdentity(error));
           }
         }
+        const authStartedAt = Date.now();
         try {
           if (activeChatGptAuthTokensRefreshSelection && params.host.refreshRuntimeAuth) {
             const authTokens = await readHostOwnedAuthTokens();
@@ -2486,6 +2489,7 @@ export function createCodexAppServerRuntime(
               clientHasExternalAuthTokens = true;
             }
           }
+          params.host.logger.debug('Codex startup phase', { phase: 'connected_auth_apply', elapsedMs: Date.now() - authStartedAt });
         } catch (error) {
           await createdClient.dispose().catch(() => undefined);
           throw createCodexAppServerTurnFailure({ value: error, phase: 'authentication' });
@@ -2666,7 +2670,7 @@ export function createCodexAppServerRuntime(
       target: CodexAppServerPermissionTarget,
       requestOptions?: CodexAppServerRequestOptions,
     ): Promise<unknown> => {
-      const requestThread = (effectiveParams: Record<string, unknown>) => {
+      const requestThread = async (effectiveParams: Record<string, unknown>) => {
         const config = effectiveParams.config;
         const unboundedConnectionRetries = config && typeof config === 'object'
           && 'features.unbounded_connection_retries' in config
@@ -2677,7 +2681,12 @@ export function createCodexAppServerRuntime(
           hasUnboundedConnectionRetriesOverride: typeof unboundedConnectionRetries === 'boolean',
           ...(typeof unboundedConnectionRetries === 'boolean' ? { unboundedConnectionRetries } : {}),
         });
-        return appServerClient.request(method, effectiveParams, requestOptions);
+        const startedAt = Date.now();
+        try {
+          return await appServerClient.request(method, effectiveParams, requestOptions);
+        } finally {
+          params.host.logger.debug('Codex startup phase', { phase: method, elapsedMs: Date.now() - startedAt });
+        }
       };
       try {
         const result = await requestThread(requestParams);
