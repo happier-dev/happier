@@ -2,22 +2,31 @@ import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import { formatMachineCountdown } from '@/components/machines/durationWords';
 
 /**
  * Milliseconds left until `stopAt`, re-read once a second while the stop is under ten minutes away (every
- * half minute before that) and not at all once it has passed: only the leaf that shows the clock re-renders.
+ * half minute before that), only while presented and viewed, and not at all once it has passed.
+ * Only the leaf that shows the clock re-renders; revealing it refreshes the time before paint.
  */
 export function useGuardRemainingMs(stopAt: number): number {
+    const presented = useLayoutPresentationActive();
+    const hostViewed = useHostActivelyViewed();
+    const active = presented && hostViewed;
     const [now, setNow] = React.useState(() => Date.now());
     const remaining = stopAt - now;
     const fast = remaining < 10 * 60_000;
-    React.useEffect(() => {
-        if (remaining <= 0) return;
+    React.useLayoutEffect(() => {
+        if (!active) return;
+        const current = Date.now();
+        setNow(current);
+        if (stopAt <= current) return;
         const timer = setInterval(() => setNow(Date.now()), fast ? 1000 : 30_000);
         return () => clearInterval(timer);
-    }, [fast, remaining <= 0]);
+    }, [active, stopAt, fast, remaining <= 0]);
     return remaining;
 }
 
