@@ -215,10 +215,12 @@ describe('mounted managed configurator', () => {
       metadata: { ...createMachineFixture().metadata!, displayName: 'Other computer' } });
     const publicationScope = { sourceServerId: serverId, sourceAccountId: 'owner' };
     const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const previousMachines = storage.getState().machineListByServerId[scopeServerId] ?? [];
     storage.setState({ profileScope: { serverId, accountId: 'owner' } });
     storage.getState().applyMachines([controllerMachine, otherMachine], true, publicationScope);
     expect(storage.getState().machineRecordsByServerId[scopeServerId]?.host?.installationId).toBe(defaultController.installationId);
     storage.getState().markMachineListSettled(serverId);
+    try {
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
@@ -251,6 +253,9 @@ describe('mounted managed configurator', () => {
       expect(otherOption?.props.accessibilityLabel ?? otherOption?.props['aria-label']).toContain('Renamed other computer');
     });
     await screen.unmount();
+    } finally {
+      await act(async () => storage.getState().applyMachines(previousMachines, true, publicationScope));
+    }
   }));
   it.each(['agent37', 'freestyle', 'upstash-box', 'daytona', 'superserve', 'hetzner', 'railway', 'maritime'] as const)(
     'discloses stopped compute billing from real %s declarations without treating retained storage as compute', async (vendor) => {
@@ -824,6 +829,35 @@ describe('mounted managed configurator', () => {
     expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
       id: setupOnly.id, expectedRevision: 4, patch: { name: 'Browser bot', setup: edited, launch: null, controller: null },
     });
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    await screen.unmount();
+  });
+
+  it('starts a setup-only preset from an Add-to-Preset continuation and saves the item only on Save', async () => {
+    const initial = await mountAddRoute('setup-only-continuation');
+    const serverId = route.params.serverId!;
+    await initial.unmount();
+    const setupOnly = { id: 'research', homeId: 'srv_add_server', revision: 2, name: 'Research bot',
+      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } };
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
+    const onReturn = vi.fn();
+    const continuation = { item: softwareItem, draft: { name: setupOnly.name, setup: setupOnly.setup },
+      preset: { id: setupOnly.id, revision: setupOnly.revision }, onReturn };
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner=""
+      presetId={setupOnly.id} presetOnly presetContinuation={continuation} />);
+    const setup = () => screen.tree.findAll(node => node.props.testID === 'managed-config.setup'
+      && typeof node.props.onChange === 'function')[0]?.props.setup;
+    await waitForHomeGovernance(() => expect(setup()).toEqual({ ...setupOnly.setup, items: [softwareItem] }));
+    expect(presetWrites()).toEqual([]);
+    const saved = MachineSetupV1Schema.parse(setup());
+    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...setupOnly, setup: saved, revision: 3 } } });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
+    expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
+      id: setupOnly.id, expectedRevision: 2, patch: { setup: saved, launch: null, controller: null } });
+    await waitForHomeGovernance(() => expect(onReturn).toHaveBeenCalledTimes(1));
     expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
     await screen.unmount();
   });

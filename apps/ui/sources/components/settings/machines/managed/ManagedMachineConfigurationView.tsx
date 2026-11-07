@@ -432,7 +432,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             setPreset(row);
             if (!creationRow) {
                 setDraft(null);
-                setSetupOnlyDraft(current => current ?? { name: row.name, ...(row.setup ? { setup: row.setup } : {}) });
+                // An Add-to-Preset hand-off for this preset starts from the saved setup plus its item.
+                const handOff = continuation?.preset?.id === row.id;
+                const setup = handOff ? continuationSeed : row.setup;
+                setSetupOnlyDraft(current => current ?? { name: row.name, ...(setup ? { setup } : {}) });
+                if (handOff && !continuationEntered.current) {
+                    continuationEntered.current = true;
+                    if (continuationSetup?.ok === false) setError('machine_setup_conflict', 'save');
+                }
                 return;
             }
             if (row.delegatedAcquire?.kind === 'unavailable') setError(row.delegatedAcquire.code);
@@ -447,7 +454,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 preset: { ...current.preset, revision: row.revision, name: row.name } } : current);
         }
         if (presetQuery.state.error) setError(presetQuery.state.error);
-    }, [presetQuery.state.value, presetQuery.state.error, props.provisioner, teamDenied]);
+    }, [presetQuery.state.value, presetQuery.state.error, props.provisioner, teamDenied, continuation, continuationSeed, continuationSetup, setError]);
 
     React.useEffect(() => {
         const binding = catalog.binding;

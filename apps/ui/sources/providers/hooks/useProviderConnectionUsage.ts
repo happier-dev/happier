@@ -18,6 +18,7 @@ import { observeSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCat
 import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 /** Settings and source browsing must join the same exact declaration/key authority. */
 export function providerConnectionUsageAuthority(input: Readonly<{
@@ -65,7 +66,7 @@ export function providerConnectionUsageAuthority(input: Readonly<{
   // Saved Secret subscription both use only this read's declared credentials.
   const secretBindings = input.secretBindings ? { account: select(input.secretBindings.account),
     ...(input.machineId ? { byMachineId: { [input.machineId]: select(input.secretBindings.byMachineId?.[input.machineId]) } } : {}) } : undefined;
-  return { identity: JSON.stringify([input.declaration?.contributionKey, input.connection?.deployment, requests, select(bindings)]), secretBindings };
+  return { identity: stableJsonStringify([input.declaration?.contributionKey, input.connection?.deployment, requests, select(bindings)]), secretBindings };
 }
 
 type Invoke = Parameters<typeof acquireProviderConnectionUsageRefreshResource>[0]['invoke'];

@@ -198,6 +198,7 @@ export {
 export { HappierReplyQuote, type HappierReplyQuoteProps, type HappierReplyQuoteSource, type HappierReplyQuoteTextProps } from '../presentation/content/ReplyQuote.js';
 export { ReturnedAnswerQuote, type ReturnedAnswerOutcome, type ReturnedAnswerQuestion, type ReturnedAnswerQuoteProps } from './ReturnedAnswerQuote.js';
 export { ContentPreview, type ContentPreviewProps } from './ContentPreview.js';
+export { ChangedFilesReview, type ChangedFilesReviewProps, type ChangedFile, type ChangedFileDiff } from './ChangedFilesReview.js';
 export {
   HappierReturnedAnswerQuote,
   type HappierReturnedAnswerOutcome,
@@ -558,6 +559,12 @@ export {
   resolveHappierDiffViewerRequest,
   type HappierDiffViewerRequest,
 } from '../presentation/content/DiffViewer.js';
+export {
+  resolveHappierChangedFilesReviewRequest,
+  type HappierChangedFilesReviewRequest,
+  type HappierChangedFile,
+  type HappierChangedFileDiff,
+} from '../presentation/content/ChangedFilesReview.js';
 export {
   HAPPIER_BADGE_METRICS,
   HappierBadge,

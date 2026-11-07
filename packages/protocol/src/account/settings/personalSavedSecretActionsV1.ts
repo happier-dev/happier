@@ -1,4 +1,5 @@
 import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
+import { parseSavedSecretRefV1, SharedSavedSecretReferenceSelectionV1Schema } from './savedSecretReferenceV1.js';
 export { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
 import { z } from 'zod/mini';
 import { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference } from './savedSecretMutationOwner.js';
@@ -47,6 +48,7 @@ export const PersonalSavedSecretCreateInputObjectV1Schema = lazyZodSchema(() => 
 }));
 export const PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
   'secrets.list': lazyZodSchema(() => z.strictObject({ source: z.optional(SavedSecretVaultQueryV1Schema), secretId: z.optional(identity()) })),
+  'secrets.usedBy': lazyZodSchema(() => z.strictObject({ ref: SharedSavedSecretReferenceSelectionV1Schema.shape.ref })),
   'secrets.create': lazyZodSchema(() => PersonalSavedSecretCreateInputObjectV1Schema.check(
       z.superRefine((input, context) => {
         if (input.value === undefined && input.source === undefined) {
@@ -67,6 +69,7 @@ export const PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
     secrets: z.array(z.strictObject({ secretId: identity(), expectedUpdatedAt: revision() })).check(z.minLength(1)) })),
 };
 export const PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
+  'secrets.usedBy': lazyZodSchema(() => z.strictObject({ references: z.nullable(z.array(AccountSettingsSavedSecretReferenceSchema)) })),
   'secrets.list': lazyZodSchema(() => z.strictObject({ secrets: z.array(z.strictObject({ secretId: identity(), name: name(), kind: kind(),
     updatedAt: revision(), source: z.optional(SavedSecretExternalSourceV1Schema) })), sources: z.optional(z.array(z.strictObject({
       contribution: asProtocolZod(PluginContributionIdentityV1Schema), title: identity(),
@@ -87,7 +90,7 @@ export const PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
 export type PersonalSavedSecretMetadataV1 = Readonly<{ secretId: string; name: string; kind: z.infer<ReturnType<typeof kind>>; revision: number; source?: SavedSecretExternalSourceV1 }>;
 /** Hosts adapt the incumbent private-resource writer, never a Settings writer. */
 export type PersonalSavedSecretActionPortV1 = Readonly<{
-  list(): Promise<readonly PersonalSavedSecretMetadataV1[]>;
+  list(secretId?: string): Promise<readonly PersonalSavedSecretMetadataV1[]>;
   /** One selected secret; null means the host does not hold complete census coverage. */
   usedBy?(secretId: string): Promise<readonly AccountSettingsSavedSecretReference[] | null>;
   sources?(): readonly Readonly<{ contribution: PluginContributionIdentityV1; title: string; capabilities?: PluginSecretSourceContributionV1['capabilities'] }>[];
@@ -102,10 +105,16 @@ export function createPersonalSavedSecretActionExecuteV1(port: PersonalSavedSecr
   return async (actionId: PersonalSavedSecretActionIdV1, raw: unknown): Promise<unknown> => {
     try {
     switch (actionId) {
+      case 'secrets.usedBy': {
+        const input = PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
+        const reference = parseSavedSecretRefV1(input.ref);
+        const secretId = reference.kind === 'shared_resource' ? reference.resourceId : reference.personalId;
+        return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ references: await port.usedBy?.(secretId) ?? null });
+      }
       case 'secrets.list': {
         const input = PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
         if (input.source && !port.browse) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
-        return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ secrets: (await port.list())
+        return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ secrets: (await port.list(input.secretId))
           .filter(secret => input.secretId === undefined || secret.secretId === input.secretId)
           .map(({ revision, ...secret }) => ({ ...secret, updatedAt: revision })),
           ...(input.secretId ? { usedBy: await port.usedBy?.(input.secretId) ?? null } : {}),

@@ -51,6 +51,8 @@ export {
 } from './interaction/MotionFeedback.js';
 export { useHappierCopyFeedback } from './interaction/copyFeedback.js';
 export { HAPPIER_FILTER_CHIP_METRICS } from './collection/filterChipMetrics.js';
+export { HappierFilterChip, type HappierFilterChipProps } from './collection/FilterChip.js';
+export { HappierCollectionConditionTokens, type CollectionConditionToken, type HappierCollectionConditionTokenChipProps, type HappierCollectionConditionTokensHost, type HappierCollectionConditionTokensProps } from './collection/CollectionConditionTokens.js';
 export {
   HappierComposerChip,
   type HappierComposerChipProps,
@@ -604,6 +606,12 @@ export {
   resolveHappierDiffViewerRequest,
   type HappierDiffViewerRequest,
 } from './content/DiffViewer.js';
+export {
+  resolveHappierChangedFilesReviewRequest,
+  type HappierChangedFilesReviewRequest,
+  type HappierChangedFile,
+  type HappierChangedFileDiff,
+} from './content/ChangedFilesReview.js';
 export {
   HAPPIER_TONE_COLOR_TOKEN,
   type HappierTextVariant,

@@ -13,6 +13,7 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 const account = createProviderSettingsAccountHarness();
@@ -67,6 +68,13 @@ describe('Provider usage presentation demand', () => {
         await act(async () => { finish({ status: 'success', sources: [] }); });
         await waitForHomeGovernance(() => expect(picker.view?.result.status).toBe('success'));
         expect(screen.findByTestId('provider-connection-usage')).not.toBeNull();
+        // The optional Machine projection parses the same bundled declaration
+        // through its wire schema, which can reorder nested object properties.
+        displayedDeclaration = { ...declaration!, definition: ProviderContributionV1Schema.parse(declaration!.definition) };
+        expect(displayedDeclaration.definition).toEqual(declaration!.definition);
+        await screen.update(page(true, true));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(requests()).toHaveLength(1);
         const beforeRename = picker.view;
         connectionRevision = 2;
         displayedDeclaration = { ...declaration!, definition: { ...declaration!.definition, name: 'Renamed Gateway',

@@ -9,6 +9,7 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Sc
 describe('personal Saved Secret Action boundary', () => {
   it('describes one secret with its value-free census and leaves ordinary lists census-free', async () => {
     const requested: string[] = [];
+    const selected: (string | undefined)[] = [];
     const references = [{ owner: 'provider' as const, path: 'diagnostic-only',
       referrer: { kind: 'provider' as const, id: 'pc_northwind', displayName: 'Northwind models' } }];
     const providerConnections = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
@@ -17,8 +18,11 @@ describe('personal Saved Secret Action boundary', () => {
       secretBindingsByConnectionId: { pc_northwind: { account: { apiKey: formatSharedSavedSecretRefV1('one') }, byMachineId: {} } },
     });
     const execute = createPersonalSavedSecretActionExecuteV1({
-      list: async () => [{ secretId: 'one', name: 'Key', kind: 'apiKey', revision: 1 },
-        { secretId: 'other', name: 'Other', kind: 'token', revision: 2 }],
+      list: async (secretId?: string) => {
+        selected.push(secretId);
+        return [{ secretId: 'one', name: 'Key', kind: 'apiKey', revision: 1 },
+          { secretId: 'other', name: 'Other', kind: 'token', revision: 2 }];
+      },
       usedBy: async secretId => {
         requested.push(secretId);
         return listAccountSettingsSavedSecretReferences({}, formatSharedSavedSecretRefV1(secretId), { profileRecords: [], providerConnections });
@@ -33,6 +37,7 @@ describe('personal Saved Secret Action boundary', () => {
         path: 'providerConnectionsCatalog.secretBindingsByConnectionId.pc_northwind.account.apiKey' }],
     });
     expect(requested).toEqual(['one']);
+    expect(selected).toEqual([undefined, 'one']);
   });
   it('admits one metadata browse, bulk link, and export operation while keeping Store-in private', async () => {
     const target = { contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', vaultId: 'vault' };

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { CurrentUiContextCommandInvocation, CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierFilterChip, HappierPageRowFieldLayoutContext, resolveHappierFocusRingVisible, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
@@ -79,19 +79,19 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
     } : null, [filter.id, filter.options, testID]);
     const { onChange } = filter;
     const multiple = filter.selectedIds !== undefined;
-    const handleSelect = React.useCallback((id: string, _option: SelectionListOption, context?: ActionExecutorContext) => {
+    const handleSelect = React.useCallback((id: string, _option: SelectionListOption, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => {
         // Several choices stay open: each row toggles until the viewer is done.
         if (!multiple) setOpen(false);
-        if (context) onChange?.(id, context);
+        if (context || invocation) onChange?.(id, context, invocation);
         else onChange?.(id);
     }, [multiple, onChange, setOpen]);
 
     const localCommands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => {
         if (!commandScope) return [];
         if (clearable) return [{ key: 'clear', title: filter.clearAccessibilityLabel ?? filter.label,
-            description: `${commandScope}.clear`, invoke: () => filter.onClear?.() }];
+            description: `${commandScope}.clear`, invoke: (_input, context, invocation) => filter.onClear?.(context, invocation) }];
         if (toggleable) return [{ key: 'toggle', title: filter.label,
-            description: `${commandScope}.toggle`, invoke: () => filter.onToggle?.() }];
+            description: `${commandScope}.toggle`, invoke: (_input, context, invocation) => filter.onToggle?.(context, invocation) }];
         if (!canOpen) return [];
         return [{ key: open ? 'close' : 'open', title: filter.label,
             description: `${commandScope}.${open ? 'close' : 'open'}`, invoke: () => setOpen(!open) }];

@@ -1,7 +1,7 @@
 import { createPersonalSavedSecretActionExecuteV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { readSavedSecretCatalogMetadataInContext, readSavedSecretContentsInContext } from '@/sync/api/account/apiSavedSecretCatalog';
+import { readSavedSecretCatalogInContext, readSavedSecretCatalogMetadataInContext, readSavedSecretContentsInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { createSavedSecretResource, updateSavedSecretResource, deleteSavedSecretResource,
     type SavedSecretAdmittedMutationExecute } from './savedSecretResourceOperations';
@@ -34,18 +34,21 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
             }
             return { kind: 'succeeded', value: mutation.parse(output) };
         };
-        const read = async () => {
-            const catalog = await readSavedSecretCatalogMetadataInContext(account, context.signal);
+        const read = async (secretId?: string) => {
+            const catalog = secretId === undefined
+                ? await readSavedSecretCatalogMetadataInContext(account, context.signal)
+                : await readSavedSecretCatalogInContext(account, context.signal, { resourceId: secretId });
             account.assertCurrent();
             if (!catalog.ok) refusal(catalog.failure.code ?? 'unavailable');
-            return catalog.resources.filter((entry): entry is Extract<typeof entry, { ref: string }> =>
+            return catalog.resources.map(resource => 'entry' in resource ? resource.entry : resource)
+                .filter((entry): entry is Extract<typeof entry, { ref: string }> =>
                 'ref' in entry && entry.relationship === 'owner');
         };
         const execute = createPersonalSavedSecretActionExecuteV1({
             usedBy: async secretId => readSavedSecretUsedBy(scope, formatSharedSavedSecretRefV1(secretId)),
-            list: async () => {
+            list: async secretId => {
                 const secrets = [];
-                for (const entry of await read()) {
+                for (const entry of await read(secretId)) {
                     const ref = parseSavedSecretRefV1(entry.ref);
                     if (ref.kind !== 'shared_resource' || !entry.name || !entry.kind || entry.revision === null) continue;
                     const opened = entry.storage?.kind === 'external'
@@ -74,7 +77,7 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                 return { secretId: ref.resourceId, secretRef: result.resourceRef };
             },
             update: async args => {
-                const resource = (await read()).find(resource => {
+                const resource = (await read(args.secretId)).find(resource => {
                     const ref = parseSavedSecretRefV1(resource.ref);
                     return ref.kind === 'shared_resource' && ref.resourceId === args.secretId;
                 });
