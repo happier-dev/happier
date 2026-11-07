@@ -22,6 +22,17 @@ vi.mock('node:fs/promises', async importOriginal => {
 let disposeNative: (() => Promise<void>) | undefined;
 let scratch: string;
 describe('resident streamed disk index', () => {
+    it.skipIf(process.platform === 'win32')('excludes boot EFI partitions from volume and folder scan admission', async () => {
+        const index = createStorageScanIndex({ activeServerDir: join(scratch, 'system-partitions') });
+        const runner = createStorageScanRunner({ index, readVolumes: () => [{ id: 'root', mountPath: '/', usedBytes: 1 },
+            { id: 'efi', mountPath: '/boot/efi', usedBytes: 1 }], readEnabled: () => true,
+            fullDiskAccess: () => ({ state: 'not_applicable', binary: { name: 'fixture', path: '' } }) });
+        try {
+            await runner.initialize();
+            await expect(runner.start({ target: { volumeId: 'efi' } })).rejects.toMatchObject({ code: 'storage_system_partition' });
+            await expect(runner.start({ target: { folderPath: '/boot/efi/EFI' } })).rejects.toMatchObject({ code: 'storage_system_partition' });
+        } finally { await runner.dispose(); }
+    });
     beforeAll(async () => {
         scratch = await realpath(await mkdtemp(join(tmpdir(), 'happier-scan-test-')));
         disposeNative = await createProcessCustodyFixture();
@@ -37,27 +48,33 @@ describe('resident streamed disk index', () => {
             index.ingest('progress', { v: 1, type: 'progress', sizedBytes: 0, items: 1, currentPath: root, stuckSinceMs: 1000 });
             expect(index.state(state.scanId)?.progress.stuckSinceMs).toBe(1000);
             index.ingest('progress', { v: 1, type: 'progress', sizedBytes: 4096, items: 2, currentPath: join(root, 'active') });
-            expect(index.state(state.scanId)?.progress).toEqual({ sizedBytes: 4096, usedBytes: 0, items: 2, currentPath: join(root, 'active') });
+            expect(index.state(state.scanId)?.progress).toEqual({ sizedBytes: 4096, items: 2, currentPath: join(root, 'active') });
             index.ingest('progress', { v: 1, type: 'progress', sizedBytes: 8192, items: 3 });
-            expect(index.state(state.scanId)?.progress).toEqual({ sizedBytes: 8192, usedBytes: 0, items: 3 });
+            expect(index.state(state.scanId)?.progress).toEqual({ sizedBytes: 8192, items: 3 });
         } finally { index.close(); }
     });
     it('keeps folder estimates unknown and whole-volume progress relative to volume usage', async () => {
         const volume = join(scratch, 'progress-volume'); const folder = join(volume, 'folder');
         await mkdir(folder, { recursive: true }); await writeFile(join(folder, 'data'), Buffer.alloc(8192));
         const index = createStorageScanIndex({ activeServerDir: join(scratch, 'progress-volume-state') });
-        const runner = createStorageScanRunner({ index, readVolumes: () => [{ id: 'progress-volume', mountPath: volume, usedBytes: 2_000_000 }],
+        let usedBytes = 2_000_000;
+        const runner = createStorageScanRunner({ index, readVolumes: () => [{ id: 'progress-volume', mountPath: volume, usedBytes }],
             readEnabled: () => true, fullDiskAccess: () => ({ state: 'not_applicable', binary: { name: 'fixture', path: process.execPath } }) });
         try {
             await runner.initialize();
             const folderScan = await runner.start({ target: { folderPath: folder } });
-            expect(folderScan.progress.usedBytes).toBe(0);
+            expect(folderScan.progress).not.toHaveProperty('usedBytes');
             await runner.wait(folderScan.scanId);
-            expect(MachineStorageScanGetResultV1Schema.parse(await runner.get()).state?.progress.usedBytes).toBe(0);
+            expect(MachineStorageScanGetResultV1Schema.parse(await runner.get()).state?.progress).not.toHaveProperty('usedBytes');
             const volumeScan = await runner.start({ target: { volumeId: 'progress-volume' } });
             expect(volumeScan.progress.usedBytes).toBe(2_000_000);
             await runner.wait(volumeScan.scanId);
             expect(MachineStorageScanGetResultV1Schema.parse(await runner.get()).state?.progress.usedBytes).toBe(2_000_000);
+            usedBytes = 0;
+            const emptyVolumeScan = await runner.start({ target: { volumeId: 'progress-volume' } });
+            expect(emptyVolumeScan.progress.usedBytes).toBe(0);
+            await runner.wait(emptyVolumeScan.scanId);
+            expect(MachineStorageScanGetResultV1Schema.parse(await runner.get()).state?.progress.usedBytes).toBe(0);
         } finally { await runner.dispose(); }
     });
     it('adds each resumed native invocation to retained target progress without counting old work twice', async () => {
@@ -178,6 +195,7 @@ describe('resident streamed disk index', () => {
         try {
             await runner.initialize(); const first = await runner.start({ target: { folderPath: root } }); await runner.wait(first.scanId); await cancelling;
             expect(requested).toBe(true);
+            console.log(JSON.stringify({ qa: 'scan-cancel-phases', cancelToSettledMs: finishedAt - requestedAt, indexFinishMs: finishMs }));
             const page = MachineStorageScanGetResultV1Schema.parse(await runner.get({ scanId: first.scanId, view: { tab: 'folders', depth: 1 } }));
             const retained = index.readNode(finished)!;
             expect(page.state?.status).toBe('cancelled');
@@ -327,6 +345,7 @@ describe('resident streamed disk index', () => {
         try {
             const narrowRows = 1000; const wideRows = narrowRows * 10;
             const narrowHeapBytes = sample(narrowRows); const wideHeapBytes = sample(wideRows);
+            console.log(JSON.stringify({ qa: 'queued-skip-frontier-heap', narrowRows, wideRows, narrowHeapBytes, wideHeapBytes }));
             // A point membership read must not allocate even one extra copy of the ten-times-wider path corpus.
             expect(wideHeapBytes - narrowHeapBytes).toBeLessThan((wideRows - narrowRows) * 512);
             runner.skip(state.scanId, join(root, 'queued-1') + '-'.repeat(512));
@@ -449,6 +468,72 @@ describe('resident streamed disk index', () => {
         expect((await runner.get({ view: { tab: 'old', depth: 1, olderThanDays: 1, pageSize: 10 } })).nodes.map(node => node.name)).toEqual(['tiny-old']);
         expect((await readdir(join(scratch, 'state', 'storage', 'scans'))).filter(name => name.endsWith('.sqlite'))).toHaveLength(1);
         await runner.dispose();
+    });
+    it.each([{ childScans: 1, fullTarget: 'folder', existingChild: false }, { childScans: 2, fullTarget: 'folder', existingChild: false },
+        { childScans: 3, fullTarget: 'volume', existingChild: false }, { childScans: 2, fullTarget: 'folder', existingChild: true }])(
+        'compares a repeated $fullTarget target with its own complete scan after $childScans child scans (existing: $existingChild)', async ({ childScans, fullTarget, existingChild }) => {
+        const volume = join(scratch, `same-target-history-${fullTarget}-${childScans}-${existingChild}`); await mkdir(volume);
+        const existing = join(volume, 'existing'); await writeFile(existing, Buffer.alloc(8192));
+        const child = join(volume, 'new-child');
+        if (existingChild) { await mkdir(child); await writeFile(join(child, 'new.txt'), Buffer.alloc(4096)); }
+        const activeServerDir = join(scratch, `same-target-history-${fullTarget}-${childScans}-${existingChild}-state`); let time = 10000;
+        let index = createStorageScanIndex({ activeServerDir, nowMs: () => time });
+        const createRunner = () => createStorageScanRunner({ index, readVolumes: () => [{ id: 'same-target', mountPath: volume, usedBytes: 100_000 }],
+            readEnabled: () => true, fullDiskAccess: () => ({ state: 'not_applicable' as const, binary: { name: 'fixture', path: process.execPath } }) });
+        let runner = createRunner();
+        const scan = async (folderPath: string) => { const state = await runner.start({ target: { folderPath } }); return runner.wait(state.scanId); };
+        const scanFullTarget = async () => {
+            const state = await runner.start({ target: fullTarget === 'volume' ? { volumeId: 'same-target' } : { folderPath: volume } });
+            return runner.wait(state.scanId);
+        };
+        try {
+            await runner.initialize(); await scanFullTarget();
+            const firstBytes = index.readNode(volume)!.node.size.allocatedBytes;
+            if (existingChild) await writeFile(join(child, 'new.txt'), Buffer.alloc(12288));
+            else { await mkdir(child); await writeFile(join(child, 'new.txt'), Buffer.alloc(4096)); }
+            time = 20000; await scan(child);
+            const firstChild = await runner.get({ view: { tab: 'insights', depth: 1, pageSize: 10 } });
+            expect(firstChild.previousScanAt).toBeUndefined();
+            let appearedBytes = existingChild ? 8192 : index.readNode(child)!.node.size.allocatedBytes;
+            if (!existingChild) expect(appearedBytes).toBe((await measureNativeDisk({ paths: [child] })).totalAllocatedBytes);
+            if (process.platform === 'linux') expect(appearedBytes).toBe(8192);
+            for (let repeat = 1; repeat < childScans; repeat++) {
+                time = 25000;
+                if (repeat === 1) {
+                    await scan(child);
+                    const childComparison = await runner.get({ view: { tab: 'insights', depth: 1, pageSize: 10 } });
+                    expect(childComparison.previousScanAt).toBe(20000);
+                    expect(childComparison.insights).toMatchObject({ growthBytes: 0, reclaimedBytes: 0, notComparableFolders: 0 });
+                } else {
+                    const sibling = join(volume, 'second-child'); await mkdir(sibling); await writeFile(join(sibling, 'new.txt'), Buffer.alloc(4096));
+                    await scan(sibling); appearedBytes += index.readNode(sibling)!.node.size.allocatedBytes;
+                }
+            }
+            if (childScans > 1) {
+                await runner.dispose(); index = createStorageScanIndex({ activeServerDir, nowMs: () => time }); runner = createRunner();
+                await runner.initialize();
+                // A cancelled child replacement must not change the full
+                // target's baseline, even across reopening the retained index.
+                time = 26000;
+                await index.begin({ volumeId: 'same-target', root: child, target: { folderPath: child },
+                    fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: process.execPath } } });
+                index.finish('same-target', 'interrupted');
+            }
+            time = 30000; await scanFullTarget();
+            const comparison = await runner.get({ view: { tab: 'insights', depth: 1, pageSize: 10 } });
+            expect(comparison.previousScanAt).toBe(10000);
+            expect(comparison.root?.size.allocatedBytes).toBe(firstBytes + appearedBytes);
+            expect(comparison.insights).toMatchObject({ growthBytes: appearedBytes, reclaimedBytes: 0, notComparableFolders: 0 });
+            if (existingChild) expect(comparison.insights?.changes.grew.map(node => node.nodeId)).toContain(child);
+            else expect(comparison.insights?.changes.appeared.map(node => node.nodeId)).toContain(child);
+            // A later consecutive scan rotates to the new full-target baseline.
+            await writeFile(existing, Buffer.alloc(16384)); time = 40000; await scanFullTarget();
+            const neighbor = await runner.get({ view: { tab: 'insights', depth: 1, pageSize: 10 } });
+            expect(neighbor.previousScanAt).toBe(30000);
+            expect(neighbor.insights).toMatchObject({ growthBytes: 8192, reclaimedBytes: 0, notComparableFolders: 0 });
+            expect(neighbor.insights?.changes.appeared).toEqual([]);
+            expect((await runner.get({ view: { tab: 'large', depth: 1 } })).nodes.find(node => node.nodeId === existing)?.deltaSincePrevious).toBe(8192);
+        } finally { await runner.dispose(); }
     });
     it('keeps the last complete baseline through interruption, reports appeared/disappeared rows, and purges on opt-out', async () => {
         const volume = join(scratch, 'replacement'); const gone = join(volume, 'gone'); const kept = join(volume, 'kept');
@@ -584,6 +669,7 @@ describe('resident streamed disk index', () => {
                     expect(folder.nodes.find(node => node.name === 'file-0')?.deltaSincePrevious).toBe(28672);
                     expect(large.nodes[0]).toMatchObject({ name: 'file-0', deltaSincePrevious: 28672 });
                 }
+                console.log(JSON.stringify({ qa: 'comparison-page-work', ordinaryFiles: perFolder * 2, reads: 10, comparisonRows: comparisons, elapsedPairMs: elapsed }));
                 expect(comparisons.every(rows => rows <= 6)).toBe(true);
                 expect((await index.stats('comparison')).fileRows).toBe(perFolder * 2);
             } finally { boundary.mockRestore(); database.close(); }
@@ -621,6 +707,7 @@ describe('resident streamed disk index', () => {
         expect(afterCost.stats.fileRows).toBe(beforeCost.stats.fileRows);
         expect(afterCost.stats.directoryRows).toBeLessThan(beforeCost.stats.directoryRows);
         expect(afterCost.records).toBeLessThan(beforeCost.records);
+        console.log(JSON.stringify({ qa: 'atomic-summary-first-scan-cost', ordinaryFiles: leaves.length + 2, before: beforeCost, after: afterCost }));
         const activeServerDir = join(scratch, 'atomic-index-state'); const index = createStorageScanIndex({ activeServerDir });
         const runner = createStorageScanRunner({ index, readVolumes: () => [{ id: 'atomic', mountPath: volume, usedBytes: 0 }], readEnabled: () => true,
             readScanHints: root => readStorageScanHints({ root, repositoryRoots: [project], facts: { now: Date.now(), suggestUnusedAfterDays: 30, protection: { homeDir: volume } } }),
@@ -870,6 +957,7 @@ describe('resident streamed disk index', () => {
         try {
             await runner.initialize(); const state = await runner.start({ target: { volumeId: 'compact' } }); await runner.wait(state.scanId);
             const stats = await index.stats('compact');
+            console.log(JSON.stringify({ qa: 'compact-wide-deep-index', fileCount, chartBudget: STORAGE_CHART_MAX_DRAWABLE_NODES, ...stats }));
             // Every ordinary file remains queryable with STO-19's no-floor Large-files contract.
             expect(stats.fileRows).toBe(fileCount);
             const fileAllocation = (await measureNativeDisk({ paths: [join(folders[0], 'tiny-0')] })).totalAllocatedBytes;
@@ -901,6 +989,7 @@ describe('resident streamed disk index', () => {
             const secondStats = await index.stats('compact');
             const third = await runner.start({ target: { volumeId: 'compact' } }); await runner.wait(third.scanId);
             const thirdStats = await index.stats('compact');
+            console.log(JSON.stringify({ qa: 'compact-repeat-index', second: secondStats, third: thirdStats }));
             expect(thirdStats.entryRows).toBe(secondStats.entryRows);
             // Retiring the prior-prior baseline must return free pages rather than grow the current file each scan.
             expect(thirdStats.databaseBytes).toBeLessThanOrEqual(secondStats.databaseBytes + 32 * 4096);
@@ -928,6 +1017,8 @@ describe('resident streamed disk index', () => {
             readFiles += page.nodes.length; cursor = page.nextCursor;
         } while (cursor);
         expect(readFiles).toBe(fixtureFiles); expect(index.state()?.status).toBe('complete');
+        console.log(JSON.stringify({ qa: 'metadata-only-medium-zero-byte-files', fixtureFiles, chartBudget: STORAGE_CHART_MAX_DRAWABLE_NODES,
+            elapsedMs, indexedFilesPerSecond: fixtureFiles / (elapsedMs / 1000), baselineWriterRssBytes, peakWriterRssBytes, ...stats }));
         await runner.dispose();
     }, 0);
     it.skipIf(process.env.HAPPIER_SCAN_QA_PROFILE !== '1')('profiles the native scan and index owner on an owned large tree', async () => {
@@ -970,6 +1061,8 @@ describe('resident streamed disk index', () => {
             const stats = await index.stats('profile');
             expect(stats.fileRows).toBe(folders * perFolder); expect(index.readNode(root)?.complete).toBe(true);
             expect(index.readNode(root)?.node.size.allocatedBytes).toBe(nativeSummary.allocatedBytes);
+            console.log(JSON.stringify({ qa: 'owned-large-native-index-profile', folders, perFolder, nativeRecords, nativeMs, elapsedMs,
+                rowsPerSecond: stats.nodeRows * 1000 / elapsedMs, cpuUsed, costs, finishMs, batches, peakWriterRssBytes, ...stats, hotspots, profilePath }));
         } finally { profiler.disconnect(); await runner.dispose(); }
     }, 0);
     it.skipIf(process.env.HAPPIER_SCAN_QA_HOME !== '1')('measures actual home-tree index cost without opening file contents', async () => {
@@ -992,6 +1085,12 @@ describe('resident streamed disk index', () => {
         await runner.initialize(); const started = performance.now(); const state = await runner.start({ target: { folderPath: homedir() } }); scanId = state.scanId;
         sample(); await runner.wait(state.scanId); await sampling;
         const elapsedMs = performance.now() - started; const stats = await index.stats('home-qa');
+        console.log(JSON.stringify({ qa: 'metadata-only-home-tree', platform: process.platform, chartBudget: STORAGE_CHART_MAX_DRAWABLE_NODES,
+            rootCoverageComplete: index.readNode(homedir())?.complete ?? false, unreadableCounts: index.state()?.unreadable.counts,
+            unreadableExamples: index.state()?.unreadable.examples,
+            elapsedMs, rowsPerSecond: stats.nodeRows * 1000 / elapsedMs,
+            baselineIndexWriterRssBytes, peakIndexWriterRssBytes: peakRss, firstObservedNativeRssBytes,
+            peakNativeRssBytes: peakNativeRss, nativeRssSamples: nativeSamples, ...stats, status: index.state()?.status }));
         expect(index.state()?.status).toBe('complete'); expect(stats.nodeRows).toBeGreaterThan(0); await runner.dispose();
     }, 0);
 });

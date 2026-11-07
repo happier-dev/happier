@@ -1,13 +1,15 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
 import { createActivityLog } from '@/daemon/guard/activityLog';
 import { createTrashStore } from './trashStore';
 import { measureNativeDisk } from '../measure/nativeDiskMeasure';
 import { resolveTrashOsUserId } from './trashStore';
-import { writeProtectedLocalStateFileAtomic } from '@/utils/fs/protectedLocalState';
+import { ensureProtectedLocalStateDirectory, writeProtectedLocalStateFileAtomic } from '@/utils/fs/protectedLocalState';
 import { createStorageFilesystemAdapter } from './filesystemAdapter';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { sessionFolders } from '../categories/sessionFolders';
@@ -40,6 +42,84 @@ describe('Trash with the real filesystem and native measurement', () => {
     afterAll(async () => {
         await disposeNative?.();
         if (scratch) await rm(scratch, { recursive: true, force: true });
+    });
+    it.skipIf(process.platform === 'win32')('excludes boot and EFI roots and refuses their descendants instead of falling back to the root volume', async () => {
+        const f = await fixture('system-partitions');
+        const store = createTrashStore({ ...f.deps, readVolumes: () => [{ id: 'root', mount: '/' },
+            { id: 'boot', mount: '/boot' }, { id: 'efi', mount: '/boot/efi' }, { id: 'efi2', mount: '/efi' }] });
+        expect((await store.roots()).map(root => root.volumeId)).toEqual(['root']);
+        await expect(store.prepare({ path: '/boot/efi/EFI', batchId: 'system', title: 'EFI', size: emptySize,
+            movedBy: { accountId: 'alice', kind: 'person' } })).rejects.toMatchObject({ code: 'storage_system_partition' });
+    });
+    it.each(['empty', 'restore'] as const)('%s receipts do not read Activity history and replay once across a crash window', async operation => {
+        const f = await fixture(`receipt-cost-${operation}`);
+        const prepared = [await f.prepare()];
+        for (let index = 1; index < 3; index++) {
+            const source = join(f.base, `cache-${index}`);
+            await mkdir(source); await writeFile(join(source, 'bytes'), Buffer.alloc(8192, index));
+            prepared.push(await f.store.prepare({ path: source, batchId: 'batch', title: 'Cache', size: emptySize,
+                movedBy: { accountId: 'alice', kind: 'person' } }));
+        }
+        for (const item of prepared) await item.commit();
+        const replayed = prepared[0]!;
+        const manifestPath = join(replayed.payloadPath, '..', 'entry.json');
+        const manifest: Record<string, unknown> = JSON.parse(await readFile(manifestPath, 'utf8'));
+        let historyReads = 0;
+        const realOpen = filesystem.open;
+        // Observe the OS boundary, retaining the real protected journal, Trash and Activity logic.
+        const observed = vi.spyOn(filesystem, 'open').mockImplementation(async (...args) => {
+            const [path, flags] = args;
+            if (String(path).startsWith(join(f.home, 'machine-guard', 'activity-'))
+                && (flags === 'r' || typeof flags === 'number' && (flags & (constants.O_WRONLY | constants.O_RDWR)) === 0)) historyReads++;
+            return realOpen(...args);
+        });
+        try {
+            const result = operation === 'empty'
+                ? await f.store.empty({}, { actorAccountId: 'alice', custodianAccountId: 'owner' })
+                : await f.store.restore({}, { actorAccountId: 'alice' });
+            expect(result.outcomes.map(outcome => outcome.status)).toEqual(Array(3).fill(operation === 'empty' ? 'deleted' : 'restored'));
+            expect(historyReads).toBe(0);
+            // Recreate the durable pre-flag/pre-cleanup state: the receipt and filesystem effect committed.
+            manifest.phase = operation === 'empty' ? 'emptying' : 'restoring';
+            if (operation === 'empty') manifest.emptyAttribution = f.deps.attributionFor('alice');
+            else { manifest.restorePath = f.source; manifest.restoreAttribution = f.deps.attributionFor('alice'); }
+            await ensureProtectedLocalStateDirectory(join(replayed.payloadPath, '..'), { authority: 'owned' });
+            await writeProtectedLocalStateFileAtomic(manifestPath, JSON.stringify(manifest));
+            await createTrashStore(f.deps).reconcile();
+            expect(historyReads).toBe(0);
+            const restarted = await createActivityLog({ activeServerDir: f.home, resourceSummary: { reportAutomaticAction() {} } });
+            const rows = (await restarted.list({ range: 'today' })).entries;
+            expect(rows.filter(row => row.kind === 'trash_moved')).toHaveLength(3);
+            if (operation === 'empty') expect(rows.filter(row => row.kind === 'trash_emptied')).toHaveLength(3);
+            else expect(rows.every(row => row.undoneAt !== undefined && row.wayBack === undefined)).toBe(true);
+            expect(await f.store.list()).toEqual([]);
+        } finally { observed.mockRestore(); }
+    });
+    it('publishes only real Trash changes across empty, refused and successful operations', async () => {
+        const f = await fixture('publication');
+        let publications = 0;
+        const off = f.store.subscribe(() => { publications++; });
+        try {
+            for (let index = 0; index < 3; index++) {
+                await f.store.restore({}, { actorAccountId: 'alice' });
+                await f.store.empty({}, { actorAccountId: 'alice', custodianAccountId: 'owner' });
+            }
+            expect(publications).toBe(0);
+            const prepared = await f.prepare(); const entry = await prepared.commit();
+            expect(publications).toBe(1);
+            expect((await f.store.list()).map(row => row.entryId)).toEqual([entry.entryId]);
+            publications = 0;
+            await f.store.restore({}, { actorAccountId: 'bob', custodianAccountId: 'owner' });
+            await f.store.empty({}, { actorAccountId: 'bob', custodianAccountId: 'owner' });
+            await f.store.restore({ entryIds: ['missing'] }, { actorAccountId: 'alice' });
+            await f.store.empty({ entryIds: ['missing'] }, { actorAccountId: 'alice', custodianAccountId: 'owner' });
+            expect(publications).toBe(0);
+            expect(await f.store.restore({ entryIds: [entry.entryId] }, { actorAccountId: 'alice' }))
+                .toMatchObject({ outcomes: [{ status: 'restored' }] });
+            expect(publications).toBe(1);
+            expect(await f.store.list()).toEqual([]);
+            expect(await readFile(join(f.source, 'bytes'))).toEqual(Buffer.alloc(8192, 9));
+        } finally { off(); }
     });
     it('moves an item without freeing it and emits its actual measured bytes', async () => {
         const home = join(scratch, 'first', 'home');
@@ -187,13 +267,36 @@ describe('Trash with the real filesystem and native measurement', () => {
     it('never overwrites, permits the one beside destination, and refuses a missing parent', async () => {
         const f = await fixture('beside'); const prepared = await f.prepare(); await prepared.commit();
         await mkdir(f.source); await writeFile(join(f.source, 'new'), 'keep');
+        let publications = 0;
+        const off = f.store.subscribe(() => { publications++; });
         expect(await f.store.restore({}, { actorAccountId: 'alice' })).toMatchObject({ outcomes: [{ status: 'refused' }] });
+        expect(publications).toBe(0);
         expect(await f.store.restore({}, { actorAccountId: 'alice', beside: true })).toMatchObject({ outcomes: [{ status: 'restored', path: `${f.source} (restored)` }] });
+        expect(publications).toBe(1); off();
         expect(await readFile(join(f.source, 'new'), 'utf8')).toBe('keep');
         const second = await fixture('missing-parent'); const moved = await second.prepare(); await moved.commit();
         await rename(second.base, `${second.base}-gone`);
         const restarted = createTrashStore({ ...second.deps, happyHomeDir: join(`${second.base}-gone`, 'home') });
         expect(await restarted.restore({}, { actorAccountId: 'alice' })).toMatchObject({ outcomes: [{ status: 'refused' }] });
+    });
+    it.each(['restore', 'empty'] as const)('publishes a real %s effect even when later cleanup fails', async operation => {
+        const f = await fixture(`publication-partial-${operation}`);
+        const prepared = await f.prepare(); await prepared.commit();
+        // An unexpected retained file makes rmdir fail after the payload effect
+        // and manifest unlink. This exercises a real partial filesystem outcome.
+        await writeFile(join(prepared.payloadPath, '..', 'retained'), 'retain');
+        let publications = 0;
+        const off = f.store.subscribe(() => { publications++; });
+        try {
+            const result = operation === 'restore'
+                ? await f.store.restore({}, { actorAccountId: 'alice' })
+                : await f.store.empty({}, { actorAccountId: 'alice', custodianAccountId: 'owner' });
+            expect(result.outcomes).toMatchObject([{ status: 'failed', reason: { code: 'operation_failed' } }]);
+            expect(publications).toBe(1);
+            await expect(lstat(prepared.payloadPath)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(await f.store.list()).toEqual([]);
+            if (operation === 'restore') expect(await readFile(join(f.source, 'bytes'))).toEqual(Buffer.alloc(8192, 9));
+        } finally { off(); }
     });
     it('does not follow a symlink leaf and can empty read-only nested directories', async () => {
         const f = await fixture('permissions'); const outside = join(f.home, 'retained'); await writeFile(outside, 'retained');
@@ -266,13 +369,17 @@ describe('Trash with the real filesystem and native measurement', () => {
     });
     it('exposes an Activity write failure and recovers its receipt from the protected manifest', async () => {
         const f = await fixture('receipt-failure'); const prepared = await f.prepare();
+        let publications = 0;
+        const off = f.store.subscribe(() => { publications++; });
         const log = join(f.home, 'machine-guard'); const retained = `${log}-retained`;
         const wrong = join(f.base, 'wrong-log'); await mkdir(wrong);
         await rename(log, retained); await symlink(wrong, log, process.platform === 'win32' ? 'junction' : 'dir');
         await expect(prepared.commit()).rejects.toThrow();
+        expect(publications).toBe(1);
         expect(await readFile(join(prepared.payloadPath, 'bytes'))).toEqual(Buffer.alloc(8192, 9));
         await unlink(log); await rename(retained, log);
         await f.store.reconcile(); await f.store.reconcile();
+        expect(publications).toBe(2); off();
         expect((await f.activityLog.list({ range: 'today' })).entries.filter(row => row.kind === 'trash_moved')).toHaveLength(1);
     });
     it('does not reconcile away a preparation still owned by the current store', async () => {

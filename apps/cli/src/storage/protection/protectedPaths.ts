@@ -1,18 +1,22 @@
 import type { StorageReasonV1 } from '@happier-dev/protocol/storage/storageV1';
 import { lstat, stat } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
+import { homedir } from 'node:os';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { physicalStoragePathWithoutFollowingLeaf as physicalPathWithoutFollowingLeaf,
   physicalStoragePathsWithoutFollowingLeaf,
   realStoragePathWithAbsentSuffix as realpathWithAbsentSuffix, storageAbsolutePath, storagePathToFs,
-  storagePathDirname, storagePathLeaf } from '../storagePath';
+  storagePathDirname, storagePathLeaf, storagePathContains } from '../storagePath';
 import { createStoragePathComparator, type StoragePathComparator } from '../storagePath';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
+import { readOwnServerDeploymentStorageRootForPathForHost, type OwnServerDeploymentStoragePaths } from '@/deployments/targets/ownServer/paths';
 
 export type StorageProtectionFacts = Readonly<{
   homeDir: string;
   platform?: NodeJS.Platform;
   dataHomes?: readonly string[];
+  /** Host placement from the deployment owner; not caller-supplied cleanup authority. */
+  deploymentPaths?: OwnServerDeploymentStoragePaths;
   installPaths?: readonly string[];
   volumeRoots?: readonly string[];
   systemPaths?: readonly string[];
@@ -41,6 +45,17 @@ export type StoragePathClassification = Readonly<{ tier: null; reason?: never; l
 }>;
 type Rule = Readonly<{ path: string; tier: 'forbidden' | 'keep' | 'caution'; code: StorageReasonV1['code']; tree: boolean; except?: string; cloudSynced?: boolean; sessionId?: string }>;
 
+/** Scan and Trash share the protection owner's system-tree decision before touching a mount. */
+export function storageSystemPartitionReason(path: string): 'system_partition' | undefined {
+  return bootPartitionPaths(process.platform, homedir(), process.env).some(root => storagePathContains(root, path))
+    ? 'system_partition' : undefined;
+}
+
+function bootPartitionPaths(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv): readonly string[] {
+  return platform === 'win32' ? [win32.join(env.SystemDrive || win32.parse(home).root, 'Boot')]
+    : ['/boot', '/efi'];
+}
+
 /** OS facts are inputs; no drive letter, user name or relocated personal-folder path is guessed. */
 export function storageProtectionRules(facts: StorageProtectionFacts): readonly Rule[] {
   const platform = facts.platform ?? process.platform;
@@ -57,16 +72,17 @@ export function storageProtectionRules(facts: StorageProtectionFacts): readonly 
   add(facts.installPaths ?? [], 'forbidden', 'happier_install');
   add(facts.trashRoots ?? [], 'forbidden', 'happier_data');
   add(facts.systemPaths ?? [], 'forbidden', 'system');
+  add(bootPartitionPaths(platform, home, env), 'forbidden', 'system');
   if (platform === 'win32') {
     const drive = env.SystemDrive || api.parse(home).root;
     add([api.dirname(home), api.join(drive, 'Users')], 'forbidden', 'system', false);
     add([env.windir ?? env.WINDIR ?? '',
-      ...['System Volume Information', 'Recovery', 'Boot', 'pagefile.sys', 'hiberfil.sys', 'swapfile.sys'].map(name => api.join(drive, name)),
+      ...['System Volume Information', 'Recovery', 'pagefile.sys', 'hiberfil.sys', 'swapfile.sys'].map(name => api.join(drive, name)),
       env.ProgramFiles ? api.join(env.ProgramFiles, 'WindowsApps') : '',
       env.ProgramData ? api.join(env.ProgramData, 'Microsoft') : '', api.join(home, 'ntuser.dat')], 'forbidden', 'system');
     add([env.ProgramFiles ?? '', env['ProgramFiles(x86)'] ?? ''], 'caution', 'not_rebuildable', false);
   } else {
-    add(['/System', '/bin', '/sbin', '/etc', '/boot', '/efi', '/var/lib', '/var/db', '/private/var/db', '/private/var/vm'], 'forbidden', 'system');
+    add(['/System', '/bin', '/sbin', '/etc', '/var/lib', '/var/db', '/private/var/db', '/private/var/vm'], 'forbidden', 'system');
     add(['/Users', '/home'], 'forbidden', 'system', false);
     rules.push({ path: '/usr', tier: 'forbidden', code: 'system', tree: true, except: '/usr/local' });
     add(['/srv', '/root', '/nix', '/snap', '/opt', '/mnt', '/media', '/Applications'], 'keep', 'personal_folder', false);
@@ -170,6 +186,9 @@ function classifyAgainstRules(path: string, facts: StorageProtectionFacts, rules
   }
   const match = matches.find(value => value.tier === 'forbidden') ?? matches.find(value => value.tier === 'keep')
     ?? matches.find(value => value.tier === 'caution');
+  if (match?.tier === 'forbidden') return match;
+  const deployment = classifyDeploymentPath(path, facts, key);
+  if (deployment) return deployment;
   if (match?.tier === 'keep' || match?.tier === 'caution') {
     const loses = matches.flatMap(value => value.loses ?? []);
     return { ...match, loses: loses.filter((value, index) => loses.findIndex(previous => previous.code === value.code
@@ -189,7 +208,22 @@ function classifyAgainstRules(path: string, facts: StorageProtectionFacts, rules
     ? { tier: 'caution', reason: { code: 'not_rebuildable', detail: { hiddenFolder: true } } } : { tier: null };
 }
 
-/** Fresh physical resolution is mandatory at both review and apply. Leaf symlinks stay leaves. */
+function classifyDeploymentPath(path: string, facts: StorageProtectionFacts, key: (path: string) => string): StoragePathClassification | undefined {
+  if (!facts.deploymentPaths) return undefined;
+  path = key(path);
+  const binaryPath = path.startsWith('bytes:');
+  // Deployment placement is UTF-8; a lossless native path may have non-UTF8
+  // descendants. Classify their nearest UTF-8 ancestor without decoding names.
+  while (path.startsWith('bytes:')) path = storagePathDirname(path);
+  path = key(path);
+  const root = readOwnServerDeploymentStorageRootForPathForHost(path, {
+    serversDir: key(facts.deploymentPaths.serversDir), activeServerDir: key(facts.deploymentPaths.activeServerDir),
+  }, facts.platform);
+  if (root && binaryPath && !storagePathContains(root, path, facts.platform)) return undefined;
+  return root ? { tier: 'forbidden', reason: { code: 'happier_data', detail: { path: root } } } : undefined;
+}
+
+/** Review/apply retain leaf identity; deployment target aliases are refused too. */
 export async function classifyPath(path: string, facts: StorageProtectionFacts): Promise<StoragePathClassification> {
   return (await classifyPaths([{ path, managedItemPath: facts.managedItemPath }], facts))[0];
 }
@@ -223,8 +257,16 @@ export async function classifyPaths(candidates: readonly Readonly<{ path: string
     const except = rule.except ? await realpathWithAbsentSuffix(expand(rule.except)) : undefined;
     return [...new Set([leaf, target])].map(path => ({ ...rule, path, except }));
   })))).flat();
+  const dataRoots = [...new Set([...(facts.dataHomes ?? []), ...(facts.deploymentPaths
+    ? [facts.deploymentPaths.serversDir, facts.deploymentPaths.activeServerDir] : [])])];
+  const physicalDataRoots = new Map(await timeWebLatencyPhase('storage.classification.data-homes', () => Promise.all(dataRoots.map(async path =>
+    [path, await realpathWithAbsentSuffix(expand(path))] as const))));
   const resolved: StorageProtectionFacts = { ...facts, homeDir: await timeWebLatencyPhase('storage.classification.home', () => realpathWithAbsentSuffix(expand(facts.homeDir))),
-    dataHomes: await timeWebLatencyPhase('storage.classification.data-homes', () => Promise.all((facts.dataHomes ?? []).map(path => realpathWithAbsentSuffix(expand(path))))) };
+    dataHomes: (facts.dataHomes ?? []).map(path => physicalDataRoots.get(path)!),
+    ...(facts.deploymentPaths ? { deploymentPaths: {
+      serversDir: physicalDataRoots.get(facts.deploymentPaths.serversDir)!,
+      activeServerDir: physicalDataRoots.get(facts.deploymentPaths.activeServerDir)!,
+    } } : {}) };
   const readKey = physicalComparisonKeys(platform);
   const comparison = createStoragePathComparator(platform);
   return timeWebLatencyPhase('storage.classification.candidates', async () => {
@@ -237,7 +279,16 @@ export async function classifyPaths(candidates: readonly Readonly<{ path: string
       const candidateFacts = { ...resolved, managedItemPath: candidate.managedItemPath
         ? paths.get(expand(candidate.managedItemPath)) : undefined };
       const direct = classifyAgainstRules(physical, candidateFacts, physicalRules, readKey, comparison);
-      if (direct.tier === 'forbidden' || direct.tier === 'keep') return direct;
+      if (direct.tier === 'forbidden') return direct;
+      if (resolved.deploymentPaths) {
+        try {
+          if ((await lstat(storagePathToFs(physical))).isSymbolicLink()) {
+            const deployment = classifyDeploymentPath(await realpathWithAbsentSuffix(physical), resolved, readKey);
+            if (deployment) return deployment;
+          }
+        } catch (error) { if (!['ENOENT', 'ELOOP'].includes(String((error as NodeJS.ErrnoException).code))) throw error; }
+      }
+      if (direct.tier === 'keep') return direct;
       // Directory identity catches alternate Unicode/case spellings on APFS/NTFS.
       for (const protectedPath of facts.userProtectedFolders ?? []) {
         let protectedStat; try { protectedStat = await stat(storagePathToFs(expand(protectedPath)), { bigint: true }); } catch (error) {

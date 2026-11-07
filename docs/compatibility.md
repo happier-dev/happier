@@ -2,6 +2,20 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Browser view discovery push (unreleased 0.3)
+
+`daemon.browser.view.watch` is a new closed V1 request with the list request's
+Machine/Session scope and a `knownViewIds` array. It returns the unchanged strict
+V1 list response after native membership changes. Existing list requests and
+responses, Browser events and stored state do not change. The UI treats a missing
+watch method as unavailable, retains one-shot discovery and never polls.
+
+Development UI, daemon and Home/peer route-policy consumers must load the new
+method together for push discovery. The inspected 0.2 frontier at
+`7607f9dc568d462e61ce73583881e4ce6def549e` has no browser control protocol or
+daemon Browser RPC handler (including local changes at those paths); no released
+predecessor adapter or persistence migration is introduced.
+
 ## Deployment Domain, binding and preview facts (unreleased 0.3)
 
 Domain health extends the existing current-health read with exact Domain
@@ -7063,6 +7077,13 @@ identities reuse the closed Docker prune selectors as expectations, with custody
 decided by the daemon at effect time. This changes no request, Action, persisted
 format or wire epoch. The inspected `../0.2` frontier at `f760eedfec` has no
 `packages/protocol/src/storage/storageV1.ts` path.
+
+The same additive-open/drop volume projection adds optional `cleanup` facts:
+`{kind:'available'}` or `{kind:'unavailable',reason:'system_partition'|
+'permission_denied'|'read_only'}`. These bounded presentation objects are
+additive-open/drop; they confer no effect authority. Older readers drop the field,
+new readers accept its absence as unreported, and no request, persisted format,
+Action or wire epoch changes. Scan and Trash consume the daemon protection owner.
 
 Unreleased 0.3 backup restore accepts optional `backupOperationId` to select an
 exact retained scheduled run alongside its snapshot `restoreBackupId`. Omitting

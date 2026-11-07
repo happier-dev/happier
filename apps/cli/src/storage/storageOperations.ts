@@ -527,8 +527,10 @@ export function createStorageOperations(input: Readonly<{
             return { revision: input.revision(), declinedCount: (await suggestions({ ...actor, kind: 'agent' })).declinedCount };
         },
         async prepareRead() {
-            if (!deps.activityLog || !deps.machineId) return;
-            input.setTrashRoots((await (await getTrash()).roots()).map(root => root.path));
+            if (!deps.activityLog || !deps.machineId) return [];
+            const volumes = await (await getTrash()).volumeAvailability();
+            input.setTrashRoots(volumes.flatMap(volume => volume.path ? [volume.path] : []));
+            return volumes;
         },
         async trashEntries(actor?: StorageOperationActor, onPermissionDenied?: () => void, selection: TrashSelection = {}) {
             if (actor) await assertActor(actor);

@@ -227,6 +227,12 @@ export type MachineStorageProtectedRemoveInputV1 = z.infer<typeof MachineStorage
 // rows); the Storage tab presents three. Full inventory stays on suggestions.list.
 export const STORAGE_SUMMARY_SUGGESTION_LIMIT = 8;
 
+export const StorageVolumeCleanupV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('available') }),
+  z.object({ kind: z.literal('unavailable'), reason: z.enum(['system_partition', 'permission_denied', 'read_only']) }),
+]));
+export type StorageVolumeCleanupV1 = z.infer<typeof StorageVolumeCleanupV1Schema>;
+
 export const HappierStorageSummaryV1Schema = lazyZodSchema(() => z.object({
   revision: revision(), sizedAt: time(),
   docker: z.optional(MachineStorageDockerSummaryV1Schema),
@@ -236,6 +242,7 @@ export const HappierStorageSummaryV1Schema = lazyZodSchema(() => z.object({
   // Daemon-qualified folder entry points, consumed by the ordinary scanner.
   scanShortcuts: z.optional(z.array(z.strictObject({ kind: z.enum(['downloads', 'cache', 'folder']), path: z.string().check(z.minLength(1)) }))),
   volumes: z.array(z.object({ volume: StorageVolumeRefV1Schema, totalBytes: bytes(), freeBytes: bytes(), happierBytes: bytes(), pileBytes: bytes(), trashBytes: bytes(),
+    cleanup: z.optional(StorageVolumeCleanupV1Schema),
     // Allocated pile/Trash bytes describe occupancy; only measured exclusive bytes
     // may forecast returned space. Absence means an older producer did not report it.
     pileFreesBytes: z.optional(bytes()), trashFreesBytes: z.optional(bytes()),

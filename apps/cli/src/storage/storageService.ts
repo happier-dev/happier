@@ -80,7 +80,7 @@ export type StorageServiceDeps = Readonly<{
 
 export function createStorageService(deps: StorageServiceDeps) {
     let docker: HappierStorageSummaryV1['docker'];
-    let currentTrashRoots: readonly string[] = [];
+    let currentTrashRoots: readonly string[] | undefined;
     // One policy availability owner for every Storage reader. Maintenance skips
     // effects on unknown; protection, projections and effects refuse instead of
     // classifying against presentation defaults (empty protected folders).
@@ -94,8 +94,7 @@ export function createStorageService(deps: StorageServiceDeps) {
         return policy;
     };
     const catalog = createStorageCategoryCatalog({ ...deps.catalog, readPolicy: requirePolicy, scmRegistry: deps.scmRegistry ?? deps.catalog.scmRegistry,
-        trashRoots: () => currentTrashRoots.length ? currentTrashRoots
-        : deps.catalog.trashRoots?.() ?? [] });
+        trashRoots: () => currentTrashRoots ?? deps.catalog.trashRoots?.() ?? [] });
     const now = deps.nowMs ?? Date.now;
     const listeners = new Set<() => void>();
     const controllers = new Set<AbortController>();
@@ -241,7 +240,8 @@ export function createStorageService(deps: StorageServiceDeps) {
     const canGo = (item: StorageItemV1) => item.collectable && (item.verdict === 'safe' || item.verdict === 'caution');
 
     async function measure(signal: AbortSignal, measuredRevision: number): Promise<HappierStorageSummaryV1> {
-        await timeWebLatencyPhase('storage.summary.prepare', () => operations.prepareRead());
+        const cleanupVolumes = new Map((await timeWebLatencyPhase('storage.summary.prepare', () => operations.prepareRead()))
+            .map(volume => [volume.volumeId, volume.cleanup]));
         // Catalog, protection and recognition describe this same sizing operation.
         // Later actor/effect reads acquire current protection independently,
         // including after slow sizing. Vitals publishes capacity independently.
@@ -333,6 +333,7 @@ export function createStorageService(deps: StorageServiceDeps) {
             ...(incomplete.length ? { incomplete } : {}),
             scanShortcuts,
             volumes: volumeFacts.map(volume => ({ volume: { volumeId: volume.id, label: volume.label, mountPath: volume.mount },
+                ...(cleanupVolumes.has(volume.id) ? { cleanup: cleanupVolumes.get(volume.id)! } : {}),
                 totalBytes: volume.totalBytes, freeBytes: volume.availableBytes, happierBytes: byVolume.get(volume.id) ?? 0,
                 ...(volume.availableIncludingPurgeableBytes === undefined ? {} : { availableIncludingPurgeableBytes: volume.availableIncludingPurgeableBytes }),
                 canGoBytes: unionById.get(`volume:${volume.id}`)?.totalExclusiveBytes ?? 0,

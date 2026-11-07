@@ -4,6 +4,7 @@ import { type StorageScanIndex, type StorageScanVolume } from './scanIndex';
 import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { physicalPathWithoutFollowingLeaf } from '@/utils/path/physicalAncestorPath';
 import { logger } from '@/ui/logger';
+import { storageSystemPartitionReason } from '../protection/protectedPaths';
 
 export function createStorageScanRunner(deps: Readonly<{ index: StorageScanIndex; readVolumes: () => readonly StorageScanVolume[] | Promise<readonly StorageScanVolume[]>;
     readEnabled: () => boolean | undefined | Promise<boolean | undefined>; readLowPower?: () => boolean | Promise<boolean>;
@@ -20,7 +21,8 @@ export function createStorageScanRunner(deps: Readonly<{ index: StorageScanIndex
     const api = {
         initialize() { return admit(async () => {
             if (disposed) return;
-            const [volumes, enabled, reported] = await Promise.all([deps.readVolumes(), deps.readEnabled(), deps.readVolumesReported?.() ?? true]);
+            const [reportedVolumes, enabled, reported] = await Promise.all([deps.readVolumes(), deps.readEnabled(), deps.readVolumesReported?.() ?? true]);
+            const volumes = reportedVolumes.filter(volume => !storageSystemPartitionReason(volume.mountPath));
             if (disposed) return;
             if (enabled && !reported) return;
             if (!enabled) pendingVolumes.clear();
@@ -41,15 +43,18 @@ export function createStorageScanRunner(deps: Readonly<{ index: StorageScanIndex
             try {
             if (!await (deps.readVolumesReported?.() ?? true)) throw Object.assign(new Error('Volume reporting unavailable'), { code: 'volumes_unavailable' });
             const volumes = await deps.readVolumes();
+            if ('folderPath' in input.target && storageSystemPartitionReason(input.target.folderPath)) {
+                throw Object.assign(new Error('System partition cannot be scanned'), { code: 'storage_system_partition' });
+            }
             const requested = 'folderPath' in input.target ? (input.target.folderPath.startsWith('bytes:') ? input.target.folderPath : await physicalPathWithoutFollowingLeaf(input.target.folderPath)) : undefined;
             const volume = [...volumes].sort((a, b) => b.mountPath.length - a.mountPath.length).find(value => 'volumeId' in input.target ? value.id === input.target.volumeId :
                 requested?.startsWith('bytes:') ? deps.index.readNode(requested)?.volumeId === value.id : requested !== undefined && (canonicalAbsolutePathsEqual(value.mountPath, requested) || isCanonicalAbsolutePathInsideRoot(value.mountPath, requested, { platform: process.platform })));
             if (!volume) throw Object.assign(new Error('Volume unavailable'), { code: 'volume_unavailable' });
+            if (storageSystemPartitionReason(volume.mountPath)) throw Object.assign(new Error('System partition cannot be scanned'), { code: 'storage_system_partition' });
             const root = requested ?? volume.mountPath;
-            // A folder has no known total on its first walk. Zero preserves an
-            // honest unknown estimate; volume usage is meaningful only for a
-            // whole-volume target, never as the denominator of a folder scan.
-            const usedBytes = 'volumeId' in input.target ? volume.usedBytes : 0;
+            // Only a whole-volume target has a measured denominator. Absence
+            // is unknown; a measured volume zero is preserved as zero.
+            const usedBytes = 'volumeId' in input.target ? volume.usedBytes : undefined;
             if (disposed) throw Object.assign(new Error('Scan runner closed'), { code: 'closed' });
             if (input.resume && deps.index.root(volume.id) !== root) throw Object.assign(new Error('Resume target changed'), { code: 'invalid_resume_target' });
             if (!await deps.readEnabled()) throw Object.assign(new Error('Whole-disk scan disabled'), { code: 'disabled' });

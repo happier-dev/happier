@@ -2262,7 +2262,10 @@ workspace and home; it never substitutes the custodian's history or home.
 Before Send, the composer checks an explicit separated-user folder through the
 existing directory preflight RPC under that Agent identity. An inaccessible path
 returns `invalid_directory` and a visible blocked reason; missing accessible
-folders retain the existing creation-approval flow.
+folders retain the existing creation-approval flow. If the folder disappears
+between that preflight and launch, the daemon still refuses to create it without
+consent, and creation reports `spawn_failed` with launch cause
+`SESSION_DIRECTORY_MISSING`, which the UI names ("This folder no longer exists").
 
 Deliberate Session launch sets `prepareAgentIsolationMember: true` on that
 preflight request. The host validates the request before effects and lets the
@@ -3682,6 +3685,13 @@ Storage summary and category discovery skip paths denied by native `EACCES` or
 `EPERM` while retaining readable items and totals. Their optional `incomplete`
 issues identify only the affected category, `permission_denied`, and the remedy
 `grant_admin_access_or_run_as_machine_owner`; they never disclose the denied path.
+Each summary volume also reports optional `cleanup`: `available`, or `unavailable`
+with `system_partition`, `permission_denied`, or `read_only`. The protection owner
+supplies boot/EFI paths to both scan admission and Trash; these partitions remain
+visible for capacity but are never scanned or offered a Trash root. Cleanup reads
+observe writability without creating Trash directories. A denied or read-only
+volume does not prevent healthy volumes from loading; Size again retries the
+observation after access changes. Absent `cleanup` means unreported, not available.
 Affected category sizes are lower bounds, not known-empty storage. The UI keeps
 readable data visible with the permission explanation and access remedy; retry
 replaces the incomplete result once access is restored. Effect failures still
@@ -4181,6 +4191,22 @@ reconnect and Machine-client replacement republish the current projection. Defer
 transport/CAS handlers read the current runtime summary when they execute.
 
 ### Agent installation commands (0.3 development)
+
+Installed plugin generations remain at the plugin store's admitted code root.
+The install owner makes code directories readable/traversable and code files
+readable by member UIDs, preserving executable files; members cannot write them.
+State, credentials, settings, logs and caches remain custodian-private siblings.
+The existing isolation provisioning owner grants named member UIDs execute-only
+ACLs on the code root's ancestors, including private Happier-home containers.
+These grants permit known-path traversal without directory listing or reading
+other entries. Later store initialization, CLI configuration reload and settings
+publication preserve that execute ACL mask. Protected-file operations also retain
+it on the file's immediate parent, so the daemon can reopen its private device
+key after restart. Files remain owner-only; directory-listing admission and
+private child directories retain their strict protection.
+The admitted SCM loader uses the original code root and entry; it does not copy
+or project code into member homes. Store initialization retains the daemon's
+existing optional-plugin failure handling.
 
 Managed Agent binaries, runtime dependencies, archive/wheel installs and the
 configured ACP install inventory share

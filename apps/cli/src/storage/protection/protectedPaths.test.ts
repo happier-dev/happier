@@ -2,13 +2,14 @@ import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { classifyPath, classifyPaths, classifyPhysicalPath, type StorageProtectionFacts } from './protectedPaths';
+import { classifyPath, classifyPaths, classifyPhysicalPath, storageSystemPartitionReason, type StorageProtectionFacts } from './protectedPaths';
 import { physicalPathWithoutFollowingLeaf } from '@/utils/path/physicalAncestorPath';
 import { createDaemonEventLoopStallMonitor } from '@/daemon/diagnostics/daemonEventLoopStallMonitor';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { logger } from '@/ui/logger';
 import { withStorageReadTrace } from '@/daemon/externalActions/webLatencyTrace';
 import * as filesystem from 'node:fs/promises';
+import { storagePathFromBytes } from '../storagePath';
 
 // Observe actual filesystem work; physical-path and protection logic remain real.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -24,6 +25,49 @@ async function fixture() {
 }
 afterEach(async () => { await Promise.all(fixtures.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 describe('storage physical path protection', () => {
+  it.skipIf(process.platform === 'win32')('excludes boot partitions without excluding user data mounts or sibling prefixes', () => {
+    expect(storageSystemPartitionReason('/boot/efi')).toBe('system_partition');
+    expect(storageSystemPartitionReason('/efi/EFI')).toBe('system_partition');
+    for (const path of ['/System/Volumes/Data', '/mnt/data', '/boot-data', '/efiles']) {
+      expect(storageSystemPartitionReason(path)).toBeUndefined();
+    }
+  });
+  it('refuses deployment trees and symlink aliases even for a managed catalog item', async () => {
+    const { root, home } = await fixture();
+    const happyHomeDir = join(home, '.happier'); const serversDir = join(happyHomeDir, 'servers');
+    const activeServerDir = join(serversDir, 'active');
+    const physicalServers = join(root, 'physical-servers');
+    await Promise.all([mkdir(happyHomeDir), mkdir(physicalServers)]);
+    await symlink(physicalServers, serversDir, 'junction');
+    const deploymentRoot = join(activeServerDir, 'deployments');
+    const retainedRoot = join(happyHomeDir, 'servers', 'retained', 'deployments');
+    const release = join(deploymentRoot, 'environment', 'releases', 'receipt');
+    const shared = join(deploymentRoot, 'environment', 'shared');
+    await Promise.all([release, shared, retainedRoot].map(path => mkdir(path, { recursive: true })));
+    const alias = join(root, 'release-alias'); await symlink(release, alias, 'junction');
+    const retainedAlias = join(root, 'retained-alias'); await symlink(retainedRoot, retainedAlias, 'junction');
+    const facts = { homeDir: home, deploymentPaths: { serversDir, activeServerDir } };
+    expect(await classifyPath(home, facts)).toMatchObject({ tier: 'forbidden', reason: { code: 'home_folder' } });
+    expect(classifyPhysicalPath('/', facts)).toMatchObject({ tier: 'forbidden', reason: { code: 'root' } });
+    for (const path of [deploymentRoot, release, shared, join(shared, 'data'), alias, join(alias, 'data'), retainedAlias]) {
+      expect(await classifyPath(path, { ...facts, managedItemPath: path }), path).toMatchObject({ tier: 'forbidden' });
+    }
+    expect((await classifyPath(alias, { ...facts, userProtectedFolders: [alias] })).tier).toBe('forbidden');
+    const ordinaryTarget = join(root, 'ordinary-target'); await mkdir(ordinaryTarget);
+    const ordinaryAlias = join(root, 'ordinary-alias'); await symlink(ordinaryTarget, ordinaryAlias, 'junction');
+    expect((await classifyPath(ordinaryAlias, facts)).tier).toBeNull();
+    if (process.platform !== 'win32') {
+      const loop = join(root, 'loop'); await symlink(loop, loop);
+      expect((await classifyPath(loop, facts)).tier).toBeNull();
+      const ordinaryBytes = Buffer.concat([Buffer.from(join(root, 'ordinary-')), Buffer.from([255])]);
+      const deploymentBytes = Buffer.concat([Buffer.from(join(release, 'child-')), Buffer.from([255])]);
+      await Promise.all([mkdir(ordinaryBytes), mkdir(deploymentBytes)]);
+      expect((await classifyPath(storagePathFromBytes(ordinaryBytes), facts)).tier).toBeNull();
+      expect((await classifyPath(storagePathFromBytes(deploymentBytes), facts)).tier).toBe('forbidden');
+    }
+    expect((await classifyPath(`${deploymentRoot}-ordinary`, facts)).tier).toBeNull();
+    expect((await classifyPath(join(root, 'ordinary'), facts)).tier).toBeNull();
+  });
   it('resolves a summary inventory parent once per observation, including managed aliases', async () => {
     const { root, home } = await fixture();
     const logs = join(home, 'logs'); await mkdir(logs);
@@ -33,7 +77,8 @@ describe('storage physical path protection', () => {
     const reads = vi.mocked(filesystem.realpath);
     for (let observation = 0; observation < 2; observation++) {
       const before = reads.mock.calls.length;
-      const result = await classifyPaths(candidates, { homeDir: home });
+      const result = await classifyPaths(candidates, { homeDir: home,
+        deploymentPaths: { serversDir: join(home, '.happier', 'servers'), activeServerDir: join(home, '.happier', 'servers', 'active') } });
       expect(result.every(value => value.tier === null)).toBe(true);
       // The exact names need their shared physical parent, never 2N identical realpaths.
       expect(reads.mock.calls.slice(before).filter(([path]) => path === alias)).toHaveLength(1);
@@ -108,10 +153,12 @@ describe('storage physical path protection', () => {
     const { root, home } = await fixture();
     const system = join(root, 'system'); await mkdir(system); await mkdir(join(system, 'child'));
     const alias = join(home, 'alias'); await symlink(system, alias, 'junction');
+    const facts = { homeDir: home, systemPaths: [system],
+      deploymentPaths: { serversDir: join(home, '.happier', 'servers'), activeServerDir: join(home, '.happier', 'servers', 'active') } };
     expect(await physicalPathWithoutFollowingLeaf(join(alias, 'child'))).toBe(join(system, 'child'));
     expect(await physicalPathWithoutFollowingLeaf(alias)).toBe(alias);
-    expect((await classifyPath(join(alias, 'child'), { homeDir: home, systemPaths: [system] })).tier).toBe('forbidden');
-    expect((await classifyPath(alias, { homeDir: home, systemPaths: [system] })).tier).toBeNull();
+    expect((await classifyPath(join(alias, 'child'), facts)).tier).toBe('forbidden');
+    expect((await classifyPath(alias, facts)).tier).toBeNull();
   });
   it('protects containers of roots and checkouts without forbidding all verified managed children', async () => {
     const { home } = await fixture(); const data = join(home, '.happier'); const cache = join(data, 'cache');
@@ -142,6 +189,19 @@ describe('storage physical path protection', () => {
     }
     expect(classifyPhysicalPath('D:\\Users\\Alice2\\cache', windows).tier).toBeNull();
     expect(classifyPhysicalPath('D:\\Users', { ...windows, homeDir: 'E:\\People\\Alice' }).tier).toBe('forbidden');
+    const deploymentPaths = { serversDir: 'D:\\Data\\Happier\\servers', activeServerDir: 'D:\\Data\\Happier\\servers\\active' };
+    const deploymentFacts = { ...windows, deploymentPaths };
+    for (const path of ['d:/DATA/HAPPIER/servers/ACTIVE/deployments/environment/releases/receipt',
+      'D:\\DATA\\HAPPIER\\SERVERS\\Retained\\DEPLOYMENTS\\environment\\shared',
+      '\\\\?\\D:\\DATA\\HAPPIER\\SERVERS\\Retained\\DEPLOYMENTS\\environment\\shared']) {
+      expect(classifyPhysicalPath(path, { ...deploymentFacts, managedItemPath: path }).tier, path).toBe('forbidden');
+    }
+    for (const path of ['D:\\Data\\Happier2\\servers\\active\\deployments',
+      'D:\\Data\\Happier\\servers\\retained\\deployments-ordinary', 'D:\\Data\\Happier\\ordinary']) {
+      expect(classifyPhysicalPath(path, deploymentFacts).tier, path).toBeNull();
+    }
+    expect(classifyPhysicalPath('D:\\', deploymentFacts)).toMatchObject({ tier: 'forbidden', reason: { code: 'root' } });
+    expect(classifyPhysicalPath(windows.homeDir, deploymentFacts)).toMatchObject({ tier: 'forbidden', reason: { code: 'home_folder' } });
   });
   it('preserves Keep confirmations for all built-in personal and credential paths and normalized protected identities', () => {
     const facts: StorageProtectionFacts = { homeDir: '/people/alice', platform: 'darwin', userProtectedFolders: ['/people/alice/Café'],

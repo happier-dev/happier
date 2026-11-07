@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
+import { access, lstat, mkdir, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod/mini';
-import { TrashEntryV1Schema, type HappierStorageCategoryIdV1, type StorageReasonV1, type TrashEntryV1 } from '@happier-dev/protocol/storage/storageV1';
+import { TrashEntryV1Schema, type HappierStorageCategoryIdV1, type StorageReasonV1, type TrashEntryV1, type StorageVolumeCleanupV1 } from '@happier-dev/protocol/storage/storageV1';
 import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
@@ -18,6 +19,7 @@ import { measureNativeDisk } from '../measure/nativeDiskMeasure';
 import { assertStoragePathIdentity, readStoragePathIdentity, removeStoragePath, type StoragePathIdentity } from './removeStoragePath';
 import { renameStoragePathNoReplace } from './renameStoragePath';
 import { isPermissionError } from '../categories/filesystem';
+import { storageSystemPartitionReason } from '../protection/protectedPaths';
 
 const execute = promisify(execFile);
 const component = z.string().check(z.regex(/^[A-Za-z0-9_-]+$/u));
@@ -82,10 +84,12 @@ export function createTrashStore(deps: TrashStoreDeps) {
     const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
     async function present(path: string) { try { await lstat(storagePathToFs(path)); return true; } catch (error) { if (missing(error)) return false; throw error; } }
     async function roots() {
+        return rootsForVolumes(deps.readVolumes());
+    }
+    async function rootsForVolumes(volumes: ReturnType<TrashStoreDeps['readVolumes']>) {
         const home = await realpath(deps.happyHomeDir);
-        const volumes = deps.readVolumes();
         const homeVolume = volumes.filter(volume => contains(volume.mount, home)).sort((a, b) => b.mount.length - a.mount.length)[0];
-        return volumes.map(volume => ({ volumeId: volume.id, mountPath: volume.mount,
+        return volumes.filter(volume => !storageSystemPartitionReason(volume.mount)).map(volume => ({ volumeId: volume.id, mountPath: volume.mount,
             path: volume.id === homeVolume?.id ? join(home, 'trash') : process.platform === 'win32'
                 ? join(volume.mount, '.happier-trash', deps.osUserId) : join(volume.mount, `.happier-trash-${deps.osUserId}`) }));
     }
@@ -99,10 +103,14 @@ export function createTrashStore(deps: TrashStoreDeps) {
         }
     }
     async function rootFor(path: string) {
+        assertCleanablePath(path);
         const physical = await physicalStoragePathWithoutFollowingLeaf(storageAbsolutePath(path));
         const root = (await roots()).filter(value => contains(value.mountPath, physical)).sort((a, b) => b.mountPath.length - a.mountPath.length)[0];
         if (!root) throw Object.assign(new Error('Item volume unavailable'), { code: 'trash_volume_unavailable' });
         await ensureRoot(root); return root;
+    }
+    function assertCleanablePath(path: string) {
+        if (storageSystemPartitionReason(path)) throw Object.assign(new Error('System partition cannot be cleaned'), { code: 'storage_system_partition' });
     }
     async function load(root: Awaited<ReturnType<typeof roots>>[number], entryId: string) {
         component.parse(entryId);
@@ -200,6 +208,32 @@ export function createTrashStore(deps: TrashStoreDeps) {
     }
     return {
         roots,
+        async volumeAvailability(): Promise<readonly Readonly<{ volumeId: string; cleanup: StorageVolumeCleanupV1; path?: string }>[]> {
+            const volumes = deps.readVolumes();
+            const byVolume = new Map((await rootsForVolumes(volumes)).map(root => [root.volumeId, root]));
+            return Promise.all(volumes.map(async volume => {
+                const system = storageSystemPartitionReason(volume.mount);
+                if (system) return { volumeId: volume.id, cleanup: { kind: 'unavailable' as const, reason: system } };
+                const root = byVolume.get(volume.id)!;
+                try {
+                    // Observe writability without creating a Trash directory during a read.
+                    let writablePath = root.path;
+                    for (;;) {
+                        try { await access(writablePath, constants.W_OK | constants.X_OK); break; }
+                        catch (error) {
+                            if (!missing(error) || storagePathsEqual(writablePath, root.mountPath)) throw error;
+                            writablePath = storagePathDirname(writablePath);
+                        }
+                    }
+                    return { volumeId: volume.id, path: root.path, cleanup: { kind: 'available' as const } };
+                } catch (error) {
+                    const code = (error as NodeJS.ErrnoException).code;
+                    if (!isPermissionError(error) && code !== 'EROFS') throw error;
+                    return { volumeId: volume.id, cleanup: { kind: 'unavailable' as const,
+                        reason: code === 'EROFS' ? 'read_only' as const : 'permission_denied' as const } };
+                }
+            }));
+        },
         refreshRetention(days: number | null, input: Readonly<{ beforeEffect?: () => Promise<void> }> = {}) {
             return serialize(async () => {
                 let changed = false;
@@ -218,6 +252,7 @@ export function createTrashStore(deps: TrashStoreDeps) {
                 trashAvailable: false as const, reason: { code: 'facts_unavailable' as const } }; }
         },
         async prepare(input: TrashPrepareInput): Promise<TrashPreparedEntry> {
+            assertCleanablePath(input.path);
             const sourcePath = await physicalStoragePathWithoutFollowingLeaf(storageAbsolutePath(input.path));
             const root = await rootFor(sourcePath);
             const identity = input.identity ?? await readStoragePathIdentity(sourcePath);
