@@ -43,7 +43,9 @@ vi.mock('@/hooks/session/useSessionListSelectionState', () => ({
     useSessionListSelectionState: () => harness.selection,
 }));
 vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({ useServerProfilesGeneration: () => 1 }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
+    // The canonical Home label reads the rest of the real profile owner.
+    ...(await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>()),
     listServerProfiles: () => [
         { id: 'home-a', name: 'Home A' },
         { id: 'home-b', name: 'Home B' },

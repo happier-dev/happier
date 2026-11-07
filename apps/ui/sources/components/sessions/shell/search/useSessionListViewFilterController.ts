@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
 import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { listServerProfileScopeIds } from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -49,7 +50,7 @@ export function resolveSelectedHomeFeatureAvailability(
     return selectedServerIds.some((serverId) => supportByServerId[serverId] === true);
 }
 
-/** The Home facet's options: each Home by its profile name, for any surface that edits a Sessions filter. */
+/** The Home facet's options: each Home by its canonical label (`resolveHomeDisplayLabel`), for any surface that edits a Sessions filter. */
 export function buildSessionListFilterHomeOptions(
     serverIds: readonly string[],
 ): readonly Readonly<{ serverId: string; label: string }>[] {
@@ -59,7 +60,7 @@ export function buildSessionListFilterHomeOptions(
     ]));
     return serverIds.map((serverId) => ({
         serverId,
-        label: profilesById.get(serverId)?.name?.trim() || serverId,
+        label: resolveHomeDisplayLabel(profilesById.get(serverId), serverId),
     }));
 }
 

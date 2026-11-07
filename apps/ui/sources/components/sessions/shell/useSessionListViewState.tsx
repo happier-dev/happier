@@ -103,6 +103,7 @@ import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { TreeDropMeasurableRef } from '@/components/ui/treeDragDrop';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
@@ -878,8 +879,10 @@ export function useSessionListViewStateFromPaneState(
     const transcriptSearchHomeLabel = React.useMemo(() => {
         const serverId = memorySearchContext.serverId.trim();
         if (!serverId) return undefined;
-        const homeLabel = filterController.homeOptions.find((home) => home.serverId === serverId)?.label ?? serverId;
-        return `${t('sessionsList.searchMatchTranscript')} · ${t('teams.homeLabel')} · ${homeLabel}`;
+        // The Home facet's canonical label ("This Home", or the Home's name): never its raw address or id.
+        const homeLabel = filterController.homeOptions.find((home) => home.serverId === serverId)?.label
+            ?? resolveHomeDisplayLabel(null, serverId);
+        return `${t('sessionsList.searchMatchTranscript')} · ${homeLabel}`;
     }, [filterController.homeOptions, memorySearchContext.serverId]);
     // A hit that arrived under an earlier corpus is never promoted by identity alone:
     // accessible-by-ID is not membership, so admission is re-checked against the

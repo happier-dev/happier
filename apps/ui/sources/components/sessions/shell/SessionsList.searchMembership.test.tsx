@@ -384,7 +384,7 @@ describe('main-list contextual search structural membership', () => {
         const { observed } = await renderMainListViewState(homeState(APPLIED_QUERY_KEY, ['in-view', 'hidden-by-filters']));
 
         expect(memorySearchCalls.lastEligibleSessionIds).toEqual(['in-view', 'hidden-by-filters']);
-        expect(observed.searchScopeLabel).toBe(`sessionsList.searchMatchTranscript · teams.homeLabel · ${HOME}`);
+        expect(observed.searchScopeLabel).toBe(`sessionsList.searchMatchTranscript · ${HOME}`);
     });
 
     it('binds Team transcript search to the Team Home while another Home is focused', async () => {
@@ -439,7 +439,7 @@ describe('main-list contextual search structural membership', () => {
 
         expect(new Set(memorySearchCalls.searchedServerIds)).toEqual(new Set([TEAM_HOME]));
         expect(memorySearchCalls.lastEligibleSessionIds).toEqual(['in-view', 'team-other-match']);
-        expect(observed.searchScopeLabel).toBe('sessionsList.searchMatchTranscript · teams.homeLabel · Studio Home B');
+        expect(observed.searchScopeLabel).toBe('sessionsList.searchMatchTranscript · Studio Home B');
         expect(observed.nodeIds).toContain(sessionNodeId(TEAM_HOME, 'team-other-match'));
     });
 
