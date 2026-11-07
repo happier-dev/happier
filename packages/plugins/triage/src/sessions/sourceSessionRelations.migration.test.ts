@@ -9,13 +9,14 @@ import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
 import { TriageReadSourceSessionLinksResultV1Schema } from '../actions/sessionLinksProtocol.js';
+import { TriageReadEntryDetailResultV1Schema, TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import { activate } from '../accountRuntime.js';
 import { linkEntryToSession } from './entrySessionLinks.js';
 import { testkitConfiguredInstance, testkitReadOnlySourceSnapshot, TESTKIT_LINK_DISPLAY } from './testkit/entrySessionTestkit.test-support.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
 
 describe('automatic retained PR duplicate contraction', () => {
-    it.each(['verified', 'newer-proof', 'read-lost', 'late-proof', 'census-failed', 'concurrent-proof', 'explicit-unlink', 'absent', 'foreign-proof', 'retired', 'retired-census', 'configured-later', 'paged', 'cancelled-demand', 'cancelled-census'] as const)(
+    it.each(['verified', 'newer-proof', 'read-lost', 'late-proof', 'census-failed', 'concurrent-proof', 'explicit-unlink', 'absent', 'foreign-proof', 'native-failed', 'retired', 'retired-census', 'configured-later', 'paged', 'cancelled-demand', 'cancelled-census'] as const)(
         'uses native proof without write Actions when the duplicate is %s', async outcome => {
             const { collections: backing, control } = createTestkitCorpusCollections();
             let upgradePages = 0;
@@ -124,6 +125,7 @@ describe('automatic retained PR duplicate contraction', () => {
                         return await handler(input, context);
                     }
                     if (operation.role === 'read') {
+                        if (outcome === 'native-failed') return { kind: 'failed', failure: { class: 'transient', code: 'native_relations_unavailable' } };
                         if (outcome === 'read-lost' && firstNativeRead) {
                             firstNativeRead = false;
                             throw new Error('Native read response lost');
@@ -133,7 +135,9 @@ describe('automatic retained PR duplicate contraction', () => {
                             nativeSignal = options?.signal;
                             await new Promise<void>(resolve => { finishNativeRead = resolve; });
                         }
-                        return { kind: 'complete', links: native.filter(link => input.sessionId === undefined || input.sessionId === link.sessionId) };
+                        return { kind: 'complete', links: native.filter(link => (input.sessionId === undefined || input.sessionId === link.sessionId)
+                            && (input.localRef === undefined || input.localRef.kindId === link.localRef.kindId
+                                && input.localRef.collisionScope === link.localRef.collisionScope && input.localRef.entryId === link.localRef.entryId)) };
                     }
                     writes.push(input);
                     if ((outcome === 'explicit-unlink' || outcome === 'concurrent-proof') && input.linked === false) return { status: 'unlinked' };
@@ -270,7 +274,7 @@ describe('automatic retained PR duplicate contraction', () => {
                 const other = TriageReadSourceSessionLinksResultV1Schema.parse(await handler({ v: 1, sessionId: 'session-b' }, context));
                 expect(other.kind).toBe('partial');
                 expect(other.lanes).toContainEqual(expect.objectContaining({ kindIds: ['pull-request'],
-                    health: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksMigrationIncomplete' } } }));
+                    health: { kind: 'partial', unavailableRefs: [{ ...entryRef, entryId: 'unresolved-pr' }] } }));
                 expect(unresolved?.status).toBe('linked');
                 if (unresolved?.status === 'linked') expect(await collections.sessionLinks.get(unresolved.linkTag)).not.toBeNull();
                 expect(writes).toHaveLength(1);
@@ -305,7 +309,27 @@ describe('automatic retained PR duplicate contraction', () => {
                 expect(first.kind).toBe('partial');
                 expect(await collections.sessionLinks.get(old.linkTag)).toEqual(retained);
                 if (outcome === 'absent' || outcome === 'foreign-proof') {
+                    expect(first.links).toContainEqual(expect.objectContaining({ entryRef, sessionId: 'session-a',
+                        linkedAtMs: 1234, displayPath: retained?.value.displayPathAtLink }));
+                    expect(first.lanes).toContainEqual(expect.objectContaining({ kindIds: ['pull-request'],
+                        health: { kind: 'partial', unavailableRefs: [entryRef] } }));
+                    const detail = handlers.get(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1);
+                    if (detail === undefined) throw new Error('Expected registered entry detail owner');
+                    expect(TriageReadEntryDetailResultV1Schema.parse(await detail({ v: 1, entryRef,
+                        sourceInstanceId: configured.instance.sourceInstanceId }, context)))
+                        .toMatchObject({ kind: 'read', linkedSessions: [{ sessionId: 'session-a' }] });
                     await read();
+                    expect(writes).toEqual([]);
+                    expect(retainedDeletes).toBe(0);
+                }
+                if (outcome === 'native-failed') {
+                    expect(first.lanes).toContainEqual(expect.objectContaining({ kindIds: ['pull-request'],
+                        health: { kind: 'failed', failure: { class: 'transient', code: 'native_relations_unavailable' } } }));
+                    const detail = handlers.get(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1);
+                    if (detail === undefined) throw new Error('Expected registered entry detail owner');
+                    await expect(detail({ v: 1, entryRef, sourceInstanceId: configured.instance.sourceInstanceId }, context))
+                        .rejects.toMatchObject({ code: 'native_relations_unavailable' });
+                    expect(await collections.sessionLinks.get(old.linkTag)).toEqual(retained);
                     expect(writes).toEqual([]);
                     expect(retainedDeletes).toBe(0);
                 }

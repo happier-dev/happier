@@ -20,7 +20,9 @@ export type TriageRetainedSessionRelationsUpgrade = Readonly<{
     reconcile(input: Readonly<{ source: TriageEntryRefV1['source']; kindIds: readonly string[]; sourceInstanceId: string;
         entryRef?: TriageEntryRefV1; sessionId?: string;
         links: readonly TriageSourceSessionLinkV1[];
-        collections: Collections; signal: AbortSignal }>): Promise<boolean>;
+        collections: Collections; signal: AbortSignal }>): Promise<Readonly<{
+            incomplete: boolean; retained: readonly CorpusSessionLinkRowV1[];
+        }>>;
     dispose(): Promise<void>;
 }>;
 
@@ -111,6 +113,7 @@ export function createTriageRetainedSessionRelationsUpgrade(): TriageRetainedSes
         },
         async reconcile(input) {
             let incomplete = migration === undefined;
+            const retainedRows: CorpusSessionLinkRowV1[] = [];
             for (const retained of [...pending]) {
                 const row = retained.record.value;
                 if (row.entryRef.source.pluginId !== input.source.pluginId || row.entryRef.source.localId !== input.source.localId
@@ -130,8 +133,9 @@ export function createTriageRetainedSessionRelationsUpgrade(): TriageRetainedSes
                 const current = await input.collections.sessionLinks.get(retained.record.rowId, { signal: input.signal });
                 if (current === null) { removePending(retained); continue; }
                 incomplete = true;
+                retainedRows.push(current.value);
             }
-            return incomplete;
+            return { incomplete, retained: retainedRows };
         },
         dispose() {
             lifetime.abort();
