@@ -137,7 +137,7 @@ const parseClaudePipeEpochResetText: ClaudeRuntimeResetTextEvidenceParser = (tex
 };
 
 const parseClaudeTuiResetText: ClaudeRuntimeResetTextEvidenceParser = (text, { nowMs }) => {
-  const match = /\b(?:resets?)\s+(?:(?:([A-Z][a-z]+)\s+(\d{1,2})\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm))\s*\(([^)]+)\)/iu.exec(text);
+  const match = /\b(?:resets?)\s+(?:(?:([A-Z][a-z]+)\s+(\d{1,2})(?:\s+at\s+|,\s*))?(\d{1,2})(?::(\d{2}))?\s*(am|pm))\s*\(([^)]+)\)/iu.exec(text);
   if (!match) return null;
   const clock = parseClock(match[3] ?? '', match[4], match[5] ?? '');
   if (!clock) return null;
@@ -183,11 +183,15 @@ export function parseClaudeUsageLimitReset(input: Readonly<{
 }>): ClaudeRuntimeResetTiming {
   const headers = isRecord(input.headers) ? input.headers : null;
   const body = isRecord(input.body) ? input.body : null;
+  const message = isRecord(body?.message) ? body.message : null;
+  const assistantText = Array.isArray(message?.content)
+    ? message.content.filter(isRecord).filter((block) => block.type === 'text').map((block) => block.text)
+    : [];
   return parseProviderResetAt({
     ...input,
     // Normalize the actual SDK failure text at the Claude boundary; the shared
     // timing parser continues to own timestamps and retry/reset interpretation.
-    ...(body ? { body: { ...body, message: [body.message, body.errors, body.result] } } : {}),
+    ...(body ? { body: { ...body, message: [body.message, body.errors, body.result, assistantText] } } : {}),
     timestampEvidence: readClaudeHeaderTimestampEvidence(headers),
     textEvidenceParsers: [parseClaudePipeEpochResetText, parseClaudeTuiResetText],
   });

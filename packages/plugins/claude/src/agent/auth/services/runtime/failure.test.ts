@@ -1,9 +1,29 @@
+import { createClaudeConnectedServiceRuntimeAuthAdapter } from './failure.js';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '../native/scopes.js';
 
 describe('canonical Claude failure evidence', () => {
+  it.each([
+    { entry: 'assistant', text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)", resetAtMs: Date.parse('2026-11-09T15:00:00Z') },
+    { entry: 'result', text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)", resetAtMs: Date.parse('2026-11-09T15:00:00Z') },
+    { entry: 'result', text: "You've hit your weekly limit · resets when available", resetAtMs: null },
+  ] as const)('classifies the native SDK $entry weekly failure with its provider reset', ({ entry, text, resetAtMs }) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-07T09:00:00Z'));
+    try {
+      const error = entry === 'assistant'
+        ? { type: 'assistant', error: 'rate_limit', message: { role: 'assistant', content: [{ type: 'text', text }] } }
+        : { type: 'result', subtype: 'error_during_execution', is_error: true, errors: [text] };
+      expect(createClaudeConnectedServiceRuntimeAuthAdapter().classifyRuntimeAuthFailure({
+        target: { agentId: 'claude' },
+        selection: { serviceId: 'happier.agent.claude/claude-subscription', profileId: 'issued-profile', groupId: 'issued-pool' },
+        error,
+      })).toMatchObject({ kind: 'usage_limit', limitCategory: 'usage_limit', resetsAtMs: resetAtMs,
+        serviceId: 'happier.agent.claude/claude-subscription', profileId: 'issued-profile', groupId: 'issued-pool' });
+    } finally { clock.mockRestore(); }
+  });
+
   it('retains source organization with the selected provider user', async () => {
     const { classifyClaudeConnectedServiceRuntimeAuthFailure } = await import('./failure.js');
     expect(classifyClaudeConnectedServiceRuntimeAuthFailure({
@@ -301,6 +321,9 @@ describe('Claude runtime auth service classification', () => {
         credential,
         selection,
       });
+
+      await expect(adapter.materializeActiveProfile({ target: { agentId: 'claude' }, selection }))
+        .resolves.toMatchObject({ supported: true, supportsInTurnApply: true });
 
       expect(adapter.canHotApply({
         target: { agentId: 'claude' },
@@ -909,5 +932,18 @@ describe('Claude runtime auth service classification', () => {
     });
     expect(JSON.stringify(diagnostic)).not.toContain('secret');
     expect(JSON.stringify(diagnostic)).not.toContain('/Users/test/.claude');
+  });
+});
+
+
+describe('Claude issued request attribution', () => {
+  it('retains explicit unknown request identity and separate provider organization proof', () => {
+    const adapter = createClaudeConnectedServiceRuntimeAuthAdapter();
+    expect(adapter.classifyRuntimeAuthFailure({target: {agentId: 'claude'},
+      selection: {serviceId: 'happier.agent.claude/claude-subscription', activeProfileId: 'issued-profile',
+        sourceProviderAccountId: null, sourceProviderOrganizationId: null, providerReportedOrganizationId: 'org-proof'},
+      error: {error: 'rate_limit_error', apiErrorStatus: 429, message: 'Usage limit reached'},
+    })).toMatchObject({profileId: 'issued-profile', sourceProviderAccountId: null,
+      sourceProviderOrganizationId: null, providerReportedOrganizationId: 'org-proof'});
   });
 });

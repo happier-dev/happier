@@ -220,7 +220,7 @@ function containsRateLimitEvidence(value: unknown): boolean {
 }
 
 function containsUsageLimitEvidence(value: unknown): boolean {
-  return containsClaudeFailureText(value, /usage\s+limit|limit\s+reached/iu);
+  return containsClaudeFailureText(value, /usage\s+limit|limit\s+reached|\b(?:weekly|daily)\s+limit\b|\byou(?:'ve| have)?\s+(?:hit|reached)\s+your\s+limit\b/iu);
 }
 
 function containsTransientThrottleEvidence(value: unknown): boolean {
@@ -287,7 +287,7 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
   const hasCompatibleStatus = status === null || status === 429 || status === 529;
   const isAssistantApiError =
     (record.type === 'assistant' || record.type === 'assistant_response')
-    && record.isApiErrorMessage === true
+    && (record.isApiErrorMessage === true || readString(record.error) !== null)
     && (hasRateLimitEvidence || hasUsageLimitEvidence || hasTransientThrottleEvidence || hasProviderCapacityEvidence || status === 429)
     && hasCompatibleStatus;
   const isResultApiError =
