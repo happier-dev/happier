@@ -23,7 +23,26 @@ import { supportsWorkflowAnotherRoundV1 } from '@happier-dev/protocol/workflows'
 
 export { isTerminalWorkflowRunState, isWorkflowRunStopping, isWorkflowRunStopPending };
 
-/** The full Run page and inline controls offer the same accepted continuation. */
+/** The Run page and inline band consume the same boundary-resume availability. */
+export function canResumeWorkflowRunBoundary(params: Readonly<{
+    run: Pick<WorkflowRunSummaryV1, 'availability'>;
+    canEdit: boolean;
+}>): boolean {
+    return params.canEdit && params.run.availability.resumeBoundary;
+}
+
+/** The full Run page and inline band offer the same accepted replay. */
+export function canStartWorkflowRunAgain(params: Readonly<{
+    run: WorkflowRunSummaryV1;
+    canEdit: boolean;
+    hasAcceptedContext: boolean;
+    cancelRequested?: boolean;
+}>): boolean {
+    return params.canEdit && params.hasAcceptedContext && isTerminalWorkflowRunState(params.run.state)
+        && !isWorkflowRunStopPending({ ...params.run, cancelRequested: params.cancelRequested });
+}
+
+/** Another round adds the authored continuation contract to ordinary replay eligibility. */
 export function canStartWorkflowAnotherRound(params: Readonly<{
     run: WorkflowRunSummaryV1;
     definition: Pick<WorkflowDefinitionV1, 'inputs'> | null;
@@ -32,8 +51,7 @@ export function canStartWorkflowAnotherRound(params: Readonly<{
     supportsAnotherRound?: boolean;
     cancelRequested?: boolean;
 }>): boolean {
-    return params.canEdit && params.hasAcceptedContext && isTerminalWorkflowRunState(params.run.state)
-        && !isWorkflowRunStopPending({ ...params.run, cancelRequested: params.cancelRequested })
+    return canStartWorkflowRunAgain(params)
         && (params.definition ? supportsWorkflowAnotherRoundV1(params.definition) : params.supportsAnotherRound === true);
 }
 
@@ -237,7 +255,8 @@ export function describeWorkflowRunState(
     // Run reports its outcome; an explicit composed headline stays the caller's.
     // "Interrupted" is already an attention word that says why the person is needed, so it stays.
     const needsYou = context?.word === undefined && (state === 'waiting_for_review'
-        || context?.inAttentionWindow === true && !isTerminalWorkflowRunState(state) && state !== 'interrupted');
+        || context?.inAttentionWindow === true && !isTerminalWorkflowRunState(state)
+            && state !== 'interrupted' && state !== 'paused' && state !== 'pause_requested');
     const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: {
         state,
         word: context?.word ?? (needsYou ? t('workStatus.buckets.needs_you') : t(`workflows.runState.${state}`)),

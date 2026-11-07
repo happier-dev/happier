@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import '@happier-dev/protocol/actions/actionApprovalPolicy';
 import * as React from 'react';
+import { projectWorkflowDiscussionResultContentV1 } from '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -22,7 +23,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
-const { DiscussionWorkflowRunRow } = await import('./DiscussionWorkflowRunRow');
+const { DiscussionWorkflowRunEndRow, DiscussionWorkflowRunRow } = await import('./DiscussionWorkflowRunRow');
 const { projectWorkflowRunPublishedAnswerIds } = await import('./prepareDiscussionSelectionHandoff');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
@@ -69,6 +70,29 @@ it('pauses and stops the running inline Pattern through the scoped Run Actions',
         { workflowCustodyState: paused.workflowCustodyState, cancelRequested: true }).label);
 });
 
+it('resumes a paused band through the same boundary Resume Action as the Run page (RUN-BAND B2)', async () => {
+    const serverId = await homes.addHome({ name: 'Pattern Home', serverUrl: 'https://inline-resume.test', accountId: 'alice' });
+    const accountLifetime = { scope: { serverId, accountId: 'alice' }, isCurrent: () => true,
+        onRetire: () => ({ dispose: () => undefined }) };
+    const run = createWorkflowRunSummaryFixture({ id: 'resume-run', ownerAccountId: 'alice', revision: 7,
+        state: 'paused', attentionRequired: true, availability: { pause: false, cancel: true, resumeBoundary: true } });
+    const route = '/v3/automations/runs/workflow-storage';
+    homes.answer(serverId, route, { select: input => {
+        // The real Action consumes mode=boundary before forwarding the key-free storage control.
+        expect(input).toEqual({ operation: 'resume', runId: run.id, expectedRevision: 7 });
+        return { body: { run: { ...run, state: 'running', revision: 8 }, intent: 'resumed' } };
+    } });
+    const screen = await renderScreen(<DiscussionWorkflowRunRow run={run} metadata={null}
+        supportsAnotherRound={false} canEdit={true} accountLifetime={accountLifetime}
+        onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
+    expect(screen.getTextContent()).toContain(describeWorkflowRunState('paused').label);
+    expect(screen.findHostByTestId('discussion-workflow-run-pause:resume-run')).toBeNull();
+    await screen.pressByTestIdAsync('discussion-workflow-run-resume:resume-run');
+    await waitForHomeGovernance(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id, accountLifetime.scope)]?.summary)
+        .toMatchObject({ state: 'running', revision: 8 }));
+    expect(homes.requestsFor(route)).toHaveLength(1);
+});
+
 it.each([
     { state: 'succeeded' as const, canEdit: true, pause: false, cancel: false },
     { state: 'running' as const, canEdit: false, pause: true, cancel: true },
@@ -81,7 +105,43 @@ it.each([
             onRetire: () => ({ dispose: () => undefined }) }}
         onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
     expect(screen.findHostByTestId('discussion-workflow-run-pause:run-a')).toBeNull();
+    expect(screen.findHostByTestId('discussion-workflow-run-resume:run-a')).toBeNull();
     expect(screen.findHostByTestId('discussion-workflow-run-stop:run-a')).toBeNull();
+});
+
+it.each([
+    { state: 'cancelled' as const, canEdit: true, supportsAnotherRound: false, offered: true },
+    { state: 'failed' as const, canEdit: true, supportsAnotherRound: false, offered: true },
+    { state: 'succeeded' as const, canEdit: true, supportsAnotherRound: true, offered: true },
+    { state: 'running' as const, canEdit: true, supportsAnotherRound: false, offered: false },
+    { state: 'cancelled' as const, canEdit: true, supportsAnotherRound: false, offered: false, stopping: true },
+    { state: 'cancelled' as const, canEdit: false, supportsAnotherRound: false, offered: false },
+    { state: 'cancelled' as const, canEdit: true, supportsAnotherRound: undefined, offered: false },
+])('uses the Run page replay eligibility for $state with edit=$canEdit, continuation=$supportsAnotherRound (RUN-BAND B3)', async ({ state, canEdit, supportsAnotherRound, offered, stopping }) => {
+    const screen = await renderScreen(<DiscussionWorkflowRunRow
+        run={createWorkflowRunSummaryFixture({ id: 'replay-run', state, workflowCustodyState: stopping ? 'pending' : 'settled',
+            availability: { pause: false, cancel: false } })}
+        metadata={null} supportsAnotherRound={supportsAnotherRound} canEdit={canEdit}
+        accountLifetime={{ scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) }}
+        onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
+    expect(screen.findHostByTestId('discussion-workflow-run-again:replay-run') !== null).toBe(offered);
+    expect(homes.requestsFor('/v3/automations/runs/workflow-storage')).toHaveLength(0);
+});
+
+it('offers replay only below the replies when a completed band has an end row (RUN-BAND B3)', async () => {
+    const props = {
+        run: createWorkflowRunSummaryFixture({ id: 'replay-run', state: 'succeeded' }),
+        metadata: null, supportsAnotherRound: false, canEdit: true,
+        accountLifetime: { scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) },
+        onStarted: () => undefined, onSaveAsPattern: () => undefined, publishedMessageIds: ['answer-a'],
+    };
+    const header = await renderScreen(<DiscussionWorkflowRunRow {...props} endRow />);
+    expect(header.findHostByTestId('discussion-workflow-run-again:replay-run')).toBeNull();
+    await standardCleanup();
+    const end = await renderScreen(<DiscussionWorkflowRunEndRow {...props} replyTextInset={0} />);
+    expect(end.findHostByTestId('discussion-workflow-run-again:replay-run')).not.toBeNull();
 });
 
 it.each(['finished', 'run', 'account'] as const)('retires accepted Stop feedback when the %s changes', async change => {
@@ -141,6 +201,20 @@ it('keeps a refused inline control recoverable without claiming Stop was accepte
     expect(screen.getTextContent()).toContain(describeWorkflowRunState(run.state, { cancelRequested: true }).label);
 });
 
+it.each(['cancelled', 'failed'] as const)('renders the %s Run state without a published outcome message', async state => {
+    const content = projectWorkflowDiscussionResultContentV1({ runId: 'run-a', invocationRecordId: 'leaf',
+        invocationAttempt: '0', lifecycle: state, result: { checked: true } });
+    expect(content).toBeNull();
+    const screen = await renderScreen(<DiscussionWorkflowRunRow
+        run={createWorkflowRunSummaryFixture({ id: 'run-a', state, workflowCustodyState: 'settled' })}
+        metadata={null} supportsAnotherRound={false} canEdit={true}
+        accountLifetime={{ scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) }}
+        onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
+    expect(screen.getTextContent()).toContain(describeWorkflowRunState(state).label);
+    expect(screen.findHostByTestId('discussion-workflow-run-save-pattern:run-a')).toBeNull();
+});
+
 it('offers end-row capture from committed Workflow and Agent answers, bound to the exact Run', async () => {
     const messages = (['agent', 'workflow', 'execution'] as const).map((kind, index) => {
         const committed = DiscussionMessageV1Schema.parse({
@@ -178,4 +252,58 @@ it('offers end-row capture from committed Workflow and Agent answers, bound to t
     expect(screen.findHostByTestId('discussion-workflow-run-save-pattern:run-b')).toBeNull();
     await screen.pressByTestIdAsync('discussion-workflow-run-save-pattern:run-a');
     expect(save).toHaveBeenCalledWith(['answer-agent', 'answer-workflow']);
+});
+
+it('shows committed answer coverage in a completed Discussion run instead of internal step progress', async () => {
+    const screen = await renderScreen(<DiscussionWorkflowRunRow
+        run={createWorkflowRunSummaryFixture({ id: 'run-a', state: 'succeeded',
+            stepProgress: { completed: 2, total: 4 } })}
+        metadata={{ kind: 'available', value: { title: 'Fresh opinions' } }}
+        supportsAnotherRound={false} canEdit={true}
+        accountLifetime={{ scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) }}
+        onStarted={() => undefined} onSaveAsPattern={() => undefined}
+        publishedMessageIds={['answer-a', 'answer-b']} />);
+    expect(screen.getTextContent()).toContain('Fresh opinions');
+    expect(screen.getTextContent()).toContain('2 answers');
+    expect(screen.getTextContent()).not.toContain('2 of 4');
+});
+
+it.each(['running', 'failed'] as const)('keeps %s lifecycle truthful when no published answers are available', async state => {
+    const screen = await renderScreen(<DiscussionWorkflowRunRow
+        run={createWorkflowRunSummaryFixture({ id: 'run-a', state, stepProgress: { completed: 2, total: 4 } })}
+        metadata={{ kind: 'available', value: { title: 'Fresh opinions' } }}
+        supportsAnotherRound={false} canEdit={true}
+        accountLifetime={{ scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) }}
+        onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
+    expect(screen.getTextContent()).not.toContain('0 answers');
+    if (state === 'running') expect(screen.getTextContent()).toContain('2 of 4');
+    else {
+        expect(screen.getTextContent()).toContain('Failed');
+        expect(screen.getTextContent()).not.toContain('2 of 4');
+    }
+});
+
+it('keeps a finished run\'s header to its state and Open run, and closes it with Another round and Save as pattern below its replies', async () => {
+    const save = vi.fn<(ids: readonly string[]) => void>();
+    const props = {
+        run: createWorkflowRunSummaryFixture({ id: 'run-a', state: 'succeeded' }),
+        metadata: { kind: 'available' as const, value: { title: 'Fresh opinions' } },
+        supportsAnotherRound: true, canEdit: true,
+        accountLifetime: { scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) },
+        onStarted: () => undefined, onSaveAsPattern: save, publishedMessageIds: ['answer-a', 'answer-b'],
+    };
+    const header = await renderScreen(<DiscussionWorkflowRunRow {...props} endRow />);
+    expect(header.findHostByTestId('workflow-run-fold-open:run-a')).not.toBeNull();
+    expect(header.findHostByTestId('discussion-workflow-run-another-round:run-a')).toBeNull();
+    expect(header.findHostByTestId('discussion-workflow-run-save-pattern:run-a')).toBeNull();
+    await standardCleanup();
+
+    const end = await renderScreen(<DiscussionWorkflowRunEndRow {...props} replyTextInset={0} />);
+    expect(end.findHostByTestId('discussion-workflow-run-another-round:run-a')).not.toBeNull();
+    expect(end.findHostByTestId('workflow-run-fold-open:run-a')).toBeNull();
+    await end.pressByTestIdAsync('discussion-workflow-run-save-pattern:run-a');
+    expect(save).toHaveBeenCalledWith(['answer-a', 'answer-b']);
 });

@@ -2,15 +2,20 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    createWorkflowAccountRunActionOwner,
-    ActionExecuteFailureSchema,
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    createWorkflowAccountRunActionOwner} from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import {
+    ActionExecuteFailureSchema} from '@happier-dev/protocol/actions/actionExecutionResult';
+import {
     WorkflowRunStartRequestV1Schema,
     WorkflowRunGetResultV1Schema,
-    WorkflowRunRecipientCensusResponseV1Schema,
-    prepareWorkflowRunStartV1,
     type WorkflowRunStartResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/actionsV1';
+import {
+    WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import {
+    prepareWorkflowRunStartV1} from '@happier-dev/protocol/workflows';
 import { createDeferred, renderScreen } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -19,7 +24,6 @@ import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shipped
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 
 installDisconnectedServerSocketBoundary();
@@ -58,7 +62,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' | 'refused', holdFirstMissingRead = false, anotherRound = false, inlineRound = false, newSession = false) {
+async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' | 'refused', holdFirstMissingRead = false, anotherRound = false, inlineRound = false, newSession = false, inlineReplay = false) {
     vi.stubGlobal('React', React);
     installShippedNativeFrameScheduler();
     await loadSyncSingletonForTests();
@@ -156,7 +160,7 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' 
         priorDetail = opened;
         if (!opened.acceptedContext) throw new Error('prior_context_unavailable');
         const prepared = prepareWorkflowRunStartV1({ definition: priorDefinition, acceptedContext: opened.acceptedContext,
-            replay: { runId: priorId, intent: 'another_round' } });
+            replay: { runId: priorId, ...(inlineReplay ? {} : { intent: 'another_round' as const }) } });
         source = { runId, source: prepared.source, inputs: prepared.inputs };
         admissions = 0;
     }
@@ -166,7 +170,7 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' 
         dispatches++;
         const actual = WorkflowRunStartRequestV1Schema.parse(request);
         dispatchedInput = actual;
-        if (inlineRound) admittedRunId = actual.runId;
+        if (inlineRound || inlineReplay) admittedRunId = actual.runId;
         if (currentOutcome === 'refused') return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable',
             details: { reason: 'account_role_overrides_unavailable' } };
         if (currentOutcome === 'not-sent') return { ok: false, errorCode: 'target_unavailable', error: 'offline before dispatch' };
@@ -194,13 +198,13 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' 
         const inline = useWorkflowInlineRunControls({ run: priorDetail?.run ?? createWorkflowRunSummaryFixture({ id: runId }),
             definition: null, acceptedContext: null, supportsAnotherRound: inlineRound, accountLifetime: lifetime, canEdit: true,
             onStarted: result => { opened(result); } });
-        const start = inlineRound ? inline.start : controller;
+        const start = inlineReplay ? inline.replayStart : inlineRound ? inline.start : controller;
         state = start.stateFor(start.pendingRunId ?? admittedRunId);
         return <WorkflowRunComposer inputs={[]} definition={definition} values={{}} onChangeValues={() => {}} onCancel={() => {}}
             pending={state === 'submitting' || state === 'reconciling'}
             reconciling={state === 'reconciling'}
             startProblem={start.refusal}
-            onRun={() => { pending = inlineRound ? inline.anotherRound?.()
+            onRun={() => { pending = inlineReplay ? inline.runAgain?.() : inlineRound ? inline.anotherRound?.()
                 : controller.runNow({ ...input, project: context.externalActionTarget.project, refusal: 'inline' }).then(result => { if (result) opened(result); }); }} />;
     };
     const panelProps = {
@@ -258,7 +262,6 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         expect(h.counts()).toMatchObject({ admissions: 0, reads: 0, dispatches: 1 });
     });
 
-
     it('keeps the typed refusal from authenticated Start through the controller to Technical details', async () => {
         const h = await harness('refused');
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
@@ -270,6 +273,18 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
     });
 
+    it('replays the accepted inputs from an inline Run without adding another-round context (RUN-BAND B3)', async () => {
+        const h = await harness('admitted', false, true, false, false, true);
+        expect(h.counts()).toMatchObject({ reads: 0, dispatches: 0 });
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
+        await act(async () => { await h.pending(); });
+        expect(h.opened).toHaveBeenCalledWith(expect.objectContaining({ admission: 'existing' }));
+        expect(h.counts()).toMatchObject({ admissions: 1, dispatches: 1 });
+        expect(h.dispatchedInput()).toMatchObject({ ...h.input, runId: h.admittedRunId() });
+        const opened = await h.owner.execute({ actionId: 'workflow.run.get', input: { runId: h.admittedRunId() }, context: h.context });
+        expect(opened).toMatchObject({ acceptedContext: { inputs: { participants: ['retained-participant'] } } });
+        expect(WorkflowRunGetResultV1Schema.parse(opened).acceptedContext.inputs).not.toHaveProperty('previousRoundContext');
+    });
     it('opens inline continuation detail only on press and reconciles one ordinary new Run', async () => {
         const h = await harness('admitted', false, true, true);
         expect(h.counts()).toMatchObject({ reads: 0, dispatches: 0 });

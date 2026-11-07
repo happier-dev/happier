@@ -73,6 +73,9 @@ describe('describeWorkflowInvocationLifecycle', () => {
         // An explicit composed word (the Run page headline) stays the caller's.
         expect(describeWorkflowRunState('running', { inAttentionWindow: true, word: 'Running' }).label).toBe('Running');
     });
+    it.each(['pause_requested', 'paused'] as const)('keeps %s visible while a child still needs attention (RUN-BAND B2)', state => {
+        expect(describeWorkflowRunState(state, { inAttentionWindow: true }).label).toBe(`workflows.runState.${state}`);
+    });
     it('covers every canonical lifecycle the Protocol declares', () => {
         for (const lifecycle of WORKFLOW_INVOCATION_LIFECYCLES_V1) {
             const presentation = describeWorkflowInvocationLifecycle(lifecycle);

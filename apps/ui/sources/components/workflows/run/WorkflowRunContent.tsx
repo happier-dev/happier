@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
+import { WorkflowPageNavigation } from '../navigation/WorkflowNavigationViews';
+import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { normalizeResultPreview } from '@/components/workflows/presentation/resultPreview';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -12,19 +16,23 @@ import {
 } from 'react-native';
 
 import {
-    type WorkflowDefinitionV1,
-    type JsonValue,
-    type WorkflowMaterializedLeafV1,
+    type WorkflowDefinitionV1} from '@happier-dev/protocol/workflows/workflowV1';
+import {
+    type JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import {
+    type WorkflowMaterializedLeafV1} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import {
     type WorkflowInvocationRecoveryV1,
     type WorkflowInvocationRecoveryAvailabilityV1,
     type WorkflowRunInvocationIndexV1,
     type WorkflowRunSummaryV1,
     type WorkflowProgressEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows';
 import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
+import { resolveWorkflowRunProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -37,9 +45,9 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import {
+    canResumeWorkflowRunBoundary,
     isWorkflowAttentionInvocation,
     describeWorkflowInvocationLifecycle,
     describeWorkflowInvocationAttempt,
@@ -59,6 +67,7 @@ import { readPressFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/f
 import type { CustomModalInjectedProps } from '@/modal';
 import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
+import { DEFAULT_SESSION_WIDTH_PX } from '@/components/ui/panels/paneBreakpoints';
 import { compareInvocationOrder } from '@/sync/store/domains/workflowRuns';
 import type { PaneMainColumnDescriptor } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
@@ -105,6 +114,7 @@ import {
     projectWorkflowInvocationRecovery,
     projectWorkflowRunFailure,
     selectWorkflowRunFailureInvocation,
+    selectWorkflowRunApprovalPresentation,
     type WorkflowRunFailurePresentation,
     type WorkflowRecoveryContinuation,
 } from './workflowRunDetailPresentation';
@@ -437,7 +447,8 @@ function WorkflowSelectedDetail(props: Readonly<{
             <WorkflowInvocationDetail {...props.detail} />
         </ScrollView>}
         {props.sessionId === null || (!props.phone && reviewShown) ? null : <SessionInPane sessionId={props.sessionId}
-            serverId={props.serverId} active={active && !reviewOpen} composer composerPlaceholder={t('workflows.run.stepComposerPlaceholder')} />}
+            serverId={props.serverId} active={active && !reviewOpen} composer
+            composerPlaceholder={t('workflows.run.stepComposerPlaceholder')} />}
     </View>;
 }
 
@@ -507,6 +518,18 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const sidePanesAvailable = useDetailsPaneAvailable();
     const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const phone = useDeviceType() === 'phone';
+    const navigationScope = useActiveServerAccountScope(props.serverId ?? null);
+    const selectPage = React.useCallback((id: string) => {
+        if (id === 'flow' || id === 'steps' || id === 'activity') props.onChangeView(id);
+    }, [props.onChangeView]);
+    const navigation = useWorkflowNavigation({ pageKind: 'workflowRun', identity: props.run.id, scope: navigationScope,
+        activeId: props.view,
+        phone, presented: props.active !== false,
+        selectPage });
+    const executeNavigation = useMountedScopeActionCommand(navigationScope);
+    // One identity for the page tabs, so live progress does not re-render them.
+    const selectNavigation = React.useCallback((id: string) => selectWorkflowNavigationItem(executeNavigation, navigation.model, id),
+        [executeNavigation, navigation.model]);
     /**
      * Where focus returns when the compact modal closes: the exact row or node
      * whose press selected the invocation. Recorded at the press, because by
@@ -599,6 +622,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         [derivedStructure, props.invocations, props.run.state, props.cancelRequested],
     );
     const attentionCount = attentionRows.length;
+    const approvalPresentation = React.useMemo(() => selectWorkflowRunApprovalPresentation({
+        requests: props.publicationRequests ?? [], waitingInvocations: attentionRows,
+        progressByInvocationId: structureProgressById,
+    }), [props.publicationRequests, attentionRows, structureProgressById]);
     // The index draws one row per held step: a For-each's held items share it, ordered as the items
     // are (item 1 first, whatever order they were dispatched in), and its Review opens the first.
     const attentionIndexRows = React.useMemo(() => {
@@ -609,7 +636,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         for (const invocation of attentionRows) {
             const nodeId = derivedStructure.get(invocation.id)?.nodeId ?? null;
             const repeated = occurrenceOf(invocation).some((coordinate) => coordinate.kind === 'item' || coordinate.kind === 'iteration');
-            const repeatedNodeId = nodeId !== null && repeated ? nodeId : null;
+            // Distinct approval decisions each keep their exact Open request entry.
+            const repeatedNodeId = nodeId !== null && repeated && !approvalPresentation.byInvocationId.has(invocation.id) ? nodeId : null;
             const existing = repeatedNodeId === null ? undefined : byNode.get(repeatedNodeId);
             if (existing) {
                 existing.members.push(invocation);
@@ -625,7 +653,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             row.invocation = row.members[0] ?? row.invocation;
         }
         return rows;
-    }, [attentionRows, derivedStructure]);
+    }, [attentionRows, derivedStructure, approvalPresentation.byInvocationId]);
     /**
      * Activity lists the work inside the Run. The Run's own root row repeats what the header and
      * outcome already say, and Map and Steps never show it either.
@@ -765,6 +793,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * no selected final result exists, the absence is stated instead of implied.
      */
     const stopPending = isWorkflowRunStopPending({ ...props.run, cancelRequested: props.cancelRequested });
+    const canResume = canResumeWorkflowRunBoundary({ run: props.run, canEdit: props.onResume !== undefined });
     const invocationStatusContext = React.useMemo(() => ({ runStopPending: stopPending,
         machineReachable: props.machineReachable, machineName: props.machineName ?? props.run.machineId }),
     [stopPending, props.machineReachable, props.machineName, props.run.machineId]);
@@ -785,6 +814,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     firstFailedInvocationId: props.firstFailedInvocationId })?.id ?? props.firstFailedInvocationId };
         }
         if (props.run.state === 'failed') return null;
+        // Only a Run that finished has a result to open or steps to inspect as its answer; a stopped,
+        // expired or uncertain Run leads with its own recovery (07 §6.1), never Inspect steps.
+        if (props.run.state !== 'succeeded') return null;
         const producerBlockId = props.definition?.finalOutput?.producer.blockId ?? null;
         if (producerBlockId === null
             || props.resultLabel === null
@@ -799,6 +831,16 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             : { kind: 'open_result', invocationId: props.finalOutputInvocationId };
     }, [derivedStructure, props.definition, props.failurePresentation, props.finalOutputInvocationId, props.firstFailedInvocationId, props.firstFailedInvocationResolution, props.invocations, props.resultLabel, props.run.state, stopPending]);
 
+    // A terminal Run's actions and primary depend on its first failure (See failures leads, or Run again).
+    // That lookup settles after the page, so until then none is offered: the outcome is decided once, and
+    // nothing arrives, swaps or changes tone after the page is read (an interrupted Run's primary never
+    // depends on it, so only its cause line waits).
+    const outcomeUndecided = isTerminalWorkflowRunState(props.run.state) && !stopPending
+        && props.firstFailedInvocationResolution === 'loading';
+    const onResume = outcomeUndecided ? undefined : props.onResume;
+    const onRunAgain = outcomeUndecided ? undefined : props.onRunAgain;
+    const onAnotherRound = outcomeUndecided ? undefined : props.onAnotherRound;
+
     /**
      * One dominant action per state (UX §1, §3.3).
      *
@@ -812,10 +854,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         terminalOutcome?.kind === 'open_result' || terminalOutcome?.kind === 'see_failures'
             || terminalOutcome?.kind === 'result_absent'
             ? 'outcome'
-            : props.run.availability.resumeBoundary && props.onResume !== undefined
+            : canResume
                 ? 'resume'
-                : props.run.state !== 'succeeded' && props.onRunAgain !== undefined
+                : props.run.state !== 'succeeded' && onRunAgain !== undefined
                     ? 'run_again'
+                    // An interrupted Run with nothing to resume moves on only by being stopped (then run
+                    // again), so Stop is its one primary (07 §6.1, FIN-DESIGN-REVIEW H3).
                     : props.run.state === 'interrupted' && props.run.availability.cancel && props.onCancel !== undefined
                         && props.cancelRequested !== true
                         ? 'stop'
@@ -830,12 +874,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         isWorkflowWaitForYouHold(invocation.lifecycle, { blockKind: invocationBlockKind(invocation) })
     ), [invocationBlockKind]);
     const firstAttention = attentionRows[0];
-    // A phone keeps what needs you in thumb reach while the Map scrolls.
-    const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
-    const [dockHeightPx, setDockHeightPx] = React.useState(0);
     // One primary per view: while a hold is open beside the Run, its own card carries the primary,
     // so the index's Review stays bordered; with nothing open, the first hold is the page's next step.
-    const primaryReviewId = props.selectedInvocationId === null ? attentionIndexRows[0]?.invocation.id : undefined;
+    // A phone page keeps what needs you in a dock in thumb reach instead of a section above the Map (phone-P1).
+    const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
+    const [dockHeightPx, setDockHeightPx] = React.useState(0);
+    // One primary per page: the first hold's Review leads only when the header has no primary of its own.
+    const primaryReviewId = props.selectedInvocationId === null && primaryAction === null
+        ? attentionIndexRows[0]?.invocation.id : undefined;
     const firstAttentionLabel = firstAttention === undefined ? null : invocationLabel(firstAttention);
     const failureInvocation = props.firstFailedInvocationResolution === 'resolved'
         ? selectWorkflowRunFailureInvocation({ invocations: props.invocations, structure: derivedStructure,
@@ -861,9 +907,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // The line names the failed step's number, what the attempt recorded
     // and a usage limit's reset, so the page says why without opening See failures (FIN-DESIGN-C4 R5).
     // An interrupted Run parked on a failed step says the same retained cause under its status.
-    const failureReason = (props.run.state !== 'failed' && props.run.state !== 'interrupted') || failurePresentation == null
+    const runProblem = failurePresentation == null ? resolveWorkflowRunProblemPresentation(props.run) : null;
+    const failureReason = runProblem?.message ?? ((props.run.state !== 'failed' && props.run.state !== 'interrupted') || failurePresentation == null
         || (!phone && props.selectedInvocationId === failurePresentation.invocationId) ? null
-        : formatWorkflowRunFailureCauseLine(failurePresentation);
+        : formatWorkflowRunFailureCauseLine(failurePresentation));
+    const failureReasonPending = failureReason === null
+        && (props.run.state === 'failed' || props.run.state === 'interrupted')
+        && props.firstFailedInvocationResolution === 'loading' && (phone || props.selectedInvocationId === null);
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
         workflowCustodyState: props.run.workflowCustodyState,
@@ -905,6 +955,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             attention: firstAttention === undefined || firstAttentionLabel === null ? null : {
                 step: firstAttentionLabel,
                 waitForYou: attentionWaitsForYou(firstAttention),
+                waitsForApproval: firstAttention.lifecycle === 'waiting_for_approval',
             },
             ...(props.machineReachable === undefined ? {} : {
                 machine: {
@@ -999,35 +1050,35 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * the primary leads there instead of landing alone on the second line. Inspect steps is withdrawn
      * while Steps is open, since it would only point at the view already showing.
      */
-    const resumeAction = props.run.availability.resumeBoundary && props.onResume !== undefined ? (
+    const resumeAction = canResume ? (
         <ToolbarButton
             key="resume"
             testID={`${testIDPrefix}-resume`}
             disabled={operationPending}
             busy={operationPending}
-            onPress={props.onResume}
+            onPress={onResume}
             label={t('workflows.run.resume')}
             {...(primaryAction === 'resume' ? { tone: 'primary' as const } : {})}
             size="md"
         />
     ) : null;
-    const runAgainAction = props.onRunAgain !== undefined ? (
+    const runAgainAction = onRunAgain !== undefined ? (
         <View key="run-again" ref={props.runAgainAnchorRef} collapsable={false}>
             <ToolbarButton
                 testID={`${testIDPrefix}-run-again`}
-                onPress={props.onRunAgain}
+                onPress={onRunAgain}
                 label={t('workflows.run.runAgain')}
                 {...(primaryAction === 'run_again' ? { tone: 'primary' as const } : {})}
                 size="md"
             />
         </View>
     ) : null;
-    const anotherRoundAction = props.onAnotherRound !== undefined ? (
+    const anotherRoundAction = onAnotherRound !== undefined ? (
         <ToolbarButton
             key="another-round"
             testID={`${testIDPrefix}-another-round`}
             disabled={operationPending}
-            onPress={props.onAnotherRound}
+            onPress={onAnotherRound}
             label={t('workflows.start.anotherRound')}
             size="md"
         />
@@ -1036,7 +1087,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         <ToolbarButton
             key="inspect-steps"
             testID={`${testIDPrefix}-inspect-steps`}
-            onPress={() => props.onChangeView('steps')}
+            onPress={() => selectWorkflowNavigationItem(executeNavigation, navigation.model, 'steps')}
             label={t('workflows.run.inspectSteps')}
             tone="primary"
             size="md"
@@ -1075,10 +1126,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         .filter((element) => element !== null && element !== primaryElement);
     const sourceFolded = phonePage;
     const stateMenuActions: ItemAction[] = [
-        ...(runAgainFolded && props.onRunAgain ? [{ id: `${testIDPrefix}-run-again`, title: t('workflows.run.runAgain'),
-            icon: 'play' as const, onPress: props.onRunAgain }] : []),
-        ...(anotherRoundFolded && props.onAnotherRound ? [{ id: `${testIDPrefix}-another-round`, title: t('workflows.start.anotherRound'),
-            icon: 'arrows-clockwise' as const, disabled: operationPending, onPress: props.onAnotherRound }] : []),
+        ...(runAgainFolded && onRunAgain ? [{ id: `${testIDPrefix}-run-again`, title: t('workflows.run.runAgain'),
+            icon: 'play' as const, onPress: onRunAgain }] : []),
+        ...(anotherRoundFolded && onAnotherRound ? [{ id: `${testIDPrefix}-another-round`, title: t('workflows.start.anotherRound'),
+            icon: 'arrows-clockwise' as const, disabled: operationPending, onPress: onAnotherRound }] : []),
         ...(sourceFolded && props.sourceAction ? [{ id: `${testIDPrefix}-${props.sourceAction.kind}-workflow`,
             title: props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow'),
             icon: props.sourceAction.kind === 'edit' ? 'pencil-simple' as const : 'tree-structure' as const,
@@ -1097,15 +1148,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {outcomeActions}
             {props.run.availability.pause && props.onPause !== undefined ? (
                 // Pause is the quiet one beside the bordered Stop (lab run-A): two outlines side by side would
-                // say the two are equals. "At boundary" is what it does, so it is the accessible name.
+                // say the two are equals. It reads what it does, "Pause at boundary" (07 §2.3 item 6).
                 <SectionActionButton
                     testID={`${testIDPrefix}-pause`}
                     disabled={operationPending}
                     loading={operationPending}
                     onPress={props.onPause}
                     icon="pause-circle"
-                    title={t('workflows.run.pause')}
-                    accessibilityLabel={t('workflows.run.pauseAtBoundary')}
+                    title={t('workflows.run.pauseAtBoundary')}
                 />
             ) : null}
             {/* Stop is bordered and neutral: a healthy run is never tinted (07 §3). */}
@@ -1140,14 +1190,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     );
     // A phone's navigation bar keeps only `⋯`; the state's own actions (Run again, See failures, Stop) stay
     // in the page under the outcome they answer, so the failed page's next step is never behind a menu (lab P1).
-    const hasStateControls = (props.run.availability.resumeBoundary && props.onResume !== undefined)
-        || (props.onRunAgain !== undefined && !runAgainFolded) || (props.onAnotherRound !== undefined && !anotherRoundFolded)
+    const hasStateControls = canResume
+        || (onRunAgain !== undefined && !runAgainFolded) || (onAnotherRound !== undefined && !anotherRoundFolded)
         || (terminalOutcome !== null && (terminalOutcome.kind !== 'result_absent' || props.view !== 'steps'))
         || (props.run.availability.pause && props.onPause !== undefined)
         || (props.run.availability.cancel && props.onCancel !== undefined);
     const pageStateControls = phone && props.embedded !== true && hasStateControls;
     const runControls = (
-        <View style={styles.headerControls}>
+        <View style={[styles.headerControls, outcomeUndecided ? styles.headerControlsHeld : null]}>
             {pageStateControls ? null : stateControls}
             {overflowControl}
         </View>
@@ -1220,14 +1270,20 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 </Text>}
                 {failureReason ? <Text testID={`${testIDPrefix}-failure-reason`} style={[styles.provenance, styles.outcomeDetail]}>
                     {failureReason}
-                </Text> : null}
+                </Text> : failureReasonPending ? (
+                    // The cause's own line, held while the first failure resolves, so it fills in without moving the page.
+                    <Text testID={`${testIDPrefix}-failure-reason-pending`} style={[styles.provenance, styles.outcomeDetail]}
+                        accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{'\u00A0'}</Text>
+                ) : null}
                 {/* Contact loss is all that is known; resume choices come from
                     the recovery owner once the current state is. */}
                 {props.machineReachable === false && (!props.machineStatus || props.machineStatus.bucket === 'offline') && !isTerminalWorkflowRunState(props.run.state)
                     // A selected step that stopped says when its choices appear, in its recovery card (DESIGN-17 R1).
                     && !(selectedInvocation?.lifecycle === 'failed' || selectedInvocation?.lifecycle === 'outcome_uncertain') ? (
                     <Text testID={`${testIDPrefix}-machine-unavailable`} style={styles.provenance}>
-                        {t('workflows.run.machineUnavailableBody')}
+                        {/* Its cause first, so "choices will appear" never reads without a reason. */}
+                        {props.machineName ? t('workflows.run.machineUnavailable', { machine: props.machineName }) : null}
+                        {props.machineName ? ' ' : null}{t('workflows.run.machineUnavailableBody')}
                     </Text>
                 ) : null}
 
@@ -1245,7 +1301,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
                 {pageStateControls ? (
                     <View testID={`${testIDPrefix}-page-controls`} style={styles.headerControls}>{stateControls}</View>
-                ) : null}
+                ) : phone && props.embedded !== true && outcomeUndecided ? <View style={styles.headerControlsHeld} /> : null}
                 {props.runAgainStatus}
                 {/* The durable receipt, so the request survives its own
                     transport and names what it is waiting on. */}
@@ -1256,18 +1312,18 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                         })}
                     </Text>
                 ) : null}
-                {/* While the Stop is pending the outcome line already says so; the custody mechanism is not repeated. */}
-                {props.deleteBlockedByCustody && !stopPending ? (
+                {/* A terminal outcome and unresolved stop confirmation are separate owner facts. */}
+                {props.deleteBlockedByCustody && (props.run.state === 'cancelled' || !stopPending) ? (
                     <Text testID={`${testIDPrefix}-custody-pending`} style={styles.provenance}>
                         {t('workflows.recovery.waitingForStop')}
                     </Text>
                 ) : null}
                 {/* A publication that waits on its approval names it and opens it, also once the Run is terminal. */}
-                {props.publicationRequests === undefined || props.publicationRequests.length === 0
+                {approvalPresentation.unassigned.length === 0
                     || props.onOpenPublicationRequest === undefined ? null : (
                     <ListPresentationProvider value="page" pageInsets="contained">
                         <ItemGroup header="none" constrainToContentWidth={false}>
-                            {props.publicationRequests.map((request) => (
+                            {approvalPresentation.unassigned.map((request) => (
                                 <WorkflowRunPublicationRequestRow
                                     key={request.artifactId}
                                     testID={`${testIDPrefix}-publication-request-${request.artifactId}`}
@@ -1328,6 +1384,18 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     <ListPresentationProvider value="page" pageInsets="contained">
                         <ItemGroup header="none" constrainToContentWidth={false}>
                             {attentionIndexRows.map(({ invocation, members }) => {
+                                const request = approvalPresentation.byInvocationId.get(invocation.id);
+                                if (request && props.onOpenPublicationRequest) return (
+                                    <WorkflowRunPublicationRequestRow
+                                        key={invocation.id}
+                                        testID={`${testIDPrefix}-needs-you-request-${request.artifactId}`}
+                                        artifactId={request.artifactId}
+                                        serverId={props.serverId}
+                                        // Two invitations share one Action title; the item each belongs to tells them apart.
+                                        context={formatMapOccurrence(derivedStructure.get(invocation.id)?.occurrence ?? [])}
+                                        onOpen={() => props.onOpenPublicationRequest?.(request.href)}
+                                    />
+                                );
                                 const step = invocationLabel(invocation) ?? t('workflows.contentUnavailable');
                                 const reviewing = members.some((member) => member.id === props.selectedInvocationId);
                                 const entry = derivedStructure.get(invocation.id);
@@ -1340,8 +1408,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                                 return (
                                     <Item
                                         key={invocation.id}
+                                        // A Wait that keeps its default name is already the instruction ("Wait for you").
                                         title={invocation.lifecycle !== 'waiting_for_review' ? step : attentionWaitsForYou(invocation)
-                                            ? t('workflows.run.attentionWaitRow', { step })
+                                            ? step === t('workflows.page.blocks.waitTitle') ? step : t('workflows.run.attentionWaitRow', { step })
                                             : t('workflows.run.attentionReviewRow', { step })}
                                         subtitle={invocation.lifecycle === 'waiting_for_review' ? where
                                             : [describeWorkflowInvocationLifecycle(invocation.lifecycle).label, where].filter(Boolean).join(' · ')}
@@ -1377,20 +1446,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}
-            <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : styles.viewSwitchOnTitle]}>
+            <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : styles.viewSwitchOnMark]}>
                 <View style={phone ? null : styles.viewTabs}>
-                <SegmentedTabBar
-                    testIDPrefix={`${testIDPrefix}-view`}
-                    accessibilityLabel={t('workflows.tabsAccessibility.runViews')}
-                    segmentSizing={phone ? 'equal' : 'content'}
-                    tabs={[
-                        { id: 'flow' as const, label: t('workflows.tabs.map') },
-                        { id: 'steps' as const, label: t('workflows.tabs.steps') },
-                        { id: 'activity' as const, label: t('workflows.tabs.activity') },
-                    ]}
-                    activeTabId={props.view}
-                    onSelectTab={props.onChangeView}
-                />
+                    <WorkflowPageNavigation navigation={navigation} phone={phone}
+                        testIDPrefix={`${testIDPrefix}-view`}
+                        onSelect={selectNavigation} />
                 </View>
                 {/* A phone folds the source action into ⋯, so a settled Run's phone page has no row here to reserve. */}
                 {sourceFolded && isTerminalWorkflowRunState(props.run.state) ? null : <View style={[styles.viewActions, phone ? styles.viewActionsPhone : styles.viewActionsTrailing]}>
@@ -1466,6 +1526,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         props.materializedLeaves, props.selectedInvocationId, props.selectedInvocationProgress?.attempt,
         props.selectedInvocationProgress?.blockKind, props.selectedInvocationProgress?.timing, selectedInvocation]);
     const selectedDetailSubtitle = selectedDetail.subtitle;
+    // A step with no recovery choice still has a way forward on this page: the action the Run itself offers
+    // (Stop while it is open, Run again once it has ended, else the workflow it came from). The card names
+    // that action instead of ending on what cannot be done.
+    const noChoicesNext: WorkflowInvocationDetailProps['noChoicesNext'] =
+        props.run.availability.cancel && props.onCancel !== undefined ? 'stop'
+            : props.onRunAgain !== undefined ? 'run_again'
+                : props.sourceAction ? 'open_workflow' : null;
     const detailProps = React.useMemo((): WorkflowInvocationDetailProps | null => (
         props.selectedInvocationId === null ? null : {
             continuationText: selectedRecoveryText?.continuation,
@@ -1486,6 +1553,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 reachable: props.machineReachable,
             },
             operationPending,
+            noChoicesNext,
             testIDPrefix,
             ...(props.selectedContentUnavailable === undefined
                 ? {}
@@ -1531,6 +1599,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         }
     ), [
         operationPending,
+        noChoicesNext,
         props.onAcknowledgeUncertainPriorEffects,
         props.onContinuePrepared,
         props.onCopyWorkspace,
@@ -1588,7 +1657,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
-            {/* The last row clears the dock and the shell's bottom chrome. */}
+            {/* The scroll content clears the dock and the safe area, so the last Map row is never covered. */}
             {phoneDock ? <View style={{ height: dockHeightPx }} /> : null}
             {technicalOpen ? (
             <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
@@ -1651,7 +1720,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         phonePresentation: 'sheet',
     });
 
-    const outline = props.view === 'steps' && props.definition !== null ? (
+    // Show the accepted Run immediately, while its map waits for the first step
+    // states (DESIGN-15 R12). An unread held step must never say "Not started".
+    const outline = props.view === 'steps' && props.definition !== null && props.invocationsLoaded ? (
         <ScrollView testID={`${testIDPrefix}-steps`} style={styles.scroll}
             contentContainerStyle={[styles.root, props.contentContainerStyle]}>
             {header}
@@ -1671,7 +1742,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 loading={props.loadingMoreInvocations === true} failed={props.loadMoreInvocationsFailed === true} />}
             {footer}
         </ScrollView>
-    ) : props.view === 'activity' || flowProjection === null ? (
+    ) : props.view === 'activity' || flowProjection === null || !props.invocationsLoaded ? (
         <WorkflowInvocationList
             invocationStatusContext={invocationStatusContext}
             listRef={activityListRef}
@@ -1776,6 +1847,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     if (!detailsPaneAvailable) return main;
     return <DetailsPaneHost main={main}
         mainColumn={runMainColumn}
+        // A step is read and discussed at a Session's width; the Run keeps the rest of the page.
+        detailsPreferredWidthPx={DEFAULT_SESSION_WIDTH_PX}
+        onMainColumnControlsChange={navigation.onMainColumnControlsChange}
         details={inspector === null ? null : { content: inspector, header: { title: selectedDetailTitle, subtitle: selectedDetailSubtitle }, accessibilityLabel: selectedDetailTitle }}
         onCloseDetails={() => props.onDeselectInvocation?.()} />;
 }

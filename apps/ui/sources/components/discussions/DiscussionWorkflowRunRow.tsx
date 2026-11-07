@@ -38,7 +38,7 @@ type DiscussionWorkflowRunProps = Readonly<{
   supportsAnotherRound: boolean | undefined;
   canEdit: boolean;
   accountLifetime: ServerAccountScopeLifetime;
-  /** The new round stays here: the list re-reads and shows it under its message. */
+  /** The new Run stays here: the list re-reads and shows it under its message. */
   onStarted: (result: WorkflowRunStartResultV1) => void;
   /** The committed replies this Run published here, in thread order. */
   publishedMessageIds: readonly string[];
@@ -74,7 +74,7 @@ function useRunLine(props: Pick<DiscussionWorkflowRunProps, 'run' | 'metadata' |
  * Run band names it and its state, and Open goes to the full Run. Replies arrive as ordinary attributed
  * messages; this row never repeats them.
  *
- * The Run's own operations (Another round, Save as pattern) live in exactly one place: on the end row
+ * The Run's own operations (Run again, Another round, Save as pattern) live in exactly one place: on the end row
  * after its last published reply when the timeline placed one (`endRow`), otherwise on this header
  * (a live Run, or a finished one with nothing published here).
  */
@@ -86,7 +86,7 @@ export const DiscussionWorkflowRunRow = React.memo(function DiscussionWorkflowRu
     : <DiscussionWorkflowRunWithControls {...props} placement="header" />;
 });
 
-/** The quiet row that closes a finished Run after its last published reply: Another round and Save as pattern. */
+/** The quiet row that closes a finished Run after its last published reply and offers its next actions. */
 export const DiscussionWorkflowRunEndRow = React.memo(function DiscussionWorkflowRunEndRow(props: DiscussionWorkflowRunProps & Readonly<{
   /** How far the thread's reply text stands in from its row edge (past the speaker face): the end row starts there. */
   replyTextInset: number;
@@ -107,11 +107,13 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
   });
   const runId = props.run.id;
   const pending = controls.start.pendingRunId !== null && controls.start.isPending(controls.start.pendingRunId);
+  const replayPending = controls.replayStart.pendingRunId !== null && controls.replayStart.isPending(controls.replayStart.pendingRunId);
   const anotherRound = controls.anotherRound;
+  const runAgain = controls.runAgain;
   const { publishedMessageIds, onSaveAsPattern } = props;
   const savePattern = React.useCallback(() => onSaveAsPattern(publishedMessageIds), [onSaveAsPattern, publishedMessageIds]);
   const canSavePattern = isTerminalWorkflowRunState(props.run.state) && publishedMessageIds.length > 0;
-  const operationPending = pending || controls.pendingControl !== null;
+  const operationPending = pending || replayPending || controls.pendingControl !== null;
   const pause = props.canEdit && controls.availability.pause ? (
     <SectionActionButton
       testID={`discussion-workflow-run-pause:${runId}`}
@@ -120,6 +122,16 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
       disabled={operationPending}
       loading={controls.pendingControl === 'pause'}
       onPress={() => void controls.submitControl('pause')}
+    />
+  ) : null;
+  const resume = controls.canResume ? (
+    <SectionActionButton
+      testID={`discussion-workflow-run-resume:${runId}`}
+      title={t('workflows.run.resume')}
+      icon="play-circle"
+      disabled={operationPending}
+      loading={controls.pendingControl === 'resume'}
+      onPress={() => void controls.submitControl('resume')}
     />
   ) : null;
   const stop = props.canEdit && controls.availability.cancel ? (
@@ -132,6 +144,16 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
       disabled={operationPending}
       busy={controls.pendingControl === 'cancel'}
       onPress={() => void controls.submitControl('cancel')}
+    />
+  ) : null;
+  const replay = runAgain ? (
+    <SectionActionButton
+      testID={`discussion-workflow-run-again:${runId}`}
+      title={t('workflows.run.runAgain')}
+      icon="arrow-clockwise"
+      disabled={operationPending}
+      loading={replayPending}
+      onPress={() => void runAgain()}
     />
   ) : null;
   const another = anotherRound ? (
@@ -153,6 +175,7 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
       onPress={savePattern}
     />
   ) : null;
+  const startRefusal = controls.replayStart.refusal ?? controls.start.refusal;
   const refusal = controls.controlError ? (
     <SurfaceStateCard
       testID={`discussion-workflow-run-control-error:${runId}`}
@@ -162,20 +185,20 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
       title={controls.controlError.title}
       reason={controls.controlError.message}
     />
-  ) : controls.start.refusal ? (
+  ) : startRefusal ? (
     <SurfaceStateCard
       testID={`discussion-workflow-run-refusal:${runId}`}
       size="line"
       kind="error"
       accessibilitySemantics="status"
-      title={controls.start.refusal.message}
+      title={startRefusal.message}
     />
   ) : null;
   if (props.placement === 'header') {
     return <DiscussionWorkflowRunHeader {...props} cancelRequested={controls.cancelRequested}
-      actions={pause || stop || another || save ? <>{pause}{stop}{another}{save}</> : null} refusal={refusal} />;
+      actions={pause || resume || stop || replay || another || save ? <>{pause}{resume}{stop}{replay}{another}{save}</> : null} refusal={refusal} />;
   }
-  return <DiscussionWorkflowRunEnd {...props} actions={<>{another}{save}</>} refusal={refusal} />;
+  return <DiscussionWorkflowRunEnd {...props} actions={<>{replay}{another}{save}</>} refusal={refusal} />;
 }
 
 function DiscussionWorkflowRunHeader(props: DiscussionWorkflowRunProps & Readonly<{
