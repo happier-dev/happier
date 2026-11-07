@@ -12,6 +12,7 @@ import { SessionAgentUpdateNoticeV1Schema, SessionSpawnNewActionResultV1Schema }
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
@@ -364,6 +365,15 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     machineId: ActionOperationIdentifierV1Schema,
     preset: z.optional(z.strictObject({ id: ActionOperationIdentifierV1Schema, revision: z.number().check(z.int(), z.nonnegative()) })),
     managedId: z.optional(ActionOperationIdentifierV1Schema),
+    /** Reviewed native steps in plan order; display facts, never effect operands. */
+    steps: z.optional(z.array(z.strictObject({
+      planIndex: z.number().check(z.int(), z.nonnegative()),
+      stepId: z.string().check(z.minLength(1)),
+      label: PluginLocalizedStringV2Schema,
+      state: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
+      /** Machine-readable native reason only; no process output or submitted content. */
+      failureCause: z.optional(z.string().check(z.minLength(1))),
+    }))),
     setupTask: z.optional(z.strictObject({
       id: ActionOperationIdentifierV1Schema,
       taskKind: z.enum(['machine.setup.plan.v1', 'machine.setup.apply.v1', 'machine.setup.remove.v1']),

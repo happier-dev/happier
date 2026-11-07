@@ -9695,6 +9695,14 @@ interest rather than retargeting a retained operation to the replacement actor.
 An active owner's `stop_unconfirmed` observation permits an explicit Stop retry
 against the same qualified operation; no timer retries it or fabricates settlement.
 
+In unreleased 0.3, Machine setup's current operation snapshot carries ordered
+`domainRef.steps`: `(planIndex, stepId)` identifies a row, `label` is its reviewed
+localized title, and `state` is pending, running, succeeded, failed or cancelled.
+An optional `failureCause` carries the native reason code, never process output
+or script bytes. Apply, removal and updates share this producer; terminal and
+task attachments retain the rows. The existing operation subscription publishes
+only changed snapshots. Released V1 readers omit the Machine setup reference.
+
 The development completion contract retains the original active operation and
 accepted reservation across a post-copy setup review. Its strict `setupReview`
 fact presents as Needs you, not failure or

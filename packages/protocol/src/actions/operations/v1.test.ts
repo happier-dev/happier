@@ -35,6 +35,18 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains current setup step facts and omits the setup reference for released V1 readers', () => {
+    const steps = [{ planIndex: 0, stepId: 'install', label: { key: 'setup.install', fallback: 'Install tools' },
+      state: 'failed', failureCause: 'native_effect_failed' }];
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
+      domainRef: { kind: 'machineSetup', serverId: 'home', machineId: 'machine-1', steps } });
+    expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: snapshot }))))
+      .toMatchObject({ operation: { domainRef: { steps } } });
+    expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('domainRef');
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...snapshot, domainRef: { ...snapshot.domainRef,
+      steps: [{ ...steps[0], scriptBody: 'PRIVATE_SCRIPT' }] } }).success).toBe(false);
+  });
+
   it('retains a typed spawn refusal on a failed operation with the same cause', () => {
     const refusal = { type: 'error', code: 'spawn_failed', retryable: false,
       launchError: { kind: 'launch_error', code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable' } };

@@ -13,6 +13,7 @@ import { selectMachineSetupRecipeItemsV1,
   type MachineSetupExclusionV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { resolveMachineSetupNativeEffects } from './machineSetupNativeEffects';
+import { createSetupOperationSnapshot } from './setupOperationSnapshot';
 import { readMachineSetupSessionRefreshRequirement, describeMachineSetupSessionRefresh,
   type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -32,7 +33,12 @@ import { prepareProjectNativeToolchain, ProjectNativeToolchainUncertainError } f
 import { resolveSecretReferenceOverlayEnvironment } from '@/settings/secrets/secretReferenceOverlay';
 import type { TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { listMachineSetupAdaptersV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
-import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError, type MachineNativeEffectContext, type MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import {
+  machineNativeEffectAdmission,
+  MachineNativeEffectAdmissionError,
+  type MachineNativeEffectContext,
+  type MachineNativeEffectKey,
+} from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 
 export type ApplyMachineSetupInput = Readonly<{
   homeId: string;
@@ -150,31 +156,25 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
   if (!operationId) return { ok: false, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' };
   const owner = getLiveSystemTasksRunnerAdapter();
   const taskKind = input.taskKind;
-  let setupTask: Readonly<{ id: string; taskKind: typeof taskKind }> | undefined;
-  let attachment: Extract<ActionOperationDomainRefV1, { kind: 'machineSetup' }> = {
+  const attachment: Extract<ActionOperationDomainRefV1, { kind: 'machineSetup' }> = {
     kind: 'machineSetup', serverId: input.homeId, machineId: input.machineId,
     ...(input.preset ? { preset: input.preset } : {}), ...(input.managedId ? { managedId: input.managedId } : {}),
   };
-  const operation = { ...input.operation, operationOwnerUpdate: {
-    update: (update: Parameters<ProjectSetupOperationContext['operationOwnerUpdate']['update']>[0]) => {
-      if (update.domainRef?.kind !== 'machineSetup') { input.operation.operationOwnerUpdate.update(update); return; }
-      attachment = { ...update.domainRef, ...(setupTask ? { setupTask } : {}) };
-      input.operation.operationOwnerUpdate.update({ ...update, domainRef: attachment });
-    },
-  } };
+  const snapshot = createSetupOperationSnapshot(attachment, input.plans, update => input.operation.operationOwnerUpdate.update(update));
+  const operation = { ...input.operation, operationOwnerUpdate: { update: snapshot.update } };
   let outcome: ActionExecuteResult | undefined;
   const task = await owner.startAdmitted({ run: async context => {
+    const emit: typeof context.emit = event => { context.emit(event); snapshot.emit(event); };
     const result = await applyMachineSetupWithNativeAdmission({ ...input, operation,
-      emit: context.emit,
-      ...(input.elevation ? { elevation: { ...input.elevation, prompt: context.prompt, emit: context.emit } } : {}),
+      emit,
+      ...(input.elevation ? { elevation: { ...input.elevation, prompt: context.prompt, emit } } : {}),
       signal: context.signal ? AbortSignal.any([signal, context.signal]) : signal });
     outcome = result;
     if (!result.ok) throw new SystemTaskExecutionError(result.errorCode ?? 'machine_setup_apply_failed', result.error);
     return { operationId };
   } }, taskKind);
-  setupTask = { id: task.taskId, taskKind };
-  attachment = { ...attachment, setupTask };
-  input.operation.operationOwnerUpdate.update({ domainRef: attachment });
+  const setupTask = { id: task.taskId, taskKind };
+  snapshot.update({ domainRef: { ...attachment, setupTask } });
   const cancel = () => { void owner.cancel(task); };
   signal.addEventListener('abort', cancel, { once: true });
   if (signal.aborted) cancel();
