@@ -18,7 +18,7 @@ import type { AgentInputExtraActionChip, AgentInputPopoverAnchor } from '../agen
 import type { AgentInputChipPickerOption } from './AgentInputChipPickerTypes';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { DROPDOWN_MENU_MAX_WIDTH_PX } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { AgentInputActionMenuSubmenuContext, type AgentInputActionMenuSubmenu } from '../selection/agentInputActionMenuSubmenu';
+import { AgentInputActionMenuSubmenuContext } from '../selection/agentInputActionMenuSubmenu';
 import { useAgentInputActionMenuSubmenu } from './useAgentInputActionMenuSubmenu';
 
 type SimpleOption = Readonly<{
@@ -80,19 +80,12 @@ function resolvePopoverAnchorRef(
     return anchor === 'chip' && chipAnchorRef ? chipAnchorRef : menuAnchors.actionMenu;
 }
 
-/** A picker a + menu row opened is that row's submenu (`AgentInputActionMenuSubmenuContext`). */
-function withActionMenuSubmenu(
-    anchor: AgentInputPopoverAnchor,
-    submenu: AgentInputActionMenuSubmenu | null,
-    node: React.ReactNode,
-): React.ReactNode {
-    if (anchor !== 'actionMenuRow' || !submenu || node === null) return node;
-    return <AgentInputActionMenuSubmenuContext.Provider value={submenu}>{node}</AgentInputActionMenuSubmenuContext.Provider>;
-}
+/** Places a picker: a + menu row's picker goes inside that menu (returning null here), any other stays. */
+type PlaceAgentInputPicker = (anchor: AgentInputPopoverAnchor, node: React.ReactNode) => React.ReactNode;
 
-function renderContentPopover(entry: AgentInputContentPopoverEntry, submenu: AgentInputActionMenuSubmenu | null): React.ReactNode {
+function renderContentPopover(entry: AgentInputContentPopoverEntry, place: PlaceAgentInputPicker): React.ReactNode {
     if (!entry.open) return null;
-    return withActionMenuSubmenu(entry.submenu ? 'actionMenuRow' : 'chip', submenu,
+    return place(entry.submenu ? 'actionMenuRow' : 'chip',
         <AgentInputContentPopover
             key={entry.key}
             open={entry.open}
@@ -168,8 +161,6 @@ export function AgentInputOverlayLayer(props: Readonly<{
     actionMenuAnchorRef: React.RefObject<View | null>;
     /** The + menu row a picker opened from it hangs from (`actionMenuRow`). */
     actionMenuRowAnchorRef: React.RefObject<View | null>;
-    /** The + menu opens its rows' pickers beside it (false where the menu is a phone sheet). */
-    actionMenuPresentsSubmenus: boolean;
     /** A picker opened from a + menu row is open beside the menu. */
     actionMenuSubmenuOpen: boolean;
     /** Close the picker open beside the + menu and keep the menu open. */
@@ -235,11 +226,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     envVarsPopover?: SharedContentPopoverLike;
     onEnvVarsPopoverRequestClose: () => void;
 }>): React.ReactNode {
-    // Where the menu does not present submenus (a phone sheet), a row's picker hangs from the + button.
-    const menuAnchors: AgentInputMenuAnchorRefs = {
-        actionMenu: props.actionMenuAnchorRef,
-        actionMenuRow: props.actionMenuPresentsSubmenus ? props.actionMenuRowAnchorRef : props.actionMenuAnchorRef,
-    };
+    const menuAnchors: AgentInputMenuAnchorRefs = { actionMenu: props.actionMenuAnchorRef, actionMenuRow: props.actionMenuRowAnchorRef };
     const actionMenuSubmenu = useAgentInputActionMenuSubmenu({
         actions: props.actionMenuActions,
         menuOpen: props.showActionMenu,
@@ -247,7 +234,20 @@ export function AgentInputOverlayLayer(props: Readonly<{
         rowAnchorRef: props.actionMenuRowAnchorRef,
         returnToMenu: props.onActionMenuSubmenuReturn,
     });
-    const submenu = props.actionMenuPresentsSubmenus ? actionMenuSubmenu.submenu : null;
+    const submenu = actionMenuSubmenu.submenu;
+    // A picker a + menu row opened is that row's submenu, rendered inside the menu: the shared Popover then
+    // hangs it beside its row, or pushes it inside the menu's sheet on a phone. The menu's content reads
+    // this list when it renders, after every picker below has been placed.
+    const rowPickers: React.ReactNode[] = [];
+    const place: PlaceAgentInputPicker = (anchor, node) => {
+        if (anchor !== 'actionMenuRow' || node === null || node === undefined) return node;
+        rowPickers.push(
+            <AgentInputActionMenuSubmenuContext.Provider key={`row-picker-${rowPickers.length}`} value={submenu}>
+                {node}
+            </AgentInputActionMenuSubmenuContext.Provider>,
+        );
+        return null;
+    };
     const sharedContentPopovers: AgentInputContentPopoverEntry[] = [
         {
             key: 'permission',
@@ -273,12 +273,15 @@ export function AgentInputOverlayLayer(props: Readonly<{
             key: 'actionMenu',
             open: props.showActionMenu && props.hasActionMenuPopoverSections,
             anchorRef: props.actionMenuAnchorRef,
-            content: (
+            content: ({ presentation }) => (
                 <AgentInputActionMenuPopoverContent
-                    actionMenuActions={actionMenuSubmenu.actions}
+                    // A sheet has no hover: its rows open their pickers by press, pushed inside it.
+                    actionMenuActions={presentation === 'sheet' ? actionMenuSubmenu.pressActions : actionMenuSubmenu.actions}
                     onCustomizeComposer={props.onCustomizeComposer}
-                    onPointerLeave={actionMenuSubmenu.onMenuPointerLeave}
-                />
+                    onPointerLeave={presentation === 'sheet' ? undefined : actionMenuSubmenu.onMenuPointerLeave}
+                >
+                    {rowPickers}
+                </AgentInputActionMenuPopoverContent>
             ),
             onRequestClose: props.onActionMenuRequestClose,
             // Tall enough for the lab's whole menu (add actions, every control placed In +, Customize) without scrolling.
@@ -383,10 +386,10 @@ export function AgentInputOverlayLayer(props: Readonly<{
     return (
         <>
             {sharedContentPopovers.map((entry) => (
-                <React.Fragment key={entry.key}>{renderContentPopover(entry, submenu)}</React.Fragment>
+                <React.Fragment key={entry.key}>{renderContentPopover(entry, place)}</React.Fragment>
             ))}
 
-            {props.showAgentPicker && props.hasAgentPickerOptions ? withActionMenuSubmenu(props.agentPickerAnchor, submenu,
+            {props.showAgentPicker && props.hasAgentPickerOptions ? place(props.agentPickerAnchor,
                 <AgentInputChipPickerPopover
                     open={props.showAgentPicker}
                     anchorRef={resolvePopoverAnchorRef(props.agentPickerAnchor, props.agentChipAnchorRef, menuAnchors)}
@@ -425,7 +428,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                         },
                     ],
                 };
-                return withActionMenuSubmenu(props.sessionModePickerAnchor, submenu,
+                return place(props.sessionModePickerAnchor,
                     <AgentInputSelectionListPopover
                         open={props.showSessionModePicker}
                         anchorRef={resolvePopoverAnchorRef(props.sessionModePickerAnchor, props.sessionModeChipAnchorRef, menuAnchors)}
@@ -446,7 +449,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                 if (!renderCollapsedPopover) return null;
                 const anchorRef = resolvePopoverAnchorRef(props.activeExtraCollapsedPopoverAnchor,
                     props.extraChipAnchorRefsByKey[chip.key], menuAnchors);
-                return withActionMenuSubmenu(props.activeExtraCollapsedPopoverAnchor, submenu, renderCollapsedPopover({
+                return place(props.activeExtraCollapsedPopoverAnchor, renderCollapsedPopover({
                     anchorRef,
                     onRequestClose: props.onActiveExtraCollapsedPopoverChipClose,
                 }));
@@ -492,7 +495,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     // Calling `deferAgentInputPopoverClose(...)` here as well
                     // would schedule a duplicate close on top of the
                     // wrapper's own deferred close.
-                    return withActionMenuSubmenu(props.activeExtraCollapsedPopoverAnchor, submenu,
+                    return place(props.activeExtraCollapsedPopoverAnchor,
                         <AgentInputSelectionListPopover
                             open
                             anchorRef={anchorRef}
@@ -526,7 +529,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     return null;
                 }
 
-                return withActionMenuSubmenu(props.activeExtraCollapsedPopoverAnchor, submenu,
+                return place(props.activeExtraCollapsedPopoverAnchor,
                     <AgentInputChipPickerPopover
                         open
                         anchorRef={anchorRef}

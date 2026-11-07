@@ -116,14 +116,17 @@ function findSelectionListPopoverByOpen(open: boolean): Record<string, unknown> 
     return capturedSelectionListPopover.all.find((props) => props.open === open);
 }
 
+/** The presentation the shared Popover reports to its content (a phone sheet in the sheet test). */
+const popoverPresentation: { current: 'sheet' | undefined } = { current: undefined };
+
 function renderPopoverChildren(
     props: Readonly<{
-        children?: React.ReactNode | ((args: { maxHeight: number }) => React.ReactNode);
+        children?: React.ReactNode | ((args: { maxHeight: number; presentation?: 'sheet' }) => React.ReactNode);
         maxHeightCap?: number;
     }>,
 ): React.ReactNode {
     return typeof props.children === 'function'
-        ? props.children({ maxHeight: props.maxHeightCap ?? 360 })
+        ? props.children({ maxHeight: props.maxHeightCap ?? 360, presentation: popoverPresentation.current })
         : props.children ?? null;
 }
 
@@ -184,9 +187,10 @@ vi.mock('./components/PermissionModePicker', () => ({
 }));
 
 vi.mock('./components/AgentInputActionMenuPopoverContent', () => ({
-    AgentInputActionMenuPopoverContent: (props: CapturedActionMenuContentProps) => {
+    AgentInputActionMenuPopoverContent: (props: CapturedActionMenuContentProps & { children?: React.ReactNode }) => {
         capturedActionMenuContent.last = props;
-        return null;
+        // A row's picker renders inside the menu.
+        return props.children ?? null;
     },
 }));
 
@@ -839,6 +843,28 @@ describe('AgentInput (action menu popover props)', () => {
         act(() => requestCloses[requestCloses.length - 1]?.());
         expect(screen.findByTestId('machine-content')).toBeNull();
         expect(menuExpanded()).toBe(false);
+    });
+
+    it('gives a + menu presented as a sheet no hover intent: its rows open by press only', async () => {
+        popoverPresentation.current = 'sheet';
+        try {
+            capturedActionMenuContent.last = null;
+            const { AgentInput } = await import('./AgentInput');
+            setComposerPlacements({ machine: 'overflow' });
+            const screen = await renderScreen(<AgentInput value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+                autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+                machinePopover={{ renderContent: () => React.createElement('View', { testID: 'machine-content' }) }}
+                machineName="Builder" onMachineClick={() => {}} />);
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
+            const machineRow = getCapturedActionMenuActions().find((action: { id?: string }) => action.id === 'machine') as
+                ({ onHover?: () => void; onPress?: () => void } | undefined);
+            expect(machineRow?.onHover).toBeUndefined();
+            expect((capturedActionMenuContent.last as { onPointerLeave?: unknown } | null)?.onPointerLeave).toBeUndefined();
+            act(() => machineRow?.onPress?.());
+            expect(screen.findByTestId('machine-content')).toBeTruthy();
+        } finally {
+            popoverPresentation.current = undefined;
+        }
     });
 
     it('opens a + menu row picker with Right and on hover intent', async () => {

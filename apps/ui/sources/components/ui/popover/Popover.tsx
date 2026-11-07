@@ -52,6 +52,8 @@ import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
+import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
+import { createPhoneSheetPushStack, PhoneSheetPushBody, PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from './phoneSheetPush';
 import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { GlassOpenedLayer } from '@/components/ui/glass/GlassSurface';
 
@@ -354,14 +356,29 @@ function resolvePopoverAnchorEdge(
 
 export function Popover(props: PopoverProps) {
     const deviceType = useDeviceType();
+    // A sheet-presented popover opened from inside a phone sheet pushes into that sheet (with a Back)
+    // instead of opening a second sheet over it.
+    const pushStack = React.useContext(PhoneSheetPushContext);
     // Placement measurements belong to the anchored presentation's mounted tree. A sheet
     // replaces that tree, so returning to desktop measures its new anchor and content afresh.
     // A menu's or picker's own scroll never drives the shade under the pane header it opens from.
     return <PaneHeaderScrollIsolation>
         {props.phonePresentation === 'sheet' && deviceType === 'phone'
-            ? <PhonePopoverSheet {...props} />
+            ? (pushStack ? <PushedPhonePopoverSheet {...props} stack={pushStack} /> : <PhonePopoverSheet {...props} />)
             : <AnchoredPopover {...props} />}
     </PaneHeaderScrollIsolation>;
+}
+
+function PushedPhonePopoverSheet(props: PopoverProps & Readonly<{ stack: PhoneSheetPushStack }>) {
+    usePhoneSheetPush({
+        stack: props.stack,
+        open: props.open,
+        title: props.sheetHeader === 'none' ? undefined : props.accessibilityLabel,
+        subtitle: props.sheetSubtitle,
+        onRequestClose: props.onRequestClose,
+        render: props.children,
+    });
+    return null;
 }
 
 function PhonePopoverSheet(props: PopoverProps) {
@@ -369,9 +386,13 @@ function PhonePopoverSheet(props: PopoverProps) {
     const insets = useChromeSafeAreaInsets();
     const maxHeight = Math.min(props.maxHeightCap ?? windowHeight, Math.max(0, windowHeight - insets.top - insets.bottom));
     const closeSheet = () => props.onRequestClose?.();
+    // Views pushed inside this sheet (a row's picker): the band then names the top one and leads with Back.
+    const [pushStack] = React.useState(createPhoneSheetPushStack);
+    const pushed = React.useSyncExternalStore(pushStack.subscribe, pushStack.getChrome, pushStack.getChrome);
     return <BaseModal
         visible={props.open}
         onClose={closeSheet}
+        onBack={pushed ? pushStack.back : undefined}
         placement="bottom"
         scrollHost="body"
         showBackdrop={props.sheetBackdrop !== 'none'}
@@ -383,26 +404,35 @@ function PhonePopoverSheet(props: PopoverProps) {
             presentation="sheet"
             scrollHost="bounded"
             bodyScroll="auto"
-            header={props.sheetHeader}
+            header={pushed ? 'band' : props.sheetHeader}
             material={props.sheetMaterial}
             sheetBottomInset={insets.bottom}
-            title={props.accessibilityLabel}
-            subtitle={props.sheetSubtitle}
+            leading={pushed ? <ModalBackButton testID="popover-sheet.back" onPress={pushStack.back} /> : undefined}
+            title={pushed ? pushed.title : props.accessibilityLabel}
+            subtitle={pushed ? pushed.subtitle : props.sheetSubtitle}
             closeButtonTestID="popover-sheet.close"
-            actions={props.sheetHeaderAction}
-            footer={props.sheetFooter}
-            onClose={props.onRequestClose && !props.sheetHeaderAction ? closeSheet : undefined}
+            actions={pushed ? undefined : props.sheetHeaderAction}
+            footer={pushed ? undefined : props.sheetFooter}
+            onClose={props.onRequestClose && (pushed || !props.sheetHeaderAction) ? closeSheet : undefined}
             style={{ maxHeight: Math.max(0, windowHeight - insets.top) }}
             bodyStyle={{ flexGrow: 0, paddingLeft: insets.left, paddingRight: insets.right }}
         >
             <FloatingOverlaySheetContext.Provider value={true}>
-                {props.children({
+                <PhoneSheetPushBody stack={pushStack} pushed={pushed !== null} renderProps={{
                     placement: 'bottom',
                     maxWidth: Math.max(0, windowWidth - insets.left - insets.right),
                     maxHeight,
                     presentation: 'sheet',
                     requestClose: closeSheet,
-                })}
+                }}>
+                    {props.children({
+                        placement: 'bottom',
+                        maxWidth: Math.max(0, windowWidth - insets.left - insets.right),
+                        maxHeight,
+                        presentation: 'sheet',
+                        requestClose: closeSheet,
+                    })}
+                </PhoneSheetPushBody>
             </FloatingOverlaySheetContext.Provider>
         </ModalCardFrame>
     </BaseModal>;

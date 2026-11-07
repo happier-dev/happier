@@ -255,9 +255,10 @@ describe('AgentInputSelectionPopover', () => {
         const returnToMenu = vi.fn();
         const onSurfacePointerChange = vi.fn();
 
-        const screen = await renderScreen(<AgentInputActionMenuSubmenuContext.Provider value={{ returnToMenu, onSurfacePointerChange }}>
+        let contentDismiss: (() => void) | undefined;
+        const screen = await renderScreen(<AgentInputActionMenuSubmenuContext.Provider value={{ title: 'Default session type', returnToMenu, onSurfacePointerChange }}>
             <AgentInputSelectionPopover open anchorRef={anchorRef} onRequestClose={requestClose}>
-                {() => React.createElement('View', { testID: 'picker' })}
+                {({ dismiss }) => { contentDismiss = dismiss; return React.createElement('View', { testID: 'picker' }); }}
             </AgentInputSelectionPopover>
         </AgentInputActionMenuSubmenuContext.Provider>);
 
@@ -265,6 +266,9 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.portal).toMatchObject({ anchorAlignVertical: 'start' });
         // Focus moves into the submenu as it opens, so Left and Escape work from inside it.
         expect(capturedPopoverProps.current?.autoFocusOnOpen).toBe(true);
+        // On a phone it is a sheet, so the shared Popover pushes it inside the menu's sheet, named by its row.
+        expect(capturedPopoverProps.current?.phonePresentation).toBe('sheet');
+        expect(capturedPopoverProps.current?.accessibilityLabel).toBe('Default session type');
 
         const surface = screen.findByTestId('agent-input-submenu-surface');
         // Left inside a field keeps its caret.
@@ -279,6 +283,10 @@ describe('AgentInputSelectionPopover', () => {
         (capturedPopoverProps.current as { onRequestClose?: () => void } | null)?.onRequestClose?.();
         expect(returnToMenu).toHaveBeenCalledTimes(2);
         expect(requestClose).toHaveBeenCalledTimes(2);
+
+        // The content's own dismissal (a list's Escape) returns to the menu as well.
+        contentDismiss?.();
+        expect(returnToMenu).toHaveBeenCalledTimes(3);
 
         surface?.props.onPointerEnter({ pointerType: 'mouse' });
         expect(onSurfacePointerChange).toHaveBeenCalledWith(true, { pointerType: 'mouse' });

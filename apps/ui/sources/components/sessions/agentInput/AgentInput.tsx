@@ -247,7 +247,6 @@ import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { readExternalFileDragItems, type WebFileDragEvent } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
 import { useEntityDragDropRuntime, useEntityDropDomBinding, readWindowBounds, measureWindowBounds,
@@ -3028,12 +3027,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             openSelectionOverlay('agent', 'chip');
         }, [hasAgentPickerOptions, openSelectionOverlay]),
     });
-    // A picker opened from a + menu row is that row's submenu: the + menu stays presented beside it.
-    // On a phone the + menu is the shared bottom sheet (Popover `phonePresentation`), which has no in-sheet
-    // push: there a row's picker replaces the menu from the + button, as before.
-    const actionMenuPresentsSubmenus = useDeviceType() !== 'phone';
+    // A picker opened from a + menu row is that row's submenu: the + menu stays presented, with the picker
+    // beside its row, or pushed inside the menu's sheet on a phone (the shared Popover decides which).
     const actionMenuRowAnchorRef = React.useRef<View | null>(null);
-    const actionMenuSubmenuOpen = actionMenuPresentsSubmenus && activeSelectionOverlay?.anchor === 'actionMenuRow';
+    const actionMenuSubmenuOpen = activeSelectionOverlay?.anchor === 'actionMenuRow';
     const actionMenuOpen = showActionMenu || actionMenuSubmenuOpen;
     const returnToActionMenu = useEventCallback(() => {
         if (!actionMenuSubmenuOpen || !activeSelectionOverlay) return;
@@ -4037,7 +4034,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             hasActionMenuPopoverSections={hasActionMenuPopoverSections}
             actionMenuAnchorRef={actionMenuAnchorRef}
             actionMenuRowAnchorRef={actionMenuRowAnchorRef}
-            actionMenuPresentsSubmenus={actionMenuPresentsSubmenus}
             actionMenuSubmenuOpen={actionMenuSubmenuOpen}
             onActionMenuSubmenuReturn={returnToActionMenu}
             onActionMenuRequestClose={closeActionMenu}

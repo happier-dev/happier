@@ -122,6 +122,46 @@ describe('Popover phone presentation', () => {
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
+    it('pushes a sheet popover opened from inside a phone sheet into that sheet, with a Back that returns to it', async () => {
+        const parentClose = vi.fn();
+        function Menu() {
+            const [open, setOpen] = React.useState(true);
+            const [picker, setPicker] = React.useState(false);
+            return <Popover open={open} phonePresentation="sheet" sheetHeader="none" accessibilityLabel="Add"
+                onRequestClose={() => { parentClose(); setOpen(false); }}>
+                {() => <View>
+                    <RoundButton testID="menu-row" title="Session type" onPress={() => setPicker(true)} />
+                    {picker ? <Popover open phonePresentation="sheet" accessibilityLabel="Session type"
+                        onRequestClose={() => setPicker(false)}>
+                        {() => <RoundButton testID="picker-choice" title="Direct" onPress={() => { setPicker(false); setOpen(false); }} />}
+                    </Popover> : null}
+                </View>}
+            </Popover>;
+        }
+        const modalSheets = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+            screen.findAll((node) => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true);
+        const screen = await renderScreen(<Menu />);
+        await screen.pressByTestIdAsync('menu-row');
+
+        // One sheet: the picker replaces the menu inside it, named, with a Back control.
+        expect(modalSheets(screen)).toHaveLength(1);
+        expect(screen.findByTestId('picker-choice')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Session type');
+        expect(screen.findByTestId('popover-sheet.back')).toBeTruthy();
+
+        // Back pops to the menu without closing the sheet.
+        await screen.pressByTestIdAsync('popover-sheet.back');
+        expect(modalSheets(screen)).toHaveLength(1);
+        expect(screen.findByTestId('picker-choice')).toBeNull();
+        expect(screen.findByTestId('popover-sheet.back')).toBeNull();
+        expect(parentClose).not.toHaveBeenCalled();
+
+        // A choice closes the whole sheet.
+        await screen.pressByTestIdAsync('menu-row');
+        await screen.pressByTestIdAsync('picker-choice');
+        expect(modalSheets(screen)).toHaveLength(0);
+    });
+
     it('keeps the anchored presentation on a wide viewport when phone sheets are requested', async () => {
         viewport.width = 1200;
         viewport.height = 900;

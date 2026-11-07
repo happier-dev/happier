@@ -25,6 +25,40 @@ const { VoiceIslandAnatomy, VoiceOrbAnatomy } = await import('@/components/voice
 const { useCompanionPointerDragSession } = await import('@/components/companion/interaction/useCompanionPointerDragSession');
 
 describe('Popover phone-sheet focus return', () => {
+    it('steps Escape back from a view pushed inside a phone sheet, keeping the sheet open', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const parentClose = vi.fn();
+        let openPicker: () => void = () => {};
+        function Harness() {
+            const [picker, setPicker] = React.useState(false);
+            openPicker = () => setPicker(true);
+            return <Popover open phonePresentation="sheet" sheetHeader="none" accessibilityLabel="Add" onRequestClose={parentClose}>
+                {() => <View>
+                    <Text>Menu rows</Text>
+                    {picker ? <Popover open phonePresentation="sheet" accessibilityLabel="Session type" onRequestClose={() => setPicker(false)}>
+                        {() => <Text>Picker choices</Text>}
+                    </Popover> : null}
+                </View>}
+            </Popover>;
+        }
+        try {
+            await act(async () => root.render(<Harness />));
+            await act(async () => openPicker());
+            expect(document.querySelector('[data-testid="popover-sheet.back"]')).not.toBeNull();
+            await act(async () => {
+                document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+            });
+            expect(document.querySelector('[data-testid="popover-sheet.back"]')).toBeNull();
+            expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+            expect(parentClose).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it('dismisses a headerless intelligence sheet through the shared Close grabber and restores the opener', async () => {
         const container = document.createElement('div');
         document.body.append(container);

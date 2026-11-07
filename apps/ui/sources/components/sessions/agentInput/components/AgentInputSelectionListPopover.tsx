@@ -63,7 +63,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
             maxHeightCap={props.maxHeightCap ?? DEFAULT_MAX_HEIGHT_CAP}
             maxWidthCap={props.maxWidthCap ?? DEFAULT_MAX_WIDTH_CAP}
         >
-            {({ maxHeight }) => (
+            {({ maxHeight, dismiss }) => (
                 <AgentInputPopoverSurface
                     testID={props.testID ?? DEFAULT_TEST_ID}
                     maxHeight={maxHeight}
@@ -94,7 +94,8 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                             // fall-through to guard against).
                             deferAgentInputPopoverClose(context ? () => props.onRequestClose(context) : props.onRequestClose);
                         }}
-                        onRequestClose={props.onRequestClose}
+                        // The list's own close (Escape) is a dismissal; a + menu row's picker then returns to the menu.
+                        onRequestClose={dismiss ?? props.onRequestClose}
                         maxHeight={maxHeight}
                         heightBehavior={resolvePopoverSelectionListHeightBehavior(props.heightBehavior)}
                         optionsHostInlineControls={props.optionsHostInlineControls}

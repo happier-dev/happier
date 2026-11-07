@@ -237,8 +237,8 @@ vi.mock('./components/AgentInputActionMenuPopoverContent', () => ({
                         onPress: action.onPress,
                     },
                     action.label ?? action.id ?? null,
-                ))
-                : null,
+                )).concat(props.children ?? [])
+                : props.children ?? null,
         );
     },
 }));

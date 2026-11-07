@@ -59,7 +59,6 @@ function buildDefaultOverlayLayerFixture(): AgentInputOverlayLayerProps {
         hasActionMenuPopoverSections: false,
         actionMenuAnchorRef: sharedRef,
         actionMenuRowAnchorRef: { current: null },
-        actionMenuPresentsSubmenus: true,
         actionMenuSubmenuOpen: false,
         onActionMenuSubmenuReturn: () => {},
         onActionMenuRequestClose: () => {},

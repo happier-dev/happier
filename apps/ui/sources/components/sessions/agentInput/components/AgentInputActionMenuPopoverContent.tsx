@@ -12,6 +12,8 @@ type AgentInputActionMenuPopoverContentProps = Readonly<{
     onCustomizeComposer?: () => void;
     /** The pointer left the menu: a picker open beside it closes after the shared submenu grace. */
     onPointerLeave?: (event: unknown) => void;
+    /** The picker a row opened: beside its row, or pushed inside the menu's sheet on a phone. */
+    children?: React.ReactNode;
 }>;
 
 /**
@@ -42,6 +44,7 @@ export function AgentInputActionMenuPopoverContent(props: AgentInputActionMenuPo
         >
             {hasActions ? <ActionListSection actions={props.actionMenuActions} /> : null}
             {customizeActions.length > 0 ? <ActionListSection separatorAbove={hasActions} actions={customizeActions} /> : null}
+            {props.children}
         </View>
     );
 }

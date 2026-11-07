@@ -68,6 +68,26 @@ describe('BaseModal (web focus)', () => {
             trigger.remove(); container.remove();
         }
     });
+    it('steps back on Escape when the sheet pushed a view inside itself, without closing it', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const close = vi.fn();
+        const back = vi.fn();
+        try {
+            await act(async () => root.render(<BaseModal visible placement="bottom" onClose={close} onBack={back}>
+                <button>Direct</button></BaseModal>));
+            await act(async () => {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+            });
+            expect(back).toHaveBeenCalledOnce();
+            expect(close).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it('returns focus to the pre-open trigger when its portal dialog unmounts', async () => {
         const backgroundButton = document.createElement('button');
         backgroundButton.textContent = 'Background';

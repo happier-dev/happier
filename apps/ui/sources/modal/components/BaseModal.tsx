@@ -70,6 +70,11 @@ function isInsideWebModalCardBoundary(target: EventTarget | null): boolean {
 interface BaseModalProps {
     visible: boolean;
     onClose?: () => void;
+    /**
+     * Escape and the hardware back step back instead of closing: a sheet that pushed a view inside itself
+     * returns to the view under it. The scrim and the sheet's drag still close it (`onClose`).
+     */
+    onBack?: () => void;
     children: React.ReactNode;
     accessibilityLabel?: string;
     testID?: string;
@@ -97,6 +102,7 @@ function ModalContentFrame({ motion, ...props }: React.ComponentProps<typeof Ove
 export function BaseModal({
     visible,
     onClose,
+    onBack,
     children,
     accessibilityLabel,
     testID,
@@ -185,26 +191,27 @@ export function BaseModal({
         setModalPortalTarget((prev) => prev ?? node);
     }, [visible]);
 
+    const goBack = onBack ?? onClose;
     const escapeLayer = useEscapeLayer({
-        enabled: isWeb && visible && Boolean(onClose),
+        enabled: isWeb && visible && Boolean(goBack),
         priority: ESCAPE_LAYER_PRIORITIES.modal,
         allowEditableTarget: true,
-        onEscape: () => { onClose?.(); },
+        onEscape: () => { goBack?.(); },
     });
 
     useEffect(() => {
         if (isWeb) return;
-        if (!visible || !onClose) return;
+        if (!visible || !goBack) return;
 
         const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-            onClose();
+            goBack();
             return true;
         });
 
         return () => {
             subscription.remove();
         };
-    }, [onClose, visible]);
+    }, [goBack, visible]);
 
     const handleBackdropPress = () => {
         if (closeOnBackdrop && onClose) {

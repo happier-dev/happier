@@ -24,7 +24,15 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     /** The sheet band's trailing action (a form's Done), see `Popover.sheetHeaderAction`. */
     sheetHeaderAction?: React.ReactNode;
     accessibilityLabel?: string;
-    children: (args: Readonly<{ maxHeight: number; presentation: 'popover' | 'sheet' }>) => React.ReactNode;
+    children: (args: Readonly<{
+        maxHeight: number;
+        presentation: 'popover' | 'sheet';
+        /**
+         * The popover's own dismissal, for content that dismisses (a list's Escape) rather than chooses: for a
+         * + menu row's picker it returns to the menu. Absent outside a submenu, where both mean close.
+         */
+        dismiss?: () => void;
+    }>) => React.ReactNode;
 }>;
 
 function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
@@ -83,11 +91,12 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             placementMinSpace={popoverLayout.placementMinSpace}
             flip={popoverLayout.flip}
             horizontalBoundaryRef={popoverLayout.horizontalBoundaryRef}
-            phonePresentation={props.phonePresentation}
+            // A + menu row's picker is a sheet on a phone, so it pushes inside the menu's sheet.
+            phonePresentation={submenu ? 'sheet' : props.phonePresentation}
             sheetHeader={props.sheetHeader}
             sheetSubtitle={props.sheetSubtitle}
             sheetHeaderAction={props.sheetHeaderAction}
-            accessibilityLabel={props.accessibilityLabel}
+            accessibilityLabel={props.accessibilityLabel ?? submenu?.title}
             edgePadding={popoverLayout.edgePadding}
             closeOnAnchorPress={false}
             // IMPORTANT:
@@ -109,7 +118,11 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             keyboardBottomInset={popoverLayout.keyboardBottomInset}
         >
             {({ maxHeight, presentation }) => {
-                const content = props.children({ maxHeight, presentation: presentation === 'sheet' ? 'sheet' : 'popover' });
+                const content = props.children({
+                    maxHeight,
+                    presentation: presentation === 'sheet' ? 'sheet' : 'popover',
+                    ...(submenu ? { dismiss: requestPopoverClose } : {}),
+                });
                 return (
                     <SessionModelSourceBrowseHandoffContext.Provider value={modelSourceBrowseHandoff}>
                         {submenu && Platform.OS === 'web' && presentation !== 'sheet' ? (

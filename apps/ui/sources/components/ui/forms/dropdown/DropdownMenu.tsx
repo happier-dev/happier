@@ -328,6 +328,8 @@ function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): Reac
 }
 
 const NO_SELECTABLE_ITEMS: ReadonlyArray<SelectableMenuItem> = Object.freeze([]);
+/** In a sheet a row's submenu opens by press only (hover would push it under the pointer). */
+const IGNORE_SHEET_HOVER = () => {};
 
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
@@ -836,10 +838,11 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         <View
                             collapsable={false}
                             testID={props.onSurfacePointerChange ? 'dropdown-submenu-surface' : undefined}
-                            onPointerEnter={Platform.OS === 'web' || props.onSurfacePointerChange ? (event: unknown) => {
+                            // A sheet has no hover: its submenus push inside it and leave only by Back.
+                            onPointerEnter={presentation !== 'sheet' && (Platform.OS === 'web' || props.onSurfacePointerChange) ? (event: unknown) => {
                                 props.onSurfacePointerChange?.(true, event);
                             } : undefined}
-                            onPointerLeave={Platform.OS === 'web' || props.onSurfacePointerChange ? (event: unknown) => {
+                            onPointerLeave={presentation !== 'sheet' && (Platform.OS === 'web' || props.onSurfacePointerChange) ? (event: unknown) => {
                                 props.onSurfacePointerChange?.(false, event);
                                 // Leaving this menu for anywhere but its open submenu closes that submenu after the grace.
                                 submenuHover.scheduleClose(event);
@@ -895,7 +898,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                         handlePressMenuItem(item);
                                     }}
                                     onOpenSubmenu={handleOpenSubmenu}
-                                    onHoverItem={handleHoverItem}
+                                    onHoverItem={presentation === 'sheet' ? IGNORE_SHEET_HOVER : handleHoverItem}
                                     rowVariant={rowVariant}
                                     emptyLabel={emptyLabel}
                                     showCategoryTitles={props.showCategoryTitles ?? false}

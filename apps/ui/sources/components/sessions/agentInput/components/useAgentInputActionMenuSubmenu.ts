@@ -26,6 +26,8 @@ export function useAgentInputActionMenuSubmenu(
   }>,
 ): Readonly<{
   actions: ReadonlyArray<AgentInputActionMenuAction>;
+  /** The same rows without hover intent, for a menu presented as a sheet (rows open by press only). */
+  pressActions: ReadonlyArray<AgentInputActionMenuAction>;
   /** The pointer left the + menu's surface. */
   onMenuPointerLeave: (event: unknown) => void;
   submenu: AgentInputActionMenuSubmenu;
@@ -33,6 +35,7 @@ export function useAgentInputActionMenuSubmenu(
   const { rowAnchorRef } = params;
   const rowElementsRef = React.useRef(new Map<string, View>());
   const openRowIdRef = React.useRef<string | null>(null);
+  const [openRowTitle, setOpenRowTitle] = React.useState<string | undefined>(undefined);
   const hover = useSubmenuHoverIntent({
     activeItemId: params.submenuOpen ? openRowIdRef.current : null,
     enabled: params.menuOpen,
@@ -45,6 +48,7 @@ export function useAgentInputActionMenuSubmenu(
         const activate = () => {
           rowAnchorRef.current = rowElementsRef.current.get(action.id) ?? null;
           openRowIdRef.current = action.opensPicker ? action.id : null;
+          setOpenRowTitle(action.label);
           action.onPress?.();
         };
         const opensPicker =
@@ -84,11 +88,17 @@ export function useAgentInputActionMenuSubmenu(
 
   const submenu = React.useMemo<AgentInputActionMenuSubmenu>(
     () => ({
+      title: openRowTitle,
       returnToMenu: params.returnToMenu,
       onSurfacePointerChange: hover.surfacePointerChange,
     }),
-    [hover.surfacePointerChange, params.returnToMenu],
+    [hover.surfacePointerChange, openRowTitle, params.returnToMenu],
   );
 
-  return { actions, onMenuPointerLeave: hover.scheduleClose, submenu };
+  const pressActions = React.useMemo(
+    () => actions.map((row): AgentInputActionMenuAction => ({ ...row, onHover: undefined })),
+    [actions],
+  );
+
+  return { actions, pressActions, onMenuPointerLeave: hover.scheduleClose, submenu };
 }

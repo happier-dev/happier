@@ -19,6 +19,8 @@ const MOBILE_WEB_AGENT_INPUT_POPOVER_VIEWPORT_MARGIN = 12;
 export type AgentInputContentPopoverRenderArgs = Readonly<{
     requestClose: () => void;
     maxHeight: number;
+    /** `sheet`: shown as a phone sheet (no hover). */
+    presentation?: 'popover' | 'sheet';
     /**
      * The content is laid out in a page section (the New Session wizard's expanded sections) instead
      * of this popover: it draws page rows and leaves focus alone.
@@ -155,6 +157,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
                     {renderPopoverContent(props.content, {
                         requestClose: props.onRequestClose,
                         maxHeight: contentMaxHeight,
+                        presentation,
                     })}
                 </AgentInputPopoverSurface>
                 );
