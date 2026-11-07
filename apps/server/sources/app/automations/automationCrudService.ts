@@ -73,7 +73,6 @@ import {
     automationTriggerSelect,
 } from "./automationPersistenceSelect";
 import {
-    AutomationEventCurrentnessError,
     readCurrentAutomationEventDurablePushWebhookContributionV1,
     resolveCurrentAutomationEventContributionTx,
 } from "./automationEventCurrentness";
@@ -517,24 +516,14 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         throw new AutomationValidationError("Automation Event watcher is not current");
     }
 
-    let contribution;
-    try {
-        contribution = await resolveCurrentAutomationEventContributionTx({
-            tx: params.tx,
-            accountId: params.accountId,
-            pluginId: params.input.eventRef.pluginId,
-            version: materialization.version,
-            eventLocalId: params.input.eventRef.localId,
-            sourceContractVersion: params.input.sourceContractVersion,
-        });
-    } catch (error) {
-        if (error instanceof AutomationEventCurrentnessError) {
-            throw new AutomationValidationError(
-                "Automation Event declaration is not current",
-            );
-        }
-        throw error;
-    }
+    const contribution = await resolveCurrentAutomationEventContributionTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        pluginId: params.input.eventRef.pluginId,
+        version: materialization.version,
+        eventLocalId: params.input.eventRef.localId,
+        sourceContractVersion: params.input.sourceContractVersion,
+    });
     if (!contribution.automation.source.supportedObservationTransports.includes(transport.kind)) {
         throw new AutomationValidationError(
             `Automation Event declaration does not support ${transport.kind} observation`,
@@ -702,22 +691,14 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
     if (claimable.kind !== "current") {
         throw new AutomationValidationError("Automation Event watcher is not current");
     }
-    let contribution;
-    try {
-        contribution = await resolveCurrentAutomationEventContributionTx({
-            tx: params.tx,
-            accountId: params.accountId,
-            pluginId: params.input.eventRef.pluginId,
-            version: materialization.version,
-            eventLocalId: params.input.eventRef.localId,
-            sourceContractVersion: params.input.sourceContractVersion,
-        });
-    } catch (error) {
-        if (error instanceof AutomationEventCurrentnessError) {
-            throw new AutomationValidationError("Automation Event declaration is not current");
-        }
-        throw error;
-    }
+    const contribution = await resolveCurrentAutomationEventContributionTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        pluginId: params.input.eventRef.pluginId,
+        version: materialization.version,
+        eventLocalId: params.input.eventRef.localId,
+        sourceContractVersion: params.input.sourceContractVersion,
+    });
     if (!contribution.automation.source.supportedObservationTransports.includes(transport.kind)) {
         throw new AutomationValidationError("Automation Event declaration does not support the selected transport");
     }

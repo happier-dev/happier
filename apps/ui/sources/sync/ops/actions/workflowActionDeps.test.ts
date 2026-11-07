@@ -349,7 +349,7 @@ async function installPullRequestProjection(h: Awaited<ReturnType<typeof createH
         setSessionProjection: (next: typeof sessionProjection) => { sessionProjection = next; } };
 }
 
-async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly<{ workflowResult?: boolean; malformed?: boolean; locked?: boolean; identity?: boolean; historicalSecret?: Uint8Array; credentialKind?: 'account' | 'account_directory' | 'ephemeral_session_runner'; automations?: readonly AutomationDefinitionListItem[]; cleanupFailure?: boolean; beforeAutomationDeleteResponse?: () => Promise<void>; beforeAutomationListResponse?: () => Promise<void>; featureReadFailure?: boolean; featureReadStatus?: number; automationsEnabled?: boolean; sharedMachine?: boolean }> = {}) {
+async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly<{ workflowResult?: boolean; malformed?: boolean; locked?: boolean; identity?: boolean; historicalSecret?: Uint8Array; credentialKind?: 'account' | 'account_directory' | 'ephemeral_session_runner'; automations?: readonly AutomationDefinitionListItem[]; cleanupFailure?: boolean; beforeAutomationDeleteResponse?: () => Promise<void>; beforeAutomationListResponse?: () => Promise<void>; featureReadFailure?: boolean; featureReadStatus?: number; automationsEnabled?: boolean; sharedMachine?: boolean; automationCreateRefusal?: string }> = {}) {
     const home = await upsertAndActivateServer({ serverUrl: `https://workflow-${mode}-${crypto.randomUUID()}.test`, scope: 'tab' });
     if (options.identity) await setServerProfileIdentityForUrl(home.serverUrl, `srv_workflow-${crypto.randomUUID()}`);
     const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: accountId,
@@ -485,6 +485,7 @@ async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly
             const query = target.pathname === '/v3/automations/query'
                 ? JSON.parse(String(init?.body)) : null;
             if (init?.method === 'POST' && query === null) {
+                if (options.automationCreateRefusal) return json({ error: options.automationCreateRefusal }, 400);
                 const row = createdAutomation(JSON.parse(String(init.body)) as AutomationDefinitionCreateRequest);
                 automationWrites.push(`create:${row.id}`);
                 automationRows.set(row.id, row);
@@ -2205,6 +2206,28 @@ describe('UI Workflow Action front door', () => {
             storage.setState({ machineListByServerId: {} });
             h.account.dispose();
         }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('preserves the %s Event declaration refusal through HTTP and the public Action front door', async mode => {
+        const h = await createHarness(mode, { automationCreateRefusal: 'event_contribution_not_current' });
+        try {
+            const result = await h.execute('workflow.trigger.add', {
+                project: { machineId: 'machine-a', directory: '/repo' },
+                target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
+                    actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Deployment failed' } } }] } },
+                trigger: { kind: 'pluginEvent', enabled: true,
+                    eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
+                    sourceInstanceId: 'environment:qa', sourceContractVersion: 1,
+                    displayLabel: 'QA deployment',
+                    sourceConfig: { environmentId: 'qa', serverId: h.home.id, periodMs: 1000, v: 1 },
+                    observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                        machineId: 'machine-a', materializationId: 'machine-services-a', pluginId: 'happier.machine.services',
+                    } }, filter: null, maximumObservationAgeMs: null },
+            }, h.context);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false,
+                errorCode: 'currentness_conflict', details: { reason: 'event_contribution_not_current' } });
+            expect(h.automationRows.size).toBe(0);
+        } finally { h.account.dispose(); }
     });
 
     it.each(['plain', 'e2ee'] as const)('manages a %s observation-only Event through the public Action front door without execution context', async (mode) => {

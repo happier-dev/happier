@@ -61,6 +61,7 @@ import { loadAutomationSessionLifecycleStatusProjections } from "@/app/automatio
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
 import { readSharedWorkflowTriggerSummaries } from '@/app/automations/automationSharedWorkflowSummaries';
 import { AutomationValidationError } from "@/app/automations/automationValidation";
+import { AutomationEventCurrentnessError } from "@/app/automations/automationEventCurrentness";
 import { AutomationSessionLifecycleRegistrationValidationError } from "@/app/automations/automationSessionLifecycleRegistration";
 import {
     cancelAutomationRun,
@@ -110,8 +111,8 @@ function sendStoredContentFailure(reply: { code(code: number): { send(body: unkn
     return reply.code(409).send({ error: "automation_stored_content_unavailable" });
 }
 
-function isAutomationDefinitionValidationError(error: unknown): error is AutomationValidationError | z.core.$ZodError {
-    return error instanceof AutomationValidationError || error instanceof z.core.$ZodError;
+function isAutomationDefinitionValidationError(error: unknown): error is AutomationValidationError | AutomationEventCurrentnessError | z.core.$ZodError {
+    return error instanceof AutomationValidationError || error instanceof AutomationEventCurrentnessError || error instanceof z.core.$ZodError;
 }
 
 async function toAutomationDefinitionDetailWithCurrentEventStatus(
@@ -147,7 +148,8 @@ async function loadAutomationLastRunAtProjections(accountId: string, automationI
     return result;
 }
 
-function automationDefinitionValidationMessage(error: AutomationValidationError | z.core.$ZodError): string {
+function automationDefinitionValidationMessage(error: AutomationValidationError | AutomationEventCurrentnessError | z.core.$ZodError): string {
+    if (error instanceof AutomationEventCurrentnessError) return error.code;
     if (error instanceof AutomationSessionLifecycleRegistrationValidationError) return error.code;
     if (error instanceof AutomationValidationError) return error.message;
     const issue = error.issues[0];

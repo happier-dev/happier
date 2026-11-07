@@ -17,6 +17,9 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { eventRouter } from "@/app/events/eventRouter";
 import { ensurePluginWebhookEndpointV1 } from "@/app/plugins/webhooks/endpointStore";
+import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
+import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
 
 import {
     createAutomation,
@@ -392,6 +395,29 @@ describe("Automation durable-push authoring", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("returns a typed declaration conflict when a release-less claim omits the selected Event", async () => {
+        const account = await seedAccount();
+        const manifest = releaseFacts({ supportsDurablePush: true }).normalizedManifest;
+        await db.accountPluginIntent.update({
+            where: { accountId_pluginId: { accountId: account.id, pluginId: PLUGIN_ID } },
+            data: { desiredVersion: null, releaseLessDeclaration: createReleaseLessDeclarationV1({
+                ...manifest, contributes: { ...manifest.contributes, events: [] },
+            }) },
+        });
+        const automationId = randomUUID();
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const response = await app.inject({ method: "POST", url: "/v3/automations",
+                headers: { "x-test-user-id": account.id }, payload: {
+                    automationId, name: "Deployment failure", enabled: true,
+                    triggers: [triggerInput(pullTrigger())], executionRecipe: executionRecipe(1),
+                    assignments: [{ machineId: MACHINE_ID }],
+                } });
+            expect(response.statusCode).toBe(400);
+            expect(response.json()).toEqual({ error: "event_contribution_not_current" });
+        });
+        expect(await db.automation.findUnique({ where: { id: automationId } })).toBeNull();
     });
 
     it("persists a durable-push trigger only through the shared correspondence owner", async () => {

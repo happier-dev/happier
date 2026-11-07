@@ -874,6 +874,7 @@ export const WorkflowHttpErrorDetailsV1Schema = lazyZodSchema(() => z.strictObje
     'automation_create_conflict', 'automation_disabled', 'automation_not_found',
     'automation_stored_content_unavailable', 'automation_template_version_conflict',
     'automation_trigger_create_conflict', 'automation_trigger_revision_conflict', 'version_mismatch',
+    'event_contribution_not_current',
   ])])),
 }));
 
@@ -952,7 +953,10 @@ export const WorkflowActionFailureV1Schema = lazyZodSchema(() => z.discriminated
     failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false),
     errorCode: z.literal('currentness_conflict'),
     error: z.string().check(z.trim(), z.minLength(1)),
-    details: z.optional(z.strictObject({ revision: z.number().check(z.int(), z.nonnegative(), z.int()) })),
+    details: z.optional(z.union([
+      z.strictObject({ revision: z.number().check(z.int(), z.nonnegative(), z.int()) }),
+      z.strictObject({ reason: z.literal('event_contribution_not_current') }),
+    ])),
   }),
   z.strictObject({
     failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false),

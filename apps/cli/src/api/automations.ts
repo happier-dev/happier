@@ -1,5 +1,6 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { WorkflowHttpErrorDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema, AutomationDefinitionDetailSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionPatchRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDeleteResponseSchema, AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse, type AutomationDeleteResponse, type AutomationDefinitionDetailsResponse } from '@happier-dev/protocol/automations/automationApiV3';
@@ -39,11 +40,20 @@ function automationHttpError(status: number, body: unknown) {
   if (code === 'automation_disabled' || code === 'automation_not_found') return createHttpStatusError(status, message, code);
   const semanticFailure = code ? normalizeWorkflowActionThrownError(Object.assign(new Error(message), { code })) : null;
   if (semanticFailure && (semanticFailure.errorCode !== 'storage_unavailable' || code === 'storage_unavailable')) {
-    return createHttpStatusError(status, message, semanticFailure.errorCode);
+    return Object.assign(createHttpStatusError(status, message, semanticFailure.errorCode),
+      'details' in semanticFailure ? { details: semanticFailure.details } : {});
   }
   return Object.assign(createHttpStatusError(status, message, 'workflow_http_error'), {
     details: WorkflowHttpErrorDetailsV1Schema.parse({ status, ...(code ? { code } : {}) }),
   });
+}
+
+function throwAutomationMutationHttpError(status: number, body: unknown): never {
+  const rollback = readHomeDomainConfirmedRollbackV1(status, body);
+  if (rollback) throw Object.assign(new Error(rollback.code), rollback);
+  const error = automationHttpError(status, body);
+  if (status >= 500) return unresolvedMutationReceipt(error);
+  throw error;
 }
 
 function automationDefinitionListInput(params: Readonly<Partial<AutomationDefinitionListRequest>>) {
@@ -145,8 +155,7 @@ export async function runAutomationNowReceipt(params: Readonly<{
   });
 
   if (response.status < 200 || response.status >= 300) {
-    if (response.status >= 500) return unresolvedMutationReceipt(automationHttpError(response.status, response.data));
-    throw automationHttpError(response.status, response.data);
+    return throwAutomationMutationHttpError(response.status, response.data);
   }
   try {
     return AutomationV3RunMutationResponseSchema.parse(response.data);
@@ -172,7 +181,7 @@ async function requestAutomationDefinition(params: Readonly<{
   });
   if (response.status === 404 && params.method === 'GET') return null;
   if (response.status < 200 || response.status >= 300) {
-    if (params.method !== 'GET' && response.status >= 500) return unresolvedMutationReceipt(automationHttpError(response.status, response.data));
+    if (params.method !== 'GET') return throwAutomationMutationHttpError(response.status, response.data);
     throw automationHttpError(response.status, response.data);
   }
   return response.data;

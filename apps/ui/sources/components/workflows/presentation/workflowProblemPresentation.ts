@@ -113,7 +113,7 @@ const WORKFLOW_PROBLEM_SHAPES = {
     waiting_for_keys: { titleKey: 'workflows.readState.keysTitle', messageKey: 'workflows.readState.keysBody', repair: 'retry', accessibilitySemantics: 'status' },
     storage_unavailable: { titleKey: 'workflows.readState.storageTitle', messageKey: 'workflows.readState.storageBody', repair: 'retry', accessibilitySemantics: 'alert' },
     source_unavailable: { messageKey: 'workflows.problem.sourceUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    legacy_conversion_unsupported: { messageKey: 'workflows.problem.legacyConversionUnsupported', repair: 'none', accessibilitySemantics: 'alert' },
+    legacy_conversion_unsupported: { messageKey: 'workflows.triggers.legacy.changeUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
     native_goal_owner: { messageKey: 'workflows.problem.nativeGoalOwner', repair: 'none', accessibilitySemantics: 'alert' },
     session_already_started: { messageKey: 'workflows.problem.sessionAlreadyStarted', repair: 'none', accessibilitySemantics: 'alert' },
 } as const satisfies Readonly<Record<WorkflowOperationErrorCodeV1, WorkflowProblemShape>>;
@@ -256,10 +256,15 @@ function resolveWorkflowProblemCopy(
             message: discussionFailureLabel(discussionCode.data),
         };
     }
+    const failure = error instanceof WorkflowActionError ? error.failure : null;
+    if (failure?.errorCode === 'currentness_conflict' && failure.details
+        && 'reason' in failure.details && failure.details.reason === 'event_contribution_not_current') {
+        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict,
+            messageKey: 'workflows.problem.eventDeclarationNotCurrent', repair: 'none' });
+    }
     if (scope === 'run' && code === 'currentness_conflict') {
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict, messageKey: 'workflows.problem.runMovedOn' });
     }
-    const failure = error instanceof WorkflowActionError ? error.failure : null;
     if (failure?.errorCode === 'workflow_conversation_unavailable' && failure.details) {
         return { ...present(code, WORKFLOW_PROBLEM_SHAPES.workflow_conversation_unavailable),
             message: formatWorkflowConversationProblem(failure.details) };
@@ -293,10 +298,6 @@ function resolveWorkflowProblemCopy(
         }
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
             messageKey: WORKFLOW_CONTENT_REASON_KEYS[failure.details.reason] });
-    }
-    if (failure?.errorCode === 'legacy_conversion_unsupported' && failure.details.reason === 'channel_reply_handoff') {
-        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.legacy_conversion_unsupported,
-            messageKey: 'workflows.triggers.legacy.channelReplyRefusal' });
     }
     return code === null ? present(null, GENERIC_SHAPE) : describeWorkflowOperationProblem(code);
 }

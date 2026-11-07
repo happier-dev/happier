@@ -210,6 +210,15 @@ describe('workflowProblemPresentation', () => {
         expect(presentation.accessibilitySemantics).toBe('status');
     });
 
+    it('explains an Event declaration mismatch with its watcher recovery instead of a storage retry', () => {
+        const failure = normalizeWorkflowActionThrownError(Object.assign(new Error('private diagnostics'), {
+            code: 'event_contribution_not_current',
+        }));
+        const error = new WorkflowActionError({ rawCode: failure.errorCode, message: failure.error, failure });
+        expect(resolveWorkflowProblemPresentation(error)).toMatchObject({ code: 'currentness_conflict',
+            message: 'workflows.problem.eventDeclarationNotCurrent', repair: 'none', repairLabel: null });
+    });
+
     it('offers the repair that can actually make progress', () => {
         expect(resolveWorkflowProblemPresentation(actionError('not_authenticated')))
             .toMatchObject({ code: 'not_authenticated', repair: 'none', repairLabel: null });

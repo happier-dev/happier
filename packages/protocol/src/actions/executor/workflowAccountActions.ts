@@ -5,7 +5,8 @@ import type { WorkflowActionIdV1, WorkflowIngressContextV1 } from '../../workflo
 import type { WorkflowTriggerActions } from './workflowTriggerActions.js';
 import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import { getActionSpec } from '../actionSpecs.js';
-import { projectConfirmedActionHttpRefusal } from './actionFailureEnvelope.js';
+import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { resolveWorkflowActionContext } from './callerContext.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
@@ -51,7 +52,7 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
       || rawCode === 'automation_stored_content_unavailable' ? 'content_unavailable'
     : rawCode === 'artifact_access_forbidden' || rawCode === 'credential_scope_denied' ? 'run_access_denied'
     : rawCode === 'version_mismatch' || rawCode === 'automation_template_version_conflict'
-      || rawCode === 'automation_trigger_revision_conflict' ? 'currentness_conflict'
+      || rawCode === 'automation_trigger_revision_conflict' || rawCode === 'event_contribution_not_current' ? 'currentness_conflict'
     // This is Account-wide preparation, before any role is selected. Keep
     // its specific read failure in content details rather than refusing a role.
     : rawCode === 'account_role_overrides_unavailable' ? 'content_unavailable'
@@ -62,6 +63,7 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
     ? { code: 'target_unavailable', reason: 'requester_runtime_unavailable', errorCode: rawCode }
     : sessionSnapshotUnavailable ? { code: 'target_unavailable', reason: 'session_unavailable' }
     : rawCode === 'account_role_overrides_unavailable' ? { reason: rawCode }
+    : rawCode === 'event_contribution_not_current' ? { reason: rawCode }
     : error !== null && typeof error === 'object' && 'details' in error ? error.details : undefined;
   const parsedCause = ActionFailureCauseV1Schema.safeParse(thrown && 'failureCause' in thrown ? thrown.failureCause : undefined);
   const sourceCause = parsedCause.success ? parsedCause.data : undefined;
@@ -132,7 +134,7 @@ type DefinitionActions = Readonly<{
   delete: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.delete']['parse']>,
     caller?: WorkflowActionExecuteArgs['context']) => Promise<WorkflowActionResult>;
   importDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.import']['parse']>, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
-  exportDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.export']['parse']>) => Promise<WorkflowActionResult>;
+  exportDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.export']['parse']>, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
 }>;
 
 type RunActionId = Extract<WorkflowActionIdV1, `workflow.run.${string}`>;
@@ -172,6 +174,9 @@ export function createWorkflowActionExecutor(deps: Readonly<{
     const startedAtMs = Date.now();
     let preparing = true;
     try {
+      const resolved = resolveWorkflowActionContext(rawArgs.context);
+      if (!resolved.ok) return { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' } satisfies WorkflowActionFailureV1;
+      rawArgs = { ...rawArgs, context: resolved.context };
       // A failed observation reaches the shared failure classifier. It grants
       // no availability, but is distinct from a settled disabled decision.
       const featureEnabled = await deps.isWorkflowFeatureEnabled();
@@ -193,6 +198,13 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         ? await deps.resolveIngressContext?.(rawArgs)
         : undefined;
       preparing = false;
+      if (rawArgs.actionId === 'workflow.definition.capture') {
+        if (!rawArgs.captureDefinition) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+        const captured = await rawArgs.captureDefinition(rawArgs.context);
+        const failure = readActionFailureEnvelope(captured);
+        if (failure) return normalizeWorkflowActionThrownError(failure, undefined, true);
+        return WorkflowActionOutputSchemasV1[rawArgs.actionId].parse(captured);
+      }
       if (actionId === 'workflow.validate') {
         const input = parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input);
         const target = input.target
@@ -214,7 +226,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         return await deps.definitions.importDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context);
       }
       if (actionId === 'workflow.definition.export') {
-        return await deps.definitions.exportDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input));
+        return await deps.definitions.exportDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context);
       }
       if (actionId === 'workflow.definition.create') {
         return await deps.definitions.create(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context, rawArgs.context);
@@ -283,8 +295,10 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         case 'workflow.run.invocations.publish_draft':
         case 'workflow.run.invocations.complete_review':
         case 'workflow.run.delete':
-          parseWorkflowActionInput<unknown>(WorkflowActionInputSchemasV1[rawArgs.actionId], rawArgs.input);
-          return await deps.runs.execute(rawArgs, context);
+          // The indexed schema matches this discriminant; preserve that correlation after parsing.
+          return await deps.runs.execute({ ...rawArgs,
+            input: parseWorkflowActionInput<RunActionArgs['input']>(WorkflowActionInputSchemasV1[rawArgs.actionId], rawArgs.input),
+          } as RunActionArgs, context);
         default:
           rawArgs satisfies never;
           throw new Error('unreachable_workflow_run_action');

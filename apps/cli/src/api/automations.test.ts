@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition, listAutomationDefinitionDetails, listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from './automations';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
+import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 
 const { get, post, request } = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
   request: vi.fn(),
 }));
-vi.mock('axios', () => ({ default: { get, post, request } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(actual.default.create(), { get, post, request }) };
+});
 vi.mock('@/session/transport/http/serverHttpBaseUrl', () => ({
   resolveServerHttpBaseUrl: () => 'https://api.example.test',
 }));
@@ -32,10 +37,10 @@ describe('runAutomationNow', () => {
 
   it('patches only the admitted recipe through the existing Automation definition owner', async () => {
     const controller = new AbortController();
-    const executionRecipe = { v: 2 as const, templateVersion: 2, triggerEvidence: null,
+    const executionRecipe = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 2, triggerEvidence: null,
       managedTarget: null, workflow: { t: 'plain' as const, v: { workspace: { directory: '/repo' },
-        executionTarget: { kind: 'session' as const }, inlineDefinition: { version: 1 as const,
-          blocks: [{ kind: 'wait' as const, id: 'wait', document: { text: 'Wait', references: [], attachments: [] } }] } } } };
+        executionTarget: { kind: 'session' as const }, inlineDefinition: WorkflowDefinitionV1Schema.parse({ version: 1,
+          blocks: [{ kind: 'wait', id: 'wait', document: { text: 'Wait', references: [], attachments: [] } }] }) } } });
     const row = { id: 'automation-1', name: 'Renamed', description: null, enabled: false,
       workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
       templateVersion: 2, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [], executionRecipe };
@@ -201,6 +206,16 @@ describe('runAutomationNow', () => {
     } })).rejects.toMatchObject({ code });
   });
 
+  it('preserves the Event declaration reason through the Automation HTTP and Workflow failure owners', async () => {
+    request.mockResolvedValue({ status: 400, data: { error: 'event_contribution_not_current' } });
+    const failure = await reconcileAutomationDefinition({ token: 'token-1', automationId: 'automation-1', input: {
+      expectedTemplateVersion: 1, name: 'Triggers', description: null, enabled: true,
+      assignments: [], triggers: [], removedTriggers: [],
+    } }).catch(normalizeWorkflowActionThrownError);
+    expect(failure).toMatchObject({ ok: false, errorCode: 'currentness_conflict',
+      details: { reason: 'event_contribution_not_current' } });
+  });
+
   it('uses the authenticated V3 definition-list owner and validates its response', async () => {
     get.mockResolvedValue({
       status: 200,
@@ -232,6 +247,14 @@ describe('runAutomationNow', () => {
     expect(get).toHaveBeenLastCalledWith(
       'https://api.example.test/v3/automations?limit=100&scope=account_inline', expect.anything());
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unsupported selected read without falling back to an Account census', async () => {
+    post.mockResolvedValue({ status: 404, data: { error: 'Not found' } });
+    await expect(listAutomationDefinitions({ token: 'token-1', workflowDefinitionIds: ['builtin:review'] }))
+      .rejects.toMatchObject({ code: 'workflow_http_error', details: { status: 404 } });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(get).not.toHaveBeenCalled();
   });
 
   it('uses the V3 run-now owner and sends the caller occurrence identity', async () => {
