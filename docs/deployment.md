@@ -2654,7 +2654,13 @@ takes precedence.
 The Environment Domains Add form is also the Store recovery entry. It consumes
 the Cloudflare plugin's existing `cloudflare-named/selections-read` Action through
 the UI Action executor. Omitted `zoneId` lists the configured account's zones;
-`zone_list_unavailable` exposes an explicit zone ID field. With a selected zone,
+only an HTTP 403 `zone_list_unavailable` exposes an explicit zone ID field.
+The read owner authors the cause and remedy for missing credentials or Account
+metadata, refused permissions, provider HTTP failures, network failures and
+unreadable responses. The shared form displays that recovery, retaining the
+provider status or sanitized Action cause in Details instead of replacing it
+with a generic connection message. An HTTP 401 requires reconnecting the account;
+it does not offer the missing-scope fallback. With a selected zone,
 the same Action returns complete eligible tunnel selections. The form prefills
 only a unique zone or tunnel, requires a person's explicit choice when there are
 several, and writes the selected `content.ingress` without a second eligibility

@@ -1,9 +1,9 @@
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { AccessProviderSelectionV1Schema } from '@happier-dev/plugin-sdk/access-providers';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolObject as object,
-  defineProtocolString as string, defineProtocolUnion as union, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
+  defineProtocolString as string, defineProtocolNumber as number, defineProtocolUnion as union, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { isObject } from '../connectedAccounts/probe.js';
 import { CloudflareProviderRefusal, cloudflareHasNextPage, cloudflareRemoteTunnel,
   cloudflareResponseOperation, readCloudflareResponse } from './cloudflareRoutes.js';
@@ -24,9 +24,39 @@ const selectionsResult = union([
   object({ kind: literal('ready'), zones: array(zoneOption), options: array(selectionOption, { maxItems: 0 }),
     defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
   object({ kind: literal('ready'), options: array(selectionOption), defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
-  object({ kind: literal('unavailable'), options: array(selectionOption, { maxItems: 0 }), reason: text,
-    defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
+  object({ kind: literal('unavailable'), options: array(selectionOption, { maxItems: 0 }), reason: text, requiredFact: text, remedy: text,
+    providerStatus: number().optional(), defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
 ]);
+
+/** Read recovery belongs to the provider boundary; consumers display these facts. */
+function selectionRecovery(reason: string): { requiredFact: string; remedy: string } {
+  switch (reason) {
+    case 'credential_unavailable': return { requiredFact: 'cloudflareCredential',
+      remedy: 'Cloudflare could not use the selected account credential. Reconnect that account, then find zones again.' };
+    case 'zone_list_unavailable': return { requiredFact: 'cloudflareZoneRead',
+      remedy: 'Cloudflare refused zone listing. Grant Zone:Read access to the token, or enter the zone ID explicitly.' };
+    case 'denied': return { requiredFact: 'cloudflarePermissions',
+      remedy: 'Cloudflare refused access to the selected zone or tunnels. Check the token permissions and resource access, then retry.' };
+    case 'network_unavailable': return { requiredFact: 'cloudflareNetwork',
+      remedy: 'The request could not reach Cloudflare. Check the connection, then retry.' };
+    case 'account_id_unavailable': return { requiredFact: 'cloudflareAccountId',
+      remedy: 'The selected connection has no Cloudflare Account ID. Reconnect that account, or supply its Account ID in Advanced.' };
+    case 'hostname_outside_zone': return { requiredFact: 'cloudflareHostnameZone',
+      remedy: 'The hostname does not belong to the selected zone. Choose its zone or change the hostname.' };
+    case 'zone_not_active': return { requiredFact: 'cloudflareActiveZone',
+      remedy: 'The selected Cloudflare zone is not active. Complete its setup in Cloudflare, then retry.' };
+    case 'zone_paused': return { requiredFact: 'cloudflareActiveZone',
+      remedy: 'The selected Cloudflare zone is paused. Resume it in Cloudflare, then retry.' };
+    case 'external_dns_setup_required': return { requiredFact: 'cloudflareZoneDns',
+      remedy: 'The selected zone uses external DNS. Complete its external DNS setup before adding this address.' };
+    case 'zone_type_requires_setup': return { requiredFact: 'cloudflareZoneDns',
+      remedy: 'The selected zone cannot supply an automatic public DNS route. Choose a full Cloudflare zone or complete its DNS setup.' };
+    case 'invalid_provider_output': return { requiredFact: 'cloudflareProviderResponse',
+      remedy: 'Cloudflare returned an unreadable zone or tunnel response. Retry the read; if it persists, check Cloudflare service status.' };
+    default: return { requiredFact: 'cloudflareProviderResponse',
+      remedy: 'Cloudflare did not complete the zone or tunnel request. Check Cloudflare service status and the reported HTTP status, then retry.' };
+  }
+}
 
 /** An omitted zone lists the configured Account's zones when the token allows it.
  * A permission refusal leaves the caller able to supply an explicit zone.
@@ -37,7 +67,7 @@ const selectionsResult = union([
  * https://developers.cloudflare.com/api/resources/zones/methods/list/
  * https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/methods/list/
  */
-const readSelections: PluginAccountActionHandler<ReturnType<typeof selectionsInput.parse>,
+const readSelectionsImpl: PluginAccountActionHandler<ReturnType<typeof selectionsInput.parse>,
   ReturnType<typeof selectionsResult.parse>> = async (input, context) => {
   const accounts = await context.services.actions.execute('connectedServices.accounts.list',
     { service: input.credentialRef.service }, { signal: context.signal });
@@ -49,14 +79,15 @@ const readSelections: PluginAccountActionHandler<ReturnType<typeof selectionsInp
   const connectedAccountId = profile?.providerIdentity?.accountId;
   const defaults = { connector: CLOUDFLARE_CONNECTOR_DEFAULTS,
     ...(typeof connectedAccountId === 'string' && connectedAccountId.length > 0 ? { accountId: connectedAccountId } : {}) };
-  const unavailable = (reason: string) => ({ kind: 'unavailable' as const, options: [], reason, defaults, connectorDiscovery });
+  const unavailable = (reason: string, providerStatus?: number) => ({ kind: 'unavailable' as const, options: [], reason,
+    ...selectionRecovery(reason), ...(providerStatus === undefined ? {} : { providerStatus }), defaults, connectorDiscovery });
   const accountId = input.accountId ?? defaults.accountId;
   if (accountId === undefined) return unavailable('account_id_unavailable');
   const connector = input.connector ?? defaults.connector;
   const zoneId = input.zoneId;
   if (zoneId !== undefined) {
     const selected = await readSelectedZone({ credentialRef: input.credentialRef, accountId, zoneId }, context);
-    if (selected.kind === 'unavailable') return unavailable(selected.reason);
+    if (selected.kind === 'unavailable') return unavailable(selected.reason, selected.providerStatus);
     const hostname = input.hostname.toLowerCase(), zoneName = selected.zones[0].name.toLowerCase();
     if (hostname !== zoneName && !hostname.endsWith(`.${zoneName}`)) return unavailable('hostname_outside_zone');
   }
@@ -72,10 +103,16 @@ const readSelections: PluginAccountActionHandler<ReturnType<typeof selectionsInp
         : { is_deleted: 'false', page: String(page) });
       const response = await context.services.http.request({ method: 'GET', url: `${collection}?${query}`, redirect: 'error',
         credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'tunnel.manage', origin: 'https://api.cloudflare.com',
-          method: 'GET', headerNames: ['authorization'] } }, { signal: context.signal });
+          method: 'GET', headerNames: ['authorization'] } }, { signal: context.signal }).catch(error => {
+          context.signal.throwIfAborted();
+          if (isPluginError(error)) throw error;
+          return null;
+        });
       context.signal.throwIfAborted();
-      if (response.status === 401 || response.status === 403) return unavailable(zoneId === undefined ? 'zone_list_unavailable' : 'denied');
-      if (response.status < 200 || response.status >= 300) return unavailable('provider_unavailable');
+      if (response === null) return unavailable('network_unavailable');
+      if (response.status === 401) return unavailable('credential_unavailable', response.status);
+      if (response.status === 403) return unavailable(zoneId === undefined ? 'zone_list_unavailable' : 'denied', response.status);
+      if (response.status < 200 || response.status >= 300) return unavailable('provider_unavailable', response.status);
       const native = readCloudflareResponse(response.body, operation);
       if (!Array.isArray(native.result)) return unavailable('invalid_provider_output');
       const rows: readonly ProtocolJsonValue[] = native.result;
@@ -103,7 +140,28 @@ const readSelections: PluginAccountActionHandler<ReturnType<typeof selectionsInp
   } catch (error) {
     context.signal.throwIfAborted();
     if (isPluginError(error)) throw error;
-    return unavailable(error instanceof CloudflareProviderRefusal ? error.code : 'provider_unavailable');
+    if (error instanceof CloudflareProviderRefusal) return unavailable(error.code);
+    throw error;
+  }
+};
+
+const readSelections: typeof readSelectionsImpl = async (input, context) => {
+  try { return await readSelectionsImpl(input, context); }
+  catch (error) {
+    context.signal.throwIfAborted();
+    if (!isPluginError(error)) throw error;
+    const reason = error.code === 'credential_unavailable' ? 'credential_unavailable'
+      : error.code === 'outcome_unknown' && error.data.failureCause?.phase === 'connected_account.http.execute'
+        ? 'network_unavailable' : undefined;
+    if (reason === undefined) throw error;
+    // Canonical recognition proves the cross-realm SDK exception; its public details carry authored recovery.
+    const original = error as PluginError;
+    const details = original.details && typeof original.details === 'object' && !Array.isArray(original.details)
+      ? original.details : {};
+    const fallback = selectionRecovery(reason);
+    throw new PluginError({ ...original.data, details: { ...details,
+      requiredFact: typeof details.requiredFact === 'string' ? details.requiredFact : fallback.requiredFact,
+      remedy: typeof details.remedy === 'string' ? details.remedy : fallback.remedy } }, { cause: error });
   }
 };
 

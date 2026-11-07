@@ -3,7 +3,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolObject as object,
-  defineProtocolString as string, defineProtocolUnion as union } from '@happier-dev/plugin-sdk/protocol';
+  defineProtocolString as string, defineProtocolNumber as number, defineProtocolUnion as union } from '@happier-dev/plugin-sdk/protocol';
 import { cloudflareZoneIdentity, isObject } from '../connectedAccounts/probe.js';
 
 const closed = { policy: 'closed' } as const;
@@ -12,7 +12,7 @@ const zone = object({ accountId: text, zoneId: text, name: text }, closed);
 const selectedZoneInput = object({ credentialRef: QualifiedConnectedAccountRefSchema, accountId: text, zoneId: text }, closed);
 const selectedZoneResult = union([
   object({ kind: literal('ready'), zones: array(zone), defaultZoneId: text }, closed),
-  object({ kind: literal('unavailable'), zones: array(zone), reason: text }, closed),
+  object({ kind: literal('unavailable'), zones: array(zone), reason: text, providerStatus: number().optional() }, closed),
 ]);
 
 /** Read the deliberate selected zone; never infer a default from list order.
@@ -24,16 +24,23 @@ const selectedZoneResult = union([
 export async function readSelectedZone(value: JsonValue, context: PluginAccountActionContext) {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
   const input = value as ReturnType<typeof selectedZoneInput.parse>;
-  const unavailable = (reason: string) => ({ kind: 'unavailable' as const, zones: [], reason });
+  const unavailable = (reason: string, providerStatus?: number) => ({ kind: 'unavailable' as const, zones: [], reason,
+    ...(providerStatus === undefined ? {} : { providerStatus }) });
   context.signal.throwIfAborted();
   try {
     const response = await context.services.http.request({ method: 'GET',
       url: `https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(input.zoneId)}`, redirect: 'error',
       credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'tunnel.manage', origin: 'https://api.cloudflare.com', method: 'GET', headerNames: ['authorization'] },
-    }, { signal: context.signal });
+    }, { signal: context.signal }).catch(error => {
+      context.signal.throwIfAborted();
+      if (isPluginError(error)) throw error;
+      return null;
+    });
     context.signal.throwIfAborted();
-    if (response.status === 401 || response.status === 403) return unavailable('denied');
-    if (response.status !== 200) return unavailable('provider_unavailable');
+    if (response === null) return unavailable('network_unavailable');
+    if (response.status === 401) return unavailable('credential_unavailable', response.status);
+    if (response.status === 403) return unavailable('denied', response.status);
+    if (response.status !== 200) return unavailable('provider_unavailable', response.status);
     const body: unknown = JSON.parse(new TextDecoder().decode(response.body));
     if (!isObject(body) || body.success !== true) return unavailable('invalid_provider_output');
     const identity = cloudflareZoneIdentity(body.result, input.accountId, input.zoneId);
@@ -48,7 +55,7 @@ export async function readSelectedZone(value: JsonValue, context: PluginAccountA
   } catch (error) {
     context.signal.throwIfAborted();
     if (isPluginError(error)) throw error;
-    return unavailable('provider_unavailable');
+    return unavailable('invalid_provider_output');
   }
 }
 

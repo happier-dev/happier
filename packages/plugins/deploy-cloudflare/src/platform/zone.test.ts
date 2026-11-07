@@ -57,10 +57,12 @@ it('returns no automatic default for inactive, paused, external-DNS, mismatched 
 it('keeps refusal, failed-read recovery and cancellation on the existing HTTP owner boundary', async () => {
   const state = await fixture();
   try {
+    state.respond(null, 401);
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', zones: [], reason: 'credential_unavailable', providerStatus: 401 });
     state.respond(null, 403);
-    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', zones: [], reason: 'denied' });
-    state.fail(new Error('private-provider-detail'));
-    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', zones: [], reason: 'provider_unavailable' });
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', zones: [], reason: 'denied', providerStatus: 403 });
+    state.fail(Object.assign(new Error('private-provider-detail'), { code: 'ECONNRESET' }));
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', zones: [], reason: 'network_unavailable' });
     state.respond(zone);
     expect(await state.invoke()).toMatchObject({ kind: 'ready', defaultZoneId: zoneId });
     const ownerError = new PluginError({ code: 'credential_unavailable' });

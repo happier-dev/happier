@@ -40,6 +40,7 @@ async function fixture() {
     };
   } });
   let zoneResult: unknown = zone;
+  let zoneStatus = 200;
   const pages = new Map<number, unknown>([[1, { success: true, result: [tunnel], result_info: { page: 1, total_pages: 1 } }]]);
   let listStatus = 200, listFailure: Error | undefined, waitForList: Promise<void> | undefined;
   let listEntered = () => {};
@@ -47,7 +48,7 @@ async function fixture() {
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     const url = new URL(request.url);
-    if (url.pathname === `/client/v4/zones/${zoneId}`) return { status: 200, headers: {},
+    if (url.pathname === `/client/v4/zones/${zoneId}`) return { status: zoneStatus, headers: {},
       body: new TextEncoder().encode(JSON.stringify({ success: true, result: zoneResult })) };
     if (url.pathname !== '/client/v4/zones' && url.pathname !== `/client/v4/accounts/${accountId}/cfd_tunnel`) {
       throw new Error('Unexpected vendor endpoint');
@@ -62,7 +63,7 @@ async function fixture() {
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http, actions } });
   const controller = new AbortController();
   return { kit, requests, metadataReads, providerAccount: (value: string | null) => { selectedProviderAccountId = value; }, controller, entered, invoke: (value: unknown = input) => kit.invokeAction(action, value, { signal: controller.signal }),
-    zone: (value: unknown) => { zoneResult = value; }, page: (page: number, value: unknown) => { pages.set(page, value); },
+    zone: (value: unknown, status = 200) => { zoneResult = value; zoneStatus = status; }, page: (page: number, value: unknown) => { pages.set(page, value); },
     status: (value: number) => { listStatus = value; }, fail: (value?: Error) => { listFailure = value; },
     hold: (value: Promise<void>) => { waitForList = value; } };
 }
@@ -90,7 +91,7 @@ it('reports missing selected provider account metadata without using the profile
   try {
     state.providerAccount(null);
     expect(await state.invoke({ credentialRef, hostname: input.hostname })).toMatchObject({ kind: 'unavailable',
-      options: [], reason: 'account_id_unavailable', defaults: { connector: { imageRef: expect.any(String), version: expect.any(String) } } });
+      options: [], reason: 'account_id_unavailable', requiredFact: 'cloudflareAccountId', remedy: expect.any(String), defaults: { connector: { imageRef: expect.any(String), version: expect.any(String) } } });
     expect(state.requests).toEqual([]);
     expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }],
       defaults: { connector: defaults.connector }, connectorDiscovery });
@@ -133,14 +134,31 @@ it('lists every native zone page for the configured Account when no zone is supp
   } finally { await state.kit.dispose(); }
 });
 
-it('allows an explicit-zone fallback when the provider refuses zone enumeration', async () => {
+it('distinguishes credential, zone-scope, provider-status and HTTP network failures with actionable recovery', async () => {
   const state = await fixture();
   try {
-    for (const status of [401, 403]) {
+    for (const [status, reason, requiredFact] of [
+      [401, 'credential_unavailable', 'cloudflareCredential'],
+      [403, 'zone_list_unavailable', 'cloudflareZoneRead'],
+      [429, 'provider_unavailable', 'cloudflareProviderResponse'],
+    ] as const) {
       state.status(status);
-      expect(await state.invoke(zoneListInput)).toEqual({ kind: 'unavailable', options: [],
-        reason: 'zone_list_unavailable', defaults, connectorDiscovery });
+      expect(await state.invoke(zoneListInput)).toMatchObject({ kind: 'unavailable', options: [],
+        reason, providerStatus: status, requiredFact, remedy: expect.any(String), defaults, connectorDiscovery });
     }
+    state.status(200);
+    state.fail(Object.assign(new Error('private-token-value'), { code: 'ECONNRESET' }));
+    const failed = await state.invoke(zoneListInput);
+    expect(failed).toMatchObject({ kind: 'unavailable', reason: 'network_unavailable',
+      requiredFact: 'cloudflareNetwork', remedy: expect.any(String) });
+    expect(JSON.stringify(failed)).not.toContain('private-token-value');
+    state.fail();
+    state.zone(zone, 401);
+    expect(await state.invoke()).toMatchObject({ reason: 'credential_unavailable', providerStatus: 401,
+      requiredFact: 'cloudflareCredential', remedy: expect.any(String) });
+    state.zone(zone, 403);
+    expect(await state.invoke()).toMatchObject({ reason: 'denied', providerStatus: 403,
+      requiredFact: 'cloudflarePermissions', remedy: expect.any(String) });
   } finally { await state.kit.dispose(); }
 });
 
@@ -155,7 +173,7 @@ it('settles zone pagination without metadata and rejects malformed pages without
       { success: true, result: [{ ...zone, name: null }] },
       { success: true, result: [zone], result_info: { page: 2, total_pages: 2 } }]) {
       state.page(1, page);
-      expect(await state.invoke(zoneListInput)).toEqual({ kind: 'unavailable', options: [],
+      expect(await state.invoke(zoneListInput)).toMatchObject({ kind: 'unavailable', options: [],
         reason: 'invalid_provider_output', defaults, connectorDiscovery });
     }
   } finally { await state.kit.dispose(); }
@@ -196,10 +214,10 @@ it('keeps the canonical selected-zone refusal and never lists tunnels for an uns
   const state = await fixture();
   try {
     state.zone({ ...zone, paused: true });
-    expect(await state.invoke()).toEqual({ kind: 'unavailable', options: [], reason: 'zone_paused', defaults, connectorDiscovery });
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', options: [], reason: 'zone_paused', defaults, connectorDiscovery });
     expect(state.requests).toHaveLength(1);
     state.zone({ ...zone, name: 'other.test' });
-    expect(await state.invoke()).toEqual({ kind: 'unavailable', options: [], reason: 'hostname_outside_zone', defaults, connectorDiscovery });
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', options: [], reason: 'hostname_outside_zone', defaults, connectorDiscovery });
     expect(state.requests).toHaveLength(2);
   } finally { await state.kit.dispose(); }
 });
@@ -208,18 +226,36 @@ it('reports denied older credentials, malformed lists and failed reads as unavai
   const state = await fixture();
   try {
     state.status(403);
-    expect(await state.invoke()).toEqual({ kind: 'unavailable', options: [], reason: 'denied', defaults, connectorDiscovery });
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', options: [], reason: 'denied', defaults, connectorDiscovery });
     state.status(200);
     for (const page of [{ success: true, result: null }, { success: true, result: [null] },
       { success: true, result: [{ ...tunnel, name: null }] },
       { success: true, result: [tunnel], result_info: { page: 2, total_pages: 2 } }]) {
       state.page(1, page);
-      expect(await state.invoke()).toEqual({ kind: 'unavailable', options: [], reason: 'invalid_provider_output', defaults, connectorDiscovery });
+      expect(await state.invoke()).toMatchObject({ kind: 'unavailable', options: [], reason: 'invalid_provider_output', defaults, connectorDiscovery });
     }
     state.fail(new Error('private-provider-detail'));
-    expect(await state.invoke()).toEqual({ kind: 'unavailable', options: [], reason: 'provider_unavailable', defaults, connectorDiscovery });
+    expect(await state.invoke()).toMatchObject({ kind: 'unavailable', options: [], reason: 'network_unavailable', requiredFact: 'cloudflareNetwork', remedy: expect.any(String), defaults, connectorDiscovery });
     state.fail(new PluginError({ code: 'credential_unavailable' }));
     await expect(state.invoke()).rejects.toMatchObject({ code: 'credential_unavailable' });
+  } finally { await state.kit.dispose(); }
+});
+
+it('preserves host HTTP PluginError codes and causes while authoring missing read recovery', async () => {
+  const state = await fixture();
+  try {
+    const failureCause = { phase: 'connected_account.http.execute', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    state.fail(new PluginError({ code: 'outcome_unknown', failureCause }));
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'outcome_unknown',
+      data: { failureCause, details: { requiredFact: 'cloudflareNetwork', remedy: expect.any(String) } } });
+    state.fail(new PluginError({ code: 'credential_unavailable' }));
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'credential_unavailable',
+      data: { details: { requiredFact: 'cloudflareCredential', remedy: expect.any(String) } } });
+    const details = { requiredFact: 'credentialMaterial', remedy: 'Reconnect the selected account.', source: 'owner' };
+    state.fail(new PluginError({ code: 'credential_unavailable', details }));
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'credential_unavailable', data: { details } });
+    state.fail(new PluginError({ code: 'denied' }));
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'denied', data: { code: 'denied' } });
   } finally { await state.kit.dispose(); }
 });
 

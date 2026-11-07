@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { relayAccessProviderDescriptorsById } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { isRecord } from '@happier-dev/protocol/common/records';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { AccessProviderSelectionV1Schema } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
@@ -14,10 +15,12 @@ import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import type { createDeploymentActions } from './deploymentActions';
+import { readDeploymentActionError } from './deploymentActionOutcome';
 
 export type DomainIngressInspection = ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'];
 type Selection = NonNullable<DeploymentDomainContentV1['ingress']>;
@@ -26,11 +29,11 @@ type Zone = Readonly<{ zoneId: string; name: string }>;
 type Defaults = Readonly<{ accountId?: string; connector: Readonly<{ imageRef: string; version: string }> }>;
 type ZoneRead = Readonly<{ key: string; credentialKey: string; defaults?: Defaults }> & (
   | Readonly<{ kind: 'ready'; zones: readonly Zone[] }>
-  | Readonly<{ kind: 'unavailable'; reason: string }>
+  | Readonly<{ kind: 'unavailable'; reason: string; remedy: string; diagnosticDetail?: string }>
 );
 type TunnelRead = Readonly<{ key: string }> & (
   | Readonly<{ kind: 'ready'; options: readonly TunnelOption[] }>
-  | Readonly<{ kind: 'unavailable'; reason: string }>
+  | Readonly<{ kind: 'unavailable'; reason: string; remedy: string; diagnosticDetail?: string }>
 );
 const selectionAction = 'happier.deploy.cloudflare/actions/cloudflare-named/selections-read';
 const binding = relayAccessProviderDescriptorsById.cloudflareNamed!.homeUi!.credentialBindings![0]!;
@@ -88,13 +91,20 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const metadata = { credentialKey, ...(resolvedDefaults ? { defaults: resolvedDefaults } : {}) };
       const reason = isRecord(value) && value.kind === 'unavailable' && typeof value.reason === 'string'
         ? value.reason : !result.ok ? result.code : 'invalid_provider_output';
+      const cause = !result.ok ? result.failureCause : undefined;
+      const providerStatus = isRecord(value) && typeof value.providerStatus === 'number' ? value.providerStatus : cause?.httpStatus;
+      const diagnosticDetail = providerStatus ? `HTTP ${providerStatus}`
+        : cause ? `${cause.phase}: ${cause.errorCode ?? cause.errorClass}` : undefined;
+      const unavailable = { kind: 'unavailable' as const, reason,
+        remedy: readDeploymentFailureRecoveryV1(reason, result.ok ? value : result.details).remedy,
+        ...(diagnosticDetail ? { diagnosticDetail } : {}) };
       if (kind === 'zones') {
         const rows = isRecord(value) && value.kind === 'ready' && Array.isArray(value.zones) ? value.zones : null;
         if (rows && rows.every((zone): zone is Zone => isRecord(zone) && typeof zone.zoneId === 'string' && typeof zone.name === 'string')) {
           setZones({ key: zoneKey, ...metadata, kind: 'ready', zones: rows });
           setZoneChoice(rows.length === 1 ? rows[0]!.zoneId : null);
         } else {
-          setZones({ key: zoneKey, ...metadata, kind: 'unavailable', reason });
+          setZones({ key: zoneKey, ...metadata, ...unavailable });
           setZoneChoice(null);
         }
         setTunnels(null);
@@ -109,15 +119,19 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           if (!parsed.success) { valid = false; break; }
           options.push({ label: row.label, selection: parsed.data });
         }
-        setTunnels(valid ? { key: tunnelKey, kind: 'ready', options } : { key: tunnelKey, kind: 'unavailable', reason });
+        setTunnels(valid ? { key: tunnelKey, kind: 'ready', options } : { key: tunnelKey, ...unavailable });
         setTunnelChoice(valid && options.length === 1 ? '0' : null);
       }
-    } catch {
+    } catch (error) {
+      const failure = readDeploymentActionError(error);
+      const reason = failure.kind === 'refused' ? failure.code : 'unknown_error';
+      const unavailable = { kind: 'unavailable' as const, reason,
+        remedy: readDeploymentFailureRecoveryV1(reason, failure.kind === 'refused' ? failure.failure?.details : undefined).remedy };
       if (kind === 'zones') {
-        setZones({ key: zoneKey, credentialKey, kind: 'unavailable', reason: 'provider_unavailable' });
+        setZones({ key: zoneKey, credentialKey, ...unavailable });
         setZoneChoice(null);
       } else {
-        setTunnels({ key: tunnelKey, kind: 'unavailable', reason: 'provider_unavailable' });
+        setTunnels({ key: tunnelKey, ...unavailable });
         setTunnelChoice(null);
       }
     } finally { setReading(null); }
@@ -161,11 +175,12 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           {currentZones.zones.length === 0 ? <Text>{t('projects.deployments.domainIngressZonesEmpty')}</Text> : null}
         </FieldItem>
       ) : explicitZone ? (
-        <FieldItem label={t('projects.deployments.domainIngressZoneId')} supportingText={t('projects.deployments.domainIngressZoneHint')}>
+        <FieldItem label={t('projects.deployments.domainIngressZoneId')} supportingText={currentZones.remedy}>
           <FieldTextInput testID={`${id}.zoneId`} value={explicitZoneId} onChangeText={setExplicitZoneId}
             accessibilityLabel={t('projects.deployments.domainIngressZoneId')} autoCapitalize="none" editable={!props.busy} monospace />
         </FieldItem>
-      ) : currentZones?.kind === 'unavailable' ? <Text accessibilityRole="alert">{t('projects.deployments.domainIngressZonesUnavailable')}</Text> : null}
+      ) : currentZones?.kind === 'unavailable' ? <SurfaceStateCard testID={`${id}.zones.error`} size="line" kind="error"
+        title={currentZones.remedy} diagnosticCode={currentZones.reason} diagnosticDetail={currentZones.diagnosticDetail} /> : null}
       {zoneId ? (
         <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')}
           icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} loading={reading === 'tunnels'} />
@@ -178,7 +193,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
             disabled={props.busy || currentTunnels.options.length === 0} />
           {currentTunnels.options.length === 0 ? <Text>{t('projects.deployments.domainIngressEmpty')}</Text> : null}
         </FieldItem>
-      ) : currentTunnels?.kind === 'unavailable' ? <Text accessibilityRole="alert">{t('projects.deployments.domainIngressUnavailable')}</Text> : null}
+      ) : currentTunnels?.kind === 'unavailable' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
+        title={currentTunnels.remedy} diagnosticCode={currentTunnels.reason} diagnosticDetail={currentTunnels.diagnosticDetail} /> : null}
     </View>
   ) : null };
 }

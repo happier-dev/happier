@@ -156,5 +156,7 @@ export async function executeCapturedScopeContributedAction(
     });
     if (outcome.ok) return { ok: true, result: outcome.result };
     const errorCode = outcome.reason === 'plugin_ui_action_outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason;
-    return { ok: false, errorCode, error: errorCode };
+    return { ok: false, errorCode, error: errorCode,
+        ...(outcome.details === undefined ? {} : { details: outcome.details }),
+        ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }) };
 }

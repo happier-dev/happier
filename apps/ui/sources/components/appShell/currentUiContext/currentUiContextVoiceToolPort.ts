@@ -68,7 +68,9 @@ import {
  */
 export type CurrentUiContextVoiceInvocationOutcome =
     | Readonly<{ ok: true; result?: PluginUiJsonValueV1 }>
-    | Readonly<{ ok: false; code: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['code'] | 'outcome_unknown'; errorCode?: string; actionHandlerInvocation?: 'notStarted' }>;
+    | Readonly<{ ok: false; code: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['code'] | 'outcome_unknown'; errorCode?: string; actionHandlerInvocation?: 'notStarted';
+        details?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['details'];
+        failureCause?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['failureCause'] }>;
 
 export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
     commandId: string;
@@ -381,9 +383,13 @@ export function createCurrentUiContextVoiceToolPort(
                 // An issued effect remains indeterminate even if its UI binding
                 // retired while the acknowledgement was lost. Voice custody
                 // retains this canonical terminal result by stable effect ID.
-                return { ok: false, code: 'outcome_unknown' };
+                return { ok: false, code: 'outcome_unknown',
+                    ...(outcome.details === undefined ? {} : { details: outcome.details }),
+                    ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }) };
             }
-            return { ok: false, code: outcome.code, errorCode: outcome.reason };
+            return { ok: false, code: outcome.code, errorCode: outcome.reason,
+                ...(outcome.details === undefined ? {} : { details: outcome.details }),
+                ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }) };
         } catch {
             return isCurrent() ? internalError() : stale();
         } finally {

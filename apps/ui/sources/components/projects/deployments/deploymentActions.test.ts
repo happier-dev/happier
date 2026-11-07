@@ -1,18 +1,14 @@
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit';
 import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
-import { getRandomBytes } from '@/platform/cryptoRandom';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1,
     DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -26,14 +22,6 @@ installHomeGovernanceBoundaries(homes);
 const { createDeploymentActions } = await import('./deploymentActions');
 // Resolve the real lazy Action graph during collection, outside the behavior budget.
 await import('@/sync/ops/actions/defaultActionExecutor');
-
-function answerController(serverId: string, accountId: string, resourceMode: 'plain' | 'e2ee' = 'plain') {
-    const plain = createPlainMachineRowFixture({ id: 'machine-a', accountId });
-    const machine = { ...plain, access: { ...plain.access, resourceMode } };
-    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-    }) });
-}
 
 describe('deployment UI Action callbacks', () => {
     beforeEach(() => homes.reset());
@@ -58,38 +46,23 @@ describe('deployment UI Action callbacks', () => {
             runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const account = await captureLazyActionAccountContext(serverId);
-        try {
-            answerController(serverId, accountId, mode);
-            homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
-                environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
-            const { encryption } = await account.resolveAccountEncryption();
-            const material = mode === 'e2ee' ? { type: 'dataKey' as const, machineKey: encryption!.getContentPrivateKey() } : undefined;
-            homes.answer(serverId, '/v1/actions/deployments.environments.update', { select: raw => {
-                if (mode === 'e2ee') expect(JSON.stringify(raw)).not.toContain('private-owner/private-app');
-                const envelope = ExternalActionRequestEnvelopeSchema.parse(raw);
-                const binding = { serverIdentityId: homeId, accountId, authentication: { kind: 'account' as const, tokenEpoch: 0 },
-                    actionId: 'deployments.environments.update', requestId: envelope.requestId, target: envelope.target! };
-                const opened = envelope.v === 2 && material
-                    ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-                        envelope, binding, material })?.input : envelope.v === 1 ? envelope.input : undefined;
-                const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(opened);
-                expect(input).toEqual({ serverId: lifetime.scope.serverId, environmentId: detail.environment.id,
-                    expectedRevision: detail.environment.revision, contentArtifactId: detail.environment.contentArtifactId,
-                    contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
-                    patch: { previewTemplate } });
-                const execution = { ok: true, result: { ok: false, error: 'deployment_conflict' } };
-                return { body: envelope.v === 2 && material
-                    ? prepareExternalActionResponseV2({ binding, material, request: envelope, randomBytes: getRandomBytes,
-                        executedMachineId: detail.environment.controllerMachineId, execution }).response
-                    : { v: 1, actionId: binding.actionId, requestId: envelope.requestId, execution } };
-            } });
-            await expect(createDeploymentActions(lifetime, detail.environment.projectSourceId)
-                .updateEnvironment(detail.environment, { previewTemplate }))
-                .resolves.toEqual({ ok: false, error: 'deployment_conflict' });
-            expect(homes.artifacts(serverId).list()).toEqual([]);
-        } finally { account.dispose(); }
+        homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+            environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+            actionId: 'deployments.environments.update', tokenEpoch: 0, execute: raw => {
+            const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+            expect(input).toEqual({ serverId: lifetime.scope.serverId, environmentId: detail.environment.id,
+                expectedRevision: detail.environment.revision, contentArtifactId: detail.environment.contentArtifactId,
+                contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+                patch: { previewTemplate } });
+            return { ok: false, error: 'deployment_conflict' };
+        } });
+        await expect(createDeploymentActions(lifetime, detail.environment.projectSourceId)
+            .updateEnvironment(detail.environment, { previewTemplate }))
+            .resolves.toEqual({ ok: false, error: 'deployment_conflict' });
+        if (mode === 'e2ee') expect(JSON.stringify(homes.requestsFor('/v1/actions/deployments.environments.update')))
+            .not.toContain('private-owner/private-app');
+        expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 
     it.each(['image', 'rebuild'] as const)('requests the destination controller’s promotion review for %s', async artifact => {
@@ -98,23 +71,22 @@ describe('deployment UI Action callbacks', () => {
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ id: 'production', serverId }) });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
-        answerController(serverId, 'owner');
         homes.answer(serverId, 'GET /v1/deployments/environments/production', { body: { ok: true,
             environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
-        homes.answer(serverId, '/v1/actions/deployments.promote', { select: (body, request) => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
-            expect(envelope.input).toEqual({ serverId, environmentId: 'production', sourceEnvironmentId: 'staging',
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+            actionId: 'deployments.promote', tokenEpoch: 0,
+            deploymentSource: { id: detail.environment.projectSourceId, revision: 1 }, execute: (input, context) => {
+            expect(context.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
+            expect(input).toEqual({ serverId, environmentId: 'production', sourceEnvironmentId: 'staging',
                 sourceDeploymentId: 'tested-release', artifact });
             const routing = resolveActionApprovalRouting({ actionId: 'deployments.promote', spec: getActionSpec('deployments.promote'),
-                input: envelope.input, context: { surface: 'ui', actionCaller: { kind: 'host' },
-                    authority: new Headers(request.init?.headers).get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation'
+                input, context: { surface: 'ui', actionCaller: { kind: 'host' },
+                    authority: context.requestHeaders.get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation'
                         ? 'account_automation' : 'present_user' } });
-            return { body: { v: 1, actionId: 'deployments.promote', requestId: envelope.requestId,
-                execution: { ok: true, result: routing.required
+            return routing.required
                     ? { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' }
                     : { ok: true, environmentId: 'production', revision: 2,
-                        deploymentId: 'unreviewed-promotion', deploymentRevision: 1, state: 'succeeded' } } } };
+                        deploymentId: 'unreviewed-promotion', deploymentRevision: 1, state: 'succeeded' };
         } });
         await expect(createDeploymentActions(lifetime, detail.environment.projectSourceId).promote({
             environmentId: 'production', sourceEnvironmentId: 'staging', sourceDeploymentId: 'tested-release', artifact,
@@ -136,7 +108,11 @@ describe('deployment UI Action callbacks', () => {
                 execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
                 inputSchema: defineProtocolObject({ expectedRevision: defineProtocolNumber({ integer: true }) }, { policy: 'closed' }),
                 run: async input => {
-                    if (input.expectedRevision === 2) throw new PluginError({ code: 'deployment_conflict' });
+                    if (input.expectedRevision === 2) throw new PluginError({ code: 'credential_unavailable',
+                        details: { requiredFact: 'connectedAccountCredential',
+                            remedy: 'The selected connection has no usable credential. Reconnect it before finding zones.' },
+                        failureCause: { phase: 'execution_authorization', errorClass: 'Error',
+                            errorCode: 'credential_unavailable', httpStatus: null } });
                     return { inspectedRevision: input.expectedRevision };
                 },
             } } });
@@ -149,7 +125,11 @@ describe('deployment UI Action callbacks', () => {
             expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 1 }))
                 .toEqual({ ok: true, value: { inspectedRevision: 1 } });
             expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 2 }))
-                .toEqual({ ok: false, code: 'deployment_conflict' });
+                .toEqual({ ok: false, code: 'credential_unavailable',
+                    details: { requiredFact: 'connectedAccountCredential',
+                        remedy: 'The selected connection has no usable credential. Reconnect it before finding zones.' },
+                    failureCause: { phase: 'execution_authorization', errorClass: 'Error',
+                        errorCode: 'credential_unavailable', httpStatus: null } });
             expect(await actions.inspectPlatformTarget(actionId, {}))
                 .toEqual({ ok: false, code: 'plugin_action_input_schema_invalid' });
             expect(await actions.inspectPlatformTarget('not-a-qualified-action', {}))
@@ -164,7 +144,6 @@ describe('deployment UI Action callbacks', () => {
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
         const environment = createDeploymentEnvironmentHeaderV1({ serverId: homeId });
-        answerController(serverId, 'owner');
         homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: {
             ok: true, environment, targetLinks: [],
         } });
@@ -195,10 +174,6 @@ describe('deployment UI Action callbacks', () => {
         let current = true;
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => current,
             onRetire: () => ({ dispose() {} }) };
-        const machines = ['runtime', 'reviewed-controller'].map(id => createPlainMachineRowFixture({ id, accountId: 'owner' }));
-        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => machines.find(machine => machine.id === id) ?? null).json(),
-        }) });
         const input = { name: 'App', requestKey: 'retained-create', protection: 'nonProduction' as const,
             purpose: 'standard' as const, deployerMode: 'managers' as const,
             definition: { from: 'repository' as const, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
@@ -213,20 +188,20 @@ describe('deployment UI Action callbacks', () => {
             creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null } } });
         let previews = 0;
         let commits = 0;
-        homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            const isPreview = typeof envelope.input === 'object' && envelope.input !== null && 'mode' in envelope.input;
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime',
+            additionalMachines: [{ machineId: 'reviewed-controller' }],
+            actionId: 'deployments.environments.create', tokenEpoch: 0, execute: (received, context) => {
+            const isPreview = typeof received === 'object' && received !== null && 'mode' in received;
             if (isPreview) {
                 previews++;
-                expect(envelope.input).toEqual({ ...input, mode: 'preview', serverId, projectSourceId: 'source-app' });
-                expect(envelope.target).toEqual({ kind: 'machine', machineId: 'runtime' });
+                expect(received).toEqual({ ...input, mode: 'preview', serverId, projectSourceId: 'source-app' });
+                expect(context.target).toEqual({ kind: 'machine', machineId: 'runtime' });
             } else {
                 commits++;
-                expect(envelope.input).toEqual(preview.input);
-                expect(envelope.target).toEqual({ kind: 'machine', machineId: 'reviewed-controller' });
+                expect(received).toEqual(preview.input);
+                expect(context.target).toEqual({ kind: 'machine', machineId: 'reviewed-controller' });
             }
-            return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-                execution: { ok: true, result: isPreview ? preview : { ok: true, environmentId: 'created', revision: 1 } } } };
+            return isPreview ? preview : { ok: true, environmentId: 'created', revision: 1 };
         } });
         const actions = createDeploymentActions(lifetime, 'source-app');
         const prepared = await actions.prepareCreate(input);
@@ -259,19 +234,17 @@ describe('deployment UI Action callbacks', () => {
         const edit = actions.prepareProtectionEdit(header, 'nonProduction');
         expect(edit).toEqual({ previousProtection: 'production', protection: 'nonProduction', save: expect.any(Function) });
         expect(homes.requests.length, 'opening the direct edit uses admitted old/new facts only').toBe(before);
-        answerController(serverId, 'owner');
         homes.answer(serverId, `GET /v1/deployments/environments/${header.id}`, { body: {
             ok: true, environment: header, targetLinks: [],
         } });
-        homes.answer(serverId, '/v1/actions/deployments.environments.update', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.target).toEqual({ kind: 'machine', machineId: header.controllerMachineId });
-            const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(envelope.input);
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: header.controllerMachineId,
+            actionId: 'deployments.environments.update', tokenEpoch: 0, execute: (raw, context) => {
+            expect(context.target).toEqual({ kind: 'machine', machineId: header.controllerMachineId });
+            const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
             expect(input).toEqual({ serverId, environmentId: header.id, expectedRevision: header.revision,
                 contentArtifactId: header.contentArtifactId, contentHeaderVersion: header.contentHeaderVersion,
                 contentBodyVersion: header.contentBodyVersion, patch: { protection: 'nonProduction' } });
-            return { body: { v: 1, actionId: 'deployments.environments.update', requestId: envelope.requestId,
-                execution: { ok: true, result: { ok: true, environmentId: header.id, revision: 8 } } } };
+            return { ok: true, environmentId: header.id, revision: 8 };
         } });
         expect(await edit.save()).toEqual({ ok: true, environmentId: header.id, revision: 8 });
         expect(homes.requestsFor('/v1/actions/deployments.environments.update')).toHaveLength(1);
@@ -294,23 +267,22 @@ describe('deployment UI Action callbacks', () => {
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId, owner }) });
-        answerController(serverId, 'owner');
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
-        homes.answer(serverId, '/v1/actions/deployments.domains.add', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            const input = DeploymentActionInputSchemasV1['deployments.domains.add'].parse(envelope.input);
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+            actionId: 'deployments.domains.add', tokenEpoch: 0, execute: raw => {
+            const input = DeploymentActionInputSchemasV1['deployments.domains.add'].parse(raw);
             if (!('content' in input)) throw new Error('Expected authored Domain content at the Action boundary');
             expect(input.content).toMatchObject({ hostname: 'docs.happier.dev',
                 target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 } });
             expect(input).toMatchObject({ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
                 targetLinkId: 'target-link', expectedTargetLinkRevision: 1 });
             expect(input).not.toHaveProperty('contentArtifactId');
-            return { body: { v: 1, actionId: 'deployments.domains.add', requestId: envelope.requestId, execution: { ok: true, result: {
+            return {
                 ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
                 domain: { v: 1, id: input.domainId, environmentId: detail.environment.id, targetLinkId: 'target-link', revision: 1, state: 'pending',
                     contentArtifactId: 'controller-domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
-                    createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 } } } } };
+                    createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 } };
         } });
         const result = await createDeploymentActions(lifetime, detail.environment.projectSourceId).addDomain({
             environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
@@ -330,23 +302,22 @@ describe('deployment UI Action callbacks', () => {
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId }) });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
-        answerController(serverId, 'owner');
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
-        homes.answer(serverId, '/v1/actions/deployments.deploy', { select: (body, request) => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-a' });
-            expect(envelope.input).toEqual({ serverId, environmentId: detail.environment.id, targetLinkId: 'target-link' });
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+            actionId: 'deployments.deploy', tokenEpoch: 0,
+            deploymentSource: { id: detail.environment.projectSourceId, revision: 1 }, execute: (input, context) => {
+            expect(context.target).toEqual({ kind: 'machine', machineId: 'machine-a' });
+            expect(input).toEqual({ serverId, environmentId: detail.environment.id, targetLinkId: 'target-link' });
             // Model the native process boundary using its real approval policy, not a second rule.
             const routing = resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
-                input: envelope.input, context: { surface: 'ui', actionCaller: { kind: 'host' },
-                    authority: new Headers(request.init?.headers).get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation'
+                input, context: { surface: 'ui', actionCaller: { kind: 'host' },
+                    authority: context.requestHeaders.get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation'
                         ? 'account_automation' : 'present_user' } });
-            return { body: { v: 1, actionId: 'deployments.deploy', requestId: envelope.requestId,
-                execution: { ok: true, result: routing.required
+            return routing.required
                     ? { kind: 'approval_request_created', actionId: 'deployments.deploy', artifactId: 'deploy-review' }
                     : { ok: true, environmentId: detail.environment.id, revision: 2,
-                        deploymentId: 'new-deployment', deploymentRevision: 1, state: 'succeeded' } } } };
+                        deploymentId: 'new-deployment', deploymentRevision: 1, state: 'succeeded' };
         } });
         await expect(createDeploymentActions(lifetime, detail.environment.projectSourceId).deploy({
             environmentId: detail.environment.id, targetLinkId: 'target-link',
@@ -371,39 +342,22 @@ describe('deployment UI Action callbacks', () => {
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId }) });
         homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
-        answerController(serverId, 'account-owner', accountEncryptionMode);
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const account = await captureLazyActionAccountContext(serverId);
-        try {
-            const { encryption } = await account.resolveAccountEncryption();
-            const material = accountEncryptionMode === 'e2ee'
-                ? { type: 'dataKey' as const, machineKey: encryption!.getContentPrivateKey() } : undefined;
-            let observed: unknown;
-            homes.answer(serverId, '/v1/actions/deployments.teardown', { select: body => {
-                const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
-                expect(envelope.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
-                const binding = { serverIdentityId: homeId, accountId: 'account-owner',
-                    authentication: { kind: 'account' as const, tokenEpoch: 0 }, actionId: 'deployments.teardown',
-                    requestId: envelope.requestId, target: envelope.target! };
-                observed = DeploymentActionInputSchemasV1['deployments.teardown'].parse(envelope.v === 2 && material
-                    ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })?.input
-                    : envelope.v === 1 ? envelope.input : undefined);
-                const execution = { ok: true, result: { ok: true, environmentId: detail.environment.id, revision: 8,
-                    deploymentId: 'teardown-a', deploymentRevision: 1, state: 'succeeded' } };
-                return { body: envelope.v === 2 && material
-                    ? prepareExternalActionResponseV2({ binding, request: envelope, material, randomBytes: getRandomBytes,
-                        executedMachineId: detail.environment.controllerMachineId, execution }).response
-                    : { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId, execution } };
-            } });
-            const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' }, isCurrent: () => true,
-                onRetire: () => ({ dispose() {} }) };
-            const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
-            expect(await actions.teardown({ environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' }))
-                .toMatchObject({ ok: true, deploymentId: 'teardown-a', state: 'succeeded' });
-            expect(observed).toEqual({ serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' });
-            expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
-            expect(homes.requests.filter(request => request.path.startsWith('/v1/artifacts'))).toHaveLength(0);
-        } finally { account.dispose(); }
+        let observed: unknown;
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+            actionId: 'deployments.teardown', tokenEpoch: 0, execute: (input, context) => {
+            expect(context.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
+            observed = DeploymentActionInputSchemasV1['deployments.teardown'].parse(input);
+            return { ok: true, environmentId: detail.environment.id, revision: 8,
+                deploymentId: 'teardown-a', deploymentRevision: 1, state: 'succeeded' };
+        } });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
+        expect(await actions.teardown({ environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' }))
+            .toMatchObject({ ok: true, deploymentId: 'teardown-a', state: 'succeeded' });
+        expect(observed).toEqual({ serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: 'remove' });
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+        expect(homes.requests.filter(request => request.path.startsWith('/v1/artifacts'))).toHaveLength(0);
     });
 
     describe.each(['plain', 'e2ee'] as const)('rollback from a %s Account', accountEncryptionMode => {
@@ -436,29 +390,16 @@ describe('deployment UI Action callbacks', () => {
                 homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
                     environment: { ...detail.environment, revision: 7 }, targetLinks: [{ ...detail.targetLinks[0]!.targetLink, revision: 9 }] } });
                 homes.answer(serverId, `/v1/deployments/receipts/${retained.deployment.id}`, { body: { ok: true, deployment: retained.deployment } });
-                answerController(serverId, 'account-owner', accountEncryptionMode);
-                const { encryption } = await account.resolveAccountEncryption();
-                const material = accountEncryptionMode === 'e2ee'
-                    ? { type: 'dataKey' as const, machineKey: encryption!.getContentPrivateKey() } : undefined;
                 let observed: unknown;
-                homes.answer(serverId, '/v1/actions/deployments.rollback', { select: body => {
-                    const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
-                    expect(envelope.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
-                    const binding = { serverIdentityId: homeId, accountId: 'account-owner',
-                        authentication: { kind: 'account' as const, tokenEpoch: 0 }, actionId: 'deployments.rollback',
-                        requestId: envelope.requestId, target: envelope.target! };
-                    const input = envelope.v === 2 && material
-                        ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding, material })?.input
-                        : envelope.v === 1 ? envelope.input : undefined;
+                await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+                    actionId: 'deployments.rollback', tokenEpoch: 0,
+                    deploymentSource: { id: detail.environment.projectSourceId, revision: 1 }, execute: (input, context) => {
+                    expect(context.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
                     observed = DeploymentActionInputSchemasV1['deployments.rollback'].parse(input);
-                    const execution = { ok: true, result: recovery.restoreBackupId === undefined
+                    return recovery.restoreBackupId === undefined
                         ? { ok: true, environmentId: detail.environment.id, revision: 8, deploymentId: 'rollback-a',
                             deploymentRevision: 1, state: 'succeeded' }
-                        : { ok: false, error: 'unsupported_action' } };
-                    return { body: envelope.v === 2 && material
-                        ? prepareExternalActionResponseV2({ binding, request: envelope, material, randomBytes: getRandomBytes,
-                            executedMachineId: detail.environment.controllerMachineId, execution }).response
-                        : { v: 1, actionId: 'deployments.rollback', requestId: envelope.requestId, execution } };
+                        : { ok: false, error: 'unsupported_action' };
                 } });
                 const before = homes.requests.length;
                 const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
@@ -495,11 +436,11 @@ describe('deployment UI Action callbacks', () => {
             body: DeploymentTargetLinksListResultV1Schema.parse({ ok: true, items: [], nextCursor: null, coverage: 'complete' }),
         });
         let preparedId = '';
-        answerController(serverId, 'alice');
         homes.answer(serverId, 'GET /v1/deployments/environments/environment-a', { body: { ok: true,
             environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-a', projectSourceId: 'source-app',
                 serverId: `srv_${'e'.repeat(32)}` }), targetLinks: [] } });
-        homes.answer(serverId, 'POST /v1/deployments/environments/environment-a/targets', { select: input => {
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine-a',
+            actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
             const link = DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input);
             if (!('contentArtifactId' in link)) throw new Error('Expected prepared link at storage boundary');
             const { provider: _private, ...storageSelection } = { ...selection, provider: managed ? provider : undefined };
@@ -507,7 +448,7 @@ describe('deployment UI Action callbacks', () => {
                 contentHeaderVersion: 1, contentBodyVersion: 1 });
             expect(input).not.toHaveProperty('provider');
             preparedId = link.contentArtifactId;
-            return { body: { ok: true, environmentId: 'environment-a', revision: 2, targetLinkId: 'link-a', targetLinkRevision: 1 } };
+            return { ok: true, environmentId: 'environment-a', revision: 2, targetLinkId: 'link-a', targetLinkRevision: 1 };
         } });
         const linked = await createDeploymentActions(lifetime, 'source-app').link({ environmentId: 'environment-a', expectedRevision: 1,
             ...selection });
@@ -528,13 +469,11 @@ describe('deployment UI Action callbacks', () => {
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'alice' }, isCurrent: () => current,
             onRetire: () => ({ dispose() {} }) };
         const content = { contentArtifactId: 'prepared-content', contentHeaderVersion: 3, contentBodyVersion: 5 };
-        answerController(serverId, 'alice');
-        homes.answer(serverId, '/v1/actions/deployments.environments.create', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-a' });
-            expect(envelope.input).toMatchObject({ ...content, projectSourceId: 'source-app', controllerMachineId: 'machine-a' });
-            return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
-                execution: { ok: true, result: { ok: true, environmentId: 'environment-a', revision: 1 } } } };
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine-a',
+            actionId: 'deployments.environments.create', tokenEpoch: 0, execute: (input, context) => {
+            expect(context.target).toEqual({ kind: 'machine', machineId: 'machine-a' });
+            expect(input).toMatchObject({ ...content, projectSourceId: 'source-app', controllerMachineId: 'machine-a' });
+            return { ok: true, environmentId: 'environment-a', revision: 1 };
         } });
         const actions = createDeploymentActions(lifetime, 'source-app');
         expect(await actions.create({ ...content, requestKey: 'create-a', protection: 'nonProduction', purpose: 'standard',
@@ -542,10 +481,11 @@ describe('deployment UI Action callbacks', () => {
         homes.answer(serverId, 'GET /v1/deployments/environments/environment-a', { body: { ok: true,
             environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-a', projectSourceId: 'source-app',
                 serverId: `srv_${'c'.repeat(32)}` }), targetLinks: [] } });
-        homes.answer(serverId, 'POST /v1/deployments/environments/environment-a/targets', { select: input => {
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine-a',
+            actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
             expect(input).toMatchObject({ ...content, expectedRevision: 2, targetId: 'own-server',
                 machines: [{ machineId: 'machine-a', installationId: 'installation-a' }] });
-            return { status: 409, body: { ok: false, error: 'deployment_conflict' } };
+            return { ok: false, error: 'deployment_conflict' };
         } });
         expect(await actions.link({ ...content, environmentId: 'environment-a', expectedRevision: 2,
             targetId: 'own-server', role: 'runtime', machines: [{ machineId: 'machine-a', installationId: 'installation-a' }],

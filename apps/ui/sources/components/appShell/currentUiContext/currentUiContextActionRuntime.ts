@@ -171,5 +171,9 @@ export async function executeCurrentUiContextContributedAction(
     const errorCode = outcome.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome.errorCode ?? (outcome.code === 'denied' ? 'permission_denied' : 'contributed_action_unavailable');
     return { ok: false as const, errorCode, error: errorCode,
-        ...(outcome.actionHandlerInvocation ? { details: { actionHandlerInvocation: outcome.actionHandlerInvocation } } : {}) };
+        ...(outcome.details === undefined ? {} : { details: outcome.details }),
+        ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
+        ...(outcome.actionHandlerInvocation ? { details: {
+            ...(outcome.details !== null && typeof outcome.details === 'object' && !Array.isArray(outcome.details) ? outcome.details : {}),
+            actionHandlerInvocation: outcome.actionHandlerInvocation } } : {}) };
 }

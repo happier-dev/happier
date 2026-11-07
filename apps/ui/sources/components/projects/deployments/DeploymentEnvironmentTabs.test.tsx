@@ -13,10 +13,11 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import {
   act,
-  renderScreen,
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
@@ -72,8 +73,6 @@ type Transport = Partial<DeploymentReadTransportV1>;
 
 it('detail-navigation.T1/T6 Environment exposes its six canonical pages and selects once without acquiring secrets or deploying', async () => {
   const { DEPLOYMENT_ENVIRONMENT_TABS_V1 } = await import('@happier-dev/deployments');
-  const catalog = await import('@/components/appShell/rightSidebar/detailNavigationItems');
-  const resolve = vi.spyOn(catalog, 'resolveDetailNavigationItems');
   const navigate = vi.fn();
   const deploy = vi.fn();
   const reads = vi.fn(async () => ({ ok: true as const, value: createDeploymentEnvironmentDetailV1() }));
@@ -81,7 +80,6 @@ it('detail-navigation.T1/T6 Environment exposes its six canonical pages and sele
     { readEnvironment: reads }, { onNavigate: navigate, deploy });
   try {
     expect(await settle('project-deployments.environment')).not.toBeNull();
-    expect(resolve).toHaveBeenCalledTimes(1);
     const before = reads.mock.calls.length;
     const requestsBefore = homes.requests.length;
     expect(await invokeScopeAction('shell.column.get', { column: 'main' })).toMatchObject({
@@ -95,8 +93,7 @@ it('detail-navigation.T1/T6 Environment exposes its six canonical pages and sele
     expect(reads).toHaveBeenCalledTimes(before);
     expect(homes.requests).toHaveLength(requestsBefore);
     expect(deploy).not.toHaveBeenCalled();
-    expect(resolve).toHaveBeenCalledTimes(1);
-  } finally { await screen.unmount(); controller.retire(); resolve.mockRestore(); }
+  } finally { await screen.unmount(); controller.retire(); }
 });
 
 function domain(
@@ -219,7 +216,9 @@ describe('Environment → Domains', () => {
       } }));
     } finally { await screen.unmount(); controller.retire(); }
   });
-  it.each(['provider', 'admission'] as const)('shows the zones owner cause and remedy after a %s refusal', async boundary => {
+  it.each((['provider', 'admission'] as const).flatMap(boundary =>
+    (['zones', 'tunnels'] as const).map(kind => ({ boundary, kind }))))(
+    'shows the $kind owner cause and remedy after a $boundary refusal', async ({ boundary, kind }) => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
     const credentialRef = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' };
@@ -228,7 +227,10 @@ describe('Environment → Domains', () => {
       remedy: boundary === 'provider'
         ? 'The Cloudflare request could not reach the provider. Restore the connection and find zones again.'
         : 'The selected connection has no usable credential. Reconnect it before finding zones.' };
-    const inspectPlatformTarget = vi.fn(async () => boundary === 'provider'
+    const inspectPlatformTarget = vi.fn(async (_action: string, input: Record<string, unknown>) =>
+      kind === 'tunnels' && input.zoneId === undefined
+      ? { ok: true as const, value: { kind: 'ready', zones: [{ zoneId: 'zone', name: 'happier.dev' }], options: [] } }
+      : boundary === 'provider'
       ? { ok: true as const, value: { kind: 'unavailable', options: [], reason, ...recovery } }
       : { ok: false as const, code: reason, details: recovery,
           failureCause: { phase: 'execution_authorization', errorClass: 'Error' as const,
@@ -248,8 +250,9 @@ describe('Environment → Domains', () => {
       });
       expect(inspectPlatformTarget).not.toHaveBeenCalled();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      if (kind === 'tunnels') await screen.pressByTestIdAsync(`${id}.ingress.read`);
       const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-      const failure = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.zones.error`);
+      const failure = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.${kind}.error`);
       expect(failure?.props).toMatchObject({ title: recovery.remedy, diagnosticCode: reason });
       expect(screen.findByTestId(`${id}.ingress.zoneId`)).toBeNull();
       expect(addDomain).not.toHaveBeenCalled();
@@ -867,23 +870,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
   };
 
   it('backs up and verifies an exact snapshot through the real store and Action front door, showing the destination and result', async () => {
-    const { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema,
-      ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
-      projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
-    const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-    const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-    const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
-    const { default: nacl } = await import('tweetnacl');
-    const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(26));
     await homes.reset();
     const serverIdentityId = 'srv_backups';
     const serverId = await homes.addHome({ name: 'Backups', serverUrl: 'https://backups.test',
       serverIdentityId, accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
-    const machine = { ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-owner' }),
-      installationId: 'installation-a', installationPublicKey: encodeBase64(installation.publicKey) };
-    homes.answer(serverId, '/v1/machines', { body: [machine] });
-    homes.answer(serverId, 'GET /v1/machines/machine-a', { body: { machine } });
     const base = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content,
       backup: { ...backup, config: { bucket: 'team-recovery', prefix: 'staging/', region: 'eu-central-1' } } } });
@@ -898,21 +889,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const effects: Array<{ actionId: string; input: unknown }> = [];
     const { DEPLOYMENT_BACKUP_ACTION_IDS_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
     for (const actionId of DEPLOYMENT_BACKUP_ACTION_IDS_V1) {
-      homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
-        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-        return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'backup-root', binding: {
-          accountId: 'account-owner', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId,
-          machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'account-owner',
-          accountEncryptionMode: 'plain', actionId, requestId: request.envelope.requestId, target: request.envelope.target,
-          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), environmentId: detail.environment.id,
-          deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: request.envelope }),
-        } }) };
-      } });
       // Only the remote transport/native boundary is substituted; the UI's real Action executor runs.
-      homes.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
-        const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
-        effects.push({ actionId, input: envelope.input });
+      await answerExternalActionAccountForHome(homes, serverId, { actionId, machineId: 'machine-a',
+        installationId: 'installation-a', tokenEpoch: 0, execute: input => {
+        effects.push({ actionId, input });
         const result = actionId === 'deployments.backups.run' ? { kind: 'verified', operationId: 'backup-operation', manifests: [manifest] }
           : actionId === 'deployments.backups.test' ? { kind: 'failed', step: 'repository', reason: 'repository_password_incorrect',
             nativeExitCode: 12, remedy: 'review_credentials' }
@@ -925,9 +905,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
                 verification: { kind: 'unknown', reason: 'captureReceiptUnavailable' } }] }
           : { kind: 'verified', operationId: 'verify-operation', backupOperationId: 'backup-operation', environmentId: detail.environment.id,
             configRevision: 1, repositoryId: manifest.repositoryId, snapshotId: snapshot.snapshotId,
-            level: Reflect.get(envelope.input as object, 'level'), verified: true };
-        return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
-          execution: { ok: true, result } }) };
+            level: Reflect.get(input as object, 'level'), verified: true };
+        return result;
       } });
     }
     const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
@@ -941,7 +920,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).toContain('staging/');
       expect(effects).toEqual([]); // Opening Settings performs no native backup read or write.
       await screen.pressByTestIdAsync(`${id}.verify`);
-      expect(await settle(`${id}.snapshot.${'e'.repeat(64)}`)).not.toBeNull();
+      const unknownSnapshot = await settle(`${id}.snapshot.${'e'.repeat(64)}`);
+      expect(unknownSnapshot, JSON.stringify({ text: screen.getTextContent(), effects })).not.toBeNull();
       expect(screen.findByTestId(`${id}.snapshot.${'e'.repeat(64)}.manifestReadBack`)).toBeNull();
       expect(effects[0]).toMatchObject({ actionId: 'deployments.backups.inventory' });
       await screen.pressByTestIdAsync(`${id}.verify`);

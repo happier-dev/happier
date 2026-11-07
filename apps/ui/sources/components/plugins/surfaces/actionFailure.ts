@@ -30,7 +30,8 @@ export type PluginSurfaceActionDispatchOutcome =
         diagnostics?: readonly string[];
         layer?: PluginUiHostApiErrorPayloadV1['layer'];
         phase?: PluginUiHostApiErrorPayloadV1['phase'];
-        details?: ActionFailureCauseV1;
+        details?: PluginUiJsonValueV1;
+        failureCause?: ActionFailureCauseV1;
     }>;
 
 type Failure = Extract<PluginSurfaceActionDispatchOutcome, Readonly<{ ok: false }>>;
@@ -47,6 +48,7 @@ export function createPluginSurfaceActionFailure(code: string, reason: string, a
         ...(author?.layer === undefined ? {} : { layer: author.layer }),
         ...(author?.phase === undefined ? {} : { phase: author.phase }),
         ...(author?.details === undefined ? {} : { details: author.details }),
+        ...(author?.failureCause === undefined ? {} : { failureCause: author.failureCause }),
     };
 }
 
@@ -57,13 +59,14 @@ export function createPluginSurfaceActionFailurePayload(outcome: Failure,
         { ...options, ...outcome });
 }
 
-export function createPluginSurfaceActionFailureError(outcome: Failure): PluginError {
+export function createPluginSurfaceActionFailureError(outcome: Failure, requestId?: string): PluginError {
     return new PluginError({
         ...createPluginSurfaceHostApiPluginErrorData(outcome.reason === 'plugin_ui_action_outcome_unknown'
             ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason,
-            outcome.diagnostics ?? [outcome.reason], outcome.message, outcome),
+            outcome.diagnostics ?? [outcome.reason], outcome.message, { ...outcome, requestId }),
         ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
         ...(outcome.details === undefined ? {} : { details: outcome.details }),
+        ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
     });
 }
 
@@ -78,10 +81,11 @@ export function actionOutcomeUnknownFailure(
     code: string,
     declaration: ActionEffectDeclaration,
     input: unknown,
+    author?: FailureMetadata,
 ): Failure | null {
     return code === PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         ? createPluginSurfaceActionFailure('timeout', 'plugin_ui_action_outcome_unknown',
-            { layer: 'transport', phase: 'settlement', retryable: pluginActionDeclarationIsReadOnlyForInput(
+            { ...author, layer: 'transport', phase: 'settlement', retryable: pluginActionDeclarationIsReadOnlyForInput(
                 declaration.accountActionDeclaration ?? declaration, input) }) : null;
 }
 
@@ -102,11 +106,14 @@ export function projectClientActionInvocationFailure(
         return actionOutcomeUnknownFailure(code, declaration, input) ?? clientActionFailure(code);
     }
     const author = readPluginActionFailureAuthorPayload(result.data);
-    return actionOutcomeUnknownFailure(result.code, declaration, input) ?? clientActionFailure(result.code, {
+    const metadata: FailureMetadata = {
         message: result.message,
         ...readPluginSurfaceHostApiFailureMetadata(author.details),
+        ...(author.details === undefined ? {} : { details: author.details }),
+        ...(author.failureCause === undefined ? {} : { failureCause: author.failureCause }),
         ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
         ...(author.remediation === undefined ? {} : { remediation: author.remediation }),
         ...(author.diagnostics?.length ? { diagnostics: author.diagnostics.map(diagnostic => diagnostic.code) } : {}),
-    });
+    };
+    return actionOutcomeUnknownFailure(result.code, declaration, input, metadata) ?? clientActionFailure(result.code, metadata);
 }

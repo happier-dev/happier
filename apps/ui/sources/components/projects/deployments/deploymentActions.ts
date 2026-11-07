@@ -124,20 +124,6 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     ...input, serverId: lifetime.scope.serverId,
                 })));
         },
-        /**
-         * Opens the machine-services health check setup (HTTP, TCP, DNS, certificate, heartbeat; outside vantage and
-         * alert threshold live in that form) for this Environment, run from its controller. An agent invokes the same Action.
-         */
-        async openHealthCheckSetup(input: Readonly<{ environmentId: string; monitoringMachineId: string }>) {
-            assertCurrent();
-            const result = await execute('action.invoke', {
-                action: { pluginId: 'happier.machine.services', localId: 'health/open-setup' },
-                input: { subject: { kind: 'environment', environmentId: input.environmentId },
-                    monitoringMachineId: input.monitoringMachineId },
-            });
-            const opened = typeof result === 'object' && result !== null && Reflect.get(result, 'status') === 'opened';
-            return opened ? 'opened' as const : 'unavailable' as const;
-        },
         /** Forgets the snapshots past the saved counts now, instead of after the next backup. */
         async pruneBackups(input: Omit<DeploymentBackupPruneInputV1, 'serverId'>) {
             assertCurrent();
@@ -293,7 +279,11 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 return { ok: true as const, value: await execute('action.invoke', { action, input }, operation) };
             } catch (error) {
                 const code = (error as { code?: unknown } | null)?.code;
-                return { ok: false as const, code: typeof code === 'string' && code ? code : 'unknown_error' };
+                const details = error instanceof HappyError ? error.details : undefined;
+                const failureCause = error instanceof HappyError ? error.failureCause : undefined;
+                return { ok: false as const, code: typeof code === 'string' && code ? code : 'unknown_error',
+                    ...(details !== undefined ? { details } : {}),
+                    ...(failureCause !== undefined ? { failureCause } : {}) };
             }
         },
         async link(input: PreparedLink | DeploymentUiLinkInput, operation?: UiActionOperation) {
