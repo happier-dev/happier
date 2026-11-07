@@ -328,6 +328,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                             const context = { ...operation, signal: lifetime.signal };
                             const result = await withBoundDriver(params, lifetime.signal, async driver => await driver.executePolicy(
                                 request.machine, request.purpose, { requestId, context, signal: lifetime.signal,
+                                    policySchedulerSignal: request.signal,
                                     ...(request.retentionContinuationRequestId ? { retentionContinuationRequestId: request.retentionContinuationRequestId } : {}),
                                     ...(request.actionOrigin ? { actionOrigin: request.actionOrigin } : {}),
                                     runPolicyAction: (machine, runApproved) => params.executeManagedPolicyAction!(machine, context, runApproved, request.purpose) },

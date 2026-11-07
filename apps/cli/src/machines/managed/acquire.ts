@@ -71,6 +71,8 @@ export type ManagedMachineExecutionOptions = Readonly<{
     requestId: string;
     context?: ActionExecutorContext;
     signal?: AbortSignal;
+    /** Scheduler retirement is separate from the independently admitted pending input. */
+    policySchedulerSignal?: AbortSignal;
     policyPurpose?: ManagedPolicyPurposeV1;
     policyMachine?: ManagedMachineV1;
     /** Exact pending request projected from Home's current retention admission. */
@@ -517,6 +519,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             } catch (error) {
                 if (purpose.kind === 'accepted-input-start'
                     && purpose.target.origin.kind === 'session-input' && failureClient
+                    // Retiring an obsolete compute wake does not reject the
+                    // input that the reconnected guest can now activate.
+                    && (ownerStarted || !options.policySchedulerSignal?.aborted)
                     // Before native reconciliation, Ask/admission failures are
                     // definite. After it starts, only a native refusal proves
                     // failure; unknown IO stays with the native intent owner.
