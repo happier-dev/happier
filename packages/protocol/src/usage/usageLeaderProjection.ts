@@ -67,7 +67,7 @@ export function selectUsageLeaderTokenFrontier<T extends UsageLeaderContribution
 
 function prepareUsageLeaderTokenFrontier<T extends UsageLeaderContribution>(rows: readonly T[],
     dimension: UsageLeaderDimension, topLimit: number, labels: ReadonlyMap<string, string | undefined>) {
-    type Group = { value: Omit<UsageRankedLeader, 'cost'>; rows: T[] };
+    type Group = { value: Omit<UsageRankedLeader, 'cost'> & { label: string }; rows: T[] };
     const groups = new Map<string, Group>();
     for (const row of rows) {
         const key = resolveUsageContributionDimensionKey(row, dimension) ?? 'unknown';
