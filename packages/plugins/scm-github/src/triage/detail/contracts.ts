@@ -168,8 +168,14 @@ export const GithubPreviewResultV1Schema = defineProtocolUnion([
         deploymentId: defineProtocolString({ minLength: 1 }),
         operation: ProtocolDeploymentReceiptOperationV1Schema,
         servingSha: defineProtocolString({ minLength: 1 }),
-        state: defineProtocolUnion((['needsApproval', 'deploying', 'ready', 'failed', 'removed', 'outdated'] as const)
-          .map(value => defineProtocolLiteral(value))),
+        state: defineProtocolUnion([
+          defineProtocolLiteral('needsApproval'),
+          defineProtocolLiteral('deploying'),
+          defineProtocolLiteral('ready'),
+          defineProtocolLiteral('failed'),
+          defineProtocolLiteral('removed'),
+          defineProtocolLiteral('outdated'),
+        ]),
         targetUrl: defineProtocolUnion([defineProtocolString({ minLength: 1 }), defineProtocolLiteral(null)]),
       }, { policy: 'closed' }),
       defineProtocolObject({ kind: defineProtocolLiteral('unavailable'),

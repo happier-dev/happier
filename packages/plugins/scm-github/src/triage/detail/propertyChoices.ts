@@ -65,10 +65,10 @@ export function githubPropertyChoicesEnvelopeFallback(): GithubPropertyChoicesV1
 }
 
 /** The published Action envelope is the only size boundary; never publish a false empty directory. */
-export function fitGithubPropertyChoices<TOverview extends Extract<GithubOverviewResultV1, { kind: 'overview' }>>(
-  overview: TOverview,
+export function fitGithubPropertyChoices(
+  overview: Extract<GithubOverviewResultV1, { kind: 'overview'; kindId: 'pull-request' }>,
   choices: GithubPropertyChoicesV1,
-): TOverview & Readonly<{ propertyChoices: GithubPropertyChoicesV1 }> {
+): Extract<GithubOverviewResultV1, { kind: 'overview'; kindId: 'pull-request' }> & Readonly<{ propertyChoices: GithubPropertyChoicesV1 }> {
   const complete = { ...overview, propertyChoices: choices };
   if (isExternalActionResultWithinResponseEnvelopeLimitV1(complete)) return Object.freeze(complete);
   let propertyChoices = githubPropertyChoicesEnvelopeFallback();
