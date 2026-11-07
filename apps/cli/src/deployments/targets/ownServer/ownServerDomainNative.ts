@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { readDnsHealthCheckV1 } from '../../healthChecks/finiteNetworkHealthCheck';
 import {
     observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
     type MachineSetupNativeCommand, type MachineSetupNativeCommandResult,
@@ -10,8 +11,9 @@ import {
     type DeploymentDomainObservationBodyV1,
 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1, DeploymentDomainDiscoverChildRpcV1 } from '@happier-dev/protocol';
-import { isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, environmentSecretBindingIdentityV1,
     type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
@@ -28,7 +30,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readDomainCaddyStartFirstLegs, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
+import { readDomainCaddyStartFirstLegs, resolveDomainIngress, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
 import type { CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { createNativeCaddyStartFirstRoutes } from '@/machines/reachability/nativeCaddyStartFirst';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRuntime } from './ownServerDeploymentTarget';
@@ -38,8 +40,9 @@ import { createCloudflareConnectorSetupSteps, createCloudflareConnectorRemovalSt
     ensureNativeCloudflareConnector, observeNativeCloudflareConnector, removeNativeCloudflareConnector,
     type MachineSetupApplyResultV1 } from '@happier-dev/cli-common/machineSetup';
 import type { getMachineSetupDesiredV1 } from '@happier-dev/protocol';
-import { runElevatedMachineSetupIntent, resolveInstalledMachineEffectCli,
+import { runElevatedMachineSetupIntent,
     type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
+import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 
@@ -58,10 +61,10 @@ const refuse = (code: string, details?: unknown, failureCause?: ActionFailureCau
 const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCause?: ActionFailureCauseV1) => {
     const parsed = DeploymentDomainFailureDetailsV1Schema.safeParse(details);
     return { ok: false as const, errorCode, error: errorCode,
-        details: parsed.success ? parsed.data : {
-            ...(details && typeof details === 'object' && !Array.isArray(details) ? details : {}),
+        details: parsed.success && parsed.data.step !== 'native_execution' ? parsed.data : projectDeploymentFailureRecoveryV1({
+            ...(parsed.success ? parsed.data : details && typeof details === 'object' && !Array.isArray(details) ? details : {}),
             environmentId: job.input.environmentId, domainId: job.input.domainId, step: 'native_execution' as const,
-        },
+        }),
         failureCause: failureCause ?? projectActionFailureCauseV1({ code: errorCode }, 'deployment.domain.native_execution') };
 };
 const serviceUnavailable = (job: DomainJob, step: DeploymentDomainFailureStepV1): never => refuse('service_unavailable', {
@@ -171,6 +174,11 @@ export function createOwnServerDomainNative(host: Readonly<{
             environmentContent = environment.content;
             members = job.topology.members.map(member => ({ ...member, state: 'active' }));
         }
+        if (environmentContent) {
+            const resolved = resolveDomainIngress(opened.content, environmentContent.ingress);
+            if (resolved.status === 'unavailable') return refuse(resolved.reason, resolved.details);
+            environmentContent = { ...environmentContent, ingress: resolved.ingress };
+        }
         const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
         if (!withoutWorkload && member) await host.ensureServiceObservations?.();
         const lease = await (host.acquirePluginRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease)();
@@ -213,7 +221,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             let caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
             // Only an admitted Domain add prepares or reconciles infrastructure. Verify,
             // removal and deployment observations retain their read-only paths.
-            if (job.kind === 'domainDiscover' && member && environmentContent
+            if (job.kind === 'domainDiscover' && isDeploymentDomainAddActionIdV1(job.actionId) && member && environmentContent
                 && (caddy.status === 'needs_setup' || caddy.status === 'stopped'
                     || caddy.status === 'unavailable' && caddy.reason === 'required_fact_unavailable'
                     || caddy.status === 'ready' && (!environmentContent.ingress
@@ -260,6 +268,16 @@ export function createOwnServerDomainNative(host: Readonly<{
         const acquired = await acquire(job, context);
         try {
             const { domain, topology, signal, identity } = acquired;
+            const readDnsHealth = async () => {
+                const basis = { hostname: domain.hostname, vantage: 'sameMachine' as const,
+                    observer: { machineId: host.machineId, installationId: identity.installationId } };
+                const context = { signal, now: Date.now };
+                const ipv4 = await readDnsHealthCheckV1({ ...basis, recordType: 'A' }, context);
+                const ipv6 = ipv4.status === 'up' ? undefined
+                    : await readDnsHealthCheckV1({ ...basis, recordType: 'AAAA' }, context);
+                const health = !ipv6 ? ipv4 : ipv6.status === 'up' || ipv4.status === 'down' ? ipv6 : ipv4;
+                return { status: health.status, evidence: health.evidence };
+            };
             const machines = job.topology?.machines ?? [topology];
             const members = acquired.members.map(member => ({ machineId: member.machineId, state: member.state,
                 caddy: machines.find(machine => machine.machineId === member.machineId && machine.installationId === member.installationId)?.caddy
@@ -303,9 +321,11 @@ export function createOwnServerDomainNative(host: Readonly<{
                     steps: remove ? createCloudflareConnectorRemovalSteps(connector) : createCloudflareConnectorSetupSteps(connector),
                     onSetupApplied(result) { applied = result; },
                 }, { ...setup.elevation, installationId: identity.installationId,
-                    installedCli: resolveInstalledMachineEffectCli(), verifyCurrent: async () => !signal.aborted,
+                    ...resolveMachineEffectCli(), verifyCurrent: async () => !signal.aborted,
                     connectorSecretGrant: grant });
-                if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome);
+                if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome,
+                    'failure' in elevated && elevated.failure ? { failure: elevated.failure,
+                        ...(elevated.failure.remedy ? { remedy: elevated.failure.remedy } : {}) } : undefined);
                 if (!applied) return refuse('outcome_unknown');
                 if (!remove) {
                     const ready = await ensureNativeCloudflareConnector(connector, { run: acquired.run, signal, setupResult: applied });
@@ -321,8 +341,10 @@ export function createOwnServerDomainNative(host: Readonly<{
                 }
                 const networkExposure = await native.readExposure({ placement: job.capture.placement,
                     route: routeIdentity, caddy: topology.caddy, signal });
-                if (networkExposure.kind !== 'ready') return failure(job, networkExposure.reason);
-                return signObservation({ capture: job.capture, state: 'active', networkExposure });
+                if (networkExposure.kind !== 'ready') return failure(job, networkExposure.reason, {
+                    requiredFact: networkExposure.requiredFact, remedy: networkExposure.remedy });
+                return signObservation({ capture: job.capture, state: 'active', networkExposure,
+                    dnsHealth: await readDnsHealth() });
             }
             if (!job.capture.desired) {
                 // The parent already selected last-consumer retirement. With no
@@ -407,7 +429,8 @@ export function createOwnServerDomainNative(host: Readonly<{
                     keys: [{ kind: 'dockerEngine', dockerEndpoint: acquired.docker.engineId }] }, native => machineNativeEffectAdmission.runStage(native, effect));
             if (result.kind !== 'active') return failure(job, 'reason' in result ? result.reason : 'native_route_unavailable');
             const observation: DeploymentDomainObservationBodyV1 = { capture: job.capture,
-                state: routeState, ...(result.networkExposure ? { networkExposure: result.networkExposure } : {}) };
+                state: routeState, dnsHealth: await readDnsHealth(),
+                ...(result.networkExposure ? { networkExposure: result.networkExposure } : {}) };
             return signObservation(observation);
         } finally { await acquired.release(); }
     }
@@ -419,7 +442,8 @@ export function createOwnServerDomainNative(host: Readonly<{
                 error, 'deployment.domain.native_execution');
             const failureCause = ActionFailureCauseV1Schema.safeParse(error instanceof Error && 'failureCause' in error ? error.failureCause : undefined);
             return { ...failure(job, projected.errorCode,
-                projected.details ?? (error instanceof Error && 'details' in error ? error.details : undefined),
-                failureCause.success ? failureCause.data : projected.failureCause), error: projected.error }; }
+                (error instanceof Error && 'details' in error ? error.details : undefined) ?? projected.details,
+                failureCause.success ? failureCause.data : projected.failureCause), error: projected.error,
+                ...(typeof projected.effectAttempted === 'boolean' ? { effectAttempted: projected.effectAttempted } : {}) }; }
     };
 }

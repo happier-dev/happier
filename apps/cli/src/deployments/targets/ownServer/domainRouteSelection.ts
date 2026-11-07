@@ -1,10 +1,31 @@
 import type { NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
+import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { DeploymentIngressV1, DeploymentDomainAddInputV1, DeploymentDomainHeaderV1,
     DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import type { createNativeCaddyRoutes, NativeCaddyStartFirstLeg } from '@/machines/reachability/nativeCaddyRoutes';
 import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
+
+type ResolvedDomainIngress = Readonly<{ status: 'ready'; ingress?: DeploymentIngressV1;
+    selection: ReturnType<typeof readCloudflareNamedControllerSelection> }>
+    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable';
+        details: Readonly<{ requiredFact: 'cloudflare_selection_required' | 'domain_ingress_required'; remedy: string }> }>;
+
+/** Environment topology never supplies the private named controller or credentials.
+ * Add resolves a full selection before admission; accepted native work consumes it. */
+export function resolveDomainIngress(domain: DeploymentDomainContentV1, ingress?: DeploymentIngressV1,
+    requireSelection = false): ResolvedDomainIngress {
+    const selection = readCloudflareNamedControllerSelection(domain.ingress);
+    if (requireSelection && !selection && (!ingress || ingress.kind === 'cloudflareTunnel')) return {
+        status: 'unavailable', reason: 'required_fact_unavailable', details: {
+            requiredFact: ingress ? 'cloudflare_selection_required' : 'domain_ingress_required',
+            remedy: ingress ? 'Choose a named Cloudflare tunnel and zone, then add the Domain again.'
+                : 'No ingress is recorded for this Environment. Choose the Domain ingress before adding it.',
+        },
+    };
+    return { status: 'ready', ingress: selection ? { kind: 'cloudflareTunnel' } : ingress, selection };
+}
 
 export type DomainCaddyMemberObservation = Readonly<{
     machineId: string; state: 'active' | 'joining'; caddy: NativeCaddyObservationResult;

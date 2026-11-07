@@ -69,5 +69,9 @@ export async function readDnsHealthCheckV1(check: HealthCheckObservationBasisV1 
     } finally {
         context.signal.removeEventListener('abort', cancel);
     }
-    return finiteHealthCheckResult(check, 'dns', context.now(), startedAt, status, { reason, recordType: check.recordType });
+    const remedy = reason === 'dns_missing' ? 'Configure the DNS record, then verify again.'
+        : reason === 'dns_mismatch' ? 'Correct the DNS record, then verify again.'
+        : reason === 'resolver_unavailable' ? 'Restore DNS resolver access, then verify again.' : undefined;
+    return finiteHealthCheckResult(check, 'dns', context.now(), startedAt, status,
+        { reason, recordType: check.recordType, ...(remedy ? { remedy } : {}) });
 }

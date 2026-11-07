@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { DeploymentDomainNativeRequiredFactV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
 export { DeploymentDomainHealthCheckV1Schema, type DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
@@ -13,6 +14,8 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
+import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
+import { HealthCheckResultV1Schema } from './healthCheckV1.js';
 export { deploymentDomainFailureFactsV1, DeploymentDomainNativeRequiredFactV1Schema,
     DeploymentDomainCaddyFailureV1Schema, type DeploymentDomainCaddyFailureV1,
     deploymentDomainCaddyRequiredFactsV1, type DeploymentDomainCaddyRequiredFactV1,
@@ -93,12 +96,17 @@ export const DeploymentDomainNetworkExposureV1Schema = lazyZodSchema(() => z.dis
                 hostPort: z.number().check(z.int(), z.positive()),
                 containerPort: z.number().check(z.int(), z.positive()), protocol: z.literal('tcp') })) })),
         localOrigin: z.boolean(), fallback: z.boolean() }),
-    z.strictObject({ kind: z.literal('unavailable'), reason: id }),
+    z.strictObject({ kind: z.literal('unavailable'), reason: id,
+        requiredFact: z.optional(DeploymentDomainNativeRequiredFactV1Schema),
+        remedy: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
 ]));
 export type DeploymentDomainNetworkExposureV1 = z.infer<typeof DeploymentDomainNetworkExposureV1Schema>;
+/** Semantic DNS facts only: observation clocks must not turn equal verification into a write. */
+const domainDnsHealth = () => z.pick(HealthCheckResultV1Schema, { status: true, evidence: true });
 export const DeploymentDomainCapturedPlacementsV1Schema = lazyZodSchema(() => z.array(z.extend(DeploymentDomainPlacementV1Schema, {
     installationPublicKey: z.string().check(z.minLength(1)),
     networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
+    dnsHealth: z.optional(domainDnsHealth()),
     execution: z.optional(z.strictObject({ controller: z.strictObject({ machineId: id, installationId: id }),
         requestEnvelopeDigest: z.string().check(z.minLength(1)), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove']),
     })),
@@ -114,6 +122,9 @@ export const DeploymentDomainHeaderV1Schema = lazyZodSchema(() => z.strictObject
     state: DeploymentDomainStateV1Schema, ...DeploymentArtifactContentReferenceV1Schema.shape,
     createdByAccountId: id, observedAtMs: z.optional(timestamp),
     placements: z.optional(z.array(DeploymentDomainPlacementV1Schema)),
+    /** Exact admitted controller operation; absent for legacy captures without execution custody. */
+    operationAddress: z.optional(ActionOperationAddressV1Schema),
+    dnsHealth: z.optional(domainDnsHealth()),
     networkExposure: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id,
         listener: z.enum(['privateOrigin', 'public']), observation: DeploymentDomainNetworkExposureV1Schema }))),
     createdAtMs: timestamp, updatedAtMs: timestamp, deletedAtMs: z.optional(timestamp),
@@ -153,6 +164,7 @@ export const DeploymentDomainVerifyInputV1Schema = DeploymentDomainRemoveInputV1
 export const DeploymentDomainObservationBodyV1Schema = lazyZodSchema(() => z.strictObject({
     capture: DeploymentDomainPlacementV1Schema, state: z.enum(['active', 'warning', 'failed', 'removed']),
     networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
+    dnsHealth: z.optional(domainDnsHealth()),
     removal: z.optional(NativeCaddyRemovalV1Schema),
 }).check(z.refine(value => (value.state === 'removed') === (value.removal !== undefined),
     { message: 'Removed observations require exact native absence.' })));
@@ -171,6 +183,8 @@ export const DeploymentDomainPreparedContentInputV1Schema = lazyZodSchema(() => 
         expectedBodyVersion: z.nonoptional(ArtifactJsonUpdateHttpInputV1Schema.shape.expectedBodyVersion),
         expectedHeaderVersion: ArtifactJsonUpdateHttpInputV1Schema.shape.expectedHeaderVersion,
         kind: ArtifactJsonUpdateHttpInputV1Schema.shape.kind,
+        provenance: ArtifactJsonUpdateHttpInputV1Schema.shape.provenance,
+        provenanceDataEncryptionKey: ArtifactJsonUpdateHttpInputV1Schema.shape.provenanceDataEncryptionKey,
     }),
 }));
 export type DeploymentDomainAddInputV1 = z.infer<typeof DeploymentDomainAddInputV1Schema>;

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { Resolver } from 'node:dns/promises';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { writeFile, mkdir, readFile, lstat, chmod } from 'node:fs/promises';
@@ -80,7 +81,12 @@ vi.mock('node:fs/promises', async importOriginal => {
 afterEach(() => { connectorFs.directory = ''; vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it.each([
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', diagnostic: 'removalMalformedOutput' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, diagnostic: 'verifyExposureUnavailable' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'missing' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'ipv6' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'unavailable' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
     { encryptionMode: 'e2ee', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
     { encryptionMode: 'plain', missingEngine: true, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
@@ -90,10 +96,18 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', artifactRefusal: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'foreign' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'retain' },
-] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal)', async scenario => withSocketTempDir(async directory => {
+] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
+    const dns = 'dns' in scenario ? scenario.dns : 'ready';
+    const resolveDns = vi.spyOn(Resolver.prototype, 'resolve').mockImplementation(async (_hostname, recordType) => {
+        if (dns === 'unavailable') throw Object.assign(new Error('resolver unavailable'), { code: 'ESERVFAIL' });
+        if (dns === 'missing' || dns === 'ipv6' && recordType === 'A')
+            throw Object.assign(new Error('no record'), { code: 'ENODATA' });
+        return recordType === 'AAAA' ? ['2001:db8::1'] : ['192.0.2.1'];
+    });
     const artifactRefusal = 'artifactRefusal' in scenario && scenario.artifactRefusal;
+    const diagnostic = 'diagnostic' in scenario ? scenario.diagnostic : undefined;
     const socketPath = join(directory, 'admin.sock');
     const configPath = join(directory, 'initial.json');
     const domain = { hostname: 'app.example.test', target: { service: 'web', containerPort: 8080 },
@@ -141,6 +155,9 @@ it.each([
         const etag = `"${version}"`;
         if (request.method === 'GET') {
             response.setHeader('ETag', etag);
+            // Acquisition reads a valid live config. The later native route
+            // read fails at the real HTTP boundary, without replacing its owner.
+            if (diagnostic && request.url !== '/config/') { response.end('{"routes":'); return; }
             response.end(JSON.stringify(request.url === '/config/' ? config : nativeServer));
             return;
         }
@@ -379,8 +396,24 @@ it.each([
             expect(JSON.stringify({ rawResult, rootEvents, rootLaunches })).not.toContain(token);
             return;
         }
+        if (diagnostic) {
+            expect(rawResult).toMatchObject({ ok: false, errorCode: 'native_route_unavailable',
+                details: { environmentId: placement.environmentId, domainId: placement.domainId, step: 'native_execution',
+                    requiredFact: diagnostic === 'verifyExposureUnavailable' ? 'networkExposure' : 'nativeExecutionResult',
+                    remedy: expect.stringMatching(/\S/) } });
+            expect(mutations).toEqual([]);
+            expect(JSON.stringify(rawResult)).not.toContain(socketPath);
+            return;
+        }
         if (verifying) {
+            expect(rawResult).toMatchObject({ dnsHealth: { status: dns === 'missing' ? 'down' : dns === 'unavailable' ? 'unknown' : 'up' } });
+            expect(resolveDns).toHaveBeenCalledTimes(dns === 'ready' ? 1 : 2);
             const observation = DeploymentDomainObservationV1Schema.parse(rawResult);
+            const dnsEvidence = JSON.parse(observation.dnsHealth!.evidence.items[0]!.text);
+            expect(dnsEvidence).toMatchObject({ reason: dns === 'missing' ? 'dns_missing'
+                : dns === 'unavailable' ? 'resolver_unavailable' : 'dns_matched' });
+            if (dns === 'missing' || dns === 'unavailable') expect(dnsEvidence.remedy).toEqual(expect.any(String));
+            expect(JSON.stringify(observation.dnsHealth)).not.toMatch(/app\.example\.test|192\.0\.2\.1|2001:db8::1/);
             expect(observation).toMatchObject({ state: 'active', networkExposure: { kind: 'ready',
                 listener: 'privateOrigin', localOrigin: true, fallback: false,
                 listeners: [{ tls: false, automaticHttpsDisabled: true, endpoints: [] }] } });
