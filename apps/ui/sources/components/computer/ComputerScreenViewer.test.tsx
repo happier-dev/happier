@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { PixelRatio, StyleSheet } from 'react-native';
 
 import { renderScreen } from '@/dev/testkit';
 import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { BrowserPresenceCapsule } from '@/components/browser/copresence/BrowserPresenceCapsule';
 
 import {
@@ -41,6 +42,16 @@ vi.mock('@/text', async () => {
       params ? `${key}:${JSON.stringify(params)}` : key,
   });
 });
+// The browser's primary-pointer media queries are the platform boundary: the remote-control bar
+// stands over the picture only for a finger (a precise pointer by default here).
+const pointer = vi.hoisted(() => ({ coarse: false }));
+Object.defineProperty(globalThis, 'matchMedia', { configurable: true, value: (query: string) => ({
+  matches: query === '(pointer: coarse)' || query === '(hover: none)' ? pointer.coarse
+    : query === '(pointer: fine)' || query === '(hover: hover)' ? !pointer.coarse : false,
+  media: query, onchange: null, addListener: () => {}, removeListener: () => {},
+  addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true,
+}) });
+afterEach(() => { pointer.coarse = false; });
 
 function props(
   overrides: Partial<ComputerScreenViewerProps> = {},
@@ -77,6 +88,7 @@ function pictureStage(screen: Awaited<ReturnType<typeof renderScreen>>) {
 
 describe('ComputerScreenViewer', () => {
   it('keeps presence outside the input viewport and uses the inline footer layout', async () => {
+    pointer.coarse = true;
     const viewerProps = props({ compact: true,
       presence: { kind: 'human', controlEpoch: 1, interruptedCompletion: null },
       stream: { machineName: 'machine', input: { sourceId: 'computer-source', streamId: 'stream', send: vi.fn() },
@@ -100,6 +112,7 @@ describe('ComputerScreenViewer', () => {
     await screen.unmount();
   });
   it('mounts remote control panels on the live Machine viewer and sends keys and clipboard through its input owner', async () => {
+    pointer.coarse = true;
     const send = vi.fn();
     const clipboardShortcut = vi.fn(async (_action: 'copy' | 'cut' | 'paste') => ({ ok: true as const }));
     const viewerProps = props({ presence: { kind: 'human', controlEpoch: 1, interruptedCompletion: null },
@@ -125,6 +138,22 @@ describe('ComputerScreenViewer', () => {
     expect(screen.findByTestId('v-input-controls-escape')?.props.disabled).toBe(true);
     await screen.unmount();
   });
+  it('allows hover only while this source is controlled by the person, preserving tap takeover', async () => {
+    const inputProps = props({ stream: { machineName: 'machine',
+      input: { sourceId: 'computer-source', streamId: 'stream', send: vi.fn() },
+      playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+        lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 },
+    } });
+    const screen = await renderScreen(<ComputerScreenViewer {...inputProps} />);
+    await act(async () => pictureStage(screen).props.onLayout({ nativeEvent: { layout: { width: 800, height: 600 } } }));
+    const supports = () => screen.root.findByType(LiveStreamInputLayer).props.supports;
+    expect(supports()('tap')).toBe(true);
+    expect(supports()('move')).toBe(false);
+    await screen.update(<ComputerScreenViewer {...inputProps} presence={{ kind: 'human', controlEpoch: 1, interruptedCompletion: null }} />);
+    expect(supports()('move')).toBe(true);
+    await screen.update(<ComputerScreenViewer {...inputProps} />);
+    expect(supports()('move')).toBe(false);
+  });
   it('shows connecting while the share selection is unread, then shows a confirmed empty selection', async () => {
     const screen = await renderScreen(<ComputerScreenViewer {...props({ shared: false, selectionPending: true })} />);
     expect(screen.findByTestId('v-not-shared')).toBeNull();
@@ -137,6 +166,27 @@ describe('ComputerScreenViewer', () => {
     expect(screen.findByTestId('v-title')).toBeNull();
     expect(screen.findByTestId('v-machine')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain('computerUse.presentation.onMachine');
+  });
+
+  it('names no stand-in agent mid-sentence on a Machine with no Session agent (stop hint, picker card)', async () => {
+    const machine = await renderScreen(<ComputerScreenViewer {...props({ failure: 'MACHINE_RPC_TIMEOUT', agentless: true })} />);
+    const card = machine.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'v-recovery');
+    expect(card?.props.reason).toBe('computerUse.presentation.unavailableBodyMachine');
+    const { computerTargetPickerChrome } = await import('./showComputerTargetPicker');
+    const chrome = computerTargetPickerChrome({ agentName: 'The agent', agentless: true, machineName: 'mac-vm-1' });
+    if (chrome.kind !== 'card') throw new Error('Expected card chrome');
+    expect(chrome.title).toBe('computerUse.picker.titleMachine');
+    expect(chrome.subtitle).toBe('computerUse.picker.descriptionMachine');
+    const session = computerTargetPickerChrome({ agentName: 'Claude', machineName: 'mac-vm-1' });
+    expect(session.title).toBe('computerUse.picker.title:{"agent":"Claude"}');
+  });
+
+  it('asks for a window for agents on the Machine when there is no Session agent to name', async () => {
+    const machine = await renderScreen(<ComputerScreenViewer {...props({ shared: false, selectionPending: false, agentless: true })} />);
+    expect(machine.getTextContent()).toContain('computerUse.presentation.notSharedBodyMachine');
+    expect(machine.getTextContent()).not.toContain('computerUse.presentation.notSharedBody:');
+    const session = await renderScreen(<ComputerScreenViewer {...props({ shared: false, selectionPending: false })} />);
+    expect(session.getTextContent()).toContain('computerUse.presentation.notSharedBody:{"agent":"Claude"}');
   });
 
   it('keeps a removed-access refusal visible after the owner retires the selection, with no choose or repair bypass', async () => {
@@ -312,9 +362,7 @@ describe('ComputerScreenViewer', () => {
     );
     expect(paused.findByTestId('v-paused-scrim')).toBeTruthy();
     // Only the held picture dims; the empty stage around a small window keeps its own paint.
-    const stage = paused.findAll(
-      (node) => typeof node.props?.onLayout === 'function' && node.props.onLayout.length === 1 && typeof node.type === 'string',
-    )[0]!;
+    const stage = pictureStage(paused);
     await act(async () => stage.props.onLayout({ nativeEvent: { layout: { width: 1600, height: 1200 } } }));
     const picture = StyleSheet.flatten(paused.findByTestId('v-picture')!.props.style);
     expect(StyleSheet.flatten(paused.findByTestId('v-paused-scrim')!.props.style)).toMatchObject({
@@ -514,12 +562,7 @@ describe('ComputerScreenViewer', () => {
         })}
       />,
     );
-    const stage = live.findAll(
-      (node) =>
-        typeof node.props?.onLayout === 'function' &&
-        node.props.onLayout.length === 1 &&
-        typeof node.type === 'string',
-    )[0]!;
+    const stage = pictureStage(live);
     // The mocked frame is 800x600 device pixels; the stage is twice that. One device pixel per image pixel.
     const native = {
       width: 800 / PixelRatio.get(),

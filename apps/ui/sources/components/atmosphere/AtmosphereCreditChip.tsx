@@ -20,7 +20,7 @@ import { Typography } from '@/constants/Typography';
 import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useAtmosphereMoment } from './atmosphereMoments';
 import { LookChip, type LookTarget } from './look/LookChip';
 import { lookCopy } from './look/LookControls';
@@ -246,6 +246,8 @@ export const AtmosphereTopChips = React.memo(function AtmosphereTopChips(
   props: Readonly<{
     picture: AtmospherePicture | null;
     lookTarget: LookTarget;
+    /** In a nav row that already holds the page's top line (the phone tab shell), not floated over the art. */
+    inline?: boolean;
   }>,
 ) {
   const { picture } = props;
@@ -255,7 +257,7 @@ export const AtmosphereTopChips = React.memo(function AtmosphereTopChips(
   const caption = useAtmosphereMoment('releaseCaption').on;
   const version = React.useMemo(readAppVersion, []);
   return (
-    <View ref={slotRef} collapsable={false} style={styles.slot}>
+    <View ref={slotRef} collapsable={false} style={props.inline ? styles.inlineSlot : styles.slot}>
       {picture === null ? null : (
         <PictureCaption picture={picture} version={caption && version ? version : null} anchorRef={slotRef} onBackdrop={openLook} />
       )}
@@ -270,6 +272,11 @@ const styles = StyleSheet.create((theme) => ({
     top: 14,
     right: 16,
     zIndex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
+  },
+  inlineSlot: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s6,

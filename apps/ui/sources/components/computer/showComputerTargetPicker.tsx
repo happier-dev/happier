@@ -2,7 +2,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol';
+import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol/computer/v1';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -11,7 +11,7 @@ import { Modal } from '@/modal';
 import type { CustomModalChromeConfig, CustomModalInjectedProps } from '@/modal/types';
 import {
     type ComputerActionExecute,
-    type ComputerSessionScope,
+    type ComputerScope,
 } from '@/sync/domains/computer/computerControlClient';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isActionApprovalRequiredInState } from '@/sync/domains/settings/actionsSettings';
@@ -58,12 +58,13 @@ function MachineIdentity(props: Readonly<{ name: string }>): React.ReactElement 
 }
 
 /** The picker's card: the act as title, the promise as subtitle, the machine as identity. */
-export function computerTargetPickerChrome(params: Readonly<{ agentName: string; machineName: string; purpose?: string | null }>): CustomModalChromeConfig {
-    const promise = t('computerUse.picker.description', { agent: params.agentName });
+export function computerTargetPickerChrome(params: Readonly<{ agentName: string; agentless?: boolean; machineName: string; purpose?: string | null }>): CustomModalChromeConfig {
+    // A Machine's own Computer page has no Session agent: it speaks of agents, never a stand-in name mid-sentence.
+    const promise = params.agentless ? t('computerUse.picker.descriptionMachine') : t('computerUse.picker.description', { agent: params.agentName });
     return {
         kind: 'card',
         testID: 'computer-target-picker-modal',
-        title: t('computerUse.picker.title', { agent: params.agentName }),
+        title: params.agentless ? t('computerUse.picker.titleMachine') : t('computerUse.picker.title', { agent: params.agentName }),
         // For which Session (and where), then the promise (lab TP).
         subtitle: params.purpose ? `${params.purpose} ${promise}` : promise,
         actions: <MachineIdentity name={params.machineName} />,
@@ -74,9 +75,10 @@ export function computerTargetPickerChrome(params: Readonly<{ agentName: string;
 }
 
 export type PickerModalProps = CustomModalInjectedProps & Readonly<{
-    scope: ComputerSessionScope;
+    scope: ComputerScope;
     accountLifetime?: ServerAccountScopeLifetime | null;
     agentName: string;
+    agentless?: boolean;
     machineName: string;
     currentTargetKey: string | null;
     access?: ComputerAccessV1;
@@ -91,7 +93,6 @@ export type PickerModalProps = CustomModalInjectedProps & Readonly<{
     refusalCode?: string;
     execute?: ComputerActionExecute;
     onSelected: (selection: ComputerSelectedTargetResponseV1) => void;
-    onStoppedSharing?: () => void;
     /** `switcher`: anchored to the viewer's source switch, where a row is the action. */
     density?: 'form' | 'switcher';
 }>;
@@ -139,6 +140,7 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
             onOpenSettings={picker.requestSettings}
             openSettings={picker.openSettings}
             agentName={props.agentName}
+            agentless={props.agentless}
             policy={policy}
             onChangePolicy={changePolicy}
             compact={compact}
@@ -151,9 +153,11 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
 }
 
 export type ComputerTargetPickerRequest = Readonly<{
-    scope: ComputerSessionScope;
+    scope: ComputerScope;
     accountLifetime?: ServerAccountScopeLifetime | null;
     agentName: string;
+    /** No agent to name: a Machine's own Computer page, or a Session whose agent does not resolve. */
+    agentless?: boolean;
     machineName: string;
     /** "For “<session>” in <project>." */
     purpose?: string | null;
@@ -163,7 +167,6 @@ export type ComputerTargetPickerRequest = Readonly<{
     requestedTarget?: string | null;
     onChosen?: (entry: ComputerTargetEntry, access: ComputerAccessV1) => void;
     onSelected: (selection: ComputerSelectedTargetResponseV1) => void;
-    onStoppedSharing?: () => void;
 }>;
 
 /** The picker leaf's props for a request (the modal and the anchored presentation draw the same leaf). */
@@ -172,6 +175,7 @@ export function computerTargetPickerProps(params: ComputerTargetPickerRequest): 
         scope: params.scope,
         accountLifetime: params.accountLifetime,
         agentName: params.agentName,
+        ...(params.agentless ? { agentless: true } : {}),
         machineName: params.machineName,
         currentTargetKey: params.currentTargetKey ?? null,
         access: params.access,
@@ -179,7 +183,6 @@ export function computerTargetPickerProps(params: ComputerTargetPickerRequest): 
         ...(params.requestedTarget ? { requestedTarget: params.requestedTarget } : {}),
         ...(params.onChosen ? { onChosen: params.onChosen } : {}),
         onSelected: params.onSelected,
-        ...(params.onStoppedSharing ? { onStoppedSharing: params.onStoppedSharing } : {}),
     };
 }
 
@@ -191,7 +194,7 @@ export function showComputerTargetPicker(params: ComputerTargetPickerRequest): v
     Modal.show({
         component: ComputerTargetPickerModal,
         props: computerTargetPickerProps(params),
-        chrome: computerTargetPickerChrome({ agentName: params.agentName, machineName: params.machineName, purpose: params.purpose }),
+        chrome: computerTargetPickerChrome({ agentName: params.agentName, agentless: params.agentless, machineName: params.machineName, purpose: params.purpose }),
         closeOnBackdrop: true,
     });
 }

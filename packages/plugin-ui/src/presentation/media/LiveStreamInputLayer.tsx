@@ -316,6 +316,7 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
             onResponderTerminate={handleCancel}
             onStartShouldSetResponder={() => inputAccepted}
             style={[layerStyle, props.style]}
+            role="group"
             accessibilityLabel={props.accessibilityLabel}
             testID={`${props.testID}-capture`}
         >

@@ -13,6 +13,7 @@ import { PluginPageLaunchInputScope } from '@/components/plugins/pages/pluginPag
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel, type PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
@@ -28,7 +29,7 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         pathname: () => routeState.pathname,
-        router: { push: (href: unknown) => routeState.push(href) },
+        router: { push: (href: unknown) => routeState.push(href), navigate: (href: unknown) => routeState.push(href) },
     }).module;
 });
 vi.mock('@/text', async () => {
@@ -110,9 +111,9 @@ function Wrapper({ children }: React.PropsWithChildren) {
         accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
         reloadConnectedAccountProjection: () => {},
     }}><PluginPageLaunchInputScope target={{ kind: 'app' }} pluginUiProjection={projection}>
-        <UniversalSearchRuntimeProvider value={{ open: openUniversalSearch, buildCommands: () => [] }}>
+        <InboxSummaryProvider><UniversalSearchRuntimeProvider value={{ open: openUniversalSearch, buildCommands: () => [] }}>
             {children}
-        </UniversalSearchRuntimeProvider>
+        </UniversalSearchRuntimeProvider></InboxSummaryProvider>
     </PluginPageLaunchInputScope></AppShellPluginUiProjectionValueProvider></runtime.Wrapper>;
 }
 async function render(element: React.ReactElement) {
@@ -135,8 +136,14 @@ async function select(screen: Screen, testID: string) {
     await act(async () => { menuOf(screen).props.onSelect(item.id); });
 }
 async function renderMenu() {
-    const { PhoneDestinationsMenu } = await import('./PhoneDestinationsMenu');
-    return render(<PhoneDestinationsMenu />);
+    const { PhoneMainAppTabBar, usePhoneDestinationsMore } = await import('./PhoneDestinationsMenu');
+    // Native UIKit keeps its own bar; this public hook supplies the same More menu.
+    function NativeMore() {
+        return usePhoneDestinationsMore({ native: true }).menu;
+    }
+    return render(surfaceState.platformOS === 'web'
+        ? <PhoneMainAppTabBar activeTab="sessions" onTabPress={() => {}} />
+        : <NativeMore />);
 }
 
 describe('PhoneDestinationsMenu', () => {
@@ -166,16 +173,13 @@ describe('PhoneDestinationsMenu', () => {
         });
         const menu = await renderMenu();
         expect(groups(menu)).toEqual({
-            // Workflows is a phone tab now (owner Q4); Friends left the tabs for the shortcuts.
-            // Home leads (owner 2026-11-04): the phone's one door to the Home the desktop opens on.
-            pinned: [
-                'phone-launcher-home',
-                'sessions-search-all-button',
-                'compact-app-destination:friends',
-                'compact-app-destination:bots',
-                'compact-app-destination:artifacts',
-            ],
+            // Home leads More. Other destinations remain in More until the person places them on Bar.
+            pinned: ['phone-launcher-home'],
             more: [
+                'sessions-search-all-button',
+                'compact-app-destination:bots',
+                'compact-app-destination:friends',
+                'compact-app-destination:artifacts',
                 'compact-app-destination:boards',
                 'external-sessions-browse-button',
                 'compact-app-destination:plugin:acme.log:log',
@@ -190,6 +194,7 @@ describe('PhoneDestinationsMenu', () => {
     });
 
     it("honours the launcher's own placements, never the desktop rail's", async () => {
+        surfaceState.platformOS = 'ios';
         setCatalog({
             pages: [page('board')],
             navigationPlacements: {
@@ -200,7 +205,7 @@ describe('PhoneDestinationsMenu', () => {
         const menu = await renderMenu();
         const { pinned = [], more = [] } = groups(menu);
         expect(pinned).toContain('compact-app-destination:plugin:acme.board:board');
-        expect(pinned).toContain('compact-app-destination:friends');
+        expect(more).toContain('compact-app-destination:friends');
         expect(more).toContain('compact-app-destination:artifacts');
         expect([...pinned, ...more]).not.toContain('compact-app-destination:boards');
     });
@@ -240,6 +245,7 @@ describe('PhoneDestinationsMenu', () => {
     });
 
     it('names why a pinned destination is unavailable, and dims an unavailable one in More without repeating it', async () => {
+        surfaceState.platformOS = 'ios';
         setCatalog({
             pages: [page('pinned', { ...RAIL, disabledReason: 'feature_disabled' }), page('later', { ...RAIL, disabledReason: 'feature_disabled' })],
             navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { 'plugin:acme.pinned:pinned': 'pinned' } } },

@@ -5,6 +5,7 @@ import { renderScreen as renderScreenWithProviders, standardCleanup } from '@/de
 import { NavigationContext, useNavigation } from '@react-navigation/native';
 import type { VisibleSessionListPaneStateOptions } from '@/hooks/session/useVisibleSessionListPaneState';
 import { SessionsListWrapper } from './SessionsListWrapper';
+import { PhoneTabNavRowProvider } from '@/components/navigation/shell/phoneTabNavRow';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { readActiveRetainedSessionListQueryStates, resetSessionListPaneRetentionForTests } from './sessionListPaneRetention';
 
@@ -137,6 +138,7 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
                 sessionCount,
             },
             visibleSessionListIndex: data,
+            
             hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: sessionCount === 0,
@@ -144,19 +146,13 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
         };
     },
 }));
-vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
-    useSessionListStorageKind: () => ({
-        externalSessionsEnabled: featureDecisionState.enabled,
-        storageKind: featureDecisionState.enabled ? storageKindState.storageKind : 'persisted',
-        setStorageKind: storageKindState.setStorageKind,
-    }),
-}));
 vi.mock('./search/useSessionListViewFilterController', () => ({
     useSessionListViewFilterController: () => {
         const serverIds = [...serverSelectionState.selection.allowedServerIds].sort();
         return {
             sourceAvailable: featureDecisionState.enabled,
             filters: { source: storageKindState.storageKind },
+            displayFilters: { source: storageKindState.storageKind },
             queryHomes: [],
             pagingHomes: [],
             retentionScopeKey: JSON.stringify(serverIds.map((serverId) => [
@@ -166,14 +162,14 @@ vi.mock('./search/useSessionListViewFilterController', () => ({
         };
     },
 }));
-vi.mock('@/components/sessions/shell/SessionsListStorageChrome', () => ({
-    SessionsListStorageChrome: (props: any) => React.createElement('SessionsListStorageChrome', props),
-}));
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => ({ serverId: 'server-1' }),
 }));
 vi.mock('./SessionsListEmptyState', () => ({
     SessionsListEmptyState: 'SessionsListEmptyState',
+}));
+vi.mock('@/components/hub/HomeHub', () => ({
+    HomeHub: 'HomeHub',
 }));
 vi.mock('./ExternalSessionsEmptyState', () => ({
     ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
@@ -195,7 +191,8 @@ vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsListView: (props: any) => React.createElement('SessionsListView', props),
     SessionsListViewWithFilterController: (props: any) => React.createElement('SessionsListView', props),
 }));
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+vi.mock('@/components/ui/feedback/ActivitySpinner', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/ui/feedback/ActivitySpinner')>(),
     ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
 }));
 vi.mock('@/components/ui/text/Text', () => ({
@@ -256,6 +253,7 @@ describe('SessionsListWrapper (empty state)', () => {
                     addresses: [{ serverId: 'team-home', sessionId: 'team-only' }],
                     nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
                     phase: 'ready', freshnessAt: 1, failureReason: null, failureCode: null, appliedSourceKind: 'query',
+                    homeObservation: { phase: 'ready', lastSuccessAt: 1 },
                 },
             },
         };
@@ -272,6 +270,39 @@ describe('SessionsListWrapper (empty state)', () => {
 
         expect(() => screen.findByType('SessionsListEmptyState' as any)).not.toThrow();
         expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('lands a phone with no machine yet on Home, under the tab shell line (owner 2026-11-04)', async () => {
+        gettingStartedState.kind = 'connect_machine';
+
+        const screen = await renderScreen(
+            <PhoneTabNavRowProvider leading="home-line" trailing="glyphs">
+                <SessionsListWrapper pathname="/" />
+            </PhoneTabNavRowProvider>,
+        );
+
+        expect(() => screen.findByType('HomeHub' as any)).not.toThrow();
+        expect(() => screen.findByType('SessionsListEmptyState' as any)).toThrow();
+        // Home draws the tab shell's line itself, so the list's own line is not drawn twice.
+        expect(() => screen.findByProps({ testID: 'session-list-phone-nav-row' })).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('keeps the phone Sessions list once a machine exists', async () => {
+        gettingStartedState.kind = 'create_session';
+
+        const screen = await renderScreen(
+            <PhoneTabNavRowProvider leading="home-line" trailing="glyphs">
+                <SessionsListWrapper pathname="/" />
+            </PhoneTabNavRowProvider>,
+        );
+
+        expect(() => screen.findByType('SessionsListEmptyState' as any)).not.toThrow();
+        expect(() => screen.findByType('HomeHub' as any)).toThrow();
+        expect(() => screen.findByProps({ testID: 'session-list-phone-nav-row' })).not.toThrow();
 
         await screen.unmount();
     });
@@ -567,7 +598,7 @@ describe('SessionsListWrapper (empty state)', () => {
         await inactiveScreen.unmount();
     });
 
-    it('shows storage tabs and uses the selected direct storage filter when direct sessions are enabled', async () => {
+    it('uses the selected direct storage filter when direct sessions are enabled', async () => {
         featureDecisionState.enabled = true;
         storageKindState.storageKind = 'direct';
         sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
@@ -575,8 +606,6 @@ describe('SessionsListWrapper (empty state)', () => {
         const screen = await renderScreen(<SessionsListWrapper />);
 
         expect(sessionListState.storageKinds).toEqual(['direct']);
-        expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
-        expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
         expect(screen.findByType('SessionsListView' as any).props.storageKind).toBe('direct');
         expect(screen.findByType('SessionsListView' as any).props.data).toBeUndefined();
         expect(() => screen.findByType('SessionsList' as any)).toThrow();
@@ -584,33 +613,15 @@ describe('SessionsListWrapper (empty state)', () => {
         await screen.unmount();
     });
 
-    it('keeps the storage chrome visible in the direct empty state', async () => {
+    it('shows the external-sessions empty state for an empty direct list', async () => {
         featureDecisionState.enabled = true;
         storageKindState.storageKind = 'direct';
         sessionListState.data = [];
 
         const screen = await renderScreen(<SessionsListWrapper />);
 
-        expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
-        expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
         expect(() => screen.findByType('ExternalSessionsEmptyState' as any)).not.toThrow();
         expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
-        expect(() => screen.findByType('SessionsList' as any)).toThrow();
-
-        await screen.unmount();
-    });
-
-    it('keeps the storage chrome visible when the direct tab already has sessions', async () => {
-        featureDecisionState.enabled = true;
-        storageKindState.storageKind = 'direct';
-        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
-
-        const screen = await renderScreen(<SessionsListWrapper />);
-
-        expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
-        expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
-        expect(screen.findByType('SessionsListView' as any).props.storageKind).toBe('direct');
-        expect(screen.findByType('SessionsListView' as any).props.data).toBeUndefined();
         expect(() => screen.findByType('SessionsList' as any)).toThrow();
 
         await screen.unmount();

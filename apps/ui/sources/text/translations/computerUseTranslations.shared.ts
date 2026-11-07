@@ -63,6 +63,9 @@ export type ComputerUseTranslations = Readonly<{
     picker: Readonly<{
         title: (params: Readonly<{ agent: string }>) => string;
         description: (params: Readonly<{ agent: string }>) => string;
+        /** No Session agent to name (a Machine's own Computer page). */
+        titleMachine: string;
+        descriptionMachine: string;
         windows: string;
         screens: string;
         /** A shared Use person's own personal display, and why it cannot open yet. */
@@ -78,6 +81,7 @@ export type ComputerUseTranslations = Readonly<{
         stopSharing: string;
         loadingTitle: (params: Readonly<{ machine: string }>) => string;
         noScreenTitle: (params: Readonly<{ machine: string }>) => string;
+        noScreenSessionTitle: string;
         noScreenBody: string;
         unsupportedTitle: (params: Readonly<{ machine: string }>) => string;
         unsupportedBody: string;
@@ -94,19 +98,28 @@ export type ComputerUseTranslations = Readonly<{
         purpose: (params: Readonly<{ session: string }>) => string;
         purposeIn: (params: Readonly<{ project: string; session: string }>) => string;
         access: (params: Readonly<{ agent: string }>) => string;
+        /** The agentless forms, said while no agent resolves (never a fallback name mid-sentence). */
+        accessMachine: string;
         accessValue: string;
         accessSee: string;
         accessSeeHint: (params: Readonly<{ agent: string }>) => string;
+        accessSeeHintMachine: string;
         accessUseHint: (params: Readonly<{ agent: string }>) => string;
+        accessUseHintMachine: string;
         displayUnavailable: string;
         /** What sharing a whole display exposes, said before it is shared. */
         wholeDisplayBody: (params: Readonly<{ display: string }>) => string;
         policyBoth: (params: Readonly<{ agent: string }>) => string;
+        policyBothMachine: string;
         policyInput: (params: Readonly<{ agent: string }>) => string;
+        policyInputMachine: string;
         policyCapture: (params: Readonly<{ agent: string }>) => string;
+        policyCaptureMachine: string;
         policyNone: (params: Readonly<{ agent: string }>) => string;
+        policyNoneMachine: string;
         policyChange: string;
         suggests: (params: Readonly<{ agent: string }>) => string;
+        suggestsMachine: string;
         usingIt: string;
         displayShared: string;
         refresh: string;
@@ -115,6 +128,7 @@ export type ComputerUseTranslations = Readonly<{
         allowSee: string;
         allowUse: string;
         allowUseHint: (params: Readonly<{ agent: string }>) => string;
+        allowUseHintMachine: string;
         shareDisplay: string;
     }>;
     permission: Readonly<{
@@ -144,32 +158,21 @@ export type ComputerUseTranslations = Readonly<{
         stopFailed: string;
         stopping: string;
         unavailableBody: (params: Readonly<{ agent: string }>) => string;
+        unavailableBodyMachine: string;
         endedTitle: (params: Readonly<{ target: string }>) => string;
         endedBody: (params: Readonly<{ agent: string }>) => string;
         stalled: string;
         inputA11y: (params: Readonly<{ target: string }>) => string;
         notSharedTitle: string;
         notSharedBody: (params: Readonly<{ agent: string }>) => string;
+        /** No Session agent to name (a Machine's own Computer page). */
+        notSharedBodyMachine: string;
         moreA11y: string;
         tabFallback: string;
         sourceComputer: string;
         sourceBrowser: string;
         sourceA11y: string;
         watchingA11y: (params: Readonly<{ source: string; machine: string }>) => string;
-        expandView: string;
-        restoreView: string;
-        dockView: string;
-        floatView: string;
-        closeView: string;
-        moveView: string;
-        resizeView: string;
-        moveTopLeft: string;
-        moveTopRight: string;
-        moveBottomLeft: string;
-        moveBottomRight: string;
-        larger: string;
-        smaller: string;
-        viewOptions: string;
         presentedElsewhereTitle: string;
         presentedElsewhereBody: string;
         closeHint: string;
@@ -183,7 +186,7 @@ export type ComputerUseTranslations = Readonly<{
         unconfirmedStuckHint: (params: Readonly<{ machine: string }>) => string;
         driverMissing: string;
         driverInvalid: string;
-        driverRepairBody: string;
+        driverRepairBody: (params: Readonly<{ machine: string }>) => string;
         repairDriver: string;
         geometryChanged: string;
         inputUnknown: string;
@@ -290,6 +293,8 @@ export const computerUseTranslationsEnglish = { en: {
         picker: {
             title: ({ agent }) => `Let ${agent} use a window`,
             description: ({ agent }) => `You choose what to share with ${agent}.`,
+            titleMachine: "Let agents use a window",
+            descriptionMachine: "You choose what agents on this Machine can use.",
             windows: 'Windows',
             screens: 'Whole display',
             ownDesktop: "Your bot desktop",
@@ -304,7 +309,8 @@ export const computerUseTranslationsEnglish = { en: {
             stopSharing: 'Stop sharing',
             loadingTitle: ({ machine }) => `Looking for windows on ${machine}`,
             noScreenTitle: ({ machine }) => `${machine} has no screen to share`,
-            noScreenBody: 'It runs without a desktop Happier can see. Use a machine with a screen.',
+            noScreenSessionTitle: 'No screen to share',
+            noScreenBody: 'This session’s machine runs without a desktop Happier can see. Start a session on a machine with a screen.',
             unsupportedTitle: ({ machine }) => `Happier can’t use the screen of ${machine} yet`,
             unsupportedBody: 'Sharing a window works on Linux desktops for now.',
             failedTitle: ({ machine }) => `Couldn’t list the windows on ${machine}`,
@@ -320,18 +326,26 @@ export const computerUseTranslationsEnglish = { en: {
             purpose: ({ session }) => `For “${session}”.`,
             purposeIn: ({ project, session }) => `For “${session}” in ${project}.`,
             access: ({ agent }) => `${agent} can`,
+            accessMachine: "Agents can",
             accessValue: 'See and use it',
             accessSee: 'See it',
             accessSeeHint: ({ agent }) => `Screenshots go to ${agent}. It can’t click or type.`,
+            accessSeeHintMachine: "Agents get screenshots. They can’t click or type.",
             accessUseHint: ({ agent }) => `${agent} can also click and type in what you share.`,
+            accessUseHintMachine: "Agents can also click and type in what you share.",
             displayUnavailable: 'Whole-display sharing is unavailable on this machine.',
             wholeDisplayBody: ({ display }) => `Everything visible on ${display} can be seen, including other apps and notifications.`,
             policyBoth: ({ agent }) => `${agent} asks before each screenshot, click and keystroke.`,
+            policyBothMachine: "Agents ask before each screenshot, click and keystroke.",
             policyInput: ({ agent }) => `${agent} asks before each click and keystroke.`,
+            policyInputMachine: "Agents ask before each click and keystroke.",
             policyCapture: ({ agent }) => `${agent} asks before each screenshot.`,
+            policyCaptureMachine: "Agents ask before each screenshot.",
             policyNone: ({ agent }) => `${agent} doesn’t ask before screenshots, clicks or keystrokes.`,
+            policyNoneMachine: "Agents don’t ask before screenshots, clicks or keystrokes.",
             policyChange: 'Change',
             suggests: ({ agent }) => `${agent} suggests`,
+            suggestsMachine: "Suggested",
             usingIt: 'the agent is using it',
             displayShared: 'everything on it is shared',
             refresh: 'Refresh sources',
@@ -340,6 +354,7 @@ export const computerUseTranslationsEnglish = { en: {
             allowSee: 'Allow viewing',
             allowUse: 'Allow mouse and keyboard',
             allowUseHint: ({ agent }) => `${agent} can use this display. You can take control back any time.`,
+            allowUseHintMachine: "Agents can use this display. You can take control back any time.",
             shareDisplay: 'Share display',
         },
         permission: {
@@ -369,32 +384,20 @@ export const computerUseTranslationsEnglish = { en: {
             stopFailed: 'Couldn’t stop sharing',
             stopping: 'Stopping sharing…',
             unavailableBody: ({ agent }) => `You can still stop ${agent} here.`,
+            unavailableBodyMachine: "You can still stop agents here.",
             endedTitle: ({ target }) => `${target} closed`,
             endedBody: ({ agent }) => `${agent} can’t see or use it any more. Choose another window to continue.`,
             stalled: 'Showing the last picture · reconnecting',
             inputA11y: ({ target }) => `${target}, live. Click or type to take control.`,
             notSharedTitle: 'No window is shared',
             notSharedBody: ({ agent }) => `Choose a window for ${agent} to use.`,
+            notSharedBodyMachine: "Choose a window agents can use on this Machine.",
             moreA11y: 'Window options',
             tabFallback: 'Computer',
             sourceComputer: 'Computer',
             sourceBrowser: 'Browser',
             sourceA11y: 'Source',
             watchingA11y: ({ source, machine }) => `Watching ${source} on ${machine}`,
-            expandView: 'Expand view',
-            restoreView: 'Restore view',
-            dockView: 'Dock view',
-            floatView: 'Float view',
-            closeView: 'Close view',
-            moveView: 'Move view',
-            resizeView: 'Resize view',
-            moveTopLeft: 'Move to top left',
-            moveTopRight: 'Move to top right',
-            moveBottomLeft: 'Move to bottom left',
-            moveBottomRight: 'Move to bottom right',
-            larger: 'Larger',
-            smaller: 'Smaller',
-            viewOptions: 'View options',
             presentedElsewhereTitle: 'Showing in the floating view',
             presentedElsewhereBody: 'Dock it here to keep it beside your work.',
             closeHint: 'Closes this viewer. The session keeps running.',
@@ -407,7 +410,7 @@ export const computerUseTranslationsEnglish = { en: {
             unconfirmedStuckHint: ({ machine }) => `If something looks stuck, click once in the window on ${machine} itself.`,
             driverMissing: 'The computer driver isn’t available',
             driverInvalid: 'The computer driver needs repair',
-            driverRepairBody: 'Reinstall the native driver on this machine, then check its current permissions and source.',
+            driverRepairBody: ({ machine }) => `Reinstall the native driver on ${machine}, then check its current permissions.`,
             repairDriver: 'Repair driver',
             geometryChanged: 'The window changed. Capture it again before using it.',
             inputUnknown: 'The last input couldn’t be confirmed. Check again; it won’t be repeated.',

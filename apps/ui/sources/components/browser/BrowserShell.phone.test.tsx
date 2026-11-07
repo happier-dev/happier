@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { BrowserCommandV1, BrowserEventV1 } from '@happier-dev/protocol';
+import type { BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserEventV1 } from '@happier-dev/protocol/browser/events/v1';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -215,6 +216,69 @@ describe('BrowserShell on a phone', () => {
         // The person has the page: Attach page returns, so what they signed in to can go to the chat.
         await screen.update(render(withController('human')));
         expect(screen.findByTestId('browser-shell-attach-page')).toBeTruthy();
+    });
+
+    it.each([390, 1440])('keeps idle Diagnostics in ⋯ with no bar under the page (lab Q), width %i', async (width) => {
+        windowSize.width = width;
+        const { BrowserShell } = await import('./BrowserShell');
+        const { createBrowserDiagnosticsUiStore } = await import('@/sync/domains/browser/diagnostics');
+        const { resetBrowserDiagnosticsDrawerStateForTests } = await import('./diagnostics/BrowserDiagnosticsDrawer');
+        resetBrowserDiagnosticsDrawerStateForTests();
+        const screen = await renderScreen(
+            <BrowserShell
+                browserSessionId="browser_session_1"
+                platform="web"
+                state={await createPageState()}
+                onCommand={vi.fn()}
+                browserDiagnostics={{
+                    state: createBrowserDiagnosticsUiStore(),
+                    requestEval: vi.fn(() => false),
+                    requestGetProperties: vi.fn(() => false),
+                    requestReleaseObjectGroup: vi.fn(() => false),
+                }}
+                testID="browser-shell"
+            />,
+        );
+
+        // Every width gives the idle bar's row back to the page (lab Q); Diagnostics is one ⋯ item.
+        expect(screen.findByTestId('browser-shell-diagnostics-header')).toBeFalsy();
+        // The ⋯ popover listens to the window's resize (platform boundary).
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), location: { origin: 'https://app.happier.test' } });
+        await screen.pressByTestIdAsync('browser-shell-overflow');
+        await screen.pressByTestIdAsync('browser-shell-overflow-item-open-diagnostics');
+        expect(screen.findByTestId('browser-shell-diagnostics-body-clip')).toBeTruthy();
+
+        // Closing it puts it back in ⋯, with no bar left behind.
+        await screen.pressByTestIdAsync('browser-shell-diagnostics-close');
+        expect(screen.findByTestId('browser-shell-diagnostics-header')).toBeFalsy();
+        vi.unstubAllGlobals();
+    });
+
+    it.each([
+        ['never admitted (Can’t reach)', undefined, 'localhost:5173'],
+        ['a bare path', '/', 'localhost:5173'],
+        ['a path on the preview', '/dashboard', 'localhost:5173/dashboard'],
+    ])('names a preview with no absolute address by its last known location: %s', async (_case, currentUrl, expected) => {
+        windowSize.width = 1440;
+        const { BrowserShell } = await import('./BrowserShell');
+        const reducer = await import('@/sync/domains/browser/control/reducer');
+        const events: readonly BrowserEventV1[] = [{
+            kind: 'sessionCreated', eventId: 'e1', browserSessionId: 'browser_session_1', profileId: 'profile_1', occurredAt: 1,
+        }, {
+            kind: 'viewOpened', eventId: 'e2', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            target: { kind: 'localServicePreview', targetId: 'preview_1', machineId: 'machine_1', display: { title: 'Lumen web', addressLabel: 'localhost:5173' } },
+            platform: 'web', ...(currentUrl ? { currentUrl } : {}), adapterKind: 'localPreview', engineKind: 'webIframe',
+            adapterCapabilities: buildBrowserAdapterCapabilities({
+                adapterKind: 'localPreview', supportedTargetKinds: ['localServicePreview'], supportedRenderEngines: ['webIframe'],
+            }),
+            occurredAt: 2,
+        }, { kind: 'viewFocused', eventId: 'e3', browserSessionId: 'browser_session_1', viewId: 'view_1', occurredAt: 3 }];
+        const state = events.reduce((next, event) => reducer.applyBrowserControlEvent(next, event), reducer.createBrowserControlState());
+        const screen = await renderScreen(
+            <BrowserShell browserSessionId="browser_session_1" platform="web" state={state} onCommand={vi.fn()} testID="browser-shell" />,
+        );
+
+        expect(screen.findByTestId('browser-shell-address')?.props.value).toBe(expected);
     });
 
     it('shows the launchpad on its own, with no browser chrome around it (lab W)', async () => {

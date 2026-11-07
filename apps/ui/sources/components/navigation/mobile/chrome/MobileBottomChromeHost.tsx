@@ -1,39 +1,26 @@
 import * as React from 'react';
+import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
+import { usePresentedDetailNavigationChrome, type PresentedDetailNavigationModel } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { Animated, Platform, View, type LayoutChangeEvent } from 'react-native';
-import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { admitInternalRouteHref } from '@/utils/path/routeUtils';
+import { useGlobalSearchParams, useOpenAppSection, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useWorkspaceSectionPathname } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SessionSwitcherBand } from '@/components/navigation/mobile/chrome/lateralSwipe/SessionSwitcherBand';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useAuth } from '@/auth/context/AuthContext';
 import {
-    usePersistProjectLastMobileSurface,
-    usePersistSessionLastMobileSurface,
-    useProjectLastMobileSurface,
-    useSessionLastMobileSurface,
     useSetting,
     useLocalSetting,
-    useWorkspaceRefs,
-    useActiveServerAccountScope,
-    useProjectAccountRows,
 } from '@/sync/domains/state/storage';
-import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
-import { readProjectRouteCheckoutRootPath } from '@/components/projects/detail/projectRouteState';
-import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
-import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
-import { useActiveDetailsPaneOpen } from '@/components/appShell/panes/details/useFileTabFront';
-import { resolveProjectTerminalScope } from '@/components/projects/detail/projectTerminalScope';
 import {
     isOverlaySurfaceRoutePathname,
-    normalizeSurfaceRoutePathname,
+    useSurfaceAnchorPathname,
 } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
-import type { TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
 import {
     useSessionCockpitBottomChromeHeightSetter,
@@ -41,20 +28,23 @@ import {
     useSessionCockpitDismissingSessionId,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import {
+    isSessionRootRoutePath,
+    resolveSessionPaneIntentSurface,
     resolveSessionRoutePathForSurface,
     shouldRouteSessionCockpitSurfacePressThroughUrl,
     type SessionMobileSurface,
 } from '@/components/workspaceCockpit/session/sessionCockpitState';
-import { normalizeProjectPage, resolveProjectCockpitRouteFromPathname, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
-import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
-import { MainAppTabBar } from './bars/MainAppTabBar';
-import { PhoneDestinationsMenu } from '@/components/appShell/destinations/PhoneDestinationsMenu';
-import { ProjectCockpitTabBar } from './bars/ProjectCockpitTabBar';
-import { SessionCockpitTabBar } from './bars/SessionCockpitTabBar';
+import { PhoneMainAppTabBar } from '@/components/appShell/destinations/PhoneDestinationsMenu';
+import { resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { useCompactAppDestinations } from '@/components/appShell/destinations/useCompactAppDestinations';
+import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
 import { useMainAppTabState } from './MainAppTabStateProvider';
-import { isWorkflowsTabRoutePathname, resolveMobileBottomChromeModel } from './resolveMobileBottomChromeModel';
+import { isWorkflowsTabRoutePathname, resolveMainTabPressRoute, resolveMobileBottomChromeModel } from './resolveMobileBottomChromeModel';
+import { resolveMobileBottomChromePresenter } from './resolveMobileBottomChromePresenter';
+import { systemTabBarAvailable } from './SystemTabBar';
+import { SystemMobileBottomChrome, type SystemMobileBottomChromeModel } from './SystemMobileBottomChrome';
 
 const MAIN_TAB_DEFAULT_ROUTES = {
     inbox: '/',
@@ -83,11 +73,7 @@ function resolveRouteSessionId(pathname: string | null | undefined): string | nu
     return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
-function resolveRouteWorkspaceRefId(pathname: string | null | undefined): string | null {
-    const match = /^\/projects\/([^/?#]+?)(?:\/|$)/.exec(typeof pathname === 'string' ? pathname : '');
-    return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
-
+/** The Workflows tab is its route (owner Q4); the other tabs share the home route. */
 function resolveRouteOwnedMainTab(pathname: string | null | undefined): TabType | null {
     return typeof pathname === 'string' && isWorkflowsTabRoutePathname(pathname) ? 'workflows' : null;
 }
@@ -105,24 +91,24 @@ function resolveRememberedMainTabRoute(
     return MAIN_TAB_DEFAULT_ROUTES[tab];
 }
 
-type PendingSessionSurfaceSwitch = Readonly<{
-    sourceDetailsPathname: string;
-    targetHref: string;
-}>;
-
 type BottomChromeItem = Readonly<{
     key: string;
     signature: string;
     node: React.ReactElement;
+    systemModel: SystemMobileBottomChromeModel;
     /** Set only for session cockpit chrome — the one answer to "whose band is this". */
     cockpitSessionId?: string;
+    /** The presented catalog can change without changing this page's route. */
+    detailNavigation?: PresentedDetailNavigationModel;
+    chromeRevision?: PresentedDetailNavigationModel['chromeRevision'];
 }>;
 
 function isSameBottomChromeItem(left: BottomChromeItem | null, right: BottomChromeItem | null): boolean {
     if (!left || !right) {
         return left === right;
     }
-    return left.key === right.key && left.signature === right.signature;
+    return left.key === right.key && left.signature === right.signature
+        && left.detailNavigation === right.detailNavigation && left.chromeRevision === right.chromeRevision;
 }
 
 function isBottomChromeStateSettled(
@@ -132,86 +118,54 @@ function isBottomChromeStateSettled(
     return state.previous === null && isSameBottomChromeItem(state.current, resolvedChrome);
 }
 
-const renderMainBarMore = (metrics: TabBarMetrics) => <PhoneDestinationsMenu metrics={metrics} />;
-
-export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost(props: Readonly<{
-    /** Canonical pre-push presentation decision from the app stack owner. */
-    newSessionRendersFloatingComposer?: boolean;
-}>) {
+export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost() {
     const pathname = usePathname();
+    const anchorPathname = useSurfaceAnchorPathname(pathname);
     const router = useRouter();
     const params = useGlobalSearchParams<Record<string, string | string[]>>();
     const auth = useAuth();
     const deviceType = useDeviceType();
+    const foldMetrics = useWindowFoldMetrics();
+    const systemTabBarEnabled = useLocalSetting('systemTabBarEnabled');
+    const presenter = resolveMobileBottomChromePresenter({
+        platform: Platform.OS, bridgeAvailable: systemTabBarAvailable,
+        verticalBarEdge: foldMetrics?.verticalBarEdge ?? null, enabled: systemTabBarEnabled, deviceType,
+    });
     const reduceMotion = useReducedMotionPreference();
     const { activeTab, setActiveTab } = useMainAppTabState();
     const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
     const routeSessionId = resolveRouteSessionId(pathname);
-    const routeWorkspaceRefId = resolveRouteWorkspaceRefId(pathname);
     const routeServerId = normalizeRouteParam(params.serverId);
-    const projectRef = useWorkspaceRefById(routeWorkspaceRefId ?? '', routeServerId);
-    const workspaceRefs = useWorkspaceRefs();
-    const projectLastRootPaths = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
-    const projectLastWorktreeIds = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const projectCheckout = React.useMemo(() => {
-        if (!projectRef) return null;
-        const keys = resolveProjectSelectionPreferenceKeys(workspaceRefs, projectRef);
-        const selectedRoot = readProjectRouteCheckoutRootPath({
-            rawWorktreeId: params.worktreeId, rawLegacyActiveRootPath: params.activeRootPath,
-            defaultRootPath: projectRef.rootPath,
-            persistedActiveRootPath: readProjectSelectionPreference(projectLastRootPaths, keys),
-            persistedWorktreeId: readProjectSelectionPreference(projectLastWorktreeIds, keys),
-        });
-        return selectedRoot === null ? null : resolveProjectCheckoutWorkspaceRef(workspaceRefs, projectRef, selectedRoot);
-    }, [params.activeRootPath, params.worktreeId, projectLastRootPaths, projectLastWorktreeIds, projectRef, workspaceRefs]);
-    const projectPage = resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
-    const projectViewerScope = useActiveServerAccountScope(projectRef?.serverId ?? routeServerId);
-    const projectRowsStatus = useProjectAccountRows()?.status;
-    const projectTerminalTabAvailable = React.useMemo(() => projectRef !== null && projectCheckout !== null
-        && resolveProjectTerminalScope(buildProjectPaneScopeId(projectRef.id, projectRef.serverId), workspaceAddressFromRefV1(projectCheckout)) !== null,
-    [projectCheckout, projectRef, projectRowsStatus, projectViewerScope]);
-    // A phone presents the Project's Details as the full page (the File page, a review): that page's own
-    // bottom toolbar owns the bottom edge then, so the cockpit bar steps aside instead of covering it.
-    const projectDetailsOpen = useActiveDetailsPaneOpen(routeWorkspaceRefId
-        ? buildProjectPaneScopeId(routeWorkspaceRefId, projectRef?.serverId ?? routeServerId) : null);
-    const { sidebarTabAvailable: sessionTerminalTabAvailable } = useSessionTerminalAvailability(routeServerId);
-    const sessionLastMobileSurface = useSessionLastMobileSurface(routeSessionId, routeServerId);
-    const projectLastMobileSurface = useProjectLastMobileSurface(routeWorkspaceRefId, routeServerId);
-    const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
-    const persistProjectLastMobileSurface = usePersistProjectLastMobileSurface();
+    const detailNavigation = usePresentedDetailNavigationChrome();
+    const executeDetailNavigation = useMountedScopeActionCommand(detailNavigation?.scope ?? null);
     const setBottomChromeHeight = useSessionCockpitBottomChromeHeightSetter();
     const cockpitRegistration = useSessionCockpitChromeRegistration();
     const dismissingSessionId = useSessionCockpitDismissingSessionId();
     const explicitMobileSurfaceHint = normalizeRouteParam(params.mobileSurface);
     const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params), [params]);
     const paneRouteQuery = React.useMemo(() => serializeSessionPaneUrlState(paneUrlState ?? {}), [paneUrlState]);
-    const sessionLastMobileSurfaceBySessionId = React.useMemo(() => (
-        routeSessionId && sessionLastMobileSurface
-            ? { [routeSessionId]: sessionLastMobileSurface }
-            : null
-    ), [routeSessionId, sessionLastMobileSurface]);
-    const projectLastMobileSurfaceByWorkspaceRefId = React.useMemo(() => (
-        routeWorkspaceRefId && projectLastMobileSurface
-            ? { [routeWorkspaceRefId]: projectLastMobileSurface }
-            : null
-    ), [routeWorkspaceRefId, projectLastMobileSurface]);
-
+    // Which section or More destination owns this page: the destination catalog's one answer, plus Home,
+    // which More opens from its own row outside the catalog.
+    const destinationCatalog = useCompactAppDestinations();
+    const sectionPage = React.useMemo(() => {
+        if (anchorPathname === PHONE_HOME_ROUTE) return true;
+        const destination = typeof anchorPathname === 'string' ? resolveCurrentAppDestination(destinationCatalog, anchorPathname) : null;
+        return destination !== null && destination.column !== 'settings';
+    }, [anchorPathname, destinationCatalog]);
     const model = resolveMobileBottomChromeModel({
         isAuthenticated: auth.isAuthenticated,
-        pathname,
+        pathname: anchorPathname,
         mobileWorkspaceExperience,
-        sessionTerminalTabAvailable,
-        sessionLastMobileSurfaceBySessionId,
-        projectLastMobileSurfaceByWorkspaceRefId,
+        mountedDetail: detailNavigation ? { pageKind: detailNavigation.pageKind, identity: detailNavigation.identity,
+            activeId: detailNavigation.activeId } : null,
+        rootHostedDetail: detailNavigation?.rootHosted,
         explicitMobileSurfaceHint,
         sessionDetailsKind: paneUrlState?.details?.kind ?? null,
-        registeredSessionCockpit: cockpitRegistration ? {
-            sessionId: cockpitRegistration.sessionId,
-            surface: cockpitRegistration.activeSurface,
-            terminalTabAvailable: cockpitRegistration.terminalTabAvailable,
-        } : null,
+        sectionPage,
     });
-    const routeOwnedMainTab = resolveRouteOwnedMainTab(pathname);
+    const sectionPathname = useWorkspaceSectionPathname();
+    const openSection = useOpenAppSection();
+    const routeOwnedMainTab = resolveRouteOwnedMainTab(sectionPathname ?? pathname);
     const visibleMainTab = routeOwnedMainTab ?? activeTab;
     const mainTabRoutesRef = React.useRef<Record<TabType, string>>(createInitialMainTabRoutes());
     if (routeOwnedMainTab && typeof pathname === 'string') {
@@ -227,63 +181,22 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
 
     const handleMainAppTabPress = React.useCallback((tab: TabType) => {
         const currentMainTab = routeOwnedMainTab ?? activeTab;
+        // From a pushed page or a More destination, a press returns to the tab's own page.
         if (tab === currentMainTab) {
-            const rootRoute = MAIN_TAB_DEFAULT_ROUTES[tab];
-            if (rootRoute !== '/' && typeof pathname === 'string' && pathname !== rootRoute) {
-                router.navigate(rootRoute);
-            }
+            const rootRoute = resolveMainTabPressRoute({ pathname, targetRoute: MAIN_TAB_DEFAULT_ROUTES[tab] });
+            if (rootRoute) openSection(rootRoute);
             return;
         }
 
-        const targetRoute = resolveRememberedMainTabRoute(tab, mainTabRoutesRef.current[tab]);
-        if (targetRoute !== '/' || routeOwnedMainTab) {
-            router.navigate(admitInternalRouteHref(targetRoute));
+        const targetRoute = resolveMainTabPressRoute({ pathname,
+            targetRoute: resolveRememberedMainTabRoute(tab, mainTabRoutesRef.current[tab]) });
+        if (targetRoute) {
+            openSection(targetRoute);
         }
         if (tab !== 'workflows') {
             void setActiveTab(tab);
         }
-    }, [activeTab, pathname, routeOwnedMainTab, router, setActiveTab]);
-
-    const persistSessionSurface = React.useCallback((sessionId: string, surface: SessionMobileSurface) => {
-        persistSessionLastMobileSurface(sessionId, surface, routeServerId);
-    }, [persistSessionLastMobileSurface, routeServerId]);
-
-    const handleSessionCockpitSurfacePress = React.useCallback((sessionId: string, surface: SessionMobileSurface) => {
-        const matchingRegistration =
-            cockpitRegistration?.sessionId === sessionId
-                ? cockpitRegistration
-                : null;
-        const shouldCanonicalizeRoute = shouldRouteSessionCockpitSurfacePressThroughUrl({
-            pathname,
-            sessionId,
-            surface,
-            terminalTabAvailable: matchingRegistration?.terminalTabAvailable ?? sessionTerminalTabAvailable,
-            explicitRootSurfaceHint: explicitMobileSurfaceHint,
-            paneUrlState,
-        });
-        if (matchingRegistration) {
-            matchingRegistration.switchSurface(surface);
-            if (!shouldCanonicalizeRoute) {
-                return;
-            }
-        }
-
-        persistSessionSurface(sessionId, surface);
-        router.replace(resolveSessionRoutePathForSurface(sessionId, surface, {
-            serverId: routeServerId,
-            query: surface === 'tabs' ? paneRouteQuery : undefined,
-        }));
-    }, [
-        cockpitRegistration,
-        explicitMobileSurfaceHint,
-        pathname,
-        paneRouteQuery,
-        paneUrlState,
-        persistSessionSurface,
-        routeServerId,
-        router,
-        sessionTerminalTabAvailable,
-    ]);
+    }, [activeTab, openSection, pathname, routeOwnedMainTab, setActiveTab]);
 
     // The nested tab navigator is the source of truth for history/native Back.
     // This outer route owner observes its already-registered active surface and
@@ -313,6 +226,13 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         if (!previous || previous.sessionId !== next.sessionId || previous.surface === next.surface) {
             return;
         }
+        // The navigator consuming the root URL's own pane intent (a window narrowed to a phone shows the open
+        // Details page on Tabs) is presentation. Projecting it onto `/session/<id>/details?details=…` would make the
+        // workspace tab a Details link tab, which it would stay when the window widens again.
+        if (isSessionRootRoutePath(pathname, next.sessionId)
+            && resolveSessionPaneIntentSurface(paneUrlState, registration.terminalTabAvailable) === next.surface) {
+            return;
+        }
 
         if (!shouldRouteSessionCockpitSurfacePressThroughUrl({
             pathname,
@@ -339,20 +259,23 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         router,
     ]);
 
-    const buildMainChrome = React.useCallback((tab: TabType): BottomChromeItem => ({
-        key: 'mainAppTabs',
-        signature: `mainAppTabs:${tab}`,
-        node: (
-            <MainAppTabBar
+    const buildMainChrome = React.useCallback((tab: TabType): BottomChromeItem => {
+        const node: React.ReactElement<React.ComponentProps<typeof PhoneMainAppTabBar>> = (
+            <PhoneMainAppTabBar
                 activeTab={tab}
                 onTabPress={handleMainAppTabPress}
                 // Session creation belongs to the sessions surface; the other tabs keep the bar as
                 // a pure navigation control.
                 trailingAccessory={tab === 'sessions' ? <TabBarNewSessionButton /> : undefined}
-                more={renderMainBarMore}
             />
-        ),
-    }), [handleMainAppTabPress]);
+        );
+        return {
+            key: 'mainAppTabs',
+            signature: `mainAppTabs:${tab}`,
+            node,
+            systemModel: { kind: 'mainAppTabs', props: node.props },
+        };
+    }, [handleMainAppTabPress]);
 
     // An overlay route (`/new`, the zen modals, …) is presented OVER the current screen rather than
     // replacing it, so it should not change which bar the chrome host is showing — it simply covers
@@ -360,13 +283,10 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // closing the composer had to build it back afterwards and the two read as a sequence instead of
     // one surface lifting away. Freezing the last real chrome keeps the bar mounted underneath.
     const overlayRouteActive = typeof pathname === 'string' && isOverlaySurfaceRoutePathname(pathname);
-    const androidFloatingNewSessionActive = Platform.OS === 'android'
-        && normalizeSurfaceRoutePathname(pathname) === '/new'
-        && props.newSessionRendersFloatingComposer === true;
     const frozenChromeRef = React.useRef<BottomChromeItem | null>(null);
 
     const resolvedChrome = React.useMemo((): BottomChromeItem | null => {
-        if (overlayRouteActive) {
+        if (overlayRouteActive && frozenChromeRef.current) {
             return frozenChromeRef.current;
         }
 
@@ -377,131 +297,51 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
             return buildMainChrome(visibleMainTab);
         }
 
-        const sessionCockpitModel = model.kind === 'sessionCockpit' ? model : null;
-
-        if (
-            sessionCockpitModel
-            && isMobileWorkspaceCockpitEnabled({
-                deviceType,
-                mobileWorkspaceExperience,
-            })
-        ) {
+        if (model.kind === 'detail'
+            && detailNavigation
+            && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience })) {
             // Dismiss-start: the session is sliding out but the route hasn't
             // committed yet. Cross-fade to the destination main bar now (the band
             // dissolves with the outgoing cockpit chrome) instead of at slide-end.
             // The in-flow reservation is route-keyed below, so this is visual-only
             // and a cancelled gesture (`closing:false`) reverts here.
-            if (dismissingSessionId === sessionCockpitModel.sessionId) {
+            if (detailNavigation.sessionId && dismissingSessionId === detailNavigation.sessionId) {
                 return buildMainChrome(lastMainTabRef.current);
             }
-
-            const matchingRegistration =
-                cockpitRegistration?.sessionId === sessionCockpitModel.sessionId
-                    ? cockpitRegistration
-                    : null;
-            const activeSurface = matchingRegistration?.activeSurface ?? sessionCockpitModel.surface;
-            const terminalTabAvailable = matchingRegistration?.terminalTabAvailable ?? sessionCockpitModel.terminalTabAvailable;
-            const openDetailsTabCount = matchingRegistration?.openDetailsTabCount ?? 0;
-
+            const chrome = detailNavigation.phoneChrome(executeDetailNavigation);
+            if (!chrome) return null;
             return {
-                key: `session:${sessionCockpitModel.sessionId}`,
-                cockpitSessionId: sessionCockpitModel.sessionId,
-                signature: `session:${sessionCockpitModel.sessionId}:${activeSurface}:${terminalTabAvailable ? 'terminal' : 'no-terminal'}:${routeServerId ?? 'default-server'}:tabs${openDetailsTabCount}`,
-                node: (
-                    <SessionCockpitTabBar
-                        sessionId={sessionCockpitModel.sessionId}
-                        serverId={routeServerId}
-                        activeSurface={activeSurface}
-                        terminalTabAvailable={terminalTabAvailable}
-                        openDetailsTabCount={openDetailsTabCount}
-                        pluginPlacements={matchingRegistration?.pluginPlacements}
-                        onSurfacePress={(surface) => handleSessionCockpitSurfacePress(sessionCockpitModel.sessionId, surface)}
-                    />
-                ),
-            };
-        }
-
-        if (
-            model.kind === 'projectCockpit'
-            && !projectDetailsOpen
-            && isMobileWorkspaceCockpitEnabled({
-                deviceType,
-                mobileWorkspaceExperience,
-            })
-        ) {
-            const rawWorktreeId = typeof params.worktreeId === 'string'
-                ? params.worktreeId
-                : Array.isArray(params.worktreeId)
-                    ? params.worktreeId[0] ?? null
-                    : null;
-            const rawActiveRootPath = typeof params.activeRootPath === 'string'
-                ? params.activeRootPath
-                : Array.isArray(params.activeRootPath)
-                    ? params.activeRootPath[0] ?? null
-                    : null;
-            return {
-                key: `project:${model.workspaceRefId}`,
-                signature: JSON.stringify(['project', model.workspaceRefId, model.surface, projectPage,
-                    projectRef?.serverId ?? routeServerId, projectTerminalTabAvailable,
-                    projectViewerScope?.accountId ?? null,
-                    projectCheckout?.id ?? null, projectCheckout?.rootPath ?? null, rawWorktreeId, rawActiveRootPath]),
-                node: (
-                    <ProjectCockpitTabBar
-                        workspaceRefId={model.workspaceRefId}
-                        activeSurface={model.surface}
-                        activePage={projectPage}
-                        terminalTabAvailable={projectTerminalTabAvailable}
-                        onSurfacePress={(surface) => {
-                            const page = normalizeProjectPage(surface) ?? resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
-                            persistProjectLastMobileSurface(model.workspaceRefId, page, routeServerId);
-                            router.replace(resolveProjectRoutePathForSurface({
-                                workspaceRefId: model.workspaceRefId,
-                                page,
-                                surface,
-                                serverId: routeServerId,
-                                routeParams: params,
-                                rawWorktreeId,
-                                rawActiveRootPath,
-                            }));
-                        }}
-                    />
-                ),
+                key: `${model.pageKind}:${model.identity}`,
+                signature: JSON.stringify([model.pageKind, model.identity, model.activeId]),
+                detailNavigation,
+                chromeRevision: detailNavigation.chromeRevision,
+                cockpitSessionId: detailNavigation.sessionId,
+                ...chrome,
             };
         }
 
         return null;
     }, [
         overlayRouteActive,
-        activeTab,
         buildMainChrome,
-        cockpitRegistration,
+        detailNavigation,
+        executeDetailNavigation,
         deviceType,
         dismissingSessionId,
-        handleSessionCockpitSurfacePress,
         mobileWorkspaceExperience,
         model,
-        params.activeRootPath,
-        params.worktreeId,
-        params,
-        pathname,
-        persistProjectLastMobileSurface,
-        router,
-        routeServerId,
-        projectPage,
-        projectRef?.serverId,
-        projectViewerScope?.accountId,
-        projectTerminalTabAvailable,
-        projectDetailsOpen,
-        projectCheckout,
         visibleMainTab,
-        sessionTerminalTabAvailable,
-        sessionLastMobileSurfaceBySessionId,
-        projectLastMobileSurfaceByWorkspaceRefId,
     ]);
 
     if (!overlayRouteActive) {
         frozenChromeRef.current = resolvedChrome;
     }
+
+    // Hardware/pref eligibility owns the container lifetime, never route visibility or keyboard focus.
+    const lastSystemChromeRef = React.useRef<BottomChromeItem | null>(null);
+    if (presenter !== 'system') lastSystemChromeRef.current = null;
+    else if (resolvedChrome) lastSystemChromeRef.current = resolvedChrome;
+    const systemChrome = resolvedChrome ?? lastSystemChromeRef.current;
 
     const [renderedChrome, setRenderedChrome] = React.useState<Readonly<{
         current: BottomChromeItem | null;
@@ -536,6 +376,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     React.useLayoutEffect(() => {
         const currentRenderedState = renderedChromeRef.current;
         const currentRenderedChrome = currentRenderedState.current;
+
+        if (presenter === 'system') {
+            stopChromeAnimation();
+            if (currentRenderedState.current || currentRenderedState.previous) {
+                setRenderedChromeState({ current: null, previous: null });
+            }
+            progress.setValue(1);
+            return;
+        }
 
         if (reduceMotion) {
             stopChromeAnimation();
@@ -597,7 +446,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         }
 
         if (currentRenderedChrome.key === resolvedChrome.key) {
-            if (currentRenderedChrome.signature === resolvedChrome.signature) {
+            if (isSameBottomChromeItem(currentRenderedChrome, resolvedChrome)) {
                 return;
             }
             // Same bar, content changed (badge/surface/etc.). If a cross-fade is
@@ -637,31 +486,26 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
             progress.setValue(1);
             setRenderedChromeState({ current: latestResolvedChromeRef.current ?? resolvedChrome, previous: null });
         });
-    }, [progress, reduceMotion, resolvedChrome, setRenderedChromeState, stopChromeAnimation]);
+    }, [presenter, progress, reduceMotion, resolvedChrome, setRenderedChromeState, stopChromeAnimation]);
 
     React.useLayoutEffect(() => () => {
         stopChromeAnimation();
     }, [stopChromeAnimation]);
 
     React.useLayoutEffect(() => {
-        if (!renderedChrome.current) {
+        if (presenter === 'system' || !renderedChrome.current) {
             setBottomChromeHeight(0);
         }
-    }, [renderedChrome.current, setBottomChromeHeight]);
+    }, [presenter, renderedChrome.current, setBottomChromeHeight]);
+
+    if (presenter === 'system') {
+        return systemChrome ? <SystemMobileBottomChrome model={systemChrome.systemModel} hidden={resolvedChrome === null} /> : null;
+    }
 
     // `previous` outlives `current` while the bar dissolves on its way out, so the host keeps
     // rendering until BOTH are gone. The published chrome height already dropped to 0 above, so the
     // surfaces that pad by it reclaim their space immediately rather than waiting for the fade.
     if (!renderedChrome.current && !renderedChrome.previous) {
-        return null;
-    }
-
-    // Android's transparent native-stack screen and this global chrome host are sibling native
-    // views. The host is mounted after the Stack, so keeping its pixels rendered places them above
-    // the composer's app-painted scrim even though its frozen model is conceptually "under" the
-    // modal. Keep that model intact for an immediate return, but contribute no sibling pixels while
-    // the floating composer is active. Other presentations keep the normal frozen-underlay path.
-    if (androidFloatingNewSessionActive) {
         return null;
     }
 

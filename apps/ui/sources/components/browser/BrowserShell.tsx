@@ -1,24 +1,26 @@
-
-
-const pageCoveredByApp = () => true;
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
-    BrowserCommandV1,
-    BrowserPlatformV1,
-    BrowserRecordingCapabilities,
+    BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type {
+    BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
+import type {
+    BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type {
     BrowserRecordingPolicyStateV1,
-    BrowserRecordingSessionV1,
-    FeatureDecision,
+    BrowserRecordingSessionV1} from '@happier-dev/protocol/browser/recording/v1';
+import type {
+    FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type {
     ActionExecuteResult,
-} from '@happier-dev/protocol';
-import type { BrowserViewTargetV1 } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import { BrowserLaunchpad } from '@/components/browser/launchpad';
 import { resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
 import { useBrowserStreamedChrome } from '@/components/browser/streamed/BrowserStreamedSurfaceScope';
-import type { BrowserLaunchpadOpenTargetOptions } from '@/components/browser/launchpad/BrowserLaunchpad';
 import type {
     BrowserControlState,
     BrowserControlViewState,
@@ -49,7 +51,7 @@ import type { LocalServicePreviewState } from '@/sync/domains/local/services/pre
 import { useLocalServicePreviewStateController } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
-    createPluginLocalizedTextResolver,
+    usePluginLocalizedTextResolver,
 } from '@/sync/domains/plugins/ui/i18n';
 import type {
     PluginBrowserActionProjection,
@@ -60,6 +62,7 @@ import {
     resolveExternalUrlTargetFromInput,
     selectActiveBrowserView,
     selectBrowserToolbarModel,
+    selectBrowserViewAddress,
     selectBrowserViewDisplayHost,
 } from '@/sync/domains/browser/shell';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
@@ -79,17 +82,20 @@ import {
 } from './diagnostics';
 import {
     BrowserToolbarOverflowMenu,
+    type BrowserToolbarOverflowItem,
     SecurityOriginIndicator,
 } from './toolbar';
 import { useBrowserToolbarOverflowItems } from './toolbar/useBrowserToolbarOverflowItems';
 import { useBrowserPluginActions } from './useBrowserPluginActions';
 import { BROWSER_CHROME_WIDTH, BROWSER_PAGE_BASIS, resolveBrowserChromeControlMetrics, useBrowserChromeDensity } from './browserChromeDensity';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
-import { SessionViewerMachineMark } from '@/components/sessions/viewer/SessionViewerMachineMark';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { BrowserStatusBar } from './BrowserStatusBar';
 import { BrowserToolbar } from './BrowserToolbar';
+import { BrowserViewportPicker } from './BrowserViewportPicker';
 import { BrowserViewHost } from './BrowserViewHost';
 import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
+import type { BrowserOpenExternalAvailability } from '@/sync/domains/browser/actions/openExternal';
 import type { BrowserStreamedPageRect, BrowserStreamedSurfaceRuntime } from './adapters/BrowserStreamedTarget';
 import { BrowserPluginActionPlacements } from './BrowserPluginActionPlacements';
 import { BrowserShellPresence, type BrowserShellAgentPresence } from './copresence/BrowserShellPresence';
@@ -97,6 +103,7 @@ import { BrowserFirstUseConnecting } from './streamed/BrowserFirstUseConnecting'
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import {
     useSessionViewerBodyPresentation,
+    useSessionViewerFloatFromDock,
     type SessionViewerSourceNavigation,
 } from '@/components/sessions/viewer/SessionViewerController';
 import { type BrowserProfileStatusModel } from './profile/BrowserProfileStatus';
@@ -105,6 +112,7 @@ import { shouldSurfaceBrowserPrivacy } from './profile/browserPrivacyVisibility'
 import type { BrowserDiagnosticsEngineBridgeConfig } from './frame/types';
 import type { OpenBrowserViewTarget } from './surfaces/openBrowserTargetInWorkspace';
 import { useBrowserPreviewRecovery } from './useBrowserPreviewRecovery';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import {
     BrowserRecordingCapsule,
     resolveBrowserRecordingControl,
@@ -115,6 +123,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { usePaneHeaderSlotBinding, usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { getPreferredLanguage } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -251,6 +261,30 @@ function resolveActiveDiagnosticsBridge(input: Readonly<{
     return bridge;
 }
 
+/**
+ * R-3: why "Open in your browser" is greyed out, as a sentence like the menu's other reasons, in the
+ * words the Services and preview states already use (the full ended-card sentence is too long here).
+ */
+function describeOpenInYourBrowserRefusal(
+    refusal: Extract<BrowserOpenExternalAvailability, { enabled: false }>,
+): string {
+    switch (refusal.reasonCode) {
+        case 'service_stopped':
+            // The ended card's sentence when the Service is known by name ("Lumen web stopped.").
+            return refusal.serviceName
+                ? t('browserShell.unavailable.previewEndedServiceStopped', { service: refusal.serviceName })
+                : t('localServices.actions.failure.serviceNotRunning', { servicesActionOffered: true });
+        case 'service_failed':
+            return t('localServices.actions.failure.startFailed');
+        case 'preview_ended':
+            return t('browserShell.unavailable.previewEndedTitle');
+        default:
+            return resolveReasonCopy({ kind: 'browserFrame', reasonCode: refusal.reasonCode }).body;
+    }
+}
+
+const pageCoveredByApp = () => true;
+
 export function BrowserShell(props: Readonly<{
     browserSessionId: string;
     /**
@@ -267,9 +301,9 @@ export function BrowserShell(props: Readonly<{
     /** Allow the managed browser's sandbox on the Session's Machine; null when the person declined. */
     onAllowBrowserSandbox?: () => Promise<BrowserSandboxInstallOutcome | null>;
     onOpenInSystemBrowser?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
-    onOpenDevtools?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
     /** Opens the sign-in import for the managed profile in view; absent where the host has no Machine for it. */
     onImportLogins?: (view: Readonly<{ browserSessionId: string; viewId: string; profileId: string; profileName: string | null }>) => void;
+    onOpenDevtools?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
     /**
      * B-2 cause-2: a sink the in-app render engines call to feed their page-load lifecycle
      * (iframe `onLoad`/`onError`, RN `onLoadStart`/`onLoadEnd`/`onError`, desktop `publishPageInfo`)
@@ -285,11 +319,17 @@ export function BrowserShell(props: Readonly<{
     onRefreshLaunchpad?: () => void;
     onOpenTarget?: OpenBrowserViewTarget;
     /**
+     * A phone page with no tab strip (lab Qp): the strip's + and × move into the page's ⋯, and the
+     * page's own Close tab closes this tab rather than only its view.
+     */
+    onOpenNewTab?: () => void;
+    onCloseTab?: () => void;
+    /**
      * OWNER-NAV (DV-NAV): navigate the CURRENT tab in place (the launchpad/new-tab URL entry uses
      * this). Distinct from `onOpenTarget`, which opens a NEW workspace tab and is reserved for
      * external surfaces (Services rows, session-header button).
      */
-    onNavigateInPlace?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onNavigateInPlace?: OpenBrowserViewTarget;
     /**
      * Lets the surface owner decide whether a typed address in an active view should replace the
      * view target (for example local-preview -> external URL) instead of issuing an in-target
@@ -306,6 +346,7 @@ export function BrowserShell(props: Readonly<{
     allowExternalUrlBrowsing?: boolean;
     localServicePreviewState?: LocalServicePreviewState | null;
     localServicePreviewServerId?: string | null;
+    openExternalAvailability?: BrowserOpenExternalAvailability;
     pluginUiProjection?: PluginUiProjectionModel | null;
     pluginUiInteractionEnabled?: boolean;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
@@ -333,11 +374,6 @@ export function BrowserShell(props: Readonly<{
      * automation: a daemon-owned view is the agent's browser even when in-app automation is off.
      */
     agent?: BrowserShellAgentPresence | null;
-    /**
-     * The Machine this browser runs on, when it is a Session's: the docked pane's bar says it once
-     * (the floating viewer's controls already do), the same mark the Computer pane's bar draws.
-     */
-    machine?: Readonly<{ name: string; online: boolean | null }> | null;
     browserRecording?: BrowserShellRecordingState | null;
     browserProfile?: BrowserShellProfileState | null;
     navigationEffect?: BrowserControlCommandEffect | null;
@@ -384,13 +420,10 @@ export function BrowserShell(props: Readonly<{
         ...(props.onPluginBrowserAction ? { onAction: props.onPluginBrowserAction } : {}),
     });
     const pluginLocale = getPreferredLanguage();
-    const localizePluginText = React.useMemo(
-        () => createPluginLocalizedTextResolver({
+    const localizePluginText = usePluginLocalizedTextResolver({
             projection: props.pluginUiProjection,
             locale: pluginLocale,
-        }),
-        [pluginLocale, props.pluginUiProjection],
-    );
+    });
     const showLaunchpad = !activeView;
     const streamedChrome = useBrowserStreamedChrome(props.streamedBrowserRuntime ?? null);
     const streamedFirstUse = streamedChrome?.firstUse;
@@ -517,10 +550,21 @@ export function BrowserShell(props: Readonly<{
         ? () => { void props.onOpenInSystemBrowser?.({ browserSessionId: activeView.browserSessionId, viewId: activeView.viewId }); }
         : null), [openableUrl, activeView?.browserSessionId, activeView?.viewId, props.onOpenInSystemBrowser]);
 
+    const [toolbarOverflowOpen, setToolbarOverflowOpen] = React.useState(false);
+    // Lab Q: idle Diagnostics live in ⋯ at every width; the drawer appears only once opened from there.
     const diagnosticsDrawerRef = React.useRef<BrowserDiagnosticsDrawerHandle>(null);
     const openDiagnostics = React.useMemo(() => (activeDiagnostics || props.supplementalDiagnostics
         ? () => diagnosticsDrawerRef.current?.open()
         : null), [activeDiagnostics, props.supplementalDiagnostics]);
+    const closeView = React.useCallback(() => dispatchViewCommand('closeView'), [dispatchViewCommand]);
+    // Without a tab strip, Close tab closes the tab itself (its view goes with it, as with the strip's ×).
+    const closePage = props.onCloseTab ?? closeView;
+    // A Session viewer docked here floats again from the page menu (the Computer pane's same entry).
+    const inViewer = useSessionViewerBodyPresentation() === 'viewer';
+    // N4: under a pane header (the Session side pane) the page's tools fold into that header's one ⋯,
+    // so the band never carries two. A phone keeps its ⋯ in the bottom bar, where the thumb is.
+    const paneHeaderOwnsMenu = usePaneHeaderSlotBinding() !== null && chromeDensity.density !== 'phone' && !inViewer;
+    const onFloatView = useSessionViewerFloatFromDock('browser', !inViewer);
     // A managed profile the Machine runs can take imported sign-ins; an embedded or preview page cannot.
     const importProfileId = activeView && isDaemonAuthoritativeBrowserView(activeView) ? activeSession?.profileId ?? null : null;
     const onImportLogins = props.onImportLogins;
@@ -535,13 +579,20 @@ export function BrowserShell(props: Readonly<{
         onStartRecording: recordingModel?.onStartRecording ? startRecording : undefined,
         onDiscardRecording: recordingModel?.onCancelRecording ? discardRecording : undefined,
         onOpenInYourBrowser: openInYourBrowser,
+        openInYourBrowserDisabledReason: props.openExternalAvailability?.enabled === false
+            ? describeOpenInYourBrowserRefusal(props.openExternalAvailability)
+            : null,
         onOpenDiagnostics: openDiagnostics,
+        onOpenNewTab: props.onOpenNewTab,
+        onCloseTab: props.onCloseTab,
+        onFloatView,
         onImportLogins: importLogins,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools: openDesktopDevtools,
         plugins,
         pluginActionsEnabled: Boolean(props.onPluginBrowserAction),
-        localizePluginText,
+        // The header's menu lists its rows whenever it is drawn; the toolbar's only while it is open.
+        localizePluginText: toolbarOverflowOpen || paneHeaderOwnsMenu ? localizePluginText : undefined,
     });
     // While the agent drives its own (daemon) browser the page is moving under it: the page tools
     // step out of the chrome until the person has the page (lab `browser` A/H). The controller is the
@@ -585,13 +636,11 @@ export function BrowserShell(props: Readonly<{
 
     // The Session viewer presents the page itself (lab `b-watch`): no browser chrome around the
     // picture. Its Back, Forward and Reload move to the viewer's menu; the pane keeps the full shell.
-    const inViewer = useSessionViewerBodyPresentation() === 'viewer';
     const viewerNavigation = React.useMemo<SessionViewerSourceNavigation | null>(() => (inViewer ? {
         back: toolbar.canGoBack ? () => dispatchViewCommand('goBack') : null,
         forward: toolbar.canGoForward ? () => dispatchViewCommand('goForward') : null,
         reload: toolbar.canReload ? () => dispatchViewCommand('reload') : null,
     } : null), [dispatchViewCommand, inViewer, toolbar.canGoBack, toolbar.canGoForward, toolbar.canReload]);
-    const closePage = React.useCallback(() => dispatchViewCommand('closeView'), [dispatchViewCommand]);
     const frameRecovery = useBrowserPreviewRecovery({
         activeView,
         launchpadRows,
@@ -617,7 +666,8 @@ export function BrowserShell(props: Readonly<{
     // page there (lab W): it brings its own address entry, so no browser chrome surrounds it.
     const phone = chromeDensity.density === 'phone';
     const showPhoneChrome = phone && (!showLaunchpad || firstUseConnecting !== null) && !inViewer;
-    const controlMetrics = resolveBrowserChromeControlMetrics(chromeDensity.density);
+    const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
+    const controlMetrics = resolveBrowserChromeControlMetrics(chromeDensity.density, { touch: touchPrimaryPointer });
     const addressField = (
         <BrowserUrlField
             testID={`${testID}-address`}
@@ -626,7 +676,7 @@ export function BrowserShell(props: Readonly<{
             trailingAction={phone ? 'none' : 'copy'}
             formatWhileBlurred
             displayHost={selectBrowserViewDisplayHost(activeView)}
-            value={activeView?.pendingUrl ?? activeView?.currentUrl
+            value={selectBrowserViewAddress(activeView)
                 ?? (firstUseConnecting ? streamedChrome?.firstUseTargetUrl : undefined) ?? ''}
             disabled={activeView ? !toolbar.canNavigate : !props.onNavigateInPlace}
             onEditStart={onAddressEdit}
@@ -662,12 +712,11 @@ export function BrowserShell(props: Readonly<{
             disabled={markUpDisabledReason !== null}
             disabledReason={markUpDisabledReason ?? undefined}
             size={controlMetrics.size}
-            minimumInteractiveTargetSize={controlMetrics.touchTargetFloorPx ?? undefined}
-            interactiveTargetGapPx={4}
+            interactiveTargetGapPx={phone ? undefined : 4}
             onPress={toggleMarkUp}
         />
     ) : null;
-    const attachPageButton = browserContextPresent ? (
+    const attachPageButton = browserContextPresent && pageShown ? (
         chromeDensity.collapsed ? (
             <IconButton
                 testID={`${testID}-attach-page`}
@@ -679,8 +728,7 @@ export function BrowserShell(props: Readonly<{
                 disabled={annotation.contextButtonDisabled}
                 disabledReason={annotation.contextDisabledReason ?? undefined}
                 size={controlMetrics.size}
-                minimumInteractiveTargetSize={controlMetrics.touchTargetFloorPx ?? undefined}
-                interactiveTargetGapPx={4}
+                interactiveTargetGapPx={phone ? undefined : 4}
                 onPress={annotation.attachPageReference}
             />
         ) : (
@@ -702,16 +750,33 @@ export function BrowserShell(props: Readonly<{
             model={props.browserProfile}
         />
     ) : null;
-    const overflowMenu = (
+    const overflowMenu = paneHeaderOwnsMenu ? <BrowserPaneHeaderMenuPublisher items={overflowItems} /> : (
         <BrowserToolbarOverflowMenu
             testID={`${testID}-overflow`}
             items={overflowItems}
+            onOpenChange={setToolbarOverflowOpen}
             size={controlMetrics.size}
             iconSize={controlMetrics.iconSize}
-            touchTargetFloorPx={controlMetrics.touchTargetFloorPx}
+            spread={phone}
             placement={phone ? 'top' : 'bottom'}
         />
     );
+    const viewportPicker = activeView && isDaemonAuthoritativeBrowserView(activeView) ? (
+        <BrowserViewportPicker
+            testID={`${testID}-viewport`}
+            emulation={streamedChrome?.viewport?.emulation ?? { kind: 'fitViewer' }}
+            size={controlMetrics.size}
+            iconSize={controlMetrics.iconSize}
+            spread={phone}
+            onSelect={(emulation) => props.onCommand({
+                kind: 'setViewport',
+                commandId: createCommandId('setViewport', activeView.viewId),
+                browserSessionId: activeView.browserSessionId,
+                viewId: activeView.viewId,
+                emulation,
+            })}
+        />
+    ) : null;
     const navigationControls = (
         <BrowserToolbar
             testID={testID}
@@ -719,18 +784,20 @@ export function BrowserShell(props: Readonly<{
             shortcutLabels={browserShortcutLabels}
             controlSize={controlMetrics.size}
             iconSize={controlMetrics.iconSize}
-            touchTargetFloorPx={controlMetrics.touchTargetFloorPx}
             spread={phone}
             onBack={() => dispatchViewCommand('goBack')}
             onForward={() => dispatchViewCommand('goForward')}
             onReload={() => dispatchViewCommand('reload')}
             onStop={() => dispatchViewCommand('stop')}
         >
-            {phone ? <>{markUpButton}{attachPageButton}{overflowMenu}</> : null}
+            {phone ? <>{markUpButton}{attachPageButton}{viewportPicker}{overflowMenu}</> : null}
         </BrowserToolbar>
     );
 
+    // The retained Browser body mounts outside the details workspace, so it takes its state step here:
+    // the page's states (Ended, Can't reach, Start failed) read at the pane's measure, as the lab draws them.
     return (
+        <SurfaceStateSizeProvider size={phone ? 'phone' : 'details'}>
         <View testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
             {annotatorSession ? <BrowserAnnotatorMount session={annotatorSession} onAnnotator={setAnnotator} /> : null}
             {annotating ? (
@@ -754,9 +821,7 @@ export function BrowserShell(props: Readonly<{
                     {markUpButton}
                     {attachPageButton}
                     {privacyControl}
-                    {props.machine ? (
-                        <SessionViewerMachineMark name={props.machine.name} online={props.machine.online} testID={`${testID}-machine`} />
-                    ) : null}
+                    {viewportPicker}
                     {overflowMenu}
                 </View>
             )}
@@ -775,6 +840,8 @@ export function BrowserShell(props: Readonly<{
                     />
                 ) : showLaunchpad ? (
                     <BrowserLaunchpad
+                        previewAccountLifetime={previewController.accountLifetime}
+                        previewCredentialKey={previewController.credentialKey}
                         testID={`${testID}-launchpad`}
                         rows={launchpadRows}
                         platform={props.platform}
@@ -839,6 +906,7 @@ export function BrowserShell(props: Readonly<{
                         onCheckAgain={props.onCheckAgain}
                         agent={props.agent ?? null}
                         pageRect={streamedPageRect}
+                        viewerControlling={streamedChrome?.viewerControlling ?? null}
                         compact={chromeDensity.collapsed}
                         nowMs={props.browserAutomation?.nowMs ?? props.nowMs}
                     />
@@ -849,7 +917,7 @@ export function BrowserShell(props: Readonly<{
                     detailsPanelActions={plugins.detailsPanelActions}
                     contextMenuActions={plugins.contextMenuActions}
                     policyContext={plugins.policyContext}
-                    localizePluginText={localizePluginText}
+                    pluginUiProjection={props.pluginUiProjection}
                     onAction={plugins.invokeAction}
                     testID={`${testID}-plugin-action`}
                 />
@@ -891,5 +959,23 @@ export function BrowserShell(props: Readonly<{
                 </View>
             ) : null}
         </View>
+        </SurfaceStateSizeProvider>
     );
+}
+
+/** The page's tools as the pane header's ⋯ rows: the same items, labels, reasons and order the toolbar's ⋯ had. */
+function BrowserPaneHeaderMenuPublisher(props: Readonly<{ items: readonly BrowserToolbarOverflowItem[] }>): null {
+    const { items } = props;
+    usePaneHeaderSlotContent(React.useMemo(() => ({
+        menuActions: items.map((item): ItemAction => ({
+            id: item.id,
+            title: item.label,
+            subtitle: item.disabled ? item.disabledReason ?? undefined : undefined,
+            icon: item.iconName,
+            onPress: item.disabled ? undefined : item.onPress,
+            disabled: item.disabled,
+            destructive: item.destructive,
+        })),
+    }), [items]));
+    return null;
 }

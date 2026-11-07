@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
@@ -13,9 +13,11 @@ import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/naviga
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
+import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
+import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -77,9 +79,13 @@ const styles = StyleSheet.create((theme) => ({
 
 export type CockpitTabBadge =
     | Readonly<{ kind: 'count'; value: number }>
+    /** Something new behind this tab (the main bar's Inbox and Sessions dots). */
+    | Readonly<{ kind: 'dot' }>
     /** Something on this surface is waiting for the person (the Companion's amber dot). */
     | Readonly<{ kind: 'attention' }>
-    | Readonly<{ kind: 'diff'; added: number; removed: number; changedFileCount: number }>;
+    | Readonly<{ kind: 'diff'; added: number; removed: number; changedFileCount: number }>
+    /** A tab's own short status count ("2", "17", "1.8K"); its full words travel in the accessible name. */
+    | Readonly<{ kind: 'text'; value: string }>;
 
 export type CockpitTabBarTabDefinition<TSurface extends string> = Readonly<{
     id: TSurface;
@@ -107,10 +113,14 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
     trailing?: React.ReactNode;
     /**
      * `scroll` when the tabs do not fit the capsule: the first tab stays fixed and the rest (with
-     * `trailing`) scroll sideways under an edge fade. The bar decides this from its width
-     * (`resolveFloatingTabBarSlotCount`); `fit` (the default) renders one row.
+     * `trailing`) scroll sideways under an edge fade. The bar's presentation decides this from its width
+     * (`resolveDetailPhoneBarFit`, the main bar's own slot count); `fit` (the default) renders one row.
      */
     layout?: 'fit' | 'scroll';
+    /** A sibling capsule beside the bar, never a tab (the main bar's "+"; see `FloatingTabBarSurface`). */
+    trailingAccessory?: React.ReactNode;
+    /** The detail bars' opaque band; the main bar floats over the page without one. */
+    opaqueBand?: boolean;
     /**
      * Actions that belong to the BAND rather than to any one tab — today, the lateral
      * session swipe's non-gesture equivalent.
@@ -126,10 +136,19 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
     onBandAccessibilityAction?: (actionName: string) => void;
 }>;
 
-export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface>) {
+/** The live bar: every phone bar renders through it, and it publishes whether it owns the horizontal axis. */
+export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface> & Readonly<{
+    /** The main bar sizes its fitting icons to the room its "+" leaves. */
+    metrics?: TabBarMetrics;
+}>) {
     const insets = useChromeSafeAreaInsets();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
-    return <CockpitTabBarView {...props} bottomInset={insets.bottom} metrics={metrics} />;
+    const settingsMetrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    usePublishCockpitBarScrolls(cockpitTabBarScrolls(props));
+    return <CockpitTabBarView {...props} bottomInset={insets.bottom} metrics={props.metrics ?? settingsMetrics} />;
+}
+
+function cockpitTabBarScrolls(props: Pick<CockpitTabBarProps<string>, 'layout' | 'tabs'>): boolean {
+    return props.layout === 'scroll' && props.tabs.length > 1;
 }
 
 /** Shared controls with captured chrome inputs, including static placement previews. */
@@ -173,7 +192,8 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     )}
                     {renderTabBadge(tab.badge, `${props.tabTestIdPrefix}${tab.id}-badge`)}
                 </View>
-                {metrics.showLabels ? (
+                {/* Owner 11-06: the selected tab always names itself, even with labels off. */}
+                {metrics.showLabels || active ? (
                     <Text style={[styles.label, active ? styles.labelActive : styles.labelInactive]}>
                         {tab.label}
                     </Text>
@@ -181,10 +201,11 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
             </HappierPressable>
         );
     };
-    const scrolls = props.layout === 'scroll' && props.tabs.length > 1;
+    const scrolls = cockpitTabBarScrolls(props);
 
     return (
-        <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand>
+        <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand={props.opaqueBand ?? true}
+            trailingAccessory={props.trailingAccessory}>
             <Animated.View accessibilityRole="tablist" style={[styles.innerContainer, { gap: metrics.rowGap }]}>
                 {scrolls ? (
                     <>
@@ -206,27 +227,45 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
     );
 }
 
+/** The track's edge fade: its own items fade out, so none reads as cut off at the bar's end. */
+const TRACK_EDGE_FADE = { fadeSize: 16 } as const;
+
 /**
  * The scrolling part of an overflowing bar. Gesture-handler's ScrollView so it takes part in
  * arbitration with the band's pan, which stays off the horizontal axis while the bar scrolls
- * (`publishCockpitBarScrolls`). The fades say "more this way" only while there is more.
+ * (`usePublishCockpitBarScrolls`). The fades say "more this way" only while there is more. They mask
+ * the track's own pixels (CSS mask on web, `HorizontalScrollEdgeMask` natively): a painted fade has no
+ * colour to paint over the bar's glass, and the last item read as hidden under the "+" beside it.
  */
 function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode }>) {
-    const { theme } = useUnistyles();
     const fades = useScrollEdgeFades({ enabledEdges: { left: true, right: true }, overflowThreshold: 4, edgeThreshold: 2 });
+    const [nativeWidth, setNativeWidth] = React.useState(0);
+    const edges = React.useMemo(() => ({ top: false, bottom: false, left: fades.visibility.left, right: fades.visibility.right }),
+        [fades.visibility.left, fades.visibility.right]);
+    const webMask = React.useMemo(() => Platform.OS === 'web' ? resolveHorizontalScrollEdgeMaskStyle(edges, TRACK_EDGE_FADE) : undefined, [edges]);
+    const nativeRamps = React.useMemo(() => Platform.OS === 'web' ? null : resolveHorizontalScrollEdgeMaskRamps(edges, TRACK_EDGE_FADE), [edges]);
+    const onViewportLayout = (event: LayoutChangeEvent) => {
+        fades.onViewportLayout(event);
+        if (Platform.OS !== 'web') setNativeWidth(event.nativeEvent.layout.width);
+    };
+    const track = (
+        <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={webMask ?? undefined}
+            contentContainerStyle={styles.trackContent}
+            onContentSizeChange={fades.onContentSizeChange}
+            onScroll={fades.onScroll}
+            scrollEventThrottle={32}
+        >
+            {props.children}
+        </ScrollView>
+    );
     return (
-        <View style={styles.track} onLayout={fades.onViewportLayout}>
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.trackContent}
-                onContentSizeChange={fades.onContentSizeChange}
-                onScroll={fades.onScroll}
-                scrollEventThrottle={32}
-            >
-                {props.children}
-            </ScrollView>
-            <ScrollEdgeFades color={theme.colors.surface.base} size={16} edges={fades.visibility} />
+        <View style={styles.track} onLayout={onViewportLayout}>
+            {Platform.OS !== 'web' && fades.canScrollX
+                ? <HorizontalScrollEdgeMask ramps={nativeRamps} width={nativeWidth}>{track}</HorizontalScrollEdgeMask>
+                : track}
         </View>
     );
 }
@@ -290,6 +329,12 @@ function renderTabBadge(badge: CockpitTabBadge | undefined, testID: string): Rea
     }
     if (badge.kind === 'count') {
         return <TabBadge variant="count" value={badge.value} tone="neutral" testID={testID} />;
+    }
+    if (badge.kind === 'dot') {
+        return <TabBadge variant="dot" testID={testID} />;
+    }
+    if (badge.kind === 'text') {
+        return <TabBadge variant="count" value={0} text={badge.value} tone="neutral" testID={testID} />;
     }
     if (badge.kind === 'attention') {
         return <TabBadge variant="dot" tone="attention" testID={testID} />;

@@ -51,6 +51,12 @@ export type PaneHeaderSlotContent = Readonly<{
     line?: PaneHeaderLine | null;
     action?: React.ReactNode;
     menuActions?: readonly ItemAction[];
+    /**
+     * The tab's body is a full page with its own chrome right now (an open Browser page, lab Qp): a
+     * phone screen's large header steps aside so the page starts under the Session header. Pane
+     * headers that also carry the pane's own tabs (the desktop sidebar) keep drawing.
+     */
+    immersive?: boolean;
 }>;
 
 type PaneHeaderSlotStore = Readonly<{
@@ -77,7 +83,8 @@ function sameLine(left: PaneHeaderLine | null | undefined, right: PaneHeaderLine
 function sameContent(left: PaneHeaderSlotContent | null, right: PaneHeaderSlotContent | null): boolean {
     if (left === right) return true;
     if (!left || !right) return false;
-    return left.action === right.action && left.menuActions === right.menuActions && sameLine(left.line, right.line);
+    return left.action === right.action && left.menuActions === right.menuActions && left.immersive === right.immersive
+        && sameLine(left.line, right.line);
 }
 
 function createPaneHeaderSlotStore(): PaneHeaderSlotStore {
@@ -131,6 +138,25 @@ export function PaneHeaderSlotScope(props: Readonly<{ slotKey: string; children:
     return <PaneHeaderSlotKeyContext.Provider value={props.slotKey}>
         <PaneHeaderScrollKey scrollKey={props.slotKey}>{props.children}</PaneHeaderScrollKey>
     </PaneHeaderSlotKeyContext.Provider>;
+}
+
+/** The header slot a tab body sits in, captured so a body mounted elsewhere (a retained viewer source) keeps it. */
+export type PaneHeaderSlotHandle = Readonly<{ store: PaneHeaderSlotStore; slotKey: string }> | null;
+
+export function usePaneHeaderSlotHandle(): PaneHeaderSlotHandle {
+    const store = React.useContext(PaneHeaderSlotStoreContext);
+    const slotKey = React.useContext(PaneHeaderSlotKeyContext);
+    return React.useMemo(() => (store && slotKey !== null ? { store, slotKey } : null), [slotKey, store]);
+}
+
+/**
+ * Re-provides a captured slot to a body rendered outside its pane's tree (no scroll channel: the body keeps
+ * its own). A null handle keeps the same element tree, so a presentation switch never remounts the body.
+ */
+export function PaneHeaderSlotHandleProvider(props: Readonly<{ handle: PaneHeaderSlotHandle; children: React.ReactNode }>) {
+    return <PaneHeaderSlotStoreContext.Provider value={props.handle?.store ?? null}>
+        <PaneHeaderSlotKeyContext.Provider value={props.handle?.slotKey ?? null}>{props.children}</PaneHeaderSlotKeyContext.Provider>
+    </PaneHeaderSlotStoreContext.Provider>;
 }
 
 /**

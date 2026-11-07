@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -21,7 +22,9 @@ import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutInt
 import { buildSessionListCollapseContextKey } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { resolveSessionsListEmptyStateKind } from './resolveSessionsListEmptyStateKind';
 import { SessionListSkeletonRows } from './SessionListSkeletonRows';
+import { PhoneTabNavRowLine, usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { HomeHub } from '@/components/hub/HomeHub';
 import {
     normalizeSessionListSurfaceOwnership,
     type SessionListSurfaceOwnership,
@@ -34,14 +37,12 @@ import {
     type RetainedSessionListPaneState,
     updateRetainedSessionListPaneSurfaceRoutePathname,
 } from './sessionListPaneRetention';
-import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import {
     useSessionListViewFilterController,
     type SessionListViewFilterController,
 } from './search/useSessionListViewFilterController';
 
 type SessionsListPaneContentProps = Readonly<{
-    storageKind: SessionListStorageFilter;
     fallbackGuidanceVariant: SessionGettingStartedGuidanceVariant;
     pathname?: string;
     surfaceRoutePathname?: string;
@@ -75,12 +76,14 @@ const EMPTY_SESSIONS_LIST_PANE_STATE: VisibleSessionListPaneState = {
     },
     visibleSessionListIndex: null,
     hasHiddenInactiveSessions: false,
+
     folderFeatureEnabledServerIds: [],
     showLoading: true,
     showEmptyState: false,
 };
 
 type SessionsListPaneContentViewProps = SessionsListPaneContentProps & Readonly<{
+    storageKind: SessionListStorageFilter;
     sessionListPaneState: VisibleSessionListPaneState;
     surfaceOwnership: SessionListSurfaceOwnership;
     filterController: SessionListViewFilterController;
@@ -105,6 +108,7 @@ function getRetainablePaneState(
 }
 
 function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentProps & Readonly<{
+    storageKind: SessionListStorageFilter;
     retainedPathname?: string | null;
     retainedVisibleSessionListIndex?: VisibleSessionListPaneState['visibleSessionListIndex'];
     surfaceOwnership: SessionListSurfaceOwnership;
@@ -141,17 +145,35 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
     );
 }
 
+/**
+ * While the list is loading or empty its header is not drawn, but the phone tab shell's line it carries
+ * (the Home line and the shell glyphs) stays where that header puts it.
+ */
+function PhoneTabNavRowWithoutList() {
+    return <PhoneTabNavRowLine testID="session-list-phone-nav-row" />;
+}
+
 function SessionsListPaneEmptyState(props: Pick<SessionsListPaneContentViewProps, 'fallbackGuidanceVariant' | 'sessionListPaneState' | 'storageKind'>) {
     const gettingStarted = useSessionGettingStartedGuidanceBaseModel();
+    const phoneTabShell = usePhoneTabNavRow() !== null;
     const styles = stylesheet;
+
+    // One first run on every device (owner 2026-11-04): with no machine yet the phone's Sessions tab is the
+    // same Home the desktop main pane shows, with its Get set up first step; Home draws the tab shell's line.
+    if (phoneTabShell && props.storageKind !== 'direct' && gettingStarted.kind === 'connect_machine') {
+        return <View style={styles.emptyStateContainer}><HomeHub /></View>;
+    }
 
     if (props.storageKind === 'persisted' && props.sessionListPaneState.hasHiddenInactiveSessions) {
         return (
-            <View style={styles.emptyStateContainer}>
-                <View style={styles.emptyStateContentContainer}>
-                    <HiddenInactiveSessionsEmptyState />
+            <>
+                <PhoneTabNavRowWithoutList />
+                <View style={styles.emptyStateContainer}>
+                    <View style={styles.emptyStateContentContainer}>
+                        <HiddenInactiveSessionsEmptyState />
+                    </View>
                 </View>
-            </View>
+            </>
         );
     }
 
@@ -169,11 +191,14 @@ function SessionsListPaneEmptyState(props: Pick<SessionsListPaneContentViewProps
             : <SessionGettingStartedGuidance variant={props.fallbackGuidanceVariant} />;
 
     return (
-        <View style={styles.emptyStateContainer}>
-            <View style={styles.emptyStateContentContainer}>
-                {content}
+        <>
+            <PhoneTabNavRowWithoutList />
+            <View style={styles.emptyStateContainer}>
+                <View style={styles.emptyStateContentContainer}>
+                    {content}
+                </View>
             </View>
-        </View>
+        </>
     );
 }
 
@@ -188,21 +213,26 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
 
     if (props.sessionListPaneState.showLoading) {
         return (
+            <>
+            <PhoneTabNavRowWithoutList />
             <View style={styles.loadingContainerWrapper}>
                 <HomeReachabilityGate variant="line">
                     <SessionListSkeletonRows />
                 </HomeReachabilityGate>
             </View>
+            </>
         );
     }
 
     if (props.sessionListPaneState.showEmptyState) {
         return (
-            <SessionsListPaneEmptyState
-                fallbackGuidanceVariant={props.fallbackGuidanceVariant}
-                sessionListPaneState={props.sessionListPaneState}
-                storageKind={props.storageKind}
-            />
+            <>
+                <SessionsListPaneEmptyState
+                    fallbackGuidanceVariant={props.fallbackGuidanceVariant}
+                    sessionListPaneState={props.sessionListPaneState}
+                    storageKind={props.storageKind}
+                />
+            </>
         );
     }
 

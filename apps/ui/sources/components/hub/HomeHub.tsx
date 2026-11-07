@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useAtmosphereBackdrop } from '@/components/atmosphere/atmosphereBackdrop';
 import { useWindowDimensions, View, type ScrollView } from 'react-native';
 
 import { HomeWhereLine } from '@/components/homes/journeys/label/HomeWhereLine';
@@ -7,10 +8,14 @@ import { useRowActionHoverHost } from '@/components/sessions/transcript/messageA
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
+import { isSessionGettingStartedGuidanceHome } from '@/components/sessions/guidance/gettingStartedModel';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { GlassEnvironmentHold } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { HomeHubFrame } from './HomeHubFrame';
+import { PhoneTabNavRowLine, usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import { useWidgetFrameStyle } from '@/components/widgets/frame/useWidgetFrameStyle';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -18,6 +23,7 @@ import { createNearViewportTracker, type NearViewportTracker } from '@/component
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
+import { useWidgetInstanceNetworkEditor } from '@/components/widgets/surface/useWidgetInstanceNetworkEditor';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { runWidgetSetupCommand, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetSizeChoicesV1, type WidgetInputBindingsV1, type WidgetLayoutGroupV1, type WidgetLayoutItemV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
@@ -32,7 +38,6 @@ import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useW
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetCardPointerDestination, resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget, widgetLayoutEndDropTarget, widgetLayoutSiblingIds } from '@/components/widgets/group/widgetGroupDropTarget';
-import { HomeHubFrame } from './HomeHubFrame';
 import { HomeWidgetAddPopover } from '@/components/widgets/add/HomeWidgetAddPopover';
 import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMenu';
@@ -50,8 +55,10 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList } from './HomeHubSectionList';
+import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
+import type { HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubWidgetSection } from './HubWidgetSection';
+import { HomeBotFaces } from './HomeBotFaces';
 import type { HomeHubSection } from './layout/homeHubLayout';
 import { HubSectionMenu } from './layout/HubSectionMenu';
 import { useHomeHubLayout, type HomeHubLayout } from './layout/useHomeHubLayout';
@@ -65,8 +72,9 @@ import { widgetEntitySourceRef, widgetMovementRefused } from '@/sync/ops/actions
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
-import { useAtmospherePictureShown, useAtmosphereSending } from '@/components/atmosphere/atmosphereStage';
+import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
 import { HomePlanet, homePlanetFootFade, useHomePlanetOptions } from '@/components/atmosphere/HomePlanet';
+import { HomeBotMoons } from './HomeBotMoons';
 import { homePlanetDrawnHeight, homePlanetGeometry, type HomePane } from '@/components/atmosphere/homePlanetPlacement';
 import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadingMoment';
 import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
@@ -77,6 +85,7 @@ import { AtmosphereTopChips } from '@/components/atmosphere/AtmosphereCreditChip
 import { isAtmosphereMomentOn } from '@/components/atmosphere/atmosphereMoments';
 import { HomeIdleResettle } from '@/components/atmosphere/HomeIdleResettle';
 import { HomeHero, useHomeHeroFrame } from './HomeHero';
+import { HomeCompletedBots } from './HomeCompletedBots';
 import { LookChip, type LookTarget } from '@/components/atmosphere/look/LookChip';
 import { subscribeHomeCustomizeRequest } from './header/homeCustomizeRequest';
 import { AddNameSetupBlock } from '@/components/account/useAddNameSetupItem';
@@ -102,7 +111,7 @@ type SlotProps = Readonly<{
     topLevelIds: readonly string[];
     onCustomize: () => void;
     placeholder: string;
-    composerSuggestions: 'tiles' | 'links' | 'pills';
+    composerSuggestions: HubComposerSuggestionsPresentation;
     tracker: NearViewportTracker;
     homeSurface: WidgetSurfaceRefV1 | null;
     widgetDrag: Pick<SessionSurfaceEntityBinding, 'scope' | 'isCurrent' | 'admitWidgetMovement'> | null;
@@ -128,6 +137,8 @@ type HubGroupChildPlacement = Readonly<{ group: HubGroupSection; index: number; 
 const HubSectionSlot = React.memo(function HubSectionSlot(props: SlotProps & Readonly<{
     section: HomeHubSection<WidgetCandidate>;
     ownsRow?: boolean;
+    inRowOfThree?: boolean;
+    leads?: boolean;
 }>) {
     const section = props.section;
     if (section.kind === 'widget') return <HubWidgetSlot {...props} section={section} />;
@@ -266,12 +277,16 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
     parent?: HubGroupChildPlacement;
     /** Alone in its row: the card presents at its full-row size. */
     ownsRow?: boolean;
+    /** In the row of three smalls: the card presents at its column's regular height. */
+    inRowOfThree?: boolean;
+    /** Leads Home's cards on its own row (no machine yet, 58d AF1). */
+    leads?: boolean;
 }>) {
     const hover = useRowActionHoverHost();
     const frameStyle = useWidgetFrameStyle('home', props.section.frameStyle);
     const testID = `home-hub.section.${props.section.id}`;
     const { instance, widget } = props.section;
-    const { setInputs, rename } = props.layout;
+    const { setInputs, rename, setNetwork } = props.layout;
     const account = useActiveServerAccountScope();
     const scope = React.useMemo<WidgetSurfaceRefV1 | null>(() => (
         account ? { serverId: account.serverId, accountId: account.accountId, owner: { kind: 'home' } } : null
@@ -294,6 +309,9 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
         surface: 'home', sizes: resolveWidgetSizeChoicesV1('home', widget?.sizeDeclaration).sizes }) : undefined;
     const inGroup = parent ? { index: parent.index, count: parent.group.children.length,
         onMove: (delta: -1 | 1) => props.groupOperations.move(instance.id, parent.index + delta, parent.group.id) } : undefined;
+    // An HTML copy's guest frame reaches only what its network choice allows (the Board's panel).
+    const network = useWidgetInstanceNetworkEditor({ instance, candidate: widget, scope, anchorRef: edit.anchorRef, testID,
+        setNetwork: value => runWidgetSetupCommand(() => setNetwork(instance.id, value), t('sessionBoard.item.network.failed')) });
     // About this widget (lab dagent G2) for a copy of one of the Account's own widgets.
     const definition = useWidgetDefinitionFlows({ instance, scope, providedContext: widgetProvidedContext(context), anchorRef: edit.anchorRef, editInputs: edit.editInputs, testID });
     // Rename stays optional (lab dbind N1): an empty name, or the widget's own, goes back to it.
@@ -317,6 +335,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
             anchorRef={edit.anchorRef}
             {...(edit.editInputs ? { editInputs: edit.editInputs } : {})}
             {...(renaming.begin ? { onRename: renaming.begin } : {})}
+            {...(network.onNetwork ? { onNetwork: network.onNetwork } : {})}
             {...(definition.about ? { onAbout: definition.about } : {})}
             {...(definition.addTo ? { onAddTo: definition.addTo } : {})}
             {...(inGroup ? { inGroup } : {})}
@@ -332,6 +351,8 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
                 instance={props.section.instance}
                 size={props.section.size}
                 ownsRow={props.ownsRow === true}
+                inRowOfThree={props.inRowOfThree === true}
+                leads={props.leads === true}
                 menu={menu}
                 frameStyle={frameStyle}
                 tracker={props.tracker}
@@ -356,6 +377,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
             />
             {edit.popover}
             {definition.panel}
+            {network.panel}
         </>
     );
 }
@@ -396,9 +418,9 @@ function HomeNewRowTarget(props: Readonly<{
 /**
  * The app home (the main pane when no session is open, and the page the phone's logo opens): a
  * greeting with one line about the present and Customize, then the Account's sections in its
- * chosen order. It composes the hub section owners the Settings Overview also uses. Before a machine
- * can run a session (none yet, or none running), and while that is not known yet, the
- * getting-started guidance is the home instead.
+ * chosen order. It composes the hub section owners the Settings Overview also uses. While none of the
+ * Home's machines is running, the getting-started guidance is the home instead; with no machine yet,
+ * Home itself shows and its Machines and Capacity widgets carry the first steps (58d AF1).
  */
 export const HomeHub = React.memo(function HomeHub() {
     const presented = useLayoutPresentationActive();
@@ -420,6 +442,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // Brief me (lab voice-moments B0/B1): the greeting turns into the brief, in place, while open.
     const [briefOpen, setBriefOpen] = React.useState(false);
     const phone = !useIsTablet();
+    // Home as the phone's Sessions tab on a first run draws the tab shell's line itself.
+    const phoneTabShell = usePhoneTabNavRow() !== null;
     const listRef = React.useRef<ScrollView>(null);
     const contentRef = React.useRef<View>(null);
     // A section's "⋯ → Customize" opens the header's popover; bring the header into view first so
@@ -439,11 +463,21 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         readContentNode: () => contentRef.current ?? listRef.current?.getInnerViewNode(),
     }));
     React.useEffect(() => { tracker.invalidateLayout(); }, [tracker, layout.sections]);
+    // The visible window itself (no prebuild overscan), for the Bot moons: scrolled out, they stop.
+    const [visibleWindow] = React.useState(() => createNearViewportTracker({
+        quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
+        initialViewportHeight,
+        overscan: false,
+    }));
     const accountScope = useActiveServerAccountScope();
     const focused = useIsFocused();
+    const presented = useLayoutPresentationActive();
     const closeCustomize = React.useCallback(() => setCustomizeOpen(false), []);
-    useCurrentUiContextLocalCommands(focused && accountScope && guidance.kind !== 'loading'
-        && guidance.kind !== 'connect_machine' && guidance.kind !== 'start_daemon' ? [{
+    // The getting-started guidance is Home only while none of the Home's machines runs; with no machine
+    // yet, Home itself is shown and its widgets carry the first steps (58d AF1).
+    const guidanceIsHome = isSessionGettingStartedGuidanceHome(guidance.kind);
+    const hubShown = guidance.kind !== 'loading' && !guidanceIsHome;
+    useCurrentUiContextLocalCommands(focused && accountScope && hubShown ? [{
         key: `${accountScope.serverId}:${accountScope.accountId}:home-customize`,
         title: `${t(customizeOpen ? 'common.done' : 'homeIndex.customize')}: ${t('common.home')}`,
         invoke: customizeOpen ? closeCustomize : openCustomize,
@@ -452,8 +486,10 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const { theme } = useUnistyles();
     const atmosphere = useAtmosphere('home');
     const heroActive = atmosphere.source !== 'none';
-    const heroFrame = useHomeHeroFrame({ active: heroActive, focused, phone });
+    const backdrop = useAtmosphereBackdrop(atmosphere);
+    const heroFrame = useHomeHeroFrame({ active: heroActive, focused, phone, backdrop });
     const sending = useAtmosphereSending() && atmosphere.moments.send !== false;
+    const dissolving = useAtmosphereSendDissolving() && atmosphere.moments.send !== false;
     const pictureShown = useAtmospherePictureShown();
     // The planet stays drawn until a picture that replaces it is on screen, then hands over.
     const planetSource = atmosphere.source === 'planet';
@@ -472,7 +508,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         theme: homeTheme, phone, hero: heroFrame.hero };
     const planetOptions = useHomePlanetOptions(planetLook);
     const planetFade = homePlanetFootFade(planetLook);
-    const guidanceIsHome = guidance.kind === 'connect_machine' || guidance.kind === 'start_daemon';
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
     const momentTarget = React.useMemo(() => resolveHomeMomentTarget({
         guidanceKind: guidance.kind, heroActive, planetSource, options: planetOptions, fade: planetFade,
@@ -495,15 +530,16 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         loadingShown: loadingMoment.shown, reducedMotion: atmosphere.reducedMotion, writing: heroFrame.isWriting,
     });
     // Home's menus and its Add surface float inside this column, never over the sidebar or the title bar.
+    // Parked Home's glass sleeps through the backing of the tabs shown in its place.
     const framed = (content: React.ReactNode) => (
+        <GlassEnvironmentHold presented={presented} carriesAtmosphere={heroActive && heroFrame.hero !== null}>
             <HomeHubFrame focused={focused} style={styles.pane} onLayout={onHubLayout} loadingLayer={loadingMoment.layer}>
-                <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure} collapsable={false}>
-                    {content}
-                </View>
+                {content}
             </HomeHubFrame>
+        </GlassEnvironmentHold>
     );
     useVoiceBriefHomeRequest({
-        available: focused && guidance.kind !== 'loading' && guidance.kind !== 'connect_machine' && guidance.kind !== 'start_daemon',
+        available: focused && hubShown,
         onOpen: () => setBriefOpen(true),
     });
     const surface = React.useMemo(() => accountScope ? { ...accountScope, owner: { kind: 'home' as const } } : null, [accountScope]);
@@ -511,11 +547,10 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const groupOperations = useHomeWidgetGroupOperations(layout);
     const arrivals = useWidgetGroupMembershipArrivals(layout.items);
     const admitWidgetMovement = movement.admit;
-    const widgetDrag = React.useMemo(() => accountScope && focused && layout.status === 'ready' && guidance.kind !== 'loading'
-        && guidance.kind !== 'connect_machine' && guidance.kind !== 'start_daemon' ? {
+    const widgetDrag = React.useMemo(() => accountScope && focused && layout.status === 'ready' && hubShown ? {
             scope: accountScope, admitWidgetMovement,
             isCurrent: () => { const current = getActiveServerAccountScope(); return current?.serverId === accountScope.serverId && current.accountId === accountScope.accountId; },
-        } : null, [accountScope, focused, layout.status, guidance.kind, admitWidgetMovement]);
+        } : null, [accountScope, focused, layout.status, hubShown, admitWidgetMovement]);
     const homeDrop = useSessionSurfaceEntityDrag(widgetDrag && surface ? { ...widgetDrag, title: t('common.home'), getItem: () => null,
         target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget', 'widget-area-instance', 'widget-layout-group'],
             listDestinations: () => [{ destination: { index: 0 }, label: t('widgetFrame.moveIntoGroupNamed', { group: t('common.home') }), group: t('common.home') }],
@@ -558,9 +593,11 @@ const HomeHubContent = React.memo(function HomeHubContent() {
 
     // Under the atmosphere the composer's suggestions step back so it stays the one hero (quiet links over
     // Horizon, glass pills over a Wallpaper and Rise), wherever the composer sits; tiles only on the plain page.
+    // With no machine yet no suggestion could run, so the composer stands alone until the first one joins (58d AF1).
+    const firstRun = guidance.kind === 'connect_machine';
     const wallpaper = atmosphere.source === 'picture' && atmosphere.picture.layout === 'wallpaper';
-    const atmosphereSuggestions = wallpaper || (planetSource && placement === 'rise') ? 'pills' as const : 'links' as const;
-    const composerSuggestions = heroActive ? atmosphereSuggestions : 'tiles' as const;
+    const atmosphereSuggestions = firstRun ? 'none' as const : wallpaper || (planetSource && placement === 'rise') ? 'pills' as const : 'links' as const;
+    const composerSuggestions = heroActive || firstRun ? atmosphereSuggestions : 'tiles' as const;
     const slotProps = { layout, topLevelIds, onCustomize: openCustomize, placeholder: greeting.subtitle, composerSuggestions, tracker, widgetDrag,
         customizing: customizeOpen, showGrips: customizeOpen, groupOperations, movementSourceItem: movement.sourceItem, homeSurface: surface };
     // Only the acknowledged Account layout can place the composer in the hero.
@@ -584,24 +621,28 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     <ItemGroup surface="none"><HomeReachabilityGate variant="line">{null}</HomeReachabilityGate></ItemGroup>
                 </HomeHubReadingColumn>
             ) : null}
+            {/* Phone (owner 11-06): the Bots' faces, a tap from their conversations; off in Appearance › Home. */}
+            {phone ? <HomeBotFaces visible={focused && presented} /> : null}
             {phone && !briefOpen ? (
                 // Phone (lab B0p): the brief's entry spans the page under the greeting.
                 <ItemGroup surface="none">
                     <VoiceBriefButton open={briefOpen} block />
                 </ItemGroup>
             ) : null}
-            {briefOpen ? <VoiceBriefBlock onClose={() => setBriefOpen(false)} /> : null}
+            {briefOpen ? <HomeHubReadingColumn><VoiceBriefBlock onClose={() => setBriefOpen(false)} /></HomeHubReadingColumn> : null}
             <SessionSurfaceEntityFeedback kind="home-section" scope={accountScope} address={null} testID="home-hub.widget-move" />
             <SessionSurfaceEntityTargetFeedback drag={homeDrop} testID="home-hub.widget-move" />
             <HomeHubSectionList
                 // Under the atmosphere a composer that leads Home stands in the hero; moved lower, it stays where it was put.
                 sections={heroComposer ? layout.sections.filter(section => section.id !== HOME_HUB_COMPOSER_SECTION_ID) : layout.sections}
+                // With no machine yet, where agents will run is the one question: Machines leads the cards (58d AF1).
+                leadCardId={firstRun ? resolveHomeHubFirstRunLeadId(layout.sections) : null}
                 renderSection={(section, index, placement) => section.kind === 'builtin' ? (
                     <HubSectionSlot key={section.id} section={section} index={index} {...slotProps} />
                 ) : (
                     // Ungroup fans its widgets out to their own cards; Group with merges cards into one.
                     <WidgetGroupMembershipArrivalView key={section.id} arrival={arrivals.get(section.id)} style={styles.card}>
-                        <HubSectionSlot section={section} index={index} ownsRow={placement.ownsRow} {...slotProps} />
+                        <HubSectionSlot section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />
                     </WidgetGroupMembershipArrivalView>
                 )}
             />
@@ -611,26 +652,34 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         </>
     );
 
-    if (heroActive) {
-        return framed(
+    return framed(
+            <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure} collapsable={false}>
                 <ItemList
                     ref={homeListRef}
                     innerViewRef={contentRef as React.RefObject<View>}
                     testID="home-hub"
                     pageColumn="dashboard"
-                    onScroll={event => { tracker.onScroll(event); heroFrame.onScroll(event); }}
-                    onLayout={event => { tracker.onLayout(event); homeDrop.onLayout(event); }}
+                    onScroll={heroActive ? event => { tracker.onScroll(event); visibleWindow.onScroll(event); heroFrame.onScroll(event); } : tracker.onScroll}
+                    onLayout={event => { tracker.onLayout(event); visibleWindow.onLayout(event); homeDrop.onLayout(event); }}
                     onContentSizeChange={tracker.onContentSizeChange}
                     scrollEventThrottle={16}
                 >
+                    {heroActive ? <React.Fragment key="header">
                     {planetDrawn ? (
                         <HomePlanet pane={heroFrame.pane} placement={placement} style={atmosphere.planet.style} digits={atmosphere.planet.digits}
                             theme={homeTheme} phone={phone} hero={heroFrame.hero}
-                            hidden={sending || (!planetSource && pictureShown) || loadingMoment.hold.held || welcome.playing}
+                            hidden={dissolving || (!planetSource && pictureShown) || loadingMoment.hold.held || welcome.playing}
                             arrive={loadingMoment.hold.arrive === 'instant' || welcome.arrive === 'instant' ? 'instant' : 'fade'}
                             retype={welcome.retype} writing={heroFrame.isWriting} onDrawn={onHomePlanetDrawn}
-                            leave={sending ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion}
+                            onHidden={dissolving ? atmosphereStageStore.finishSendDissolve : undefined}
+                            leave={dissolving ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion}
                             answerFinishes={planetSource && isAtmosphereMomentOn(atmosphere.moments, 'sessionFinished')} focused={focused} />
+                    ) : null}
+                    {planetSource && planetOptions ? (
+                        // Home's Bots as moons round the planet (plan U3): above the planet, under the hero.
+                        <HomeBotMoons planet={planetOptions} width={heroFrame.pane.width}
+                            height={homePlanetDrawnHeight(heroFrame.pane.height, planetFade)} placement={placement} phone={phone}
+                            keepOut={heroFrame.keepOut} shown={focused && !dissolving && !loadingMoment.hold.held && !welcome.playing} viewport={visibleWindow} />
                     ) : null}
                     {welcome.playing && planetOptions ? (
                         // Welcome lands on Home's planet where it stands: under Home's content, scrolling with it.
@@ -640,44 +689,50 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     ) : null}
                     <HomeIdleResettle picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture?.id ?? null : null}
                         focused={focused} writing={heroFrame.isWriting} sending={sending} />
-                    <AtmosphereTopChips picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture : null}
-                        lookTarget={HOME_LOOK_TARGET} />
+                    {phoneTabShell ? (
+                        // The phone tab shell's line over the art, with Home's own chips in it (lab at2 homep).
+                        <PhoneTabNavRowLine testID="home-hub-phone-nav-row" controls={(
+                            <AtmosphereTopChips picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture : null}
+                                lookTarget={HOME_LOOK_TARGET} inline />
+                        )} />
+                    ) : (
+                        <AtmosphereTopChips picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture : null}
+                            lookTarget={HOME_LOOK_TARGET} />
+                    )}
                     <HomeHero title={title} phone={phone} paneHeight={heroFrame.pane.height} frame={heroFrame}
                         rise={planetSource && placement === 'rise'} suggestions={atmosphereSuggestions}
                         showComposer={heroComposer} />
-                    <ItemGroup surface="none">
-                        <View ref={heroFrame.nextRef} onLayout={heroFrame.measure} style={styles.statusRow}>
-                            <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} /></View>
-                            {headerActions}
-                        </View>
-                    </ItemGroup>
-                    {sections}
+                    {/* The first thing under the hero, whichever it is: Rise's body ends above this. */}
+                    <View testID="home-hub.below-hero" ref={heroFrame.nextRef} onLayout={heroFrame.measure}>
+                        {heroComposer ? <HomeHubReadingColumn><HomeCompletedBots /></HomeHubReadingColumn> : null}
+                        {/* The present and Customize sit on the column the hero and the composer share. */}
+                        <HomeHubReadingColumn>
+                            <ItemGroup surface="none">
+                                <View style={styles.statusRow}>
+                                    <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} /></View>
+                                    {headerActions}
+                                </View>
+                            </ItemGroup>
+                        </HomeHubReadingColumn>
+                    </View>
+                    </React.Fragment> : (
+                        // The greeting heads the reading column it shares with the composer, Needs your
+                        // attention and Get set up; the cards below keep the wider dashboard grid.
+                        <HomeHubReadingColumn key="header">
+                            <PhoneTabNavRowLine testID="home-hub-phone-nav-row" />
+                            <NavigationLargeTitleProvider largeTitle={phone}>
+                                <PageHeader
+                                    title={title}
+                                    alwaysShowTitle
+                                    details={<HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} />}
+                                    actions={headerActions}
+                                />
+                            </NavigationLargeTitleProvider>
+                        </HomeHubReadingColumn>
+                    )}
+                    <React.Fragment key="sections">{sections}</React.Fragment>
                 </ItemList>
-        );
-    }
-
-    return framed(
-        // RN's innerViewRef declaration omits the null lifecycle supported by its native forwarder.
-        <ItemList
-            ref={homeListRef}
-            innerViewRef={contentRef as React.RefObject<View>}
-            testID="home-hub"
-            pageColumn="dashboard"
-            onScroll={tracker.onScroll}
-            onLayout={event => { tracker.onLayout(event); homeDrop.onLayout(event); }}
-            onContentSizeChange={tracker.onContentSizeChange}
-            scrollEventThrottle={16}
-        >
-            <NavigationLargeTitleProvider largeTitle={phone}>
-                <PageHeader
-                    title={title}
-                    alwaysShowTitle
-                    details={<HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} />}
-                    actions={headerActions}
-                />
-            </NavigationLargeTitleProvider>
-            {sections}
-        </ItemList>
+            </View>
     );
 });
 

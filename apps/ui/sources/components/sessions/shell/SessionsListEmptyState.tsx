@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,7 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SessionGettingStartedSummary } from '@/components/sessions/guidance/SessionGettingStartedSummary';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useAllMachines, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -37,7 +37,7 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const activeServer = useActiveServerSnapshot();
-    const allMachines = useAllMachines();
+    const allMachines = useActiveMachineFacts();
     useMachineReachabilityRevision();
     const accountScope = useActiveServerAccountScope(activeServer.serverId);
     const machines = resolveMachineActionCandidates(accountScope, allMachines);

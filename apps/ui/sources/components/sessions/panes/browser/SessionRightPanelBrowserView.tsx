@@ -4,6 +4,7 @@ import { BrowserMobileSurfaceScreen } from '@/components/browser/surfaces/Browse
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { RetainedSessionViewerSource } from '@/components/sessions/viewer/RetainedSessionViewerSource';
+import { PaneHeaderSlotHandleProvider, usePaneHeaderSlotHandle } from '@/components/appShell/panes/paneHeaderSlot';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
@@ -37,6 +38,9 @@ export function SessionRightPanelBrowserView(props: Readonly<{
     const viewer = useOptionalSessionViewerController();
     const panePresented = useRetainedPresentationSlotVisible() && props.visible !== false;
     const browserContextRuntime = useSessionBrowserContextRuntimeContext();
+    // The retained source mounts the body outside this pane's tree: carry the pane header's slot to it,
+    // so the Browser's tools fold into the header's one ⋯ (N4). A viewer frames its own chrome.
+    const paneHeaderSlot = usePaneHeaderSlotHandle();
     const preferredServerId = usePreferredServerIdForSession({
         sessionId: props.sessionId,
         serverId: props.pluginProjection === undefined
@@ -61,6 +65,7 @@ export function SessionRightPanelBrowserView(props: Readonly<{
     // presence) changes, so the page is never remounted by a presentation switch.
     const body = React.useMemo(() => (
         <SessionViewerBodyPresentation presentation={presentation}>
+            <PaneHeaderSlotHandleProvider handle={presentation === 'pane' ? paneHeaderSlot : null}>
             <SessionViewerPicture framed={presentation === 'viewer'} source="browser">
                 <SessionBrowserContextRuntimeProvider runtime={browserContextRuntime}>
                     <BrowserMobileSurfaceScreen
@@ -75,8 +80,9 @@ export function SessionRightPanelBrowserView(props: Readonly<{
                     />
                 </SessionBrowserContextRuntimeProvider>
             </SessionViewerPicture>
+            </PaneHeaderSlotHandleProvider>
         </SessionViewerBodyPresentation>
-    ), [browserContextRuntime, pluginProjection, presentation, props.sessionId, scopeId, sourceServerId, visible]);
+    ), [browserContextRuntime, paneHeaderSlot, pluginProjection, presentation, props.sessionId, scopeId, sourceServerId, visible]);
     // One body, one place: while the viewer presents the Browser, the pane does not bind it.
     if (presentation === 'pane' && isSessionViewerPresenting(viewer, 'browser', panePresented)) {
         return <SessionViewerPresentedElsewhere source="browser" testID="session-rightpanel-browser" />;
