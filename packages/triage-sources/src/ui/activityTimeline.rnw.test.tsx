@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { defineUiSurface, EmptyState, Text } from '@happier-dev/plugin-ui';
+import { defineUiSurface, EmptyState, Text, type MarkdownProps } from '@happier-dev/plugin-ui';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -19,13 +19,16 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
-async function mount(Body: () => React.ReactElement): Promise<PluginUiTestkit> {
+async function mount(Body: () => React.ReactElement, markdown?: (input: MarkdownProps) => React.ReactElement): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'activity-fixture', mountNonce: 'activity-mount' },
       authorPlugin: { id: 'happier.example.source', version: '0.0.0' },
-      surface: defineUiSurface(() => <Body />),
+      surface: context => {
+        const entry = defineUiSurface(() => <Body />)(context) as React.ReactElement<{ presentationHost?: unknown }>;
+        return markdown === undefined ? entry : React.cloneElement(entry, { presentationHost: { renderMarkdown: markdown, renderIcon: () => null } });
+      },
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: null,
@@ -42,6 +45,17 @@ function event(id: string, hoursAgo: number | null, summary: string, extra: Part
 }
 
 describe('TriageActivityTimeline', () => {
+  it('keeps source-rendered remark content inside its quote instead of reparsing it as Markdown text', async () => {
+    const events = [event('image-comment', 1, 'Commented', { quote: <Text value="Picture content" /> })];
+    const page = await mount(() => <TriageActivityTimeline events={events} locale="en" nowMs={NOW_MS}
+      accessibilityLabel="Activity" empty={EMPTY} />, input => {
+      // An incumbent Markdown parser consumes text. A source-rendered quote must never reach it.
+      expect(typeof input.value).toBe('string');
+      return <Text value={input.value} />;
+    });
+    await expect(page.getByText('Picture content')).resolves.toBeDefined();
+  });
+
   it('reads every merged collection as one chronological stream, undated last', async () => {
     // Two collections handed over back to back, each in its own order, as a source merges them.
     const events = [

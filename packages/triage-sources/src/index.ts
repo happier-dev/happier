@@ -43,4 +43,3 @@ export {
   type TriageSourceSettingsDraftEditorPropsV1,
   type TriageSourceSettingsSurfaceIdentityV1,
 } from './settings/surface.js';
-export { TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1 } from './settings/translations.js';

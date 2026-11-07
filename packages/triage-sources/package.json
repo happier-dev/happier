@@ -28,11 +28,6 @@
       "types": "./dist/projection/actionResultSequence.d.ts",
       "default": "./dist/projection/actionResultSequence.js"
     },
-    "./translations": {
-      "happier-source": "./src/translations.ts",
-      "types": "./dist/translations.d.ts",
-      "default": "./dist/translations.js"
-    },
     "./ui": {
       "happier-source": "./src/ui.ts",
       "types": "./dist/ui.d.ts",

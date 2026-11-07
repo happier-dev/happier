@@ -11,9 +11,14 @@ export type FittedActionResultPageV1<TResult> = Readonly<{
 export function fitActionResultSequenceV1<TItem, TResult>(
   items: readonly TItem[],
   project: (items: readonly TItem[], omittedCount: number) => TResult,
+  /** Measure this result inside its actual enclosing Action result, when nested. */
+  projectEnvelope?: (result: TResult) => unknown,
 ): FittedActionResultSequenceV1<TResult> {
+  const fits = (result: TResult) => isExternalActionResultWithinResponseEnvelopeLimitV1(
+    projectEnvelope === undefined ? result : projectEnvelope(result),
+  );
   const complete = project(items, 0);
-  if (isExternalActionResultWithinResponseEnvelopeLimitV1(complete)) {
+  if (fits(complete)) {
     return Object.freeze({ result: complete, includedCount: items.length });
   }
   let low = 0;
@@ -21,11 +26,11 @@ export function fitActionResultSequenceV1<TItem, TResult>(
   while (low < high) {
     const candidate = Math.ceil((low + high) / 2);
     const projected = project(items.slice(0, candidate), items.length - candidate);
-    if (isExternalActionResultWithinResponseEnvelopeLimitV1(projected)) low = candidate;
+    if (fits(projected)) low = candidate;
     else high = candidate - 1;
   }
   const result = project(items.slice(0, low), items.length - low);
-  if (!isExternalActionResultWithinResponseEnvelopeLimitV1(result)) {
+  if (!fits(result)) {
     throw new RangeError('action_result_base_exceeds_serialized_boundary');
   }
   return Object.freeze({ result, includedCount: low });

@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  TRIAGE_SOURCE_SETTINGS_ENGLISH_V1,
-  TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1,
-  withTriageSourceSettingsTranslationsV1,
-} from './translations.js';
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
+const SOURCE_CATALOGS = ['linear', 'jira', 'scm-github', 'scm-gitlab', 'scm-bitbucket', 'scm-azure-devops', 'posthog', 'sentry']
+  .map(id => ({ id, messages: readPluginTranslationResources(new URL(`../../../plugins/${id}/`, import.meta.url)) }));
 
 import {
   UNKNOWN_TRIAGE_SOURCE_SETTINGS_ROW_LIFECYCLE_V1,
@@ -890,8 +889,9 @@ describe('the source failure sentence', () => {
   });
 
   it('carries one complete translated catalogue with matching placeholders in every source locale', () => {
-    const keys = Object.keys(TRIAGE_SOURCE_SETTINGS_ENGLISH_V1).sort();
-    const locales = Object.keys(TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1);
+    const english = SOURCE_CATALOGS[0]!.messages.en;
+    const keys = Object.keys(english).filter(key => key.startsWith('plugins.triage.sourceSettings.')).sort();
+    const locales = Object.keys(SOURCE_CATALOGS[0]!.messages);
     const placeholders = (message: string) => [...message.matchAll(/\{([A-Za-z][A-Za-z0-9]*)\}/gu)]
       .map((match) => match[1])
       .sort();
@@ -899,34 +899,27 @@ describe('the source failure sentence', () => {
     expect(locales).toEqual([
       'en', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja', 'de',
     ]);
-    for (const locale of locales) {
-      const bundle = TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1[
-        locale as keyof typeof TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1
-      ];
-      expect(Object.keys(bundle).sort()).toEqual(keys);
-      expect(Object.values(bundle).every((sentence) => sentence.trim().length > 0)).toBe(true);
-      for (const key of keys) {
-        const source = TRIAGE_SOURCE_SETTINGS_ENGLISH_V1[
-          key as keyof typeof TRIAGE_SOURCE_SETTINGS_ENGLISH_V1
-        ];
-        const translated = bundle[key as keyof typeof bundle];
-        expect(placeholders(translated)).toEqual(placeholders(source));
-        if (locale !== 'en') expect(translated).not.toBe(source);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const { id, messages } of SOURCE_CATALOGS) {
+      for (const locale of locales) {
+        const bundle = messages[locale as keyof typeof messages];
+        expect(Object.keys(bundle).filter(key => key.startsWith('plugins.triage.sourceSettings.')).sort(), `${id}:${locale}`).toEqual(keys);
+        for (const key of keys) {
+          const source = english[key]!;
+          const translated = bundle[key]!;
+          expect(translated.trim().length, `${id}:${locale}:${key}`).toBeGreaterThan(0);
+          expect(placeholders(translated)).toEqual(placeholders(source));
+          if (locale !== 'en') expect(translated).not.toBe(source);
+        }
       }
     }
   });
 
-  it('merges the complete shared settings catalogue into provider manifest locale rows', () => {
-    const rows = withTriageSourceSettingsTranslationsV1([{
-      locale: 'de',
-      messages: { 'plugins.example.own': 'Eigene Nachricht' },
-    }]);
-
-    expect(rows[0]?.messages['plugins.example.own']).toBe('Eigene Nachricht');
-    for (const key of Object.keys(TRIAGE_SOURCE_SETTINGS_ENGLISH_V1)) {
-      expect(rows[0]?.messages[key]).toBeTypeOf('string');
+  it('packages shared settings copy together with each provider’s own catalog', () => {
+    for (const { id, messages } of SOURCE_CATALOGS) {
+      expect(messages.de['plugins.triage.sourceSettings.connectAccount'], id).toBe('Konto verbinden');
+      expect(Object.keys(messages.de).some(key => !key.startsWith('plugins.triage.')), id).toBe(true);
     }
-    expect(rows[0]?.messages['plugins.triage.sourceSettings.connectAccount']).toBe('Konto verbinden');
   });
 
   it('gives each class its own remedy rather than one generic line', () => {

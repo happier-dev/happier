@@ -17,7 +17,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createTriageSourceSettingsSurface,
-  createTriageSourceSettingsSurfaceForTesting,
   type TriageSourceSettingsDraftEditorPropsV1,
 } from './surface.js';
 
@@ -233,6 +232,22 @@ afterEach(async () => {
 });
 
 describe('the mounted PRs & Issues source settings page', () => {
+  it('enumerates Account source candidates without a Machine and refreshes through the same Action', async () => {
+    let discoveryReads = 0;
+    const harness = createHarness({ discovery: async () => {
+      discoveryReads += 1;
+      return { kind: 'complete', candidates: [candidate('Account repository')], failures: [] };
+    } });
+    const page = await mountSettings(harness, {}, renderSurface, createSurfaceContextFixture({
+      requesterExecutionReady: true, machineConnectionPending: false, machineExecutionReady: false,
+    }));
+    await expect(page.getByRole('button', { name: 'Add Account repository to PRs & Issues' })).resolves.toBeDefined();
+    expect(discoveryReads).toBe(1);
+    await pressControl(page, 'Refresh');
+    expect(discoveryReads).toBe(2);
+    expect(harness.administrations()).toEqual([]);
+  });
+
   it('defers configured reads and Refresh until its requester is admitted independently of Machine discovery', async () => {
     let configuredReads = 0;
     const harness = createHarness({ discovery: { kind: 'complete', candidates: [], failures: [] },
@@ -258,7 +273,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     expect(configuredReads).toBe(1);
   });
 
-  it('defers Machine discovery while the host is pending, keeps Account reads independent, and reacquires on readmission', async () => {
+  it('dispatches discovery without a Machine, ignores Machine churn, and reacquires on requester readmission', async () => {
     let discoveryReads = 0;
     const harness = createHarness({
       discovery: async () => {
@@ -267,28 +282,29 @@ describe('the mounted PRs & Issues source settings page', () => {
       },
       configured: { kind: 'read', status: 'complete', instances: [configuredRecord('Already configured', 'active')] },
     });
-    const pending = createSurfaceContextFixture({ machineConnectionPending: true, machineExecutionReady: false });
-    const ready = createSurfaceContextFixture({ machineConnectionPending: false, machineExecutionReady: true });
-    const page = await mountSettings(harness, {}, renderSurface, pending);
+    const ready = createSurfaceContextFixture({ requesterExecutionReady: true, machineConnectionPending: false, machineExecutionReady: false });
+    const pending = createSurfaceContextFixture({ requesterExecutionReady: false, machineConnectionPending: false, machineExecutionReady: false });
+    const page = await mountSettings(harness, {}, renderSurface, ready);
 
     await expect(page.getByText('Already configured')).resolves.toBeDefined();
-    expect(discoveryReads).toBe(0);
-    // A settled Machine-less Account renderer is still not admitted to run
-    // discovery. Loading ending is not evidence of execution readiness.
-    await act(async () => { await page.updateSurface(createSurfaceContextFixture({
-      machineConnectionPending: false, machineExecutionReady: false,
-    })); });
-    expect(discoveryReads).toBe(0);
-    await pressControl(page, 'Refresh');
-    expect(discoveryReads).toBe(0);
-    await act(async () => { await page.updateSurface(ready); });
     await expect(page.getByRole('button', { name: 'Add Workspace 1 to PRs & Issues' })).resolves.toBeDefined();
+    expect(discoveryReads).toBe(1);
+    // Machine presence cannot preempt or repeat the Action owner's placement.
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture({
+      requesterExecutionReady: true, machineConnectionPending: true, machineExecutionReady: false,
+    })); });
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture({
+      requesterExecutionReady: true, machineConnectionPending: false, machineExecutionReady: true,
+    })); });
     await act(async () => { await page.updateSurface(ready); });
     expect(discoveryReads).toBe(1);
-    await act(async () => { await page.updateSurface(pending); });
-    expect(discoveryReads).toBe(1);
-    await act(async () => { await page.updateSurface(ready); });
+    await pressControl(page, 'Refresh');
     await expect(page.getByRole('button', { name: 'Add Workspace 2 to PRs & Issues' })).resolves.toBeDefined();
+    expect(discoveryReads).toBe(2);
+    await act(async () => { await page.updateSurface(pending); });
+    expect(discoveryReads).toBe(2);
+    await act(async () => { await page.updateSurface(ready); });
+    await expect(page.getByRole('button', { name: 'Add Workspace 3 to PRs & Issues' })).resolves.toBeDefined();
     expect(harness.administrations()).toEqual([]);
   });
 
@@ -304,7 +320,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const page = await mountSettings(harness, {}, renderSurface, ready);
     expect(oldSignal?.aborted).toBe(false);
     try {
-      await act(async () => { await page.updateSurface(createSurfaceContextFixture({ machineConnectionPending: true, machineExecutionReady: false })); });
+      await act(async () => { await page.updateSurface(createSurfaceContextFixture({ requesterExecutionReady: false, machineConnectionPending: true, machineExecutionReady: false })); });
       expect(oldSignal?.aborted).toBe(true);
       await act(async () => { await page.updateSurface(ready); });
       await expect(page.getByRole('button', { name: 'Add Current workspace to PRs & Issues' })).resolves.toBeDefined();
@@ -940,7 +956,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     await expect(page.queryByText(`No ${SOURCE_DISPLAY_NAME} scopes to add`)).resolves.toBeUndefined();
   });
 
-  it('settles an unanswered source discovery at the Triage deadline and ignores its late answer', async () => {
+  it('cancels held discovery when the host withdraws it and ignores its late answer', async () => {
     let sourceSignal: AbortSignal | undefined;
     let resolveLate: ((result: JsonValue) => void) | undefined;
     const harness = createHarness({
@@ -949,19 +965,12 @@ describe('the mounted PRs & Issues source settings page', () => {
         resolveLate = resolve;
       }),
     });
-    const deadlineSurface = createTriageSourceSettingsSurfaceForTesting({
-      pluginId: PLUGIN_ID,
-      listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
-      connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
-      connectedAccountPurpose: PURPOSE,
-      sourceDisplayName: SOURCE_DISPLAY_NAME,
-    }, {
-      discoveryDeadlineMs: 5,
-    });
-    const page = await mountSettings(harness, {}, deadlineSurface);
-
-    await vi.waitFor(async () => {
-      expect(await page.queryByText('This read did not finish')).toBeDefined();
+    const page = await mountSettings(harness);
+    expect(sourceSignal?.aborted).toBe(false);
+    await act(async () => {
+      await page.updateSurface(createSurfaceContextFixture({
+        requesterExecutionReady: false, machineConnectionPending: true, machineExecutionReady: false,
+      }));
     });
     expect(sourceSignal?.aborted).toBe(true);
 

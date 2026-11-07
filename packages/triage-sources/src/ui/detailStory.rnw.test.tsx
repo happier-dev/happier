@@ -200,6 +200,26 @@ describe('the ask of a long change request', () => {
     expect(document.body.textContent).toContain('GitHub could not read the current description');
   });
 
+  it('holds the ask with lines of reading text while the first read settles, then shows the words in place', async () => {
+    let settle!: () => void;
+    function Story() {
+      const [loading, setLoading] = React.useState(true);
+      settle = () => setLoading(false);
+      return (
+        <TriageDetailStory kind="ask" loading={loading} changes={<Text value="What changed follows" />}>
+          {loading ? null : <Text value="Cart totals were rounded on the client." />}
+        </TriageDetailStory>
+      );
+    }
+    const page = await mount(Story);
+    await expect(page.getByRole('progressbar', { name: 'Reading this entry' })).resolves.toBeDefined();
+    expect(document.querySelector('[data-testid="triage-story-ask-body"]')).toBeNull();
+    expect(document.body.textContent).toContain('What changed follows');
+    await act(async () => { settle(); });
+    await expect(page.queryByRole('progressbar', { name: 'Reading this entry' })).resolves.toBeUndefined();
+    expect(document.querySelector('[data-testid="triage-story-ask-body"]')?.textContent).toContain('rounded on the client');
+  });
+
   it('shows a short ask whole, with nothing to open', async () => {
     const page = await mount(() => (
       <TriageDetailStory kind="ask">

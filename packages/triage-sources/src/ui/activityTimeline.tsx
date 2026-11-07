@@ -15,9 +15,9 @@ import {
   type TimelineItemContent,
   usePluginHostApi,
 } from '@happier-dev/plugin-ui';
-import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
+import { formatTriageCompactAgeV1, formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
-import { useTriageActivityAgent } from './activityAgent.js';
+import { useTriageActivityAgent, useTriagePageRefresh } from './activityAgent.js';
 import { TriageTextPreview } from './textPreview.js';
 
 /**
@@ -51,8 +51,8 @@ export type TriageActivityEventV1 = Readonly<{
   summary: string;
   /** Quiet context after the sentence: the label, the commit subject, the changed fields. */
   detail?: string | null;
-  /** A remark's own words, quoted under the sentence. */
-  quote?: string | null;
+  /** A remark's own words, or source-rendered document content, quoted under the sentence. */
+  quote?: React.ReactNode;
   /** Colours the marker: a failing check, a regression, a resolution. */
   tone?: TextTone;
   /** The provider's own page for this event. */
@@ -61,6 +61,8 @@ export type TriageActivityEventV1 = Readonly<{
   hrefLabel?: string;
   /** Source-owned content under the sentence: a thread's replies and controls, a reveal. */
   inset?: React.ReactNode;
+  /** Source-owned quiet controls beside the open control, such as editing the viewer's own remark. */
+  actions?: React.ReactNode;
 }>;
 
 /** A source's own continuation for one of the collections it pages into this stream. */
@@ -141,9 +143,10 @@ export function orderTriageActivityEventsV1(
 
 function ActivityGlyph({ event }: Readonly<{ event: TriageActivityEventV1 }>): React.ReactElement {
   const actor = event.actor ?? null;
-  return event.kind === 'comment' && actor !== null
-    ? <Avatar name={actor} size="small" />
-    : <Icon name={MARKER_ICON[event.kind]} size="small" tone={event.tone ?? 'secondary'} />;
+  if (event.kind === 'comment' && actor !== null) return <Avatar name={actor} size="small" />;
+  // A failing check never draws a tick, whatever its tone.
+  const icon = event.kind === 'check' && event.tone === 'danger' ? 'failure' : MARKER_ICON[event.kind];
+  return <Icon name={icon} size="small" tone={event.tone ?? 'secondary'} />;
 }
 
 function activityEventContent(
@@ -156,6 +159,7 @@ function activityEventContent(
   const detail = event.detail ?? null;
   const quote = event.quote ?? null;
   const href = event.href ?? null;
+  const actions = event.actions ?? null;
   // Opening the event where it happened is a rare reach beside a scanned rail: a quiet glyph, not a word per row.
   const open = href === null
     ? null
@@ -177,22 +181,28 @@ function activityEventContent(
         {detail === null ? null : <Text variant="reading" tone="secondary">{detail}</Text>}
       </>
     ),
+    // The rail's age is one short word that never breaks (lab "2d"); hovering a provider's own page says the rest.
     time: event.atMs === null ? null : (
-      <Text variant="micro" tone="muted">
-        {formatTriageTimestampV1(locale, event.atMs, 'relative', nowMs)}
+      <Text variant="micro" tone="muted" accessibilityLabel={formatTriageTimestampV1(locale, event.atMs, 'relative', nowMs)}>
+        {formatTriageCompactAgeV1(locale, event.atMs, nowMs)}
       </Text>
     ),
     body: (
       <>
         {quote === null || quote === ''
           ? null
-          : <Surface tone="muted" padding="small"><TriageTextPreview><Markdown value={quote} /></TriageTextPreview></Surface>}
+          : <Surface tone="muted" padding="small"><TriageTextPreview>{typeof quote === 'string' ? <Markdown value={quote} /> : quote}</TriageTextPreview></Surface>}
         {event.inset ?? null}
       </>
     ),
-    trailing: open,
+    trailing: actions === null ? open : <Row gap="small">{actions}{open}</Row>,
   };
 }
+
+/** What the rail draws: the source's events, then the agent's card and what happens next. */
+type TriageActivityRailItemV1 =
+  | Readonly<{ kind: 'event'; id: string; event: TriageActivityEventV1 }>
+  | Readonly<{ kind: 'tail' | 'next'; id: string; node: React.ReactNode }>;
 
 function ContinuationButtons({ continuations }: Readonly<{
   continuations: readonly TriageActivityContinuationV1[];
@@ -233,16 +243,16 @@ export function TriageActivityTimeline(props: TriageActivityTimelineProps): Reac
     [agent.events, props.events],
   );
   const tail = agent.tail ?? null;
+  const next = agent.next ?? null;
+  // The agent's card and what happens next stay on the rail after the events (lab c7). With no event to follow,
+  // they stand under the source's empty state instead.
+  const items = React.useMemo<readonly TriageActivityRailItemV1[]>(() => events.length === 0 ? [] : [
+    ...events.map((event) => ({ kind: 'event' as const, id: event.id, event })),
+    ...(tail === null ? [] : [{ kind: 'tail' as const, id: 'triage-activity-tail', node: tail }]),
+    ...(next === null ? [] : [{ kind: 'next' as const, id: 'triage-activity-next', node: next }]),
+  ], [events, next, tail]);
   // The page's one refresh re-reads this Activity: once per press, through the source's own re-read.
-  const refreshGeneration = agent.refreshGeneration ?? 0;
-  const latestRefresh = React.useRef(props.refresh);
-  latestRefresh.current = props.refresh;
-  const seenGeneration = React.useRef(refreshGeneration);
-  React.useEffect(() => {
-    if (refreshGeneration === seenGeneration.current) return;
-    seenGeneration.current = refreshGeneration;
-    void latestRefresh.current?.onRefresh();
-  }, [refreshGeneration]);
+  useTriagePageRefresh(props.refresh === undefined ? undefined : props.refresh.onRefresh);
   const hostApi = usePluginHostApi();
   const continuations = props.continuations ?? [];
   const earlier = continuations.filter((continuation) => continuation.reads === 'earlier');
@@ -257,20 +267,27 @@ export function TriageActivityTimeline(props: TriageActivityTimelineProps): Reac
     <Timeline
       accessibilityLabel={props.accessibilityLabel}
       {...(props.accessibilityLabelKey === undefined ? {} : { accessibilityLabelKey: props.accessibilityLabelKey })}
-      items={events}
-      keyForItem={(event) => event.id}
+      items={items}
+      keyForItem={(item) => item.id}
       {...(header === undefined ? {} : { header })}
       // An earlier page is a pure prepend: the row the reader was on stays where it was.
       preserveVisibleContentPositionOnPrepend
       empty={props.empty}
-      endContent={later.length === 0 && props.footer === undefined && tail === null ? undefined : (
+      endContent={later.length === 0 && props.footer === undefined && (items.length > 0 || (tail === null && next === null)) ? undefined : (
         <Stack gap="small" style={{ paddingTop: 8 }}>
           <ContinuationButtons continuations={later} />
-          {tail}
+          {items.length > 0 ? null : tail}
+          {items.length > 0 ? null : next}
           {props.footer}
         </Stack>
       )}
-      renderItem={(event) => activityEventContent(event, props.locale, props.nowMs, hostApi)}
+      renderItem={(item) => item.kind === 'event' ? activityEventContent(item.event, props.locale, props.nowMs, hostApi)
+        : item.kind === 'tail' ? {
+          glyph: <Icon name={MARKER_ICON.session} size="small" tone="secondary" />,
+          ...(agent.tailHeading === undefined ? {} : { heading: agent.tailHeading }),
+          body: item.node,
+        }
+        : { glyph: <Icon name="waiting" size="small" tone="muted" />, heading: item.node }}
     />
   );
 }

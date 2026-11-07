@@ -57,7 +57,6 @@
  */
 
 import * as React from 'react';
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
   Badge,
@@ -170,21 +169,6 @@ function isSettledConfigurationSuccess(outcome: TriageSourceSettingsConfiguratio
 export function createTriageSourceSettingsSurface(
   identity: TriageSourceSettingsSurfaceIdentityV1,
 ): RenderSurface {
-  return createTriageSourceSettingsSurfaceWithDiscoveryDeadline(identity);
-}
-
-/** Test-only source-module seam; intentionally not re-exported by this package. */
-export function createTriageSourceSettingsSurfaceForTesting(
-  identity: TriageSourceSettingsSurfaceIdentityV1,
-  input: Readonly<{ discoveryDeadlineMs: number }>,
-): RenderSurface {
-  return createTriageSourceSettingsSurfaceWithDiscoveryDeadline(identity, input.discoveryDeadlineMs);
-}
-
-function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
-  identity: TriageSourceSettingsSurfaceIdentityV1,
-  discoveryDeadlineMs?: number,
-): RenderSurface {
   const { sourceDisplayName } = identity;
   const scopeSelection = identity.scopeSelection;
   const DraftEditor = scopeSelection === undefined ? identity.DraftEditor
@@ -208,7 +192,9 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
     const discovery = useExecutePluginAction(listInstances);
     const configuredRead = useExecutePluginAction(TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1);
     const administer = useExecutePluginAction(TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1);
-    const discoveryReadiness = usePluginHostReadiness();
+    // The source Action owns Account/native placement. Wait for its requester,
+    // then let that owner decide whether this discovery needs a Machine.
+    const discoveryReadiness = usePluginHostReadiness(false);
     const configuredReadiness = usePluginHostReadiness(false);
 
     const [outcomes, setOutcomes] = React.useState<ConfigurationOutcomes>({});
@@ -247,28 +233,13 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
       const invocation = runDiscovery({ v: 1 }, { signal: controller.signal });
       const active = { controller, invocation };
       activeDiscovery.current = active;
-      void invocation.then(
-        () => {
-          if (activeDiscovery.current === active) activeDiscovery.current = null;
-        },
-        () => {
-          if (activeDiscovery.current === active) activeDiscovery.current = null;
-        },
-      );
-      void (async () => {
-        try {
-          if (discoveryDeadlineMs === undefined) {
-            await invocation;
-          } else {
-            await raceWithTimeout(invocation, discoveryDeadlineMs);
-          }
-        } finally {
-          // This invocation is no longer current to this page. The mounted
-          // host/action boundary owns the resulting outcome-unknown state.
-          controller.abort();
-        }
-      })();
-    }, [discoveryDeadlineMs, runDiscovery]);
+      const settled = () => {
+        if (activeDiscovery.current === active) activeDiscovery.current = null;
+        // The mounted host/action boundary owns the settled execution outcome.
+        controller.abort();
+      };
+      void invocation.then(settled, settled);
+    }, [runDiscovery]);
 
     React.useEffect(() => {
       if (discoveryReadiness.pending || discoveryReadiness.ready === false) return;
@@ -587,7 +558,10 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
                       ))}
                     </>
                   )}
-                  {...(remove === undefined ? {} : {
+                  {...(remove === undefined ? {
+                    secondaryActions: undefined,
+                    onSecondaryAction: undefined,
+                  } : {
                     secondaryActions: [{
                       id: 'remove',
                       label: remove.accessibilityLabel,

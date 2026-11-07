@@ -27,6 +27,18 @@ describe('fitActionResultSequenceV1', () => {
       project(rows.slice(0, fitted.includedCount + 1), rows.length - fitted.includedCount - 1),
     )).toBe(false);
   }, 30_000);
+  it('fits a nested result against its actual enclosing Action response', () => {
+    const rows = Array.from({ length: 6 }, () => 'r'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 4));
+    const body = 'b'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2);
+    const envelope = (status: ReturnType<typeof project>) => ({ kind: 'overview', body, status });
+    const fitted = fitActionResultSequenceV1(rows, project, envelope);
+    expect(fitted.includedCount).toBeGreaterThan(0);
+    expect(fitted.includedCount).toBeLessThan(rows.length);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(envelope(fitted.result))).toBe(true);
+    const next = project(rows.slice(0, fitted.includedCount + 1), rows.length - fitted.includedCount - 1);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(next)).toBe(true);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(envelope(next))).toBe(false);
+  }, 30_000);
 });
 
 describe('fitActionResultPageV1', () => {

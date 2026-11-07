@@ -28,6 +28,7 @@ import {
   TriageReadConfiguredSourceInstancesResultV1Schema,
   TriageSourceAdministrationActionResultV1Schema,
   triageSourceBindingComponentsV1,
+  TRIAGE_SOURCE_FAILURE_COPY_V1,
   type TriageConfiguredSourceInstanceRecordV1,
   type TriageSourceAccountBindingV1,
   type TriageSourceAdministrationActionInputV1,
@@ -904,19 +905,10 @@ export function describeTriageSourceConfiguredRead(
  * one of the two wrong sentences on both, so they stay two tables that say the
  * same six things differently.
  *
- * Keyed by the closed class rather than switched on, so a seventh class cannot
- * compile without a sentence and a key.
+ * The pure protocol presenter now owns those same English sentences, also used
+ * by source Action outcomes without a client translator. This page retains its
+ * class-keyed catalog keys below and imports the canonical fallback copy.
  */
-const TRIAGE_SOURCE_FAILURE_COPY_V1: Readonly<
-  Record<TriageSourceFailureV1['class'], string>
-> = Object.freeze({
-  authentication: 'The connected account is no longer authorized. Reconnect it in Connected Accounts.',
-  permission: 'The connected account cannot see this scope. Grant it access at the provider.',
-  rateLimit: 'The provider is rate limiting this account. Try again shortly.',
-  transient: 'The provider could not be reached. Try again.',
-  unsupportedContract: 'The provider returned something this version cannot read.',
-  unknown: 'The provider could not be read.',
-});
 
 /**
  * The catalog key for each sentence above.

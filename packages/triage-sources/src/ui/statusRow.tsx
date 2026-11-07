@@ -21,6 +21,10 @@ export type TriageStatusRowProps = TriageStatusRowContent & (
      */
     expandedContent?: React.ReactNode;
     expanded?: boolean;
+    /**
+     * Without `expandedContent`, the press opens the status's own detail (a CI check's run), so the row reads as
+     * a navigation row instead of a disclosure.
+     */
     onPress?: () => void;
   }> & (
     /** Row-level actions live in the row's quiet overflow, never as buttons beside every row. */
@@ -43,13 +47,15 @@ export function TriageStatusRow(props: TriageStatusRowProps): React.ReactElement
       {...(props.status === undefined || props.tone === undefined || props.tone === 'neutral' ? {} : { detailTone: props.tone })}
       {...(props.detail === undefined ? {} : props.status === undefined ? { detail: props.detail } : { subtitle: props.detail })}
       {...(props.secondaryActions === undefined
-        ? {}
+        ? { secondaryActions: undefined, onSecondaryAction: undefined }
         : { secondaryActions: props.secondaryActions, onSecondaryAction: props.onSecondaryAction })}
-      {...(props.expandedContent === undefined ? {} : {
-        expandedContent: props.expandedContent,
-        expanded: props.expanded === true,
-        ...(props.onPress === undefined ? {} : { onPress: props.onPress }),
-      })} />;
+      {...(props.expandedContent === undefined
+        ? props.onPress === undefined ? {} : { onPress: props.onPress }
+        : {
+          expandedContent: props.expandedContent,
+          expanded: props.expanded === true,
+          ...(props.onPress === undefined ? {} : { onPress: props.onPress }),
+        })} />;
   }
   if (props.presentation === 'summary') {
     const name = <Text variant={props.nameVariant ?? 'label'} tone={props.nameTone ?? 'neutral'} value={props.name} />;
