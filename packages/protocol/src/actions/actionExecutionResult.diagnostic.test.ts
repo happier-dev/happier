@@ -5,6 +5,11 @@ import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpected
 import * as actionResults from './actionExecutionResult.js';
 
 describe('Action failure cause projection', () => {
+  it('retains the Home execution authorization phase without disclosing exception text', () => {
+    const cause = projectActionFailureCauseV1(new Error('PRIVATE_MINT_CAUSE'), 'execution_authorization');
+    expect(cause).toEqual({ phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null });
+    expect(ActionFailureCauseV1Schema.parse(cause)).toEqual(cause);
+  });
   it('retains the captured Account retirement refusal without disclosing its error payload', () => {
     const error = Object.assign(new Error('PRIVATE_MESSAGE'), {
       code: 'action_account_scope_changed', details: { token: 'PRIVATE_TOKEN' },
@@ -43,6 +48,15 @@ describe('Action failure cause projection', () => {
 });
 
 describe('code-only JSON-RPC failure diagnostics', () => {
+  it('retains the known Undici dispatcher incompatibility code without transport secrets', () => {
+    const error = Object.assign(new Error('PRIVATE_MESSAGE'), {
+      code: 'UND_ERR_INVALID_ARG', request: { authorization: 'PRIVATE_TOKEN' },
+    });
+    const result = readUnexpectedActionErrorDiagnosticV1(error);
+    expect(result).toMatchObject({ errorClass: 'Error', errorCode: 'UND_ERR_INVALID_ARG' });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_/);
+    expect(readUnexpectedActionErrorDiagnosticV1({ code: 'UND_ERR_PRIVATE_TOKEN' }).errorCode).toBeNull();
+  });
   it.each(['database_transaction_conflict_exhausted', 'database_connection_unavailable', 'database_transaction_timeout'])('retains the known Home refusal %s without its body', code => {
     const result = readUnexpectedActionErrorDiagnosticV1({ code: 'ERR_BAD_RESPONSE',
       response: { status: 503, data: { error: code, message: 'PRIVATE_MESSAGE', token: 'PRIVATE_TOKEN' } } });

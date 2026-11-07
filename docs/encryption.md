@@ -5018,11 +5018,12 @@ The receiver compares the projection with opened input; Compose content stays
 in the Account-mode envelope. No-app setup needs no preparation carrier, and
 these reads grant no deployment mutation or Run storage authority.
 
-All development setup Apply requests, including Docker-only plans without app
-children, retain the installation-key sealed requester context independently of
-that optional preparation carrier. The canonical Account sender preserves the
-authenticated parent identity and seals the same Account's publisher credential;
-it does not substitute the publisher's credential kind for the admitted parent.
+Ordinary public development setup Apply requests, including Docker-only plans
+without app children, retain their requester Account custody independently of
+that optional preparation carrier. An installed Workflow's admitted finite Setup
+leaf instead carries an installation-key sealed fresh invocation codec, without
+the requester Account bearer or key. Both paths preserve the signed parent
+identity rather than substituting the publisher's credential kind.
 
 The same installation-key encrypted requester box can carry a closed private
 invocation for UI Account-machine Actions: caller provenance and permission/input
