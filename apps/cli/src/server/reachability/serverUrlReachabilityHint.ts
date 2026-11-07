@@ -2,6 +2,7 @@ import {
   isInsecureRemoteHttpServerUrl,
   isLocalishServerUrl,
   isLoopbackServerHost,
+  isTailscaleServerUrl,
 } from '@/server/serverUrlClassification';
 
 /**
@@ -37,6 +38,9 @@ export function buildServerUrlReachabilityHintLines(serverUrl: string): readonly
   }
 
   if (isLocalishServerUrl(serverUrl) && url?.protocol !== 'https:') {
+    if (isTailscaleServerUrl(serverUrl)) {
+      return [];
+    }
     return [
       'Note: your server URL looks like a LAN-only URL.',
       'This will work only when your phone/laptop are on the same LAN/VPN.',
