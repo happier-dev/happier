@@ -11,7 +11,8 @@ import { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInv
 import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-import { readNoticeInvestigationSubject, readHealthNoticeInvestigationOutcome, useHealthNoticeInvestigate } from './healthNoticeInvestigation';
+import { readNoticeInvestigationSubject, readHealthNoticeInvestigationOutcome, useHealthNoticeInvestigate,
+  useInvestigationAgentActions } from './healthNoticeInvestigation';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' };
 const investigate = {
@@ -294,6 +295,59 @@ describe('useHealthNoticeInvestigate', () => {
       expect(result.calls).toEqual(['actions/read-v1', 'sessions/run-configured-v1']);
     },
   );
+});
+
+describe('agent actions on a native subject page', () => {
+  const selection = (configuredActionId: string) => ({ configuredActionId,
+    sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } as const);
+  const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'environment', deploymentId: 'receipt' } as const;
+
+  it('draws the person\'s records for this subject and launches the one pressed, in the mode chosen', async () => {
+    const reads: unknown[] = [];
+    const runs: unknown[] = [];
+    // The contributed plugin invocation is the realm boundary; the front door and the Account owner stay real.
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+      invokeContributedAction: async (request) => {
+        if (request.action.localId === 'actions/read-v1') {
+          reads.push(request.input);
+          return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [
+            { label: 'Ask', selection: selection('ask'), launchMode: 'review', startable: false },
+            { label: 'Debug it', selection: selection('investigate'), launchMode: 'start', startable: true },
+            { label: 'Fix this deploy', selection: selection('deployments.fix-deploy'), launchMode: 'review',
+              startable: false, forSubject: true },
+          ] } };
+        }
+        runs.push(request.input);
+        return { ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
+      },
+    }));
+    const owner = createAccountNoticeInvestigation({ scope, isCurrent: () => true,
+      execute: createFrontDoorActionExecute(executor) });
+    const bound = {
+      readChoices: (options: { signal: AbortSignal }) => owner.readChoices(subject, options),
+      resume: (options: { signal: AbortSignal }) => owner.resume(subject, options),
+      run: (picked: Parameters<typeof owner.run>[1], options: Parameters<typeof owner.run>[2]) => owner.run(subject, picked, options),
+    };
+    const hook = await renderHook(() => ({
+      actions: useInvestigationAgentActions(bound, { includeDefault: true }),
+      intent: useHealthNoticeInvestigate(bound),
+    }));
+    try {
+      await act(async () => {});
+      expect(reads).toEqual([expect.objectContaining({ projection: 'sessionHandoff', subject: 'deploymentReceipt' })]);
+      // The task default leads, then the subject's own records; a record offered everywhere is not this page's.
+      expect(hook.getCurrent().actions).toEqual([
+        { actionId: 'investigate', label: 'Debug it', launchMode: 'start', startable: true },
+        { actionId: 'deployments.fix-deploy', label: 'Fix this deploy', launchMode: 'review', startable: false },
+      ]);
+      await act(async () => { await hook.getCurrent().intent.launch('review', 'deployments.fix-deploy'); });
+      expect(runs).toEqual([expect.objectContaining({ handoff: expect.objectContaining({
+        configuredActionId: 'deployments.fix-deploy', delivery: 'compose',
+        context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }] }) })]);
+      expect(hook.getCurrent().intent.outcome).toEqual({ kind: 'started',
+        handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });
+    } finally { await hook.unmount(); }
+  });
 });
 
 describe('readNoticeInvestigationSubject', () => {

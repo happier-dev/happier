@@ -3056,6 +3056,7 @@ export const ja: TranslationStructure = {
       agentActionStartNow: "今すぐ開始",
       agentActionAddInstructions: "指示を追加…",
       agentActionEdit: "アクションを編集…",
+      agentActionStartNeedsTask: "このアクションにはタスクがないため、作成画面を開きます。",
     },
   },
 

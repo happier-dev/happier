@@ -4,6 +4,11 @@ import {
     defineProtocolObject,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
+import {
+    TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1,
+    TriageReadSessionHandoffChoicesInputV1Schema,
+    TriageSessionHandoffChoicesV1Schema,
+} from '@happier-dev/triage-protocol/v1';
 
 import {
     TRIAGE_ACTION_DRAFT_MEMBERS_V1,
@@ -76,6 +81,16 @@ export const TriageReadActionsResultV1Schema = defineProtocolObject({
     revision: TriageAccountKvRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadActionsResultV1 = ReturnType<typeof TriageReadActionsResultV1Schema.parse>;
+
+/** The registered Action adds one projection; legacy catalog readers stay exact. */
+export const TriageReadActionsActionInputV1Schema = defineProtocolUnion([
+    TriageReadActionsInputV1Schema, TriageReadSessionHandoffChoicesInputV1Schema,
+]);
+export type TriageReadActionsActionInputV1 = ReturnType<typeof TriageReadActionsActionInputV1Schema.parse>;
+export const TriageReadActionsActionResultV1Schema = defineProtocolUnion([
+    TriageReadActionsResultV1Schema, TriageSessionHandoffChoicesV1Schema,
+]);
+export type TriageReadActionsActionResultV1 = ReturnType<typeof TriageReadActionsActionResultV1Schema.parse>;
 
 const TriageActionDraftV1WireSchema = TRIAGE_ACTION_DRAFT_MEMBERS_V1;
 
@@ -172,6 +187,6 @@ export type TriageAdministerActionResultV1 =
     ReturnType<typeof TriageAdministerActionResultV1Schema.parse>;
 
 /** The authoritative configured-action read. */
-export const TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 = 'actions/read-v1';
+export const TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 = TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1.localId;
 /** The one explicit create/update/delete/reorder write. */
 export const TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 = 'actions/administer-v1';

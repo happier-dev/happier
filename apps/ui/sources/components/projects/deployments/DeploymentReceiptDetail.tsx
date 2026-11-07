@@ -19,8 +19,7 @@ import {
 } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
-import { AgentActionButton } from '@happier-dev/plugin-ui/components';
-import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { readDeploymentFailureRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
@@ -77,6 +76,9 @@ import type { DeploymentReadLogs } from './useDeploymentStepLog';
  * the receipt's own facts; current health is the Environment's, joined beside it. An uncertain outcome says so
  * once and never offers a blind retry.
  */
+/** The receipt draws the person's Investigate plus its own records; an unresolved placement opens the composer. */
+const RECEIPT_AGENT_ACTIONS = { agentActions: 'withDefault', composerOnUnresolvedPlacement: true } as const;
+
 export const DeploymentReceiptDetail = React.memo(
   function DeploymentReceiptDetail(
     props: Readonly<{
@@ -141,20 +143,13 @@ export const DeploymentReceiptDetail = React.memo(
     const investigateSubject = React.useMemo(() => failed ? { kind: 'deploymentReceipt' as const,
       serverId: props.serverId, environmentId: props.environmentId, deploymentId: props.deploymentId } : null,
     [failed, props.serverId, props.environmentId, props.deploymentId]);
-    const investigation = useInvestigateFailure(investigateSubject);
+    // The person's Investigate and this receipt's own records; an unresolved placement opens the composer.
+    const investigation = useInvestigateFailure(investigateSubject, RECEIPT_AGENT_ACTIONS);
     const investigationOwner = useAccountNoticeInvestigation();
-    // An unresolved placement opens the composer, where the person chooses it; no placement picker on this page.
-    // Once only: if the composer itself still asks for a placement, its own chooser stays as the way forward.
-    const placementUnresolved = investigation.outcome?.kind === 'placement_choice_required';
-    const { launch: launchInvestigation } = investigation;
-    const openedComposerForPlacement = React.useRef(false);
-    React.useEffect(() => {
-      if (!placementUnresolved || openedComposerForPlacement.current) return;
-      openedComposerForPlacement.current = true;
-      void launchInvestigation('review');
-    }, [placementUnresolved, launchInvestigation]);
-    const showInvestigationOutcome = investigation.outcome !== null
-      && (!placementUnresolved || openedComposerForPlacement.current && !investigation.pending);
+    const showInvestigationOutcome = investigation.showOutcome;
+    const fallbackInvestigate = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [{
+      label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
+    }], []);
     const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome);
     const outcomeInput = React.useMemo(() => persistedInvestigation && investigateSubject ? {
       subject: investigateSubject,
@@ -284,19 +279,15 @@ export const DeploymentReceiptDetail = React.memo(
       health: environmentValue?.healthAggregate,
       state: deployment.state,
     });
-    // Investigate is the shared agent-action control (DEPLOY-COMPOSE R4): its face opens the prefilled New Session
-    // composer beside this receipt; Start now runs it in the background. The configured Triage owner decides the rest.
-    // Core draws the public presenter inside the core Happier UI scope, as every other core consumer does.
+    // The shared agent-action control (DEPLOY-COMPOSE R4) for each of the person's records: its face launches in the
+    // record's own mode, the chevron offers the other. Until the catalog answers, the default Investigate stands in.
     const investigateControl = (
-      <CorePluginUiPresentationScope>
-        <AgentActionButton
-          title={t('inbox.work.healthNotice.investigate')}
-          launchMode="review"
-          onLaunch={(mode) => { void investigation.launch(mode); }}
-          disabled={investigation.pending}
-          compact={phone}
-        />
-      </CorePluginUiPresentationScope>
+      <InvestigationAgentActionButtons
+        actions={investigation.actions ?? fallbackInvestigate}
+        pending={investigation.pending}
+        compact={phone}
+        onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
+      />
     );
     const showLogs = deployment.state === 'failed' || deployment.state === 'outcome_unknown'
       || deployment.state === 'cancelled';

@@ -2,7 +2,7 @@ import {
     TriageSessionHandoffChoicesV1Schema, TriageSessionHandoffInputV1Schema,
     TriageSessionHandoffSelectionV1Schema, TriageSessionHandoffResultV1Schema, type TriageSessionHandoffChoicesV1,
     type TriageSessionHandoffSelectionV1, type TriageSessionHandoffInputV1, type TriageFailureSubjectV1,
-    triageFailureSubjectEntryV1, TriageReadSourceSessionLinksResultV1Schema,
+    triageFailureSubjectActionSubjectV1, triageFailureSubjectEntryV1, TriageReadSourceSessionLinksResultV1Schema,
     TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
@@ -25,6 +25,7 @@ export const failureInvestigationSubjectKey = (entry: FailureInvestigationSubjec
         ? JSON.stringify([entry.kind, entry.operation.serverId, entry.operation.machineId, entry.operation.operationId])
         : entry.kind === 'deploymentReceipt' ? JSON.stringify([entry.kind, entry.serverId, entry.environmentId, entry.deploymentId])
         : entry.kind === 'domain' ? JSON.stringify([entry.kind, entry.serverId, entry.environmentId, entry.domainId])
+        : entry.kind === 'deploymentEnvironment' ? JSON.stringify([entry.kind, entry.serverId, entry.environmentId])
         : JSON.stringify([entry.kind, entry.target]);
 
 const NO_RECOVERY_CHOICES: readonly AccountNoticeRecoveryChoiceV1[] = Object.freeze([]);
@@ -176,9 +177,10 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         async readChoices(entry: FailureInvestigationSubject, options?: Readonly<{ signal?: AbortSignal }>): Promise<TriageSessionHandoffChoicesV1> {
             const missing = { v: 1, kind: 'unavailable', reason: 'catalogUnavailable' } as const;
             if (options?.signal?.aborted || !read(entry)) return missing;
+            const subject = 'artifact' in entry ? undefined : triageFailureSubjectActionSubjectV1(entry);
             const result = await input.execute('action.invoke', {
                 action: { pluginId: 'happier.triage', localId: 'actions/read-v1' },
-                input: { v: 1, projection: 'sessionHandoff', task: 'investigate' },
+                input: { v: 1, projection: 'sessionHandoff', task: 'investigate', ...(subject === undefined ? {} : { subject }) },
             }, context(options?.signal));
             if (!result.ok || !input.isCurrent() || options?.signal?.aborted) return missing;
             const choices = TriageSessionHandoffChoicesV1Schema.safeParse(result.result);

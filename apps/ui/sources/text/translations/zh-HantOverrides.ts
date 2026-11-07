@@ -1477,6 +1477,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       agentActionStartNow: "立即開始",
       agentActionAddInstructions: "新增說明…",
       agentActionEdit: "編輯動作…",
+      agentActionStartNeedsTask: "此動作未指定任務，因此會開啟編輯器。",
     },
   },
   approvals: {

@@ -2756,6 +2756,7 @@ export const de: TranslationStructure = {
             agentActionStartNow: "Jetzt starten",
             agentActionAddInstructions: "Anweisungen hinzufügen…",
             agentActionEdit: "Aktion bearbeiten…",
+            agentActionStartNeedsTask: "Diese Aktion nennt keine Aufgabe, deshalb öffnet sie den Editor.",
         },
     },
 

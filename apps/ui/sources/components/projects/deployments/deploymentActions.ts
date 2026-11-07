@@ -15,8 +15,6 @@ import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireA
     type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
-import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { t } from '@/text';
 import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
@@ -69,15 +67,6 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         }
     }
     return {
-        /** Start owns this editable handoff; opening it neither spawns a Session nor deploys anything. */
-        async openPreparation(input: Readonly<{ environmentId: string; name: string }>) {
-            assertCurrent();
-            const result = SessionAuthoringOpenResultV1Schema.parse(await execute('session.authoring.open', {
-                seed: { prompt: t('projects.deployments.copy.preparePrompt', { ...input, sourceId: projectSourceId }) },
-            }));
-            if (result.kind !== 'opened') throw new HappyError(result.reason, false, { code: result.reason });
-            return result;
-        },
         async runBackup(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
             assertCurrent();
             return DeploymentBackupActionResultSchemasV1['deployments.backups.run'].parse(await invoke(

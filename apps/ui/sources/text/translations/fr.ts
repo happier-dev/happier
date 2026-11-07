@@ -2912,6 +2912,7 @@ export const fr: TranslationStructure = {
       agentActionStartNow: "Lancer maintenant",
       agentActionAddInstructions: "Ajouter des instructions…",
       agentActionEdit: "Modifier l’action…",
+      agentActionStartNeedsTask: "Cette action ne précise aucune tâche, elle ouvre donc l’éditeur.",
     },
   },
 

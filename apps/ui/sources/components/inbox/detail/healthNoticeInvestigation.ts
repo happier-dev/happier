@@ -128,9 +128,12 @@ export function useHealthNoticeInvestigate(
   const [outcome, setOutcome] =
     React.useState<HealthNoticeInvestigationOutcome | null>(null);
   const controller = React.useRef<AbortController | null>(null);
+  // The record the person pressed; a placement retry continues that same record.
+  const pressedActionId = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
     setPending(false);
     setOutcome(null);
+    pressedActionId.current = undefined;
     return () => {
       controller.current?.abort();
       controller.current = null;
@@ -154,11 +157,12 @@ export function useHealthNoticeInvestigate(
         signal: own.signal,
       });
       if (own.signal.aborted) return;
+      const wanted = pressedActionId.current
+        ?? (choices.kind === 'choices' ? choices.defaultActionId : null);
       const selection =
         choices.kind === 'choices'
           ? choices.actions.find(
-              (action) =>
-                action.selection.configuredActionId === choices.defaultActionId,
+              (action) => action.selection.configuredActionId === wanted,
             )?.selection
           : undefined;
       if (!selection) {
@@ -186,11 +190,71 @@ export function useHealthNoticeInvestigate(
       if (!own.signal.aborted) setPending(false);
     }
   }, [investigation]);
-  const investigate = React.useCallback(() => performInvestigation(), [performInvestigation]);
+  const investigate = React.useCallback(() => {
+    pressedActionId.current = undefined;
+    return performInvestigation();
+  }, [performInvestigation]);
   const investigateWithPlacement = React.useCallback((placement: HealthNoticeInvestigationPlacement) =>
     performInvestigation(placement), [performInvestigation]);
-  /** `AgentActionButton`'s launch: the same configured Investigate, in the mode the person chose. */
-  const launch = React.useCallback((mode: 'start' | 'review') =>
-    performInvestigation(undefined, mode === 'start' ? 'send' : 'compose'), [performInvestigation]);
+  /**
+   * `AgentActionButton`'s launch: the record the person pressed (the default when none is named, or the record
+   * pressed last for a follow-up launch), in the mode they chose.
+   */
+  const launch = React.useCallback((mode: 'start' | 'review', configuredActionId?: string) => {
+    if (configuredActionId !== undefined) pressedActionId.current = configuredActionId;
+    return performInvestigation(undefined, mode === 'start' ? 'send' : 'compose');
+  }, [performInvestigation]);
   return { investigate, investigateWithPlacement, launch, pending, outcome };
+}
+
+/** One configured record a failure page draws as an `AgentActionButton`, with the catalog owner's launch facts. */
+export type InvestigationAgentAction = Readonly<{
+  actionId: string;
+  label: string;
+  titleKey?: string;
+  launchMode: 'start' | 'review';
+  startable: boolean;
+}>;
+
+/** The task default first when asked, then every record the person offers on this page's own subject. */
+export function readInvestigationAgentActions(
+  choices: TriageSessionHandoffChoicesV1,
+  includeDefault: boolean,
+): readonly InvestigationAgentAction[] | null {
+  if (choices.kind !== 'choices') return null;
+  const isDefault = (id: string) => includeDefault && id === choices.defaultActionId;
+  return [
+    ...choices.actions.filter((item) => isDefault(item.selection.configuredActionId)),
+    ...choices.actions.filter((item) => item.forSubject === true && !isDefault(item.selection.configuredActionId)),
+  ].map((item) => ({
+    actionId: item.selection.configuredActionId,
+    label: item.label,
+    ...(item.titleKey === undefined ? {} : { titleKey: item.titleKey }),
+    launchMode: item.launchMode ?? 'review',
+    startable: item.startable ?? true,
+  }));
+}
+
+/**
+ * The page's records, read once per subject so the buttons carry the person's names and launch modes. `null` until
+ * the catalog answers (or when it cannot), and the last answer stays while another subject loads.
+ */
+export function useInvestigationAgentActions(
+  investigation: BoundHealthNoticeInvestigation | null,
+  options: Readonly<{ includeDefault: boolean }>,
+): readonly InvestigationAgentAction[] | null {
+  const [actions, setActions] = React.useState<readonly InvestigationAgentAction[] | null>(null);
+  const includeDefault = options.includeDefault;
+  React.useEffect(() => {
+    if (!investigation) {
+      setActions(null);
+      return;
+    }
+    const own = new AbortController();
+    void investigation.readChoices({ signal: own.signal }).then((choices) => {
+      if (!own.signal.aborted) setActions(readInvestigationAgentActions(choices, includeDefault));
+    }, () => {});
+    return () => own.abort();
+  }, [investigation, includeDefault]);
+  return actions;
 }

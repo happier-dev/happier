@@ -2900,6 +2900,7 @@ export const ca: TranslationStructure = {
               agentActionStartNow: "Inicia ara",
               agentActionAddInstructions: "Afegeix instruccions…",
               agentActionEdit: "Edita l’acció…",
+              agentActionStartNeedsTask: "Aquesta acció no indica cap tasca, així que obre el compositor.",
           },
       },
 

@@ -2875,6 +2875,7 @@ export const zhHans: TranslationStructure = {
       agentActionStartNow: "立即开始",
       agentActionAddInstructions: "添加说明…",
       agentActionEdit: "编辑操作…",
+      agentActionStartNeedsTask: "此操作未指定任务，因此会打开编辑器。",
     },
   },
 

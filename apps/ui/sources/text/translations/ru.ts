@@ -2917,6 +2917,7 @@ export const ru: TranslationStructure = {
       agentActionStartNow: "Запустить сейчас",
       agentActionAddInstructions: "Добавить инструкции…",
       agentActionEdit: "Изменить действие…",
+      agentActionStartNeedsTask: "В этом действии не указана задача, поэтому оно открывает редактор.",
     },
   },
 

@@ -3154,6 +3154,7 @@ const enUi = {
     agentActionStartNow: "Start now",
     agentActionAddInstructions: "Add instructions…",
     agentActionEdit: "Edit action…",
+    agentActionStartNeedsTask: "This action names no task, so it opens the composer.",
   },
 };
 

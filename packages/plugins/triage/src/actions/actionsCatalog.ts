@@ -1,9 +1,13 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
-
+import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, type TriageSessionHandoffChoicesV1 } from '@happier-dev/triage-protocol/v1';
 
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import {
+    applyTriageActionLaunchModeV1,
     mutateTriageAction,
+    planTriageOfferedActionsV1,
+    readTriageActionLaunchModeV1,
+    readTriageActionTitleKeyV1,
     readTriageActions,
     TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
     type TriageActionCommandV1,
@@ -15,6 +19,8 @@ import type {
     TriageAdministerActionResultV1,
     TriageReadActionsInputV1,
     TriageReadActionsResultV1,
+    TriageReadActionsActionInputV1,
+    TriageReadActionsActionResultV1,
 } from './actionsCatalogProtocol.js';
 import { createTriageAccountKvCatalogStore } from '../settings/accountKvCatalogStore.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
@@ -154,16 +160,42 @@ export async function administerTriageAction(
 }
 
 export function createTriageReadActionsActionHandler(): TriageDataActionHandler<
-    TriageReadActionsInputV1,
-    TriageReadActionsResultV1
+    TriageReadActionsActionInputV1,
+    TriageReadActionsActionResultV1
 > {
-    return async (input, context: TriageDataActionContext) => await readTriageActionsForSurface(input, {
-        catalog: createTriageAccountKvCatalogStore(
-            requireTriageAccountStorage(context).kv,
-            TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
-        ),
-        signal: context.signal,
-    });
+    return async (input, context: TriageDataActionContext) => {
+        const deps = {
+            catalog: createTriageAccountKvCatalogStore(
+                requireTriageAccountStorage(context).kv,
+                TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
+            ),
+            signal: context.signal,
+        };
+        if (!('projection' in input)) return await readTriageActionsForSurface(input, deps);
+        const read = await readTriageActions(deps);
+        if (read.kind === 'unreadable') return { v: 1, kind: 'unavailable', reason: 'catalogUnavailable' };
+        // A handoff without an entry addresses a native record, whose declared source workflow subject is `other`
+        // (triage-protocol investigationSubjects.ts). The one planner decides, so a pull-request-only or
+        // subject-owned record (a deployment Environment's "Set it up") is never offered on an unrelated failure.
+        // A page that names its own native subject also gets that subject's records, marked so it draws them.
+        const shared = planTriageOfferedActionsV1(read.value.actions, 'other');
+        const own = input.subject === undefined ? [] : planTriageOfferedActionsV1(read.value.actions, input.subject);
+        const actions: Extract<TriageSessionHandoffChoicesV1, { kind: 'choices' }>['actions'] = read.value.actions
+            .filter(action => action.target.kind === 'agent' && (shared.includes(action) || own.includes(action)))
+            .map(action => {
+                const titleKey = readTriageActionTitleKeyV1(action);
+                return { label: action.label, selection: {
+                    configuredActionId: action.actionId,
+                    sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured',
+                }, launchMode: readTriageActionLaunchModeV1(action),
+                startable: applyTriageActionLaunchModeV1(action, 'start') !== null,
+                ...(titleKey === null ? {} : { titleKey }),
+                ...(own.includes(action) ? { forSubject: true as const } : {}) };
+            });
+        const defaultActionId = input.task === 'investigate' ? TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1 : TRIAGE_DEFAULT_FIX_ACTION_ID_V1;
+        return { v: 1, kind: 'choices', actions,
+            defaultActionId: actions.some(action => action.selection.configuredActionId === defaultActionId) ? defaultActionId : null };
+    };
 }
 
 export function createTriageAdministerActionActionHandler(): TriageDataActionHandler<
