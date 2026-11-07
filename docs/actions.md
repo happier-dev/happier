@@ -6970,6 +6970,12 @@ decisions and Action observations independently apply the Action's observation
 projection; those redacted views are not caller receipts. This is a 0.3
 development contract, not a claim about released availability.
 
+In 0.3 development, a fresh deferred live-only result reaches the authenticated
+deciding human through both direct approval execution and exact-daemon replay.
+The shared decision-result owner selects that custody once. Repeated decisions
+and recorded reads retain the observation projection; a receipt-only CLI caller
+receives `approval_result_held` rather than an incomplete authentication result.
+
 The result-custody exception is
 `approvalResultCustody: 'live_only'`, where the exact invocation stays the blocking waiter because
 its raw result must never become durable artifact custody; such a row must declare both a required

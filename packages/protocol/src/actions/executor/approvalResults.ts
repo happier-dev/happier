@@ -46,7 +46,18 @@ export function readUnavailableApprovalReplayOrigin(request: ApprovalRequest): A
   };
 }
 
-export function buildApprovalDecisionResult(request: ApprovalRequest, liveResult?: ActionExecuteResult): ActionExecuteResult {
+export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecution?: Readonly<{
+  exec: ActionExecuteResult;
+  authority: ActionExecutorContext['authority'];
+}>): ActionExecuteResult {
+  const currentActionId = ActionIdSchema.safeParse(request.actionId);
+  // Deferred execution has no original waiter. Its deciding human receives
+  // the fresh result once, including when execution ran through daemon replay.
+  // Blocking invocations and recorded reads retain their existing custody.
+  const liveResult = freshExecution?.authority === 'present_user'
+    && request.approval?.flow === 'deferred'
+    && currentActionId.success && getActionSpec(currentActionId.data).approvalResultCustody === 'live_only'
+    ? freshExecution.exec : undefined;
   // Lost live input is a terminal refusal, not a successful Approve control.
   // Keep ordinary execution receipts and live-only result custody unchanged.
   if (request.v === 2 && request.execution?.effectAttempted === false

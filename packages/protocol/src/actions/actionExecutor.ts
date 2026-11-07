@@ -6704,14 +6704,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ctx,
           observeExecution: true,
         });
-        // A deferred mint has no original live waiter: deliver its bearer once
-        // to the deciding human. A detached blocking invocation has lost its
-        // secret custody and cannot recover it through another decision call.
-        const liveResult = executed.ok && resolveHostStampedAuthority(ctx) === 'present_user'
-          && approvedRequest.approval?.flow === 'deferred'
-          && requestedActionId.success && getActionSpec(requestedActionId.data).approvalResultCustody === 'live_only'
-          ? executed.exec : undefined;
-        return executed.ok ? buildApprovalDecisionResult(executed.request, liveResult) : executed;
+        return executed.ok ? buildApprovalDecisionResult(executed.request, {
+          exec: executed.exec, authority: resolveHostStampedAuthority(ctx),
+        }) : executed;
         } catch (error) {
           const failure = normalizeActionExecutorThrownError(error);
           return await settleApprovedFailure({ ok: false, ...failure, error: redactBugReportSensitiveText(failure.error) },

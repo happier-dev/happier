@@ -2789,6 +2789,53 @@ describe('createActionExecutor (approvals)', () => {
     } } });
   });
 
+  it.each(['configurationRequired', 'awaitingOAuth'] as const)('returns fresh deferred beginConnect custody through daemon replay (%s)', async status => {
+    const actionId = 'connectedServices.authentication.beginConnect';
+    const service = { pluginId: 'example.accounts', localId: 'service' };
+    const input = { machineId: 'machine-1', service, modeId: 'password' };
+    const output = getActionSpec(actionId).outputSchema!.parse(status === 'configurationRequired'
+      ? { status, attemptId: 'attempt', target: { kind: 'attempt', attemptId: 'attempt', service, modeId: 'password' }, missingFieldIds: ['mailbox'] }
+      : { status, attemptId: 'attempt', callbackUrl: 'https://callback.example.test/', authorizationUrl: 'https://authorize.example.test/private' });
+    let stored: ApprovalRequest | null = null;
+    let effects = 0;
+    const boundary: Partial<ActionExecutorDeps> = {
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'connect-replay' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestSchema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next; return { ok: true };
+      },
+      // Native authentication and Artifact storage are system boundaries.
+      connectedServiceAction: async () => { effects++; return output; },
+    };
+    const origin = { surface: 'cli' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home' };
+    const daemon = createExecutor(boundary);
+    expect(await daemon.execute(actionId, input, { ...origin, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      [actionId]: { approvalRequiredSurfaces: ['cli'] },
+    } }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'connect-replay' } });
+    const deciding = createExecutor({ ...boundary,
+      // The exact-Machine RPC transport calls the real daemon replay entry.
+      approvalRequestApprovedReplay: async ({ artifactId, context }) => daemon.replayApprovedApprovalRequest({
+        artifactId, callerAuthority: context.authority,
+      }),
+    });
+    const decision = await deciding.execute('approval.request.decide', { artifactId: 'connect-replay', decision: 'approve' }, origin);
+    expect(decision).toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: output } } });
+    if (decision.ok && decision.result && typeof decision.result === 'object' && 'liveExecution' in decision.result) {
+      expect(getActionSpec(actionId).outputSchema!.parse((decision.result.liveExecution as { result: unknown }).result)).toEqual(output);
+    }
+    const repeat = await deciding.execute('approval.request.decide', { artifactId: 'connect-replay', decision: 'approve' }, origin);
+    expect(repeat).toMatchObject({ ok: true, result: { status: 'executed' } });
+    if (repeat.ok) expect(repeat.result).not.toHaveProperty('liveExecution');
+    expect(effects).toBe(1);
+    expect(JSON.stringify(stored)).not.toContain('https://authorize.example.test/private');
+    if (status === 'configurationRequired') expect(ApprovalRequestSchema.parse(stored).execution?.result).not.toHaveProperty('target');
+  });
+
   it('keeps a present-user invitation approval on its live mounted invocation', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'ui-home-approval-1' }));
     const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));

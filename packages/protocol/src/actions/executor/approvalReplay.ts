@@ -105,7 +105,9 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
             serverId: args.currentAccount.serverId, serverIdentityId: args.currentAccount.serverIdentityId } : {}),
           ...(args.callerAuthority === 'present_user' ? { authority: 'present_user' as const } : {}),
         }, observeExecution: true });
-      return executed.ok ? buildApprovalDecisionResult(executed.request) : executed;
+      return executed.ok ? buildApprovalDecisionResult(executed.request, {
+        exec: executed.exec, authority: args.callerAuthority,
+      }) : executed;
     } catch (error) {
       const normalized = normalizeActionExecutorThrownError(error);
       return { ok: false, ...normalized, ...(!effectMayHaveStarted ? { effectAttempted: false } : {}) };
