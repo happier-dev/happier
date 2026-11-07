@@ -93,7 +93,7 @@ const savedSecrets = lazyZodSchema(() => z.array(z.strictObject({ name: id, phas
 export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('partial'), environmentId: z.optional(id), revision: z.optional(revision),
   targetLinkId: z.optional(id), definition: z.optional(storedPin), savedSecrets,
-  phase: z.enum(['generation', 'environment', 'target', 'bindings', 'metadata', 'deploy']), errorCode: id,
+  phase: z.enum(['generation', 'environment', 'target', 'bindings', 'metadata', 'domains', 'deploy']), errorCode: id,
   deployment: z.optional(DeploymentReceiptAcceptedResultV1Schema),
   unknownSecret: z.optional(z.strictObject({ name: id, phase: z.enum(['build', 'runtime']), ref: DeploymentSecretBindingSourceV1Schema.shape.ref })),
 }));

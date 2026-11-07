@@ -9114,7 +9114,7 @@ export type DeploymentsActionResultById = {
                 resourceRevision: number;
             };
         }[];
-        phase: 'environment' | 'bindings' | 'target' | 'metadata' | 'deploy' | 'generation';
+        phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'target';
         errorCode: string;
         environmentId?: string | undefined;
         revision?: number | undefined;

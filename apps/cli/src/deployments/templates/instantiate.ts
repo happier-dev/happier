@@ -6,7 +6,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInsta
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
     DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
     DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -17,7 +17,7 @@ import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonV
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     environmentSecretBindingIdentityV1, resolveDeploymentStoredDefinitionRevisionV1, createOwnServerEnvironmentConfigurationV1,
-    type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentDomainContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentTemplatePreparationErrorV1, prepareDeploymentTemplateInstantiationV1, resolveDeploymentCreationDefaultsV1, resolveDeploymentTemplateInstantiationBaselineRefV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -31,7 +31,10 @@ import { createDeploymentTemplateGeneratedSecretForHost, validateDeploymentTempl
 import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefaultInputsForHost } from '../readCreationDefaultsForHost';
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (failure: string | ActionExecuteFailure): never => {
+    const code = typeof failure === 'string' ? failure : failure.errorCode;
+    throw Object.assign(new Error(code, typeof failure === 'string' ? undefined : { cause: failure }), { code });
+};
 const deploymentTemplateDomainChildRole = (key: string) => `template.domain:${key}`;
 function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiationReviewV1): HostReviewedChildrenPreparationV1 {
     const children = review.domains.map(domain => ({ action: 'deployments.domains.add' as const,
@@ -160,8 +163,12 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if (contentRevision === null) return refuse('deployment_conflict');
         const definition = { ...candidateDefinition, contentRevision };
         await admitStoredComposeDefinition(definition);
-        // Domain selection is not route creation. Never report an applied route without its real owner.
-        if (prepared.domains.length) return refuse('template_domain_route_required');
+        // Catalog Install reviews required-Domain deployment before allocating its Environment.
+        if (actionId === 'deployments.environments.create' && template.domains.some(domain => domain.required)) {
+            input = { ...input, deploy: creationReview?.deploy ?? { requestKey: context.actionRequestId ?? refuse('invalid_parameters') } };
+        }
+        // Optional-only Catalog selection retains its existing refusal until an explicit deploy is requested.
+        if (prepared.domains.length && input.environment.kind === 'create' && !input.deploy) return refuse('template_domain_route_required');
         const name = current?.content.name ?? (input.environment.kind === 'create' ? input.environment.name : '');
         const projectOwner = input.newProject?.owner ?? source?.source.owner
             ?? (source ? { kind: 'account' as const, accountId: source.source.createdByAccountId } : refuse('invalid_parameters'));
@@ -236,6 +243,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         let effectIssued = false;
         try {
             if (plan.input.mode === 'preview') return { kind: 'preview', review: plan.review };
+            if (plan.prepared.domains.length && !context.hostReviewedChild) return failure('credential_scope_denied');
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
             const bindings: StoredAppPresetInputV1['bindings'] = [...input.bindings];
@@ -343,6 +351,33 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 if (deployment.state !== 'succeeded' && deployment.state !== 'running_unverified') return refuse(
                     deployment.state === 'failed' ? 'deployment_failed' : deployment.state === 'cancelled' ? 'cancelled'
                         : deployment.state === 'outcome_unknown' ? 'outcome_unknown' : 'deployment_in_progress');
+            }
+            if (finalPrepared.domains.length) {
+                phase = 'domains';
+                const link = created.targetLinks.find(item => item.targetLink.id === targetLinkId)!.targetLink;
+                for (const domain of finalPrepared.domains) {
+                    const domainContent: DeploymentDomainContentV1 = { hostname: domain.hostname,
+                        target: { service: domain.service, containerPort: domain.containerPort,
+                            ...(domain.path ? { path: domain.path } : {}) },
+                        ...(domain.healthCheck ? { healthCheck: domain.healthCheck } : {}) };
+                    // Give each selected declaration a stable identity within this admitted install attempt.
+                    const key = createHash('sha256').update(JSON.stringify([
+                        environmentId, input.environment.kind === 'create' ? input.environment.requestKey : context.actionRequestId,
+                        domain.key,
+                    ])).digest('hex');
+                    const result = await context.hostReviewedChild!.invoke({ action: 'deployments.domains.add',
+                        role: deploymentTemplateDomainChildRole(domain.key), input: normalizeStrictJsonValue({
+                            serverId: input.serverId, environmentId, targetLinkId, expectedRevision: revision,
+                            expectedTargetLinkRevision: link.revision, domainId: `template-${key}`, requestKey: `template-domain-${key}`,
+                            content: domainContent,
+                        }) });
+                    if (!result.ok) return refuse(result);
+                    const settled = DeploymentDomainMutationResultV1Schema.safeParse(result.result);
+                    if (!settled.success) return refuse('invalid_action_output');
+                    if (!settled.data.ok) return refuse(settled.data.error);
+                    revision = settled.data.revision;
+                    if (settled.data.domain.state === 'failed') return refuse('native_route_unavailable');
+                }
             }
             return { kind: 'applied', environmentId: environmentId!, revision: revision!, targetLinkId, definition: appliedDefinition, savedSecrets,
                 ...(deployment ? { deployment } : {}) };
