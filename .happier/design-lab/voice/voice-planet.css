@@ -1,0 +1,32 @@
+/* Voice lab · the ONE planet (shared by every voice concept page). Since 2026-10-02 it is the Daybreak dot planet drawn
+   by ../daybreak/engine.js (palette, light and grammar live there); this file only sizes the mark, the mute pip and the
+   bar meter kept for the non-dot comparison. Namespace vp-*. Nothing moves when idle or muted. */
+:root { --vp-cool: #6D94FF; --vp-warm: #FFB14A; }
+.vp { display: inline-block; flex: none; position: relative; vertical-align: middle; }
+/* the canvas bleeds 30% past the box so the atmosphere (energy) can spread without moving layout */
+.vp canvas.db-cv { position: absolute; left: -30%; top: -30%; width: 160%; height: 160%; pointer-events: none; }
+/* rest: the line `waveform` glyph from the app icon family, in the composer's ordinary icon tint (VE-02, amended
+   2026-10-10; shipped VoiceMark.tsx VoiceMarkRestGlyph → button.secondary.tint = the lab's --text2). Centred in the
+   mark's box; during the morph it fades while its dots stream onto the planet. */
+.vp .vp-wave { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--text2); pointer-events: none; }
+.vp.morph.play .vp-wave { animation: vp-wave-out .55s ease-in-out forwards; }
+.vp.regather.play .vp-wave { opacity: 0; animation: vp-wave-in .55s ease-in-out forwards; }
+@keyframes vp-wave-out { to { opacity: 0; } }
+@keyframes vp-wave-in { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .vp.morph.play .vp-wave, .vp.regather.play .vp-wave { animation: none; } }
+/* mute pip: never colour-only (spec §2.2) */
+.vp .mx { position: absolute; right: -3px; bottom: -3px; width: 55%; height: 55%; min-width: 11px; min-height: 11px; border-radius: 50%; background: var(--base); color: var(--text); display: grid; place-items: center; box-shadow: 0 0 0 1.5px var(--base); }
+.vp .mx svg { width: 78%; height: 78%; }
+
+/* the meter: real input/output energy only; never rendered without audio behind it (spec §2.1) */
+.vp-meter { display: inline-flex; align-items: center; gap: 2px; height: 14px; flex: none; }
+.vp-meter i { display: block; width: 2px; border-radius: 1px; background: var(--text2); min-height: 2px; }
+.vp-meter.in i { background: var(--vp-cool); }
+.vp-meter.out i { background: var(--vp-warm); }
+[data-theme="light"] .vp-meter.out i, :root:not([data-theme="dark"]) .vp-meter.out i { background: #E08A12; }
+[data-theme="light"] .vp-meter.in i { background: #4F78F0; }
+.vp-meter.flat i { background: var(--text3); }
+.vp-meter.live i { animation: vp-lvl 1.1s ease-in-out infinite alternate; transform-origin: 50% 50%; }
+.vp-meter.live i:nth-child(2n) { animation-duration: .8s; } .vp-meter.live i:nth-child(3n) { animation-duration: 1.4s; }
+@keyframes vp-lvl { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .vp-meter.live i { animation: none; } }

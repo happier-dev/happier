@@ -1,0 +1,319 @@
+/* Voice presence lab (lane A, 2026-10-02). Namespace vo-*. Lab-only. The shell, tabs, session, Companion (F1 Plain),
+   composer and phone kit are the shared kit's classes; this file adds only the voice presence. Colour carries meaning
+   only: amber = needs you, red = error. The live pill is neutral material, never a tinted vessel. */
+
+/* ═══ desktop: the live pill in the top rail ═══ */
+.vo-pill { position: absolute; top: 6px; right: 12px; height: 28px; z-index: 7; display: flex; align-items: center; gap: 0; padding: 0 2px 0 0; border-radius: 14px; background: color-mix(in srgb, var(--text) 5.5%, transparent); box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--text) 9%, transparent); font-size: 12.5px; line-height: 16px; color: var(--text); white-space: nowrap; }
+.vo-pill .main { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px 0 6px; border-radius: 14px; min-width: 0; }
+.vo-pill .main .l { font-weight: 590; }
+.vo-pill .main .tm { color: var(--text3); font-variant-numeric: tabular-nums; }
+.vo-pill .dv { width: 1px; height: 14px; background: color-mix(in srgb, var(--text) 12%, transparent); margin: 0 2px; }
+.vo-pill .ib { width: 26px; height: 24px; border-radius: 12px; display: grid; place-items: center; color: var(--text2); }
+.vo-pill .ib svg { width: 15px; height: 15px; }
+.vo-pill .ib.on { color: var(--text); background: color-mix(in srgb, var(--text) 9%, transparent); }
+.vo-pill .ib.end { color: var(--danger); }
+.vo-pill .tb { height: 22px; padding: 0 9px; border-radius: 11px; font-size: 12px; font-weight: 600; background: var(--btn); color: var(--btn-text); margin: 0 2px 0 4px; }
+.vo-pill.t-need .main .l { color: var(--warning); }
+.vo-pill.t-error .main .l { color: var(--danger); }
+.vo-pill .nd { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex: none; }
+.vo-pill.open { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.vo-pill .z-work { width: 11px; height: 11px; }
+/* the pill as a static spec element (states board) */
+.vo-pill.inl { position: relative; top: auto; right: auto; display: inline-flex; }
+
+/* ═══ the Voice glance (Companion F1 Plain item; same component in the popover and the phone sheet) ═══ */
+.vo-gl { border-top: 0; padding-top: 4px; }
+.cn-col > .vo-gl:first-child { border-top: 0; }
+.vo-gl .ih .vp { margin-right: 1px; }
+.vo-gl .st { display: flex; align-items: center; gap: 10px; margin: 10px 0 2px; }
+.vo-gl .st b { font-size: 17px; line-height: 22px; font-weight: 640; letter-spacing: -0.01em; }
+.vo-gl .st .grow { flex: 1; }
+.vo-gl.t-need .st b { color: var(--warning); }
+.vo-gl.t-error .st b { color: var(--danger); }
+.vo-gl .cap { font-size: 12.5px; line-height: 17px; color: var(--text2); }
+.vo-gl .cap .z-work { display: inline-block; width: 10px; height: 10px; vertical-align: -1px; margin-right: 3px; }
+.vo-tx { margin: 12px 0 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 18.5px; }
+.vo-tx .u { color: var(--text2); }
+.vo-tx .u .who { color: var(--text3); }
+.vo-tx .a { color: var(--text); }
+.vo-tx .a.live::after { content: ''; display: inline-block; width: 2px; height: 13px; margin-left: 2px; vertical-align: -2px; background: var(--text3); border-radius: 1px; }
+.vo-dl { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 10px; background: color-mix(in srgb, var(--text) 4%, transparent); font-size: 12.5px; line-height: 16px; color: var(--text2); }
+.vo-dl svg { flex: none; }
+.vo-dl b { color: var(--text); font-weight: 580; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vo-dl .s { margin-left: auto; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+.vo-dl .s .z-work { width: 10px; height: 10px; }
+.vo-dl .s .nd { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+.vo-ctl { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
+.vo-ctl .grow { flex: 1; }
+.vo-cb { height: 28px; padding: 0 10px 0 8px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 560; color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); background: var(--p-paper); }
+.vo-cb svg { width: 14px; height: 14px; color: var(--text2); }
+.vo-cb.on { background: color-mix(in srgb, var(--text) 8%, transparent); box-shadow: none; }
+.vo-cb.end { color: var(--danger); }
+.vo-cb.end svg { color: var(--danger); }
+.vo-cb.pri { background: var(--btn); color: var(--btn-text); box-shadow: none; }
+.vo-cb.pri svg { color: var(--btn-text); }
+.vo-open { font-size: 12px; color: var(--text2); margin-top: 10px; display: inline-flex; align-items: center; gap: 3px; }
+.vo-open svg { width: 12px; height: 12px; }
+.vo-why { margin-top: 10px; font-size: 12.5px; line-height: 17px; color: var(--text2); }
+.vo-gl .cn-need { margin-top: 12px; }
+.vo-said { display: flex; align-items: center; gap: 5px; margin: 0 0 8px 22px; font-size: 11.5px; color: var(--text3); }
+.vo-said svg { width: 12px; height: 12px; }
+
+/* ═══ composer: dictation mic in the field corner, the planet left of Send (spec §2.3) ═══ */
+.vo-fmic { position: absolute; top: 9px; right: 10px; width: 24px; height: 24px; display: grid; place-items: center; color: var(--text3); }
+.vo-fmic svg { width: 16px; height: 16px; }
+.vo-nochips .hi-chip { display: none; }
+.vo-cpl { width: 32px; height: 32px; display: grid; place-items: center; flex: none; border-radius: 16px; }
+
+/* ═══ sidebar: the quiet affordance (the row of a session Voice is bound to) ═══ */
+.vo-rowmark { display: inline-grid; place-items: center; margin-left: 4px; }
+
+/* ═══ popover host (no Companion in this view; also alternative C) ═══ */
+.vo-pop { position: absolute; top: 40px; right: 12px; width: 340px; z-index: 30; border-radius: 14px; background: var(--base); box-shadow: 0 0 0 .5px var(--p-sheet-border), 0 12px 40px rgba(0,0,0,.16); padding: 10px 14px 14px; }
+[data-theme="dark"] .vo-pop { background: #221D1D; box-shadow: 0 0 0 .5px rgba(255,255,255,.1), 0 16px 48px rgba(0,0,0,.5); }
+.vo-pop .cn-item { padding: 0; }
+
+/* ═══ the opt-in orb, redesigned: 28 px, no meter bars, no sheet, no floor ═══ */
+.vo-orb { position: absolute; z-index: 20; display: flex; align-items: center; gap: 8px; }
+.vo-orb .body { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 22px; }
+.vo-orb .cap { height: 26px; padding: 0 10px; border-radius: 13px; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 580; background: var(--base); box-shadow: 0 0 0 .5px var(--p-sheet-border), 0 4px 14px rgba(0,0,0,.1); white-space: nowrap; }
+[data-theme="dark"] .vo-orb .cap { background: #2A2424; }
+.vo-orb .cap .tm { color: var(--text3); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* ═══ phone ═══ */
+.vo-ph .wt-ph390 { padding-bottom: 170px; }
+.vo-pcomp { position: absolute; left: 12px; right: 12px; bottom: 86px; z-index: 5; display: flex; align-items: center; gap: 6px; }
+.vo-pcomp .fld { flex: 1; min-width: 0; height: 44px; border-radius: 22px; background: var(--p-paper); box-shadow: inset 0 0 0 1px var(--border-strong), 0 6px 18px rgba(0,0,0,.05); padding: 0 6px 0 16px; display: flex; align-items: center; }
+[data-theme="dark"] .vo-pcomp .fld { background: #1E1B1B; }
+.vo-pcomp .tx { flex: 1; font-size: 15px; color: var(--text3); }
+.vo-pcomp .fmic { width: 32px; height: 32px; display: grid; place-items: center; color: var(--text3); }
+.vo-pcomp .fmic svg { width: 18px; height: 18px; }
+.vo-pcomp .vo-cpl { width: 40px; height: 40px; }
+.vo-pcomp .send { width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center; background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text3); flex: none; }
+.vo-pcomp .send svg { width: 16px; height: 16px; }
+.vo-ph.haspill .vo-pcomp { bottom: 136px; }
+/* the phone pill: same material as the bar, docked above it */
+.vo-ppill { position: absolute; left: 50%; transform: translateX(-50%); bottom: 84px; z-index: 7; height: 42px; display: flex; align-items: center; gap: 2px; padding: 0 5px 0 7px; border-radius: 21px; background: color-mix(in srgb, var(--base) 82%, transparent); backdrop-filter: blur(18px); box-shadow: 0 6px 22px rgba(0,0,0,.12), inset 0 0 0 .5px color-mix(in srgb, var(--text) 10%, transparent); white-space: nowrap; font-size: 14px; }
+[data-theme="dark"] .vo-ppill { background: color-mix(in srgb, #221D1D 88%, transparent); box-shadow: 0 6px 22px rgba(0,0,0,.45), inset 0 0 0 .5px rgba(255,255,255,.1); }
+.vo-ppill .main { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 2px; }
+.vo-ppill .main .l { font-weight: 620; }
+.vo-ppill .main .tm { color: var(--text3); font-variant-numeric: tabular-nums; }
+.vo-ppill .ib { width: 34px; height: 34px; border-radius: 17px; display: grid; place-items: center; color: var(--text2); }
+.vo-ppill .ib svg { width: 18px; height: 18px; }
+.vo-ppill .ib.on { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.vo-ppill .ib.end { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
+.vo-ppill .tb { height: 30px; padding: 0 12px; border-radius: 15px; font-size: 13.5px; font-weight: 620; background: var(--btn); color: var(--btn-text); margin-left: 2px; }
+.vo-ppill.t-need .l { color: var(--warning); }
+.vo-ppill.t-error .l { color: var(--danger); }
+.vo-ppill .nd { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); }
+.vo-ppill.inl { position: relative; left: auto; bottom: auto; transform: none; display: inline-flex; }
+/* top island alternative */
+.vo-ppill.top { bottom: auto; top: 4px; }
+.vo-ph.island .ss-pnav { margin-top: 50px; }
+/* the sheet: the same glance, no scrim (Voice runs while you watch) */
+.vo-sheet { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 9; border-radius: 30px; background: var(--base); box-shadow: 0 -2px 0 .5px var(--p-sheet-border), 0 -10px 40px rgba(0,0,0,.14); padding: 8px 18px 26px; }
+[data-theme="dark"] .vo-sheet { background: #221D1D; box-shadow: 0 0 0 .5px rgba(255,255,255,.1), 0 -12px 44px rgba(0,0,0,.55); }
+.vo-sheet .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--border-strong); margin: 0 auto 10px; }
+.vo-sheet .cn-item { padding: 0; border: 0; }
+.vo-sheet .cn-item .ih .t { font-size: 15px; }
+.vo-sheet .cn-item .k { font-size: 13px; }
+.vo-sheet .vo-gl .st b { font-size: 24px; line-height: 30px; }
+.vo-sheet .vo-gl .cap { font-size: 14px; line-height: 19px; }
+.vo-sheet .vo-tx { font-size: 15px; line-height: 21px; gap: 10px; }
+.vo-sheet .vo-dl { font-size: 14px; padding: 10px 12px; border-radius: 12px; }
+.vo-sheet .vo-ctl { gap: 8px; margin-top: 16px; }
+.vo-sheet .vo-cb { height: 44px; border-radius: 22px; padding: 0 16px 0 13px; font-size: 15px; flex: 1; justify-content: center; }
+.vo-sheet .vo-cb svg { width: 18px; height: 18px; }
+.vo-sheet .vo-ctl .grow { display: none; }
+.vo-sheet .cn-need .h { font-size: 15px; } .vo-sheet .cn-need .s { font-size: 13.5px; }
+.vo-sheet .cn-need .btn { height: 40px; padding: 0 18px; font-size: 15px; }
+
+/* ═══ boards ═══ */
+.vo-board { grid-column: 1 / -1; }
+.vo-board h1 { font: 700 24px/30px InterLab, Inter, system-ui; letter-spacing: -0.02em; margin: 0 0 6px; }
+.vo-board .lede { font-size: 14px; line-height: 21px; color: var(--text2); max-width: 980px; margin: 0 0 22px; }
+.vo-tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 18px; }
+.vo-tbl th { text-align: left; font-size: 12px; font-weight: 600; color: var(--text3); padding: 0 12px 10px 0; border-bottom: 1px solid var(--p-divider); }
+.vo-tbl td { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--p-divider); vertical-align: middle; }
+.vo-tbl td.nm b { display: block; font-weight: 620; font-size: 13.5px; }
+.vo-tbl td.nm span { color: var(--text3); font-size: 12px; }
+.vo-tbl td.an { color: var(--text2); font-size: 12.5px; max-width: 250px; }
+.vo-tbl .gl { width: 300px; }
+.vo-tbl .gl .st { margin: 0; }
+.vo-tbl .gl .st b { font-size: 15px; }
+.vo-basis { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text2); }
+.vo-basis.derivable { background: color-mix(in srgb, #6D94FF 14%, transparent); color: #3D63D9; }
+[data-theme="dark"] .vo-basis.derivable { color: #8FB0FF; }
+.vo-basis.new { background: color-mix(in srgb, #A98CF5 18%, transparent); color: #7B5BD6; }
+[data-theme="dark"] .vo-basis.new { color: #C3B0FF; }
+.vo-pstack { display: flex; flex-direction: column; gap: 9px; padding: 10px 16px 40px; }
+.vo-pstack .r { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.vo-pstack .r .n { font-size: 12px; color: var(--text3); display: flex; gap: 6px; align-items: center; }
+
+/* ═══ transcript voice marker ═══ */
+.vo-mk { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; line-height: 14px; color: var(--text3); }
+.vo-mk.r { align-self: flex-end; margin-top: -10px; }
+.vo-tcard { border-radius: 12px; box-shadow: inset 0 0 0 1px var(--p-sheet-border); padding: 10px 12px; display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.vo-tcard .c { flex: 1; min-width: 0; }
+.vo-tcard .c b { display: block; font-weight: 600; }
+.vo-tcard .c span { color: var(--text2); font-size: 12.5px; }
+.vo-tcard .s { font-size: 12.5px; color: var(--text2); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.vo-tcard .s .z-work { width: 10px; height: 10px; }
+.vo-tcard .s .nd { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+
+/* ═══ lock screen / Live Activity / Android (system surfaces) ═══ */
+.vo-lock { position: absolute; inset: 0; background: radial-gradient(120% 70% at 30% 0%, #3a3256, #14121c 60%, #0b0a10); color: #fff; font-family: InterLab, Inter, system-ui; }
+[data-theme="light"] .vo-lock { background: radial-gradient(120% 70% at 30% 0%, #c9d6f7, #9fb0dc 55%, #7d8bb8); }
+.vo-lock .tm { text-align: center; font-size: 82px; line-height: 90px; font-weight: 640; letter-spacing: -0.03em; margin-top: 70px; }
+.vo-lock .dt { text-align: center; font-size: 18px; font-weight: 560; opacity: .85; padding-top: 70px; }
+.vo-isl { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); height: 36px; width: 210px; border-radius: 18px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 8px; z-index: 3; }
+.vo-la { position: absolute; left: 12px; right: 12px; top: 270px; border-radius: 24px; padding: 14px 16px 16px; background: rgba(28,26,34,.62); backdrop-filter: blur(24px); color: #fff; }
+[data-theme="light"] .vo-la { background: rgba(255,255,255,.72); color: #111; }
+.vo-la .h { display: flex; align-items: center; gap: 10px; }
+.vo-la .h b { font-size: 17px; font-weight: 650; }
+.vo-la .h .m { font-size: 13px; opacity: .65; }
+.vo-la .h .grow { flex: 1; }
+.vo-la .ln { font-size: 14px; line-height: 19px; opacity: .85; margin: 10px 0 12px; }
+.vo-la .a { display: flex; gap: 8px; }
+.vo-la .a span { flex: 1; height: 40px; border-radius: 20px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 15px; font-weight: 600; background: rgba(255,255,255,.14); }
+[data-theme="light"] .vo-la .a span { background: rgba(0,0,0,.07); }
+.vo-la .a span.end { background: rgba(255,69,58,.9); color: #fff; }
+.vo-la .a svg { width: 17px; height: 17px; }
+.vo-la .need { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 10px 0 12px; padding: 9px 10px; border-radius: 12px; background: rgba(255,179,64,.16); }
+.vo-la .need .nd { width: 7px; height: 7px; border-radius: 50%; background: #FFB340; flex: none; }
+.vo-and { position: absolute; inset: 0; background: #e9e7ee; color: #1b1b1f; font-family: Roboto, InterLab, system-ui; }
+[data-theme="dark"] .vo-and { background: #121116; color: #e6e1e9; }
+.vo-and .qs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 64px 18px 14px; }
+.vo-and .qs i { height: 58px; border-radius: 20px; background: rgba(0,0,0,.06); }
+[data-theme="dark"] .vo-and .qs i { background: rgba(255,255,255,.07); }
+.vo-and .qs i.on { background: #c9d6f7; } [data-theme="dark"] .vo-and .qs i.on { background: #39457a; }
+.vo-and .nt { margin: 6px 12px; border-radius: 22px; background: #fff; padding: 14px 16px 12px; }
+[data-theme="dark"] .vo-and .nt { background: #201f25; }
+.vo-and .nt .ap { display: flex; align-items: center; gap: 7px; font-size: 12.5px; opacity: .75; }
+.vo-and .nt .ap b { font-weight: 600; }
+.vo-and .nt .t { font-size: 15.5px; font-weight: 600; margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.vo-and .nt .x { font-size: 14px; line-height: 19px; opacity: .78; margin-top: 2px; }
+.vo-and .nt .ac { display: flex; gap: 22px; margin-top: 12px; font-size: 14px; font-weight: 600; color: #3d63d9; }
+[data-theme="dark"] .vo-and .nt .ac { color: #a9c0ff; }
+.vo-and .nt.dim { opacity: .9; }
+
+/* ═══ dot-planet hero in the glance (atmosphere = the meter) ═══ */
+.vo-hero { display: flex; align-items: center; gap: 18px; margin: 14px 0 4px; padding-left: 10px; }
+.vo-hero .c { min-width: 0; flex: 1; }
+.vo-hero .st { margin: 0; display: flex; align-items: center; gap: 8px; }
+.vo-gl .vo-hero .cap .z-work { display: none; }
+.vo-sheet .vo-hero { gap: 24px; margin-top: 18px; padding-left: 16px; }
+.vo-pill .db-cell, .vo-ppill .db-cell { margin: 0 1px; }
+.vo-isl .t { color: #fff; font: 600 14px/1 InterLab, Inter, system-ui; font-variant-numeric: tabular-nums; }
+.vo-tbl td { vertical-align: top; }
+.vo-tbl td:nth-child(3), .vo-tbl td:nth-child(5) { vertical-align: middle; }
+
+/* ═══ ROUND 2 ═══ */
+/* pill: the mark is its own toggle */
+.vo-pill .mk { width: 30px; height: 28px; display: grid; place-items: center; border-radius: 14px; }
+.vo-pill .main { padding-left: 2px; }
+/* tooltips */
+.vo-tip { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); white-space: nowrap; z-index: 40; height: 26px; padding: 0 9px; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 560; color: var(--btn-text); background: var(--btn); box-shadow: 0 4px 14px rgba(0,0,0,.14); pointer-events: none; }
+.vo-tip.dn { bottom: auto; top: calc(100% + 8px); left: auto; right: -2px; transform: none; }
+.vo-tip kbd { font: 600 11px/1 InterLab, Inter, system-ui; padding: 2px 5px; border-radius: 4px; background: color-mix(in srgb, var(--btn-text) 18%, transparent); }
+.vo-cpl { position: relative; }
+.vo-fmic.hov { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); border-radius: 7px; }
+.vo-fmic .vo-tip { bottom: auto; top: calc(100% + 6px); }
+/* top-rail rest mic */
+.vo-railmic { position: absolute; top: 6px; right: 12px; z-index: 7; }
+.vo-railmic .b { width: 32px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
+/* shared primitives */
+.vo-sl { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; line-height: 17px; white-space: nowrap; }
+.vo-sl b { font-weight: 620; }
+.vo-sl .tm { color: var(--text3); font-variant-numeric: tabular-nums; }
+.vo-sl.t-need b { color: var(--warning); } .vo-sl.t-error b { color: var(--danger); }
+.vo-tp { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.vo-tp .ib { width: 32px; height: 32px; border-radius: 16px; display: grid; place-items: center; color: var(--text2); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.vo-tp .ib svg { width: 16px; height: 16px; }
+.vo-tp .ib.on { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
+.vo-tp .ib.end { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
+.vo-tp .tb { height: 28px; padding: 0 11px; border-radius: 14px; font-size: 12.5px; font-weight: 620; background: var(--btn); color: var(--btn-text); }
+.vo-cap1 { display: block; font-size: 12px; line-height: 16px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the island container */
+.vo-float { position: absolute; inset: 0; z-index: 25; pointer-events: none; }
+.vo-float > * { pointer-events: auto; }
+.vo-float.desk { inset: 40px 8px 8px 337px; }
+.vo-isl2 { margin: 0 !important; position: absolute; width: 330px; height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 8px; border-radius: 28px; background: color-mix(in srgb, var(--base) 88%, transparent); backdrop-filter: blur(18px); box-shadow: 0 8px 28px rgba(0,0,0,.14), inset 0 0 0 .5px color-mix(in srgb, var(--text) 10%, transparent); touch-action: none; cursor: grab; z-index: 8; }
+[data-theme="dark"] .vo-isl2 { background: color-mix(in srgb, #2A2424 90%, transparent); box-shadow: 0 10px 32px rgba(0,0,0,.5), inset 0 0 0 .5px rgba(255,255,255,.1); }
+.vo-isl2 .mk { width: 40px; height: 40px; display: grid; place-items: center; flex: none; }
+.vo-isl2 .c { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vo-isl2.lift { transform: scale(1.06) !important; box-shadow: 0 18px 50px rgba(0,0,0,.24), inset 0 0 0 .5px color-mix(in srgb, var(--text) 12%, transparent); cursor: grabbing; }
+.vo-isl2.tuck { width: 48px; height: 48px; padding: 0; justify-content: center; border-radius: 24px; }
+.vo-isl2.ph { width: 358px; height: 58px; border-radius: 29px; }
+.vo-isl2.ph.docked { left: 16px; bottom: 84px; }
+.vo-isl2.ph.tuck { width: 52px; height: 52px; }
+.vo-isl2.inl { position: relative; left: auto; bottom: auto; }
+.vo-ph.hasisl .vo-pcomp { bottom: 150px; }
+.vo-anc { position: absolute; width: 330px; height: 56px; border-radius: 28px; border: 1.5px dashed color-mix(in srgb, var(--text) 22%, transparent); pointer-events: none; }
+.vo-anc.ph { width: auto; height: 58px; border-radius: 29px; }
+.vo-anc.ph.tuck { width: 52px; height: 52px; border-radius: 26px; }
+.vo-throw { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.vo-throw path { stroke: var(--text3); stroke-width: 1.5; stroke-dasharray: 5 5; fill: none; }
+.vo-throw circle { fill: var(--text3); }
+.vo-dragnote { position: absolute; font-size: 12px; color: var(--text2); }
+/* boards */
+.vo-h2 { font: 650 16px/22px InterLab, Inter, system-ui; margin: 30px 0 12px; }
+.vo-mkcell { display: inline-grid; place-items: center; }
+.vo-ladder td.mk { text-align: center; vertical-align: middle; }
+.vo-ladder th { text-align: center; } .vo-ladder th:first-child { text-align: left; }
+.vo-cmps { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.vo-cmp .lb { font-size: 12.5px; color: var(--text2); margin-bottom: 44px; }
+.vo-cmp .hi-comp { margin: 0; width: auto; }
+.vo-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.vo-step { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 14px 10px; border-radius: 14px; background: var(--base); box-shadow: inset 0 0 0 1px var(--p-divider); }
+.vo-step b { font-size: 13.5px; } .vo-step span:last-child { font-size: 12.5px; line-height: 17px; color: var(--text2); }
+.vo-prims { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.vo-prim { display: flex; flex-direction: column; gap: 4px; }
+.vo-prim .pv { height: 88px; border-radius: 14px; background: var(--base); box-shadow: inset 0 0 0 1px var(--p-divider); display: flex; align-items: center; justify-content: center; padding: 0 14px; margin-bottom: 6px; overflow: hidden; }
+.vo-prim b { font-size: 13.5px; } .vo-prim span:last-child { font-size: 12.5px; line-height: 17px; color: var(--text2); }
+.vo-ctns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.vo-ctn .mini { position: relative; height: 330px; border-radius: 14px; overflow: hidden; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--p-divider); margin-bottom: 8px; }
+.vo-ctn b { font-size: 13px; font-weight: 600; }
+.vo-mini-top { height: 40px; display: flex; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--p-divider); position: relative; }
+.vo-mini-top .vo-tabsbar { flex: 1; height: 10px; margin-right: 10px; border-radius: 5px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.vo-mini-top .vo-pill { position: relative; top: auto; right: auto; }
+.vo-mini-pop { position: absolute; right: 10px; top: 46px; width: 300px; border-radius: 14px; padding: 8px 12px 12px; background: var(--base); box-shadow: 0 0 0 .5px var(--p-sheet-border), 0 10px 30px rgba(0,0,0,.14); transform: scale(.92); transform-origin: top right; }
+[data-theme="dark"] .vo-mini-pop { background: #221D1D; }
+.vo-mini-pop .cn-item { padding: 0; }
+.vo-mini-body { position: absolute; inset: 16px; border-radius: 10px; background: repeating-linear-gradient(transparent 0 22px, color-mix(in srgb, var(--text) 5%, transparent) 22px 32px); }
+.vo-ctn .vo-isl2 { width: 300px; }
+.vo-sets { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.vo-set { border-radius: 14px; background: var(--base); box-shadow: inset 0 0 0 1px var(--p-divider); padding: 16px; }
+.vo-set .hd b { display: block; font-size: 14px; font-weight: 620; }
+.vo-set .hd span { display: block; font-size: 12.5px; line-height: 17px; color: var(--text2); margin: 2px 0 12px; }
+.vo-set .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.vo-tile { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.vo-tile .pv { position: relative; height: 70px; border-radius: 10px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--border); overflow: hidden; }
+.vo-tile.on .pv { box-shadow: inset 0 0 0 2px var(--text); }
+.vo-tile .t { font-size: 13px; font-weight: 560; text-align: left; }
+.vo-tile .pv .tb { position: absolute; left: 0; right: 0; top: 0; height: 16px; border-bottom: 1px solid var(--p-divider); }
+.vo-tile .pv > .vp { position: absolute; right: 8px; top: 1px; }
+.vo-tile .pv .isl { position: absolute; right: 8px; bottom: 8px; width: 64px; height: 20px; border-radius: 10px; background: var(--base); box-shadow: 0 2px 8px rgba(0,0,0,.15); display: flex; align-items: center; gap: 4px; padding: 0 4px; }
+.vo-tile .pv .isl i { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 18%, transparent); }
+.vo-tile .pv .orb { position: absolute; right: 10px; bottom: 10px; }
+
+/* ═══ Needs you: the session's own permission card (2026-11-07 lab cleanup, VI-04 amended) ═══
+   One card for the glance, the phone sheet, the brief and Moments (window.VPR.reqCard). Shipped look: neutral fill,
+   lock + title + open, the command, Yes (filled) · No · Stop (quiet) — SessionPendingPromptCards chrome="card".
+   The amber stays on the status word and dot cell, never on the card. */
+.vo-req { margin-top: var(--product-space-s12); padding: var(--product-space-s10) var(--product-space-s12) var(--product-space-s12); border-radius: 12px; background: color-mix(in srgb, var(--text) 4%, var(--base)); box-shadow: inset 0 0 0 1px var(--hair); }
+.vo-req .h { display: flex; align-items: center; gap: var(--product-space-s6); font-size: var(--product-type-body-size); line-height: var(--product-type-body-line); }
+.vo-req .h b { font-weight: var(--product-font-weights-semi-bold); }
+.vo-req .h svg { width: 15px; height: 15px; color: var(--text2); flex: none; }
+.vo-req .ext { width: 24px; height: 24px; display: grid; place-items: center; color: var(--text2); border-radius: 6px; }
+.vo-req .cmd { margin-top: var(--product-space-s6); padding-left: var(--product-space-s8); font-family: var(--product-type-face-mono); font-size: var(--product-type-meta-size); line-height: var(--product-type-meta-line); color: var(--text); }
+.vo-req .cmd .ps { color: var(--green); margin-right: var(--product-space-s8); }
+.vo-req .a { display: flex; align-items: center; gap: var(--product-space-s4); margin-top: var(--product-space-s10); }
+.vo-req .vo-q { height: 26px; padding: 0 var(--product-space-s8); border-radius: 7px; color: var(--text2); font-size: var(--product-type-meta-size); }
+.vo-req .out { display: flex; align-items: center; gap: var(--product-space-s6); margin-top: var(--product-space-s8); color: var(--text2); font-size: var(--product-type-meta-size); line-height: var(--product-type-meta-line); }
+.vo-req .out svg { width: 14px; height: 14px; color: var(--green); }
+.vo-reqnote { margin-top: var(--product-space-s6); padding: 0 var(--product-space-s2); color: var(--text3); font-size: var(--product-type-meta-size); line-height: var(--product-type-meta-line); }
+.vo-req.lg .a .btn, .vo-sheet .vo-req .a .btn { height: 40px; padding: 0 22px; }
+.vo-req.lg .vo-q, .vo-sheet .vo-req .vo-q { height: 40px; padding: 0 var(--product-space-s12); font-size: var(--product-type-body-size); }
+/* Android: the FGS notification carries the small app/mic icon, not a planet (PLAN §4.7 content refinement) */
+.vo-and .ap > svg { width: 14px; height: 14px; flex: none; color: var(--text2); }
