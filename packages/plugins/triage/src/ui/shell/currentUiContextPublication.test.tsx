@@ -6,13 +6,14 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1, PluginUiHostApi, RenderSurface } from '@happier-dev/plugin-sdk/ui';
+import { PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { useTriageCurrentUiContextPublication } from '../currentContextPublication.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type CurrentContextPublisher = Pick<PluginUiHostApi, 'publishCurrentUiContext'>;
+type CurrentContextPublisher = Pick<PluginUiHostApi, 'publishCurrentUiContext' | 'version'>;
 type CurrentContextRecord = Readonly<{
     enrichment: PluginUiContextEnrichmentV1;
     commandIds: readonly string[];
@@ -42,6 +43,8 @@ function createCurrentContextHost(): Readonly<{
     let nextCommandId = 0;
     let current: CurrentContextRecord | null = null;
     const publisher: CurrentContextPublisher = {
+        version: () => ({ apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
+            methods: ['publishCurrentUiContext'] }),
         publishCurrentUiContext(enrichment): void {
             current = enrichment === null
                 ? null
