@@ -50,7 +50,12 @@ import { isVoiceSetupFailed, readVoiceSetupNextStep } from './voiceSetupPresenta
  * may refresh the selected service's machine facts. Null once Voice is set up (unless its panel is
  * open, so the person sees the done state) or when the person hid it.
  */
-export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row' | 'wide'; span?: SetupBlockItem['span'] }>): SetupBlockItem | null {
+export function useVoiceSetupBlock(input: Readonly<{
+    layout: 'card' | 'row' | 'wide';
+    span?: SetupBlockItem['span'];
+    /** Unfolded over the work from the composer mark (lab T1): it answers setup open/close first. */
+    inPlace?: boolean;
+}>): SetupBlockItem | null {
     const router = useRouter();
     const voiceEnabled = useFeatureEnabled('voice');
     const accountScope = useActiveServerAccountScope();
@@ -141,7 +146,7 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row' | 'w
             if (!(expanded ? open() : close())) return false;
             setPanelOpen(expanded);
             return true;
-        }),
+        }, { inPlace: input.inPlace }),
         renderTile: () => (
             <VoiceSetupTile
                 layout={input.layout}

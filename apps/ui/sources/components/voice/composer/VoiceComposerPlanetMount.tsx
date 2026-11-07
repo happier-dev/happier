@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import {
     useVoiceAttemptControl,
@@ -11,6 +12,7 @@ import { t } from '@/text';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
+import { VoiceSetupPopover } from '@/voice/settings/setup/VoiceSetupPopover';
 
 import { VoiceComposerPlanet } from './VoiceComposerPlanet';
 
@@ -71,6 +73,15 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
         Modal.alert(t('voicePresence.holdToTalkTitle'), t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') }));
     }, [control.serviceTitle]);
     const { availability, live, muted, primaryAction, primaryActionHint, primaryActionLabel, onPrimaryAction } = control;
+    // The attempt owner decides the press means setup; the composer shows that setup in place over
+    // the work (lab T1) instead of leaving for Settings → Voice.
+    const anchorRef = React.useRef<View>(null);
+    const [setupOpen, setSetupOpen] = React.useState(false);
+    const closeSetup = React.useCallback(() => setSetupOpen(false), []);
+    const onPress = React.useCallback(() => {
+        if (primaryAction === 'setup') setSetupOpen(true);
+        else onPrimaryAction();
+    }, [onPrimaryAction, primaryAction]);
     const startsGlobal = idleTarget.kind === 'global';
     const holdHint = holdEnabled
         ? control.canHoldToTalk ? t('voicePresence.holdToTalkHint') : t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') })
@@ -80,32 +91,35 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
     if (availability === 'unavailable') return null;
 
     return (
-        <VoiceComposerPlanet
-            pose={resolveVoiceMarkPose(control)}
-            markEvent={control.markEvent}
-            muted={live && muted}
-            tooltip={[primaryAction === 'start'
-                ? [t('voicePresence.talkWithVoice'), shortcutLabel].filter(Boolean).join(' ')
-                : primaryActionLabel, holdHint].filter(Boolean).join('\n')}
-            /*
-             * "Start Global Voice" rather than "Start Voice" in New Session: the two do different
-             * things and a screen-reader user cannot see which composer they are in (§2.5).
-             */
-            accessibilityLabel={
-                primaryAction === 'start' && startsGlobal
-                    ? t('voiceAssistant.startGlobalVoice')
-                    : primaryActionLabel ?? ''
-            }
-            accessibilityHint={
-                [primaryAction === 'start' && startsGlobal
-                    ? t('voiceSurface.composerGlobalStartHint')
-                    : primaryActionHint, holdHint].filter(Boolean).join(' ')
-            }
-            disabled={primaryAction === null}
-            isActivelyFocused={isActivelyFocused}
-            onPress={onPrimaryAction}
-            beginHoldToTalk={holdEnabled ? control.beginHoldToTalk : undefined}
-            onHoldUnavailable={onHoldUnavailable}
-        />
+        <View ref={anchorRef} collapsable={false}>
+            <VoiceComposerPlanet
+                pose={resolveVoiceMarkPose(control)}
+                markEvent={control.markEvent}
+                muted={live && muted}
+                tooltip={[primaryAction === 'start'
+                    ? [t('voicePresence.talkWithVoice'), shortcutLabel].filter(Boolean).join(' ')
+                    : primaryActionLabel, holdHint].filter(Boolean).join('\n')}
+                /*
+                 * "Start Global Voice" rather than "Start Voice" in New Session: the two do different
+                 * things and a screen-reader user cannot see which composer they are in (§2.5).
+                 */
+                accessibilityLabel={
+                    primaryAction === 'start' && startsGlobal
+                        ? t('voiceAssistant.startGlobalVoice')
+                        : primaryActionLabel ?? ''
+                }
+                accessibilityHint={
+                    [primaryAction === 'start' && startsGlobal
+                        ? t('voiceSurface.composerGlobalStartHint')
+                        : primaryActionHint, holdHint].filter(Boolean).join(' ')
+                }
+                disabled={primaryAction === null}
+                isActivelyFocused={isActivelyFocused}
+                onPress={onPress}
+                beginHoldToTalk={holdEnabled ? control.beginHoldToTalk : undefined}
+                onHoldUnavailable={onHoldUnavailable}
+            />
+            <VoiceSetupPopover open={setupOpen} anchorRef={anchorRef} onRequestClose={closeSetup} />
+        </View>
     );
 }

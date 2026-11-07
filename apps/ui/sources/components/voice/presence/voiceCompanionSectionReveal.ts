@@ -36,13 +36,24 @@ export function setVoiceGlanceOpen(open: boolean): boolean {
     glance(open);
     return true;
 }
-export function registerVoiceSetupPresentation(control: NonNullable<typeof setup>): () => void {
+// Setup unfolded in place over the work (from the composer mark) answers before a host's tile (Home's
+// Get set up, Settings → Voice), which re-registers as its items change; each falls back on unmount.
+let setupInPlace: NonNullable<typeof setup> | null = null;
+export function registerVoiceSetupPresentation(
+    control: NonNullable<typeof setup>,
+    options?: Readonly<{ inPlace?: boolean }>,
+): () => void {
+    if (options?.inPlace) {
+        setupInPlace = control;
+        return () => { if (setupInPlace === control) setupInPlace = null; };
+    }
     setup = control;
     return () => { if (setup === control) setup = null; };
 }
 export function setVoiceSetupOpen(open: boolean): boolean {
-    if (!setup) return false;
-    return setup(open) !== false;
+    const control = setupInPlace ?? setup;
+    if (!control) return false;
+    return control(open) !== false;
 }
 export function registerVoicePresencePosition(control: NonNullable<typeof position>): () => void {
     position = control;

@@ -1185,6 +1185,51 @@ describe('useVoiceAttemptControl availability ladder', () => {
 
     await hook.unmount();
   });
+
+  it('unfolds Voice setup in place from the composer mark instead of leaving the work (lab T1)', async () => {
+    seedVoiceSettings({
+      providerId: null,
+      ui: {
+        activityFeedEnabled: false,
+        scopeDefault: 'global',
+        surfaceLocation: 'auto',
+      },
+    });
+    const { SETTINGS_ROUTES } =
+      await import('@/components/settings/catalog/routes');
+    const { VoiceComposerPlanetMount } =
+      await import('@/components/voice/composer/VoiceComposerPlanetMount');
+    const { VoiceEnergyProvider } =
+      await import('@/components/voice/light/useVoiceEnergy');
+    const { InjectedAuthProvider } =
+      await import('@/auth/context/AuthContext');
+    const { installReactDomPortalBoundaryForTests } =
+      await import('@/dev/testkit/mocks/reactDom');
+    const portal = installReactDomPortalBoundaryForTests();
+    const pushesBefore = routerMock.instance?.spies.push.mock.calls.length ?? 0;
+    // The app's authenticated tree always provides auth; the setup readiness reads it.
+    const screen = await renderScreen(
+      <InjectedAuthProvider credentials={null}>
+        <VoiceEnergyProvider
+          state={{ luminosity: 0, energized: false, direction: 'inward' }}
+          activation={{ providerReady: false, attemptActive: false, micCaptureActive: false }}
+        >
+          <VoiceComposerPlanetMount target={GLOBAL_TARGET} />
+        </VoiceEnergyProvider>
+      </InjectedAuthProvider>,
+    );
+    try {
+      expect(screen.findByTestId('voice-setup-in-place')).toBeNull();
+      await act(async () => screen.tree.pressByTestId('session-composer-voice'));
+      expect(screen.findByTestId('voice-setup-in-place')).not.toBeNull();
+      expect(
+        routerMock.instance?.spies.push.mock.calls.slice(pushesBefore).map((call) => call[0]),
+      ).not.toContain(SETTINGS_ROUTES.voice);
+    } finally {
+      await screen.unmount();
+      portal.restore();
+    }
+  });
 });
 
 /**
