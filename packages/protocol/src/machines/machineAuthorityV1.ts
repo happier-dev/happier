@@ -3,11 +3,12 @@ import { readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacemen
 
 export type MachineAuthorityFreshnessV1 = 'current' | 'stale';
 export type MachineHostAuthorityV1 = 'administrator' | 'ordinary' | 'unknown';
-/** Configuration availability is distinct from the native setup observation.
- * Preview owns the prerequisites for turning a supported target on. */
+/** Shared configuration/readiness presentation; Preview owns native prerequisites
+ * and the existing reviewed repair for a supported target. */
 export type MachineSeparateUsersAvailabilityV1 = Readonly<
   | { kind: 'available' }
   | { kind: 'can_turn_on' }
+  | { kind: 'repairable' }
   | { kind: 'unavailable'; reason: 'unsupported_platform' | 'metadata_unavailable' }
 >;
 export type MachineDaemonRightsV1 = Readonly<{
@@ -88,7 +89,8 @@ export function presentMachineAuthorityV1(input: MachineAuthorityInputV1): Machi
   const availability: MachineSeparateUsersAvailabilityV1 = !input.platform || placement === null
     ? { kind: 'unavailable', reason: 'metadata_unavailable' }
     : input.platform !== 'linux' ? { kind: 'unavailable', reason: 'unsupported_platform' }
-      : { kind: placement === 'member' ? 'available' : 'can_turn_on' };
+      : placement !== 'member' ? { kind: 'can_turn_on' }
+        : { kind: isolation?.kind === 'effective' || isolation?.kind === 'applying' ? 'available' : 'repairable' };
   const separateUsers = { placement, availability };
   const agentHostAuthority = freshness !== 'current' || isolation === null ? 'unknown'
     : isolation.kind === 'effective' ? 'ordinary' : hostAuthority;

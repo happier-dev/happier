@@ -19,11 +19,27 @@ describe('presentMachineAuthorityV1', () => {
       expect(result.separateUsers).toEqual({ placement: 'daemon', availability: { kind: 'can_turn_on' } });
     }
     expect(presentMachineAuthorityV1({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' } })
-      .separateUsers).toEqual({ placement: 'member', availability: { kind: 'available' } });
+      .separateUsers).toEqual({ placement: 'member', availability: { kind: 'repairable' } });
     expect(presentMachineAuthorityV1({ platform: 'darwin', isolationPolicy: { enabled: false } })
       .separateUsers).toEqual({ placement: 'daemon', availability: { kind: 'unavailable', reason: 'unsupported_platform' } });
     expect(presentMachineAuthorityV1({}).separateUsers).toEqual({ placement: null,
       availability: { kind: 'unavailable', reason: 'metadata_unavailable' } });
+  });
+
+  it('offers the existing reviewed repair for configured separate users that are not ready after restart', () => {
+    for (const isolation of [null, { kind: 'disabled' },
+      { kind: 'unavailable', code: 'provisioning_unavailable' }] as const) {
+      const result = presentMachineAuthorityV1({ platform: 'linux',
+        isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' }, isolation });
+      expect(result.separateUsers).toEqual({ placement: 'member', availability: { kind: 'repairable' } });
+      expect(result.isolation).toBe(isolation);
+    }
+    for (const isolation of [{ kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
+      { kind: 'applying', phase: 'workspace' }] as const) {
+      expect(presentMachineAuthorityV1({ platform: 'linux',
+        isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' }, isolation }).separateUsers)
+        .toEqual({ placement: 'member', availability: { kind: 'available' } });
+    }
   });
 
   it('carries AM-8 pending restart facts through strict observation, retained reads and the shared power presenter', () => {
