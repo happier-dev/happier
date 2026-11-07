@@ -390,6 +390,8 @@ async function cmdAdd(args: string[], options: ServerSubcommandOptions): Promise
 
   if (!assumeYes) {
     await assertRelayUrlAnswersBeforePersisting({ probeUrl: localServerUrl || serverUrl, interactive });
+  } else if (interactive) {
+    console.log(chalk.gray(`Saving ${serverUrl} without verifying it answers (--yes)`));
   }
 
   const created = await addServerProfile({ name, serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
