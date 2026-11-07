@@ -158,6 +158,27 @@ async function renderHistory(
 }
 
 describe('Environment → History', () => {
+  it('a row older than a day says the same day count as its day group', async () => {
+    const { t } = await import('@/text');
+    const environmentId = createDeploymentEnvironmentDetailV1().environment.id;
+    // 01:00 now, settled 5 days and 2 hours earlier at 23:00: five whole days elapsed, but six calendar days back.
+    const now = new Date(2026, 10, 8, 1, 0, 0).getTime();
+    const settled = now - (5 * 24 + 2) * 60 * 60 * 1000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(now);
+    const items = [{ ...createDeploymentReceiptHeaderV1({ id: 'receipt-old', environmentId, state: 'succeeded',
+      requestedAtMs: settled - 2, startedAtMs: settled - 1, settledAtMs: settled }) }];
+    const { screen, controller, settle } = await renderHistory(() => ({ ok: true, items, nextCursor: null }));
+    try {
+      expect(await settle('project-deployments.receipt.row.receipt-old')).not.toBeNull();
+      const group = screen.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('project-deployments.environment.history.day.') && typeof node.props.title === 'string')[0]!;
+      expect(group.props.title).toBe(t('sessionHistory.daysAgo', { count: 6 }));
+      const texts = screen.findAll(node => typeof node.props.children === 'string').map(node => node.props.children as string);
+      expect(texts).toContain(t('time.daysAgoShort', { count: 6 }));
+    } finally { vi.useRealTimers(); await screen.unmount(); controller.retire(); }
+  });
+
   it('leads each row with what the operation did to which version, groups rows by day, and rows are buttons', async () => {
     const environmentId = createDeploymentEnvironmentDetailV1().environment.id;
     const source = { kind: 'repository' as const, sha: 'c'.repeat(40) };
