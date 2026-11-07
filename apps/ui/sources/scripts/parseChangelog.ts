@@ -3,74 +3,26 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-interface ChangelogEntry {
-    version: number;
-    date: string;
-    summary: string;
-    changes: string[];
-    rawMarkdown?: string;
-}
+import type { ChangelogData } from '../changelog/types';
+import { parseChangelogSections, stripChangelogComments } from '../../../../scripts/pipeline/release/release-notes/changelog-sections.mjs';
 
-interface ChangelogData {
-    entries: ChangelogEntry[];
-    latestVersion: number;
+export function parseChangelogContent(content: string): ChangelogData {
+    const entries = parseChangelogSections(stripChangelogComments(content)).map((section) => ({
+        id: section.id,
+        title: section.title,
+        date: section.date,
+        markdown: section.markdown.trim(),
+    }));
+    const ids = new Set<string>();
+    for (const entry of entries) {
+        if (ids.has(entry.id)) throw new Error(`Duplicate changelog release id: ${entry.id}`);
+        ids.add(entry.id);
+    }
+    return { entries, latestReleaseId: entries[0]?.id ?? null };
 }
 
 function parseChangelog(): ChangelogData {
-    const changelogPath = path.join(__dirname, '../../CHANGELOG.md');
-    
-    if (!fs.existsSync(changelogPath)) {
-        console.warn('CHANGELOG.md not found, creating empty changelog data');
-        return { entries: [], latestVersion: 0 };
-    }
-
-    const content = fs.readFileSync(changelogPath, 'utf-8');
-    const entries: ChangelogEntry[] = [];
-    
-    // Split by version headers (## Version X - Date)
-    const versionSections = content.split(/^## Version (\d+) - (.+)$/gm);
-    
-    // Skip the first element (content before first version)
-    for (let i = 1; i < versionSections.length; i += 3) {
-        const versionStr = versionSections[i];
-        const dateStr = versionSections[i + 1];
-        const changesContent = versionSections[i + 2];
-        
-        const version = parseInt(versionStr, 10);
-        if (isNaN(version)) continue;
-        
-        // Extract summary and bullet points
-        const changes: string[] = [];
-        const lines = changesContent.trim().split('\n');
-        let summary = '';
-        let foundFirstBullet = false;
-        
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('- ')) {
-                foundFirstBullet = true;
-                changes.push(trimmed.substring(2));
-            } else if (!foundFirstBullet && trimmed.length > 0) {
-                // This is part of the summary (before any bullet points)
-                summary += (summary ? ' ' : '') + trimmed;
-            }
-        }
-        
-        entries.push({
-            version,
-            date: dateStr.trim(),
-            summary: summary.trim(),
-            changes,
-            rawMarkdown: `## Version ${version} - ${dateStr}\n${changesContent}`.trim()
-        });
-    }
-    
-    // Sort entries by version descending (newest first)
-    entries.sort((a, b) => b.version - a.version);
-    
-    const latestVersion = entries.length > 0 ? entries[0].version : 0;
-    
-    return { entries, latestVersion };
+    return parseChangelogContent(fs.readFileSync(path.join(__dirname, '../../CHANGELOG.md'), 'utf-8'));
 }
 
 function main() {
@@ -79,18 +31,19 @@ function main() {
     const changelogData = parseChangelog();
     const outputPath = path.join(__dirname, '../changelog/changelog.json');
     
-    // Ensure directory exists
-    const dir = path.dirname(outputPath);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    const rendered = JSON.stringify(changelogData, null, 2);
+    if (process.argv.includes('--check')) {
+        if (fs.readFileSync(outputPath, 'utf-8') !== rendered) {
+            throw new Error('Bundled changelog is stale. Run tsx sources/scripts/parseChangelog.ts.');
+        }
+    } else {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, rendered);
     }
     
-    // Write the parsed data
-    fs.writeFileSync(outputPath, JSON.stringify(changelogData, null, 2));
-    
     console.log(`✅ Parsed ${changelogData.entries.length} changelog entries`);
-    console.log(`📝 Latest version: ${changelogData.latestVersion}`);
-    console.log(`💾 Output written to: ${outputPath}`);
+    console.log(`📝 Latest release: ${changelogData.latestReleaseId ?? 'none'}`);
+    console.log(`${process.argv.includes('--check') ? 'Verified' : 'Wrote'} ${outputPath}`);
 }
 
 if (require.main === module) {

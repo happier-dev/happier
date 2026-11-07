@@ -4,9 +4,10 @@ import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mmkvAccess = vi.hoisted(() => ({
+    getString: vi.fn(() => { throw new Error('Disabled changelog must not read MMKV'); }),
     getNumber: vi.fn((..._args: unknown[]) => {
         throw new Error('MMKV.getNumber should not be called when changelog UI is disabled');
     }),
@@ -17,10 +18,11 @@ const mmkvAccess = vi.hoisted(() => ({
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
-        getNumber(...args: any[]) {
+        getString() { return mmkvAccess.getString(); }
+        getNumber(...args: unknown[]) {
             return mmkvAccess.getNumber(...args);
         }
-        set(...args: any[]) {
+        set(...args: unknown[]) {
             return mmkvAccess.set(...args);
         }
     }
@@ -53,15 +55,15 @@ describe('useChangelog (feature gate)', () => {
     it('reports no unread entries when changelog UI is disabled', async () => {
         const { useChangelog } = await import('./useChangelog');
 
-        let latest: { hasUnread: boolean; latestVersion: number } | null = null;
+        let latest: { hasUnread: boolean; latestReleaseId: string | null } | null = null;
         function Probe() {
             const value = useChangelog();
-            latest = { hasUnread: value.hasUnread, latestVersion: value.latestVersion };
+            latest = { hasUnread: value.hasUnread, latestReleaseId: value.latestReleaseId };
             return React.createElement('View');
         }
 
         tree = (await renderScreen(React.createElement(Probe))).tree;
 
-        expect(latest).toEqual({ hasUnread: false, latestVersion: 0 });
+        expect(latest).toEqual({ hasUnread: false, latestReleaseId: null });
     });
 });

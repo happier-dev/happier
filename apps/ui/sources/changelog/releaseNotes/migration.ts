@@ -1,4 +1,4 @@
-import { getLastViewedVersion } from '@/changelog';
+import { getLastViewedReleaseId } from '@/changelog';
 
 import { getCurrentReleaseEntry } from './manifestRuntime';
 import {
@@ -11,7 +11,7 @@ import {
 
 /**
  * Seed `release-notes-last-seen-release-id` for users who already saw the legacy
- * numeric changelog at install/upgrade time, so we do not retroactively show them
+ * changelog at install/upgrade time, so we do not retroactively show them
  * release-notes story cards they have already implicitly acknowledged.
  *
  * Rules:
@@ -35,10 +35,10 @@ export function runReleaseNotesMigrationSeeding(): void {
         return; // already ran for this baseline.
     }
 
-    const legacyLastViewedVersion = getLastViewedVersion();
-    const legacyBaseline = String(legacyLastViewedVersion);
+    const legacyLastViewedReleaseId = getLastViewedReleaseId();
+    const legacyBaseline = legacyLastViewedReleaseId;
     const wasAutoSeenForFreshInstall = getLegacyChangelogAutoSeenBaseline() === legacyBaseline;
-    if (legacyLastViewedVersion > 0 && !wasAutoSeenForFreshInstall) {
+    if (legacyLastViewedReleaseId !== null && !wasAutoSeenForFreshInstall) {
         setLastSeenReleaseId(currentEntry.releaseId);
     }
     setMigrationSeededReleaseId(currentEntry.releaseId);

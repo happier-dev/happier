@@ -13,7 +13,7 @@ import { sync } from '@/sync/sync';
 import { getServerUrl, setServerUrl, validateServerUrl } from '@/sync/domains/server/serverConfig';
 import { Switch } from '@/components/ui/forms/Switch';
 import { useUnistyles } from 'react-native-unistyles';
-import { setLastViewedVersion, getLatestVersion } from '@/changelog';
+import { setLastViewedReleaseId, getChangelogEntries } from '@/changelog';
 import { t } from '@/text';
 import { MotionPreviewDevSection } from '@/components/devSettings/MotionPreviewDevSection';
 import { StoryDeckPreviewDevSection } from '@/components/devSettings/StoryDeckPreviewDevSection';
@@ -311,10 +311,8 @@ export default function DevScreen() {
                     subtitle="Show 'What's New' banner again"
                     icon={<Icon name="sparkle" size={29} color="#007AFF" />}
                     onPress={() => {
-                        // Set to latest - 1 so it shows as unread
-                        // (setting to 0 triggers first-install logic that auto-marks as read)
-                        const latest = getLatestVersion();
-                        setLastViewedVersion(Math.max(0, latest - 1));
+                        // Use an older identity so the current release becomes unread.
+                        setLastViewedReleaseId(getChangelogEntries()[1]?.id ?? '0');
                         Modal.alert('Done', 'Changelog reset. Restart app to see the banner.');
                     }}
                 />

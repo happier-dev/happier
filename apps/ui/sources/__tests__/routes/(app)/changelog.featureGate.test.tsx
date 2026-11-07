@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mmkvAccess = vi.hoisted(() => ({
     getString: vi.fn((..._args: unknown[]) => undefined),
@@ -12,13 +12,13 @@ const mmkvAccess = vi.hoisted(() => ({
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
-        getString(...args: any[]) {
+        getString(...args: unknown[]) {
             return mmkvAccess.getString(...args);
         }
-        getNumber(...args: any[]) {
+        getNumber(...args: unknown[]) {
             return mmkvAccess.getNumber(...args);
         }
-        set(...args: any[]) {
+        set(...args: unknown[]) {
             return mmkvAccess.set(...args);
         }
     }
@@ -49,20 +49,6 @@ vi.mock('react-native-safe-area-context', () => ({
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: 'MarkdownView',
-}));
-
-vi.mock('@/changelog', () => ({
-    getChangelogEntries: () => [],
-    getLatestVersion: () => 0,
-    setLastViewedVersion: vi.fn(),
-}));
-
-vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
-    getFeatureBuildPolicyDecision: () => 'deny',
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 1000 },
 }));
 
 describe('ChangelogScreen (feature gate)', () => {

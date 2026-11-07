@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseChangelogSections, stripChangelogComments } from './changelog-sections.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
 export const RELEASE_NOTES_SOURCE_PATH = 'apps/ui/CHANGELOG.md';
@@ -75,16 +76,8 @@ function trimSectionMarkdown(markdown) {
  */
 export function parseReleaseNoteSection(changelog, releaseId) {
   const normalizedReleaseId = normalizeRequiredValue(releaseId, '--release-id');
-  const lines = String(changelog ?? '').replace(/\r\n?/g, '\n').split('\n');
-  const headerPattern = new RegExp(`^## Release ${escapeRegExp(normalizedReleaseId)} - (\\d{4}-\\d{2}-\\d{2})$`);
-  const matches = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(headerPattern);
-    if (match) {
-      matches.push({ index, date: match[1] });
-    }
-  }
+  const matches = parseChangelogSections(String(changelog ?? ''))
+    .filter((section) => section.kind === 'Release' && section.id === normalizedReleaseId);
 
   if (matches.length === 0) {
     throw new Error(`No exact changelog section found for release ${normalizedReleaseId}`);
@@ -93,12 +86,7 @@ export function parseReleaseNoteSection(changelog, releaseId) {
     throw new Error(`Changelog release ${normalizedReleaseId} must appear exactly once; found ${matches.length}`);
   }
 
-  const [{ index: startIndex, date }] = matches;
-  const endIndex = lines.findIndex(
-    (line, index) => index > startIndex && /^## (?:Release|Version) .+ - \d{4}-\d{2}-\d{2}$/.test(line),
-  );
-  const markdown = trimSectionMarkdown(lines.slice(startIndex + 1, endIndex === -1 ? undefined : endIndex).join('\n'));
-
+  const [{ date, markdown }] = matches;
   return { releaseId: normalizedReleaseId, date, markdown };
 }
 
@@ -117,8 +105,7 @@ function stripMarkdownLine(line) {
 }
 
 function hasMeaningfulPublicMarkdown(markdown) {
-  const visibleText = String(markdown ?? '')
-    .replace(/<!--([\s\S]*?)-->/g, '')
+  const visibleText = stripChangelogComments(String(markdown ?? ''))
     .replace(/\r\n?/g, '\n')
     .split('\n')
     .map(stripMarkdownLine)
