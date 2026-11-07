@@ -293,6 +293,10 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
     };
     return {
         ...PRESENTATIONS[error.code],
+        ...(error.code === 'provider_catalog_unavailable' && error.failureCause?.phase === 'providers.connections.save' ? {
+            titleKey: 'settingsProviders.errors.saveFailedTitle' as const,
+            descriptionKey: 'settingsProviders.errors.saveFailedDescription' as const,
+        } : {}),
         // A typed transport cause that names the fix replaces the generic sentence (an unknown host: the Base URL).
         ...(error.failureCause?.errorCode === 'ENOTFOUND' ? { descriptionKey: 'settingsProviders.errors.hostNotFoundDescription' as const } : {}),
         action: error.action,

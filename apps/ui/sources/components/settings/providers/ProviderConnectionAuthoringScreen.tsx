@@ -503,6 +503,11 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
 
     const executeSave = React.useCallback(async (signal: AbortSignal): Promise<boolean> => {
         if (!accountStillCurrent() || signal.aborted) return false;
+        probeGenerationRef.current += 1;
+        pendingProbe.current?.abort();
+        pendingProbe.current = null;
+        setProbeState('idle');
+        setProbeError(null);
         setLocalError(null);
         setManualModelsError(null);
         setInvalidField(null);
@@ -746,8 +751,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     React.useEffect(() => () => publishProviderDraftTitle(''), [publishProviderDraftTitle]);
     const retryMutation = React.useCallback(async (): Promise<void> => {
         if (!accountStillCurrent() || !mutation.retry) return;
-        await mutation.retry();
-    }, [accountStillCurrent, mutation.retry]);
+        await save();
+    }, [accountStillCurrent, mutation.retry, save]);
 
     // A custom endpoint is tested on one computer before it is saved; its editor keeps that scope.
     const contextBar = (

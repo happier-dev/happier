@@ -4,6 +4,18 @@ import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/p
 import { presentProviderError, presentProviderRecoveryAction } from './errorPresentation';
 
 describe('provider error presentation', () => {
+    it('presents a refused server save with Retry and retains the closed database cause', () => {
+        const failureCause = { phase: 'providers.connections.save', errorCode: 'database_transaction_timeout',
+            errorClass: 'Error', httpStatus: 503 } as const;
+        expect(presentProviderError(createProviderErrorV1('provider_catalog_unavailable', { failureCause }))).toMatchObject({
+            titleKey: 'settingsProviders.errors.saveFailedTitle',
+            descriptionKey: 'settingsProviders.errors.saveFailedDescription',
+            action: 'retry', context: { failureCause },
+        });
+        expect(presentProviderError(createProviderErrorV1('provider_catalog_unavailable')).titleKey)
+            .toBe('settingsProviders.errors.genericTitle');
+    });
+
     it('names an unresolvable host from the typed probe cause, and keeps the generic sentence otherwise', () => {
         const cause = (errorCode: string) => ({ phase: 'providers.probe.resolve_host', errorCode, errorClass: 'Error', httpStatus: null });
         const unreachable = createProviderErrorV1('provider_endpoint_unreachable');

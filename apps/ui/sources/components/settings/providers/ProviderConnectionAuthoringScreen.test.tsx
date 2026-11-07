@@ -1673,6 +1673,50 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(account.home.requestsFor('/v1/account/saved-secrets/resources').filter(request => request.input != null)).toHaveLength(0);
     });
 
+    it('replaces a failed Test with the typed server-save refusal and saves only when Try again is pressed', async () => {
+        probeProviderDraft.mockResolvedValueOnce({ status: 'error', error: createProviderErrorV1('provider_endpoint_unreachable') });
+        account.home.answer(account.serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            status: 503, body: { error: 'database_transaction_timeout', statusCode: 503 },
+        });
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const { ProviderErrorItems } = await import('./ProviderErrorItems');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
+        await React.act(async () => {
+            const fields = screen.findAllByType(FieldTextInput);
+            fields.find(field => field.props.accessibilityLabel === 'settingsProviders.authoring.name')!.props.onChangeText('Work gateway');
+            fields.find(field => field.props.accessibilityLabel === 'settingsProviders.authoring.baseUrl')!.props.onChangeText('https://gateway.example/v1');
+            screen.findAllByType(Item).find(item => item.props.title === 'settingsProviders.authoring.requiresApiKey')!
+                .props.rightElement.props.onValueChange(false);
+        });
+        await React.act(async () => { findDraftTestRow(screen)?.props.onPress?.(); });
+        await waitForHomeGovernance(() => expect(screen.findByType(ProviderErrorItems.type).props.error)
+            .toMatchObject({ code: 'provider_endpoint_unreachable' }));
+
+        await screen.pressByTestIdAsync('settings-provider-authoring-save');
+        await waitForHomeGovernance(() => expect(screen.findAllByType(ProviderErrorItems.type)
+            .map(node => node.props.error.code)).toContain('provider_catalog_unavailable'));
+        expect(screen.findAllByType(ProviderErrorItems.type)).toHaveLength(1);
+        expect(screen.findByType(ProviderErrorItems.type).props.error).toMatchObject({
+            code: 'provider_catalog_unavailable', action: 'retry',
+            failureCause: { errorCode: 'database_transaction_timeout', httpStatus: 503 },
+        });
+        expect(presentedTitles(screen)).toContain('settingsProviders.errors.saveFailedTitle');
+        const failureCard = findComposite(screen, 'provider-error:provider_catalog_unavailable', 'diagnosticCode');
+        expect(failureCard?.props.diagnosticCode).toBe('database_transaction_timeout');
+        const writes = () => account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1).filter(request => request.input != null);
+        expect(writes()).toHaveLength(1);
+        expect(routerReplace).not.toHaveBeenCalled();
+
+        installProviderConnectionsCatalogHttpBoundary({ home: account.home, serverId: account.serverId,
+            catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 });
+        const retry = findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.retry');
+        expect(retry).toBeDefined();
+        await React.act(async () => { await retry!.props.onPress(); });
+        await waitForHomeGovernance(() => expect(routerReplace).toHaveBeenCalledWith(expect.stringContaining('/settings/providers/pc_')));
+        expect(writes()).toHaveLength(2);
+        expect(probeProviderDraft).toHaveBeenCalledTimes(1);
+    });
+
     it('retains no save replay after an unknown custom create outcome', async () => {
         account.home.answer(account.serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, { dispatchThenFail: true });
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');

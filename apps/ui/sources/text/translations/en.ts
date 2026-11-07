@@ -4943,6 +4943,11 @@ const enConnectedServices = {
       'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
     accountAccessUnavailable:
       'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+    catalogSignInRequired: "Sign in to this Home again, then retry the connected-account change.",
+    catalogEncryptionUnavailable: "Happier couldn’t verify this account’s encryption state. Refresh and try again. If this continues, reconnect this device to the account.",
+    catalogContentUnreadable: "Happier couldn’t read the saved connected-account catalog. Refresh and try again. If this continues, ask your Home operator to check the saved account data.",
+    catalogSecretUnavailable: "A saved credential needed for this change is no longer available. Select an available credential and try again.",
+    catalogCancelled: "The connected-account change was cancelled. Try again when you’re ready.",
     accountSaveUnavailable:
       'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     signInLoadFailed: ({ service }: { service: string }) => `Couldn’t load ${service}’s sign-in. Try again.`,

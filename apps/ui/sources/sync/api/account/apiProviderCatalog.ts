@@ -208,8 +208,12 @@ export async function writeProviderCatalogInContext(context: LazyActionAccountCo
     } catch (error) { throw new ProviderCatalogOperationError(classifyHttpMutationRequestFailure({ error, issued: true, signal }), error); }
     const payload: unknown = await response.json().catch(() => null);
     if (response.status === 503 && payload && typeof payload === 'object'
-        && 'error' in payload && payload.error === 'database_transaction_conflict_exhausted') {
-        throw createProviderErrorV1('provider_catalog_unavailable');
+        && 'error' in payload && (payload.error === 'database_transaction_conflict_exhausted'
+            || payload.error === 'database_transaction_timeout')) {
+        // Keep the server's transaction refusal; an intentional retry still uses catalog CAS.
+        throw createProviderErrorV1('provider_catalog_unavailable', { failureCause: {
+            phase: 'providers.connections.save', errorClass: 'Error', errorCode: payload.error, httpStatus: response.status,
+        } });
     }
     const result = ProviderConnectionsRowMutationResponseV1Schema.safeParse(payload);
     if (!result.success) throw new ProviderCatalogOperationError(response.ok ? 'outcome_unknown' : `provider_catalog_http_${response.status}`);

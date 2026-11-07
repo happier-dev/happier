@@ -19,7 +19,8 @@ const { applySavedSecretCatalogPage, getSavedSecretCatalogSnapshot } = await imp
 const { getRemoteHostCatalogSnapshot } = await import('@/sync/store/settings/remoteHostCatalogSnapshot');
 
 describe('catalog mutation acknowledgement', () => {
-    it('keeps confirmed Provider database rollback retryable without claiming an unknown mutation outcome', async () => {
+    it.each(['database_transaction_conflict_exhausted', 'database_transaction_timeout'] as const)(
+        'keeps Provider server transaction refusal %s retryable with its typed cause and no automatic replay', async errorCode => {
         let writes = 0;
         const account = await restoreServerAccountForTest({ serverUrl: 'https://provider-rollback.example.test',
             accountId: 'account-provider-rollback', request: async (url, init) => {
@@ -32,7 +33,7 @@ describe('catalog mutation acknowledgement', () => {
                 if (path === '/v1/artifacts') return Response.json([]);
                 if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 && init?.method === 'POST') {
                     writes += 1;
-                    return Response.json({ error: 'database_transaction_conflict_exhausted', statusCode: 503 }, { status: 503 });
+                    return Response.json({ error: errorCode, statusCode: 503 }, { status: 503 });
                 }
                 return Response.json({ error: 'not_found' }, { status: 404 });
             } });
@@ -41,7 +42,8 @@ describe('catalog mutation acknowledgement', () => {
         const context = await captureLazyActionAccountContext(account.home.id);
         try {
             await expect(writeProviderCatalogInContext(context, { catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
-                expectedRevision: 7 })).rejects.toMatchObject({ code: 'provider_catalog_unavailable', retryable: true, action: 'retry' });
+                expectedRevision: 7 })).rejects.toMatchObject({ code: 'provider_catalog_unavailable', retryable: true, action: 'retry',
+                    failureCause: { phase: 'providers.connections.save', errorCode, httpStatus: 503 } });
             expect(writes).toBe(1);
         } finally { context.dispose(); await account.dispose(); }
     });
