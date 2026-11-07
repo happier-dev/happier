@@ -3,8 +3,7 @@ import { Pressable, View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
-import type { MachinePoolMemberInputV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolMemberEligibilityV1, MachinePoolMemberInputV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -24,19 +23,19 @@ import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { SELECTION_LIST_MODAL_MAX_HEIGHT, SELECTION_LIST_MODAL_CARD_SCROLL, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListStep } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
+import { useMachineListStatusByServerId, useMachineListByServerId } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
-import { createMachinePool, deleteMachinePool, MachinePoolActionApprovalPendingError, updateMachinePool } from '@/sync/ops/machinePools';
+import { createMachinePool, deleteMachinePool, getMachinePoolMemberEligibility, MachinePoolActionApprovalPendingError, updateMachinePool } from '@/sync/ops/machinePools';
 import { useMachinePoolProjections, type MachinePoolProjection } from '@/sync/engine/machines/useMachinePoolProjections';
 import { MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { randomUUID } from '@/platform/randomUUID';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
-import { resolveMachinePoolMemberLabel, resolveMachinePoolMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
+import { resolveMachinePoolMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
 import { createMachinePoolEditorTierState, isMachinePoolHomeOffline, isMachinePoolRefreshFailed, moveMachinePoolEditorTier, normalizeMachinePoolEditorMembers, normalizeMachinePoolEditorTierState } from './machinePoolEditorModel';
 import { useApprovalArtifact } from '@/components/approvals/useApprovalArtifact';
 import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
@@ -49,6 +48,7 @@ import {
     resolveMachinePoolDeleteFocusTargetTestId,
 } from '../sections/MachinePoolsSection';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 type Draft = Readonly<{ name: string; description: string; members: readonly MachinePoolMemberInputV1[]; tierCount: number }>;
 const draftFromView = (view: MachinePoolViewV1 | null): Draft => {
@@ -163,6 +163,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         if (isNew) publishMachinePoolDraftTitle('');
     }, [isNew, publishMachinePoolDraftTitle]);
     const [saving, setSaving] = React.useState(false); const [error, setError] = React.useState<string | null>(null);
+    const [loadingEligibility, setLoadingEligibility] = React.useState(false);
     const [approvalId, setApprovalId] = React.useState<string | null>(null);
     const {
         artifact: approvalArtifact,
@@ -171,7 +172,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     } = useApprovalArtifact({ artifactId: approvalId, serverId: props.serverId });
     const approvalStatus = approvalArtifact?.header?.approvalStatus;
     const approvalPending = approvalId !== null && (
-        approvalArtifactLoading || approvalStatus === 'open' || approvalStatus === 'approved' || approvalStatus === 'executing'
+        approvalArtifactLoading || isApprovalRequestV2InFlightStatus(approvalStatus)
     );
     const retargetNavigationFocusReturn = useRetargetNavigationFocusReturnIntent();
     const pendingDeleteFocusTargetRef = React.useRef<string | null>(null);
@@ -235,18 +236,17 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     // positive enabled result.
     const waitingForFeature = (featurePending || (isNew && pools === null)) && !homeOffline && !refreshFailed;
     const formDisabled = saving
+        || loadingEligibility
         || approvalPending
         || homeOffline
         || !poolProjection?.featureEnabled
         || waitingForExisting
         || existingMissing;
-    const eligibleMachines = React.useMemo(() => machines.filter((machine) => (
-        isPersistentMachine(machine)
-        &&
-        !(typeof machine.revokedAt === 'number' && machine.revokedAt > 0)
-        && !machine.replacedByMachineId
-    )), [machines]);
-    const availableMachines = React.useMemo(() => eligibleMachines.filter((machine) => !draft.members.some((member) => member.machineId === machine.id)), [draft.members, eligibleMachines]);
+    const availableMachines = React.useMemo(() => {
+        const memberIds = new Set(draft.members.map(member => member.machineId));
+        return machines.filter(machine => !memberIds.has(machine.id));
+    }, [draft.members, machines]);
+    const [memberEligibility, setMemberEligibility] = React.useState<readonly MachinePoolMemberEligibilityV1[]>([]);
     // Saved members carry the state the server reports, which names a member this Home no longer lists.
     const orderedMembers = React.useMemo(() => {
         const labels = resolveMachinePoolMemberLabels(draft.members.map((member) => ({
@@ -264,59 +264,80 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         if (!firstInvalid) return;
         restoreFocusToBestTarget(getMemberRowRef(firstInvalid.member.machineId));
     }, [getMemberRowRef, invalidMemberIds, orderedMembers]);
-    const memberPickerStep = React.useMemo<SelectionListStep>(() => ({
-        id: 'machine-pool-members',
-        inputPlaceholder: t('modelPickerOverlay.searchPlaceholder'),
-        emptyStateLabel: t('machinePools.noMachines'),
-        sections: [{
-            kind: 'static',
-            id: 'machines',
-            options: availableMachines.map((machine) => {
-                const label = resolveMachinePoolMemberLabel({ machineId: machine.id }, machines);
-                const presence = resolveMachinePickerPresence(machine, presenceNowMs, binding?.isCurrent() ? binding.scope : null);
-                const status = presence.status === 'online' ? t('status.online') : presence.status === 'offline' ? t('status.offline') : t('common.unknown');
-                return {
-                    id: machine.id,
-                    testID: `settings.machinePools.editor.memberPicker.${machine.id}`,
-                    label,
-                    subtitle: status,
-                    accessibilityLabel: `${label}. ${status}`,
-                    disabled: false,
-                };
-            }),
-        }],
-    }), [availableMachines, machines, binding, presenceNowMs, reachabilityRevision]);
+    const buildMemberPickerStep = React.useCallback((eligibility: readonly MachinePoolMemberEligibilityV1[]): SelectionListStep => {
+        const eligibilityById = new Map(eligibility.map(decision => [decision.machineId, decision]));
+        const labels = resolveMachinePoolMemberLabels(availableMachines.map(machine => ({ machineId: machine.id })), machines);
+        return {
+            id: 'machine-pool-members',
+            inputPlaceholder: t('modelPickerOverlay.searchPlaceholder'),
+            emptyStateLabel: t('machinePools.noMachines'),
+            sections: [{
+                kind: 'static',
+                id: 'machines',
+                options: availableMachines.map((machine) => {
+                    const label = labels.get(machine.id) ?? machine.id;
+                    const presence = resolveMachinePickerPresence(machine, presenceNowMs, binding?.isCurrent() ? binding.scope : null);
+                    const status = presence.status === 'online' ? t('status.online') : presence.status === 'offline' ? t('status.offline') : t('common.unknown');
+                    const decision = eligibilityById.get(machine.id);
+                    const subtitle = decision?.eligible === true ? status
+                        : decision?.eligible === false
+                            ? decision.reason === 'not_owned_or_missing' ? t('machinePools.memberNotOwned') : memberStatusPresentation(decision.reason).label
+                            : t('machinePools.unavailable');
+                    return {
+                        id: machine.id,
+                        testID: `settings.machinePools.editor.memberPicker.${machine.id}`,
+                        label,
+                        subtitle,
+                        accessibilityLabel: `${label}. ${subtitle}`,
+                        disabled: decision?.eligible !== true,
+                    };
+                }),
+            }],
+        };
+    }, [availableMachines, machines, binding, presenceNowMs, reachabilityRevision]);
+    const memberPickerStep = React.useMemo(() => buildMemberPickerStep(memberEligibility), [buildMemberPickerStep, memberEligibility]);
     const closeMemberPicker = React.useCallback(() => {
         if (!memberPickerModalIdRef.current) return;
         Modal.hide(memberPickerModalIdRef.current);
         memberPickerModalIdRef.current = null;
     }, []);
-    const openMemberPicker = React.useCallback((priorityTier: number) => {
+    const openMemberPicker = React.useCallback(async (priorityTier: number) => {
         if (formDisabled || availableMachines.length === 0) return;
         closeMemberPicker();
-        memberPickerModalIdRef.current = Modal.show({
-            component: MachinePoolSelectionListModalContent,
-            props: {
-                testID: 'settings.machinePools.editor.memberPicker',
-                listAccessibilityLabel: t('machinePools.addMachines'),
-                rootStep: memberPickerStep,
-                onSelect: (machineId: string) => setDraft((current) => current.members.some((member) => member.machineId === machineId) ? current : ({
-                    ...current,
-                    ...normalizeMachinePoolEditorTierState(
-                        [...current.members, { machineId, priorityTier, enabled: true }],
-                        current.tierCount,
-                    ),
-                })),
-            },
-            chrome: {
-                kind: 'card',
-                title: t('machinePools.addMachines'),
-                testID: 'settings.machinePools.editor.memberPicker.modal',
-                ...SELECTION_LIST_MODAL_CARD_SCROLL,
-            },
-            closeOnBackdrop: true,
-        });
-    }, [availableMachines.length, closeMemberPicker, formDisabled, memberPickerStep]);
+        setLoadingEligibility(true);
+        setError(null);
+        try {
+            const eligibility = await getMachinePoolMemberEligibility(props.serverId, availableMachines.map(machine => machine.id));
+            if (!lifetimeCurrentRef.current) return;
+            setMemberEligibility(eligibility);
+            memberPickerModalIdRef.current = Modal.show({
+                component: MachinePoolSelectionListModalContent,
+                props: {
+                    testID: 'settings.machinePools.editor.memberPicker',
+                    listAccessibilityLabel: t('machinePools.addMachines'),
+                    rootStep: buildMemberPickerStep(eligibility),
+                    onSelect: (machineId: string) => setDraft((current) => current.members.some((member) => member.machineId === machineId) ? current : ({
+                        ...current,
+                        ...normalizeMachinePoolEditorTierState(
+                            [...current.members, { machineId, priorityTier, enabled: true }],
+                            current.tierCount,
+                        ),
+                    })),
+                },
+                chrome: {
+                    kind: 'card',
+                    title: t('machinePools.addMachines'),
+                    testID: 'settings.machinePools.editor.memberPicker.modal',
+                    ...SELECTION_LIST_MODAL_CARD_SCROLL,
+                },
+                closeOnBackdrop: true,
+            });
+        } catch {
+            if (lifetimeCurrentRef.current) setError(t('machinePools.refreshFailed'));
+        } finally {
+            if (lifetimeCurrentRef.current) setLoadingEligibility(false);
+        }
+    }, [availableMachines, buildMemberPickerStep, closeMemberPicker, formDisabled, props.serverId]);
     React.useEffect(() => {
         if (memberPickerModalIdRef.current) Modal.update(memberPickerModalIdRef.current, { rootStep: memberPickerStep });
     }, [memberPickerStep]);
@@ -676,12 +697,13 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     // "No persistent machines" would be untrue when eligible machines are already members.
                     tier + 1 === draft.tierCount ? <EmptyState
                         layout="line"
-                        testID={eligibleMachines.length === 0 ? 'settings.machinePools.editor.noMachines' : 'settings.machinePools.editor.allMachinesAdded'}
-                        title={eligibleMachines.length === 0 ? t('machinePools.noMachines') : t('machinePools.allMachinesAdded')}
+                        testID={machines.length === 0 ? 'settings.machinePools.editor.noMachines' : 'settings.machinePools.editor.allMachinesAdded'}
+                        title={machines.length === 0 ? t('machinePools.noMachines') : t('machinePools.allMachinesAdded')}
                     /> : null
                 ) : <ItemAddRow
                     testID={tier === 0 ? 'settings.machinePools.editor.addMachines' : `settings.machinePools.editor.addMachines.tier.${tier}`}
                     title={t('machinePools.addMachines')}
+                    subtitle={loadingEligibility ? t('common.loading') : undefined}
                     onPress={() => openMemberPicker(tier)}
                     disabled={formDisabled}
                 />}

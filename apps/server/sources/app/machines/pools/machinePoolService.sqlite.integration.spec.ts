@@ -15,6 +15,7 @@ import {
     resolveMachinePool,
     updateMachinePool,
 } from "./machinePoolService";
+import { getMachinePoolMemberEligibility } from './machinePoolMemberAdmission';
 
 vi.mock("@/app/events/connectionEventRouter", () => ({ eventRouter: { emitUpdate: vi.fn() } }));
 
@@ -62,6 +63,31 @@ describe("machinePoolService (SQLite integration)", () => {
             { id: "m-foreign", accountId: otherId, metadata: "{}" },
         ] });
     }
+
+    it("reports the same pool admission eligibility for owned, foreign, missing and retired Machines", async () => {
+        await seed();
+        await db.machine.createMany({ data: [
+            { id: "m-temporary", accountId: ownerId, metadata: "{}", kind: "ephemeral_session_runner" },
+            { id: "m-revoked", accountId: ownerId, metadata: "{}", revokedAt: new Date() },
+            { id: "m-replaced", accountId: ownerId, metadata: "{}", replacedByMachineId: "m-fast" },
+        ] });
+        const machineIds = ["m-fast", "m-foreign", "m-missing", "m-temporary", "m-revoked", "m-replaced"];
+        const result = await getMachinePoolMemberEligibility({ accountId: ownerId, machineIds });
+        expect(result).toEqual([
+            { machineId: "m-fast", eligible: true },
+            { machineId: "m-foreign", eligible: false, reason: "not_owned_or_missing" },
+            { machineId: "m-missing", eligible: false, reason: "not_owned_or_missing" },
+            { machineId: "m-temporary", eligible: false, reason: "temporary" },
+            { machineId: "m-revoked", eligible: false, reason: "revoked" },
+            { machineId: "m-replaced", eligible: false, reason: "replaced" },
+        ]);
+        for (const member of result) {
+            const created = await createMachinePool({ accountId: ownerId, io: io(), input: {
+                poolId: crypto.randomUUID(), name: "Admission", members: [{ machineId: member.machineId, enabled: true, priorityTier: 0 }],
+            } });
+            expect(created.ok).toBe(member.eligible);
+        }
+    });
 
     it("does not select worker purposes through the server-only Session resolver", async () => {
         await seed();

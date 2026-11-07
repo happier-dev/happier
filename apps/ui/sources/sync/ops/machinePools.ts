@@ -4,13 +4,16 @@ import type {
     MachinePoolActionIdV1,
     MachinePoolActionInputV1,
     MachinePoolActionOutputV1,
+} from '@happier-dev/protocol/machines/pools/actionsV1';
+import type {
     MachinePoolCreateInputV1,
     MachinePoolDeleteInputV1,
+    MachinePoolMemberEligibilityV1,
     MachinePoolResolveInputV1,
     MachinePoolResolveResultV1,
     MachinePoolUpdateInputV1,
     MachinePoolViewV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/pools/v1';
 import { randomUUID } from '@/platform/randomUUID';
 import { MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { isActionAccountScopeChangedError, withDefaultActionExecuteContext } from '@/sync/ops/actions/defaultActionExecutor';
@@ -118,6 +121,14 @@ export async function refreshMachinePools(serverId: string): Promise<readonly Ma
         );
         throw error;
     }
+}
+
+/** Reads the server admission owner's decision without changing the saved Pool projection. */
+export async function getMachinePoolMemberEligibility(serverId: string, machineIds: readonly string[]): Promise<readonly MachinePoolMemberEligibilityV1[]> {
+    return await executeMachinePoolAction(serverId, 'machines.pools.list', { memberMachineIds: [...machineIds] }, (result) => {
+        if (result.memberEligibility === undefined) throw new Error('Machine Pool eligibility is unavailable.');
+        return result.memberEligibility;
+    });
 }
 
 export async function createMachinePool(serverId: string, input: Omit<MachinePoolCreateInputV1, 'poolId'> & Readonly<{ poolId?: string }>): Promise<MachinePoolViewV1> {

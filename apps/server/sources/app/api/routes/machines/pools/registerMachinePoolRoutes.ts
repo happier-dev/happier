@@ -13,6 +13,7 @@ import {
     updateMachinePool,
 } from "@/app/machines/pools/machinePoolService";
 import type { Fastify } from "../../../types";
+import { getMachinePoolMemberEligibility } from '@/app/machines/pools/machinePoolMemberAdmission';
 
 function statusForError(code: string): 400 | 404 | 409 {
     if (code === "pool_not_found") return 404;
@@ -37,7 +38,13 @@ export function registerMachinePoolRoutes(
         schema: { body: MachinePoolListInputV1Schema, response: { 200: MachinePoolListOutputV1Schema, ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        return await reply.send({ pools: [...await listMachinePools({ accountId: request.userId, io: deps.io })] });
+        const [pools, memberEligibility] = await Promise.all([
+            listMachinePools({ accountId: request.userId, io: deps.io }),
+            request.body.memberMachineIds === undefined ? undefined : getMachinePoolMemberEligibility({
+                accountId: request.userId, machineIds: request.body.memberMachineIds,
+            }),
+        ]);
+        return await reply.send({ pools: [...pools], ...(memberEligibility === undefined ? {} : { memberEligibility: [...memberEligibility] }) });
     });
 
     app.post(machinePoolActionEndpointPathV1("machines.pools.get"), {

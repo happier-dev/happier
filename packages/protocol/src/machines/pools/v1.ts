@@ -164,11 +164,25 @@ export const MachinePoolErrorV1Schema = lazyZodSchema(() => z.discriminatedUnion
 ]));
 export type MachinePoolErrorV1 = z.infer<typeof MachinePoolErrorV1Schema>;
 
-export const MachinePoolListInputV1Schema = lazyZodSchema(() => z.strictObject({}));
+/** New-reference admission only; saved unavailable references retain their edit semantics. */
+export const MachinePoolMemberEligibilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('eligible', [
+  z.strictObject({ machineId: z.string(), eligible: z.literal(true) }),
+  z.strictObject({
+    machineId: z.string(),
+    eligible: z.literal(false),
+    reason: z.enum(['not_owned_or_missing', 'temporary', 'revoked', 'replaced']),
+  }),
+]));
+export type MachinePoolMemberEligibilityV1 = z.infer<typeof MachinePoolMemberEligibilityV1Schema>;
+
+export const MachinePoolListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  memberMachineIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+}));
 export type MachinePoolListInputV1 = z.infer<typeof MachinePoolListInputV1Schema>;
 
 export const MachinePoolListOutputV1Schema = lazyZodSchema(() => z.strictObject({
   pools: z.array(MachinePoolViewV1Schema),
+  memberEligibility: z.optional(z.array(MachinePoolMemberEligibilityV1Schema)),
 }));
 export type MachinePoolListOutputV1 = z.infer<typeof MachinePoolListOutputV1Schema>;
 

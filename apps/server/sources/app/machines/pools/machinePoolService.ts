@@ -17,6 +17,7 @@ import {
 import { selectMachinePoolCandidate } from "@happier-dev/protocol/machines/pools";
 import { acquireTeamCredentialBrokerPoolAdmissionInTx, clearTeamCredentialBrokerPoolReferencesInTx } from "@/app/teams/credentials/resourceBrokerPoolLifecycle";
 import { acquireMachinePoolMutationFenceInTx } from "./machinePoolMutationFence";
+import { validateMachinePoolMembersInTx } from './machinePoolMemberAdmission';
 
 const poolAggregate = {
     include: {
@@ -142,32 +143,6 @@ async function readOwnedPool(client: Tx | typeof db, accountId: string, poolId: 
     });
 }
 
-async function validateMembersInTx(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[];
-    current?: StoredPool;
-}>): Promise<readonly string[]> {
-    if (params.members.length === 0) return [];
-    const machines = await params.tx.machine.findMany({
-        where: { accountId: params.accountId, id: { in: params.members.map((member) => member.machineId) } },
-        select: { id: true, kind: true, revokedAt: true, replacedByMachineId: true },
-    });
-    const machineById = new Map(machines.map((machine) => [machine.id, machine]));
-    const currentById = new Map(params.current?.members.map((member) => [member.machineId, member]));
-    return params.members.flatMap((member) => {
-        const machine = machineById.get(member.machineId);
-        if (!machine) return [member.machineId];
-        if (isPersistentMachine(machine) && classifyMachineAvailabilityState(machine) === "available") return [];
-        const existing = currentById.get(member.machineId);
-        // Tier edits and disabling a saved reference do not admit a Machine.
-        // A new reference or re-enable still requires current eligibility.
-        return existing && (existing.enabled || !member.enabled)
-            ? []
-            : [member.machineId];
-    });
-}
-
 async function inventoryFor(accountId: string, io: MachineDaemonPresenceSocketServer, pools: readonly StoredPool[]) {
     return await getMachineDaemonPresenceInventory({ accountId, io,
         machineIds: pools.flatMap(pool => pool.members.map(member => member.machineId)) });
@@ -221,7 +196,7 @@ export async function createMachinePool(params: Readonly<{
             await acquireAccountChangePublicationLocksInTx(tx, [params.accountId], { includeSingleAccount: true });
             const existing = await tx.machinePool.findUnique({ where: { id: params.input.poolId }, ...poolAggregate });
             if (existing) return { kind: "collision" as const };
-            const invalid = await validateMembersInTx({ tx, accountId: params.accountId, members: params.input.members });
+            const invalid = await validateMachinePoolMembersInTx({ tx, accountId: params.accountId, members: params.input.members });
             if (invalid.length > 0) return { kind: "invalid" as const, machineIds: invalid };
             await tx.machinePool.create({
                 data: {
@@ -270,7 +245,7 @@ export async function updateMachinePool(params: Readonly<{
         if (!current) return { kind: "not_found" as const };
         if (sameDefinition(current, params.input)) return { kind: "settled" as const, stored: current };
         if (current.revision !== params.input.expectedRevision) return { kind: "conflict" as const, stored: current };
-        const invalid = await validateMembersInTx({
+        const invalid = await validateMachinePoolMembersInTx({
             tx,
             accountId: params.accountId,
             members: params.input.members,

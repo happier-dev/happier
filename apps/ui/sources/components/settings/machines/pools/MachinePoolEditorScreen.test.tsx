@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActionsSettingsV1Schema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, type MachinePoolViewV1 } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import type { MachinePoolMemberEligibilityV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -29,6 +31,8 @@ const boundaries = vi.hoisted(() => ({
     serverId: '',
     pools: null as MachinePoolViewV1[] | null,
     machines: [] as Machine[],
+    memberEligibility: null as null | readonly MachinePoolMemberEligibilityV1[],
+    memberEligibilityUnavailable: false,
     machineStatus: 'idle' as 'idle' | 'loading' | 'signedOut' | 'error',
     create: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<unknown>>(),
     update: vi.fn<(serverId: string, input: Record<string, unknown>) => Promise<unknown>>(),
@@ -207,7 +211,10 @@ async function actionResponse(url: string, init?: RequestInit): Promise<Response
     if (artifactResponse) return artifactResponse;
     const action = pathname.split('/').at(-1) ?? '';
     try {
-        if (action === 'list') return Response.json({ pools: boundaries.pools ?? [] });
+        if (action === 'list') return Response.json({ pools: boundaries.pools ?? [],
+            ...(Array.isArray(input.memberMachineIds) && !boundaries.memberEligibilityUnavailable ? { memberEligibility: boundaries.memberEligibility
+                ?? input.memberMachineIds.map((machineId) => ({ machineId, eligible: true })) } : {}),
+        });
         if (action === 'create') return Response.json(await boundaries.create(boundaries.serverId, input));
         if (action === 'update') return Response.json(await boundaries.update(boundaries.serverId, input));
         if (action === 'delete') {
@@ -252,6 +259,8 @@ describe('MachinePoolEditorScreen', () => {
         boundaries.serverId = (await upsertAndActivateServer({ serverUrl: 'https://machine-pools-editor.test', name: 'Machine Pools Test' })).id;
         boundaries.pools = null;
         boundaries.machines = [];
+        boundaries.memberEligibility = null;
+        boundaries.memberEligibilityUnavailable = false;
         boundaries.machineStatus = 'idle';
         boundaries.create.mockReset();
         boundaries.update.mockReset();
@@ -506,9 +515,11 @@ describe('MachinePoolEditorScreen', () => {
         expect(boundaries.back).not.toHaveBeenCalled();
         expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development');
         expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
+        // The approval Artifact id is derived from the request identity (account-scoped), not drawn at random: open the one created.
+        const [approvalArtifactId] = Object.keys(getStorage().getState().artifacts);
         await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
         expect(boundaries.push).toHaveBeenCalledWith(
-            `/inbox/approvals/00000000-0000-4000-8000-000000000001?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
+            `/inbox/approvals/${approvalArtifactId}?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
         );
     });
 
@@ -816,6 +827,73 @@ describe('MachinePoolEditorScreen', () => {
         expect(screen.findByTestId('settings.machinePools.editor.description')?.props.accessibilityLabel).toBe('Description (optional)');
     });
 
+    it('uses server eligibility rather than local Machine facts and explains disabled shared Machines', async () => {
+        boundaries.machines = [createMachineFixture({ id: 'shared', metadata: machineMetadata('Shared workstation') }),
+            createMachineFixture({ id: 'owned', active: false, metadata: machineMetadata('Owned workstation') })];
+        boundaries.memberEligibility = [
+            { machineId: 'shared', eligible: false, reason: 'not_owned_or_missing' },
+            { machineId: 'owned', eligible: true },
+        ];
+        await publishBoundaryState();
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
+        await screen.pressByTestIdAsync('settings.machinePools.editor.addMachines');
+        const config = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+        const step = config?.props?.rootStep as SelectionListStep;
+        const options = step.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+        expect(options.find(option => option.id === 'shared')).toMatchObject({ disabled: true });
+        expect(options.find(option => option.id === 'shared')?.subtitle).toBe(t('machinePools.memberNotOwned'));
+        expect(options.find(option => option.id === 'owned')).toMatchObject({ disabled: false });
+    });
+
+    it('keeps save and structural edits busy while the eligibility request can still open a picker', async () => {
+        boundaries.machines = [createMachineFixture({ id: 'owned' })];
+        await publishBoundaryState();
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'My pool'));
+        let finishEligibility: (response: Response) => void = () => { throw new Error('Missing network resolver'); };
+        const response = new Promise<Response>(resolve => { finishEligibility = resolve; });
+        let requested = false;
+        boundaries.request.mockImplementation(async (url, init) => {
+            const input = await readInput(init);
+            if (new URL(url).pathname === '/v1/machines/pools/list' && Array.isArray(input.memberMachineIds)) {
+                requested = true;
+                return response;
+            }
+            return actionResponse(url, init);
+        });
+        let opening: Promise<void> | undefined;
+        try {
+            await act(async () => { opening = screen.findByTestId('settings.machinePools.editor.addMachines')?.props.onPress(); });
+            await vi.waitFor(() => expect(requested).toBe(true));
+            expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
+            expect(screen.findByTestId('settings.machinePools.editor.addFallback')?.props.disabled).toBe(true);
+            expect(screen.findByTestId('settings.machinePools.editor.name')?.props.editable).toBe(false);
+            expect(boundaries.create).not.toHaveBeenCalled();
+        } finally {
+            finishEligibility(Response.json({ pools: [], memberEligibility: [{ machineId: 'owned', eligible: true }] }));
+            await act(async () => { await opening; });
+        }
+    });
+
+    it('keeps the draft when eligibility is unavailable and permits retry without guessing locally', async () => {
+        boundaries.machines = [createMachineFixture({ id: 'owned' })];
+        boundaries.memberEligibilityUnavailable = true;
+        await publishBoundaryState();
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'My draft'));
+        await screen.pressByTestIdAsync('settings.machinePools.editor.addMachines');
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('My draft');
+        boundaries.memberEligibilityUnavailable = false;
+        await screen.pressByTestIdAsync('settings.machinePools.editor.addMachines');
+        const rootStep = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props?.rootStep as SelectionListStep | undefined;
+        const options = rootStep?.sections.flatMap(section => section.kind === 'static' ? section.options : []) ?? [];
+        expect(options.find(option => option.id === 'owned')).toMatchObject({ disabled: false });
+    });
+
     it('opens the shared searchable selection list and permits an offline persistent machine', async () => {
         boundaries.machines = [createMachineFixture({ id: 'machine-offline', active: false, metadata: machineMetadata('Offline machine') })];
         await publishBoundaryState();
@@ -835,7 +913,7 @@ describe('MachinePoolEditorScreen', () => {
         expect(option).toMatchObject({ id: 'machine-offline', disabled: false });
     });
 
-    it('uses unknown for withdrawn member candidates and preserves fresh offline candidates', async () => {
+    it('preserves the last observed candidate presence when the Home socket disconnects', async () => {
         boundaries.machines = [createMachineFixture({ id: 'unknown', activeAt: Date.now(), metadata: machineMetadata('Unknown machine') }),
             createMachineFixture({ id: 'offline', active: false, activeAt: 0, metadata: machineMetadata('Offline machine') })];
         await publishBoundaryState();
@@ -847,13 +925,15 @@ describe('MachinePoolEditorScreen', () => {
             await screen.pressByTestIdAsync('settings.machinePools.editor.addMachines');
             vi.mocked(Modal.update).mockClear();
             await act(async () => { withdrawMachinePresenceForScope(scope); captureMachinePresenceObservation(scope)(['offline']); });
-            const updatedProps = vi.mocked(Modal.update).mock.calls.at(-1)?.[1];
-            const step = updatedProps && 'rootStep' in updatedProps ? updatedProps.rootStep as SelectionListStep : undefined;
-            expect(step).toBeDefined();
-            if (!step) throw new Error('The mounted picker must receive current presence');
-            const options = step.sections.flatMap(section => section.kind === 'static' ? section.options : []);
-            expect(options.find(option => option.id === 'unknown')?.subtitle).toBe(t('common.unknown'));
-            expect(options.find(option => option.id === 'offline')?.subtitle).toBe(t('status.offline'));
+            await vi.waitFor(() => {
+                const updatedProps = vi.mocked(Modal.update).mock.calls.at(-1)?.[1];
+                const step = (updatedProps && 'rootStep' in updatedProps
+                    ? updatedProps.rootStep : vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props?.rootStep) as SelectionListStep | undefined;
+                if (!step) throw new Error('The mounted picker must show current presence');
+                const options = step.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+                expect(options.find(option => option.id === 'unknown')?.subtitle).toBe(t('status.online'));
+                expect(options.find(option => option.id === 'offline')?.subtitle).toBe(t('status.offline'));
+            });
         } finally { clearMachineRequestReachabilityForTest(); }
     });
 
@@ -877,10 +957,14 @@ describe('MachinePoolEditorScreen', () => {
         expect(screen.findAllByTestId('settings.machinePools.editor.noMachines')).toHaveLength(0);
     });
 
-    it('excludes temporary session runners from pool membership', async () => {
+    it('keeps temporary session runners outside the visible Machine inventory', async () => {
         boundaries.machines = [
             createMachineFixture({ id: 'persistent', kind: 'persistent' }),
             createMachineFixture({ id: 'temporary', kind: 'ephemeral_session_runner' }),
+        ];
+        boundaries.memberEligibility = [
+            { machineId: 'persistent', eligible: true },
+            { machineId: 'temporary', eligible: false, reason: 'temporary' },
         ];
         await publishBoundaryState();
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
@@ -893,7 +977,7 @@ describe('MachinePoolEditorScreen', () => {
         const rootStep = config?.props?.rootStep as SelectionListStep | undefined;
         const section = rootStep?.sections[0];
         if (!section || section.kind !== 'static') throw new Error('Expected static Machine picker section');
-        expect(section.options.map((option) => option.id)).toEqual(['persistent']);
+        expect(section.options.map(option => option.id)).toEqual(['persistent']);
     });
 
     it('keeps the draft and marks every ineligible member row returned by the aggregate owner', async () => {

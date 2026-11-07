@@ -125,6 +125,14 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect(listed.statusCode).toBe(200);
             expect(listed.json()).toEqual({ pools: [created.json()] });
 
+            const eligibility = await app.inject({ method: "POST", url: "/v1/machines/pools/list", headers,
+                payload: { memberMachineIds: [machineId, "not-owned-or-missing"] } });
+            expect(eligibility.statusCode).toBe(200);
+            expect(eligibility.json()).toMatchObject({ memberEligibility: [
+                { machineId, eligible: true },
+                { machineId: "not-owned-or-missing", eligible: false, reason: "not_owned_or_missing" },
+            ] });
+
             const fetched = await app.inject({
                 method: "POST",
                 url: "/v1/machines/pools/get",

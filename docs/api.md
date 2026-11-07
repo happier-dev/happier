@@ -2677,6 +2677,16 @@ separately observed availability never merge into one field. `availability` is
 either `{ state: 'known', connectedCount, enabledCount }` or `{ state: 'unknown' }`
 when the Home could not observe its Machine sockets.
 
+List also accepts optional `memberMachineIds`. In that case it returns
+`memberEligibility` alongside `pools`, with one decision per requested ID:
+`{ machineId, eligible: true }` or `{ machineId, eligible: false, reason }`.
+The Pool admission owner supplies this projection for editors and agents; an
+offline owned persistent Machine remains eligible. Reasons are `temporary`,
+`revoked`, `replaced`, or `not_owned_or_missing`; the last deliberately makes
+foreign and absent IDs indistinguishable. Omitting `memberMachineIds` preserves
+the original list response. A later save still admits the submitted definition
+at the server, so changes since the picker opened can produce a normal refusal.
+
 Create accepts a caller-minted UUID plus the name, optional description, and
 complete member set. Repeating an identical normalized create at the same ID is
 a read-only replay; a different aggregate at that ID conflicts. Update replaces

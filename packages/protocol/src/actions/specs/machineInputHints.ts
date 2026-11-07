@@ -57,7 +57,7 @@ export const MACHINE_PRESET_INPUT_FIELDS = {
 } satisfies Record<MachinePresetActionIdV1, ActionInputFieldHint[]>;
 
 export const MACHINE_POOL_INPUT_FIELDS = {
-  'machines.pools.list': [],
+  'machines.pools.list': [{ path: 'memberMachineIds', title: 'Machines to check for pool membership', widget: 'json' }],
   'machines.pools.get': [pool],
   'machines.pools.create': [pool, name, description, members],
   'machines.pools.update': [pool, revision, name, description, members],
