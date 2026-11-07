@@ -1,10 +1,10 @@
-import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 
 import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
@@ -32,10 +32,12 @@ import {
     type PluginActionOperationProgressUpdateV1,
     type PluginInvocationCaller,
     type PluginInvocationContext,
+    type PluginServices,
     type Disposable,
 } from '@happier-dev/plugin-sdk';
 import type { PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
 import { readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import {
     type ActionHandler,
@@ -67,6 +69,7 @@ import type {
     PluginInvocationServiceBinding,
     ManagedBootstrapCredentialInvocationBinding,
     ManagedNativeCredentialInvocationBinding,
+    PluginInvocationServicesSeed,
 } from './services/types';
 import { createPluginInvocationPresentation } from './services/interactions';
 import { readReviewedSharedSaveAdmission } from './sharedSaveAdmission';
@@ -141,6 +144,12 @@ type TargetActionPreDispatchResult = Readonly<{
     code: string;
     message: string;
 }>;
+type TargetActionFormAdmission = Readonly<{
+    status: 'admitted';
+    connectedAccountPurposeTarget?: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1;
+    deploymentSource?: PluginInvocationServicesSeed['deploymentSource'];
+    managedWorkloads?: PluginInvocationServicesSeed['managedWorkloads'];
+}>;
 
 type TargetActionConnectedAccountOperationBinding = Readonly<{
     exactPurposeBindingSubjectId: string;
@@ -186,6 +195,7 @@ export type InvokeTargetActionParams = Readonly<{
     messageAction?: MessageActionAvailableSnapshotV1;
     sessionId?: string;
     signal?: AbortSignal;
+    /** Resource-only constraint, enforced on the canonical normalized operand. */
     requiredReadOnly?: true;
     resourceSessionId?: string;
     /** Host-private subscription sink; never authored Action input. */
@@ -204,6 +214,8 @@ export type InvokeTargetActionParams = Readonly<{
     resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     /** Present only when the daemon operation runner already owns this invocation. */
     operationProgress?: TargetActionOperationProgressPort;
+    operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+    operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
     /** Host-private custody admission; never projected into plugin context. */
     beforeHandlerInvocation?: () => Promise<void>;
     /** Live host-owned managed credential lease, never selected by plugin code. */
@@ -223,7 +235,10 @@ export type TargetActionInvocationPreparation = Readonly<
     | {
         kind: 'ready';
         run(options?: Readonly<{
+            signal?: AbortSignal;
             operationProgress?: TargetActionOperationProgressPort;
+            operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+            operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
         }>): Promise<TargetActionInvocationResult>;
     }
 >;
@@ -338,7 +353,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         sessionId?: string;
         signal: AbortSignal;
         isCurrent(): boolean;
-    }>): Promise<TargetActionPreDispatchResult | null>;
+        approvalContext?: import('@happier-dev/protocol').ActionExecutorContext;
+    }>): Promise<TargetActionPreDispatchResult | TargetActionFormAdmission | null>;
     /**
      * Host-private binding for this one admitted target-Action correlation.
      * It is deliberately neither a occurrenceId nor a background-service lease.
@@ -351,6 +367,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         signal: AbortSignal;
         isCurrent(): boolean;
         recordOperationCredentialUse?: import('@happier-dev/protocol').ActionExecutorContext['recordOperationCredentialUse'];
+        admittedPurposeTarget?: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1;
     }>): Promise<TargetActionConnectedAccountOperationBinding | TargetActionPreDispatchResult | null>;
 }>): Readonly<{
     expects(pluginId: string, localId: string): boolean;
@@ -515,6 +532,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             : undefined;
         let operationSettled = false;
         const invokePrepared = invocation.readObservation ? preparedInput.observe : preparedInput.invoke;
+        let admittedPurposeTarget: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1 | undefined;
+        let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
+        let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
         const result = await invokePrepared({
             ...(invocation.signal ? { signal: invocation.signal } : {}),
             ...(invocation.retainHandlerResultAfterCancellation
@@ -522,16 +542,24 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 : {}),
             ...(params.revalidateActionFormInput
                 ? {
-                    preDispatch: ({ input, signal }) => (
-                        params.revalidateActionFormInput!({
+                    preDispatch: async ({ input, signal }) => {
+                        const admission = await params.revalidateActionFormInput!({
                             pluginId: registration.pluginId,
                             localId: registration.localId,
                             input,
                             ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
                             signal,
                             isCurrent: indexed.isCurrent,
-                        })
-                    ),
+                            ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
+                        });
+                        if (admission?.status === 'admitted') {
+                            admittedPurposeTarget = admission.connectedAccountPurposeTarget;
+                            deploymentSource = admission.deploymentSource;
+                            managedWorkloads = admission.managedWorkloads;
+                            return null;
+                        }
+                        return admission;
+                    },
                 }
                 : {}),
             handler: async ({ input, qualifiedId, signal }) => {
@@ -557,6 +585,15 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 const messageAction = invocation.messageAction
                     ? Object.freeze({ ...invocation.messageAction })
                     : undefined;
+                const destination = input !== null && typeof input === 'object' && !Array.isArray(input)
+                    ? FileDownloadDestinationV1Schema.safeParse(input.destination) : null;
+                const fileDownload = invocation.approvalContext?.prepareFileDownload
+                    && (registration.definition.dangerLevel === 'writesLocal' || registration.definition.dangerLevel === 'destructive')
+                    && !pluginActionDeclarationIsReadOnlyForInput(registration.definition, input)
+                    && destination?.success ? Object.freeze({ destinationId: destination.data.destinationId,
+                        retirementSignal: registryController.signal, operationAcceptance: invocation.operationAcceptance,
+                        operationOwnerUpdate: invocation.operationOwnerUpdate,
+                        publish: invocation.approvalContext.prepareFileDownload }) : undefined;
                 let observedAuthorityRetired = false;
                 const retireObservedRead = () => {
                     if (observedAuthorityRetired) return;
@@ -569,8 +606,13 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     retireObservedRead();
                     lifetime.settleContext();
                 };
+                const reviewedParent = readHostReviewedParentV1(invocation.approvalContext);
                 const seed = Object.freeze({
                     ...(invocation.machineConnectorSecrets ? { machineConnectorSecrets: invocation.machineConnectorSecrets } : {}),
+                    ...(deploymentSource ? { deploymentSource } : {}),
+                    ...(managedWorkloads ? { managedWorkloads } : {}),
+                    ...(reviewedParent ? { reviewedParent } : {}),
+                    ...(fileDownload ? { fileDownload } : {}),
                     ...(sharedSaveAdmission ? { sharedSaveAdmission } : {}),
                     plugin: Object.freeze({ id: registration.pluginId, version: registration.pluginVersion }),
                     contribution: Object.freeze({ id: registration.localId, qualifiedId }),
@@ -587,6 +629,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         ? { externalActionContext: invocation.externalActionContext }
                         : {}),
                     ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
+                    actionInput: input,
                     ...(invocation.selectedActionInputCarrier
                         ? { selectedActionInputCarrier: invocation.selectedActionInputCarrier }
                         : {}),
@@ -657,6 +700,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         localId: registration.localId,
                         input,
                         correlationId,
+                        ...(admittedPurposeTarget ? { admittedPurposeTarget } : {}),
                         ...(seed.approvalContext?.recordOperationCredentialUse
                             ? { recordOperationCredentialUse: seed.approvalContext.recordOperationCredentialUse }
                             : {}),
@@ -701,6 +745,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         invocationId: seed.correlationId,
                         ...(seed.caller ? { caller: seed.caller } : {}),
                         ...(seed.session ? { session: seed.session } : {}),
+                        ...(invocation.approvalContext?.sessionTargetsV1
+                            ? { sessionTargetsV1: invocation.approvalContext.sessionTargetsV1 } : {}),
                         ...(seed.messageAction ? { messageAction: seed.messageAction } : {}),
                         ...(registration.definition.operation?.progress === 'reported' && operationProgress
                             ? {
@@ -841,6 +887,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 result: unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current'),
             });
             let operationProgress = invocation.operationProgress;
+            let operationAcceptance = invocation.operationAcceptance;
+            let operationOwnerUpdate = invocation.operationOwnerUpdate;
             let sharedSaveAdmission: PluginSharedSaveAdmission | undefined;
             let correlationId: string = randomUUID();
             const lifetime = createPluginInvocationLifetime(AbortSignal.any([
@@ -1006,11 +1054,19 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }),
                     pluginVersion: registration.pluginVersion,
                     ...(registration.definition.inputSchema === undefined ? {} : { inputSchema: registration.definition.inputSchema }),
+                    declaration: registration.definition,
                 };
                 return Object.freeze({ ...action, policyFingerprint: fingerprintTargetActionPolicy(action) });
             };
             const executor = createTargetActionExecutor({
                 rawDiagnosticConfidentiality,
+                diagnostic: fact => {
+                    if (fact.status === 'failed') {
+                        logger.warnLocalFile('Plugin Action failed', {
+                            pluginId: invocation.pluginId, localId: invocation.localId, code: fact.code,
+                        });
+                    }
+                },
                 resolve: resolveCurrentAction,
                 resolveAuthorizationFacts: params.resolveAuthorizationFacts,
                 resolveHostBinding: async (action) => await params.resolveHostBinding(action, {
@@ -1079,6 +1135,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                                 },
                             } } : {}),
                             ...(operationProgress ? { operationProgress } : {}),
+                            ...(operationAcceptance ? { operationAcceptance } : {}),
+                            ...(operationOwnerUpdate ? { operationOwnerUpdate } : {}),
                         }),
                         serviceBinding,
                         correlationId,
@@ -1138,10 +1196,18 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             return Object.freeze({
                 kind: 'ready' as const,
                 run(options?: Readonly<{
+                    signal?: AbortSignal;
                     operationProgress?: TargetActionOperationProgressPort;
+                    operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+                    operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
                 }>): Promise<TargetActionInvocationResult> {
                     if (runPromise) return runPromise;
                     operationProgress = options?.operationProgress ?? operationProgress;
+                    operationAcceptance = options?.operationAcceptance ?? operationAcceptance;
+                    operationOwnerUpdate = options?.operationOwnerUpdate ?? operationOwnerUpdate;
+                    const abortFromOperation = () => { lifetime.settleContext(); };
+                    options?.signal?.addEventListener('abort', abortFromOperation, { once: true });
+                    if (options?.signal?.aborted) abortFromOperation();
                     runPromise = prepared.run().then(async result => {
                         try {
                             if (invocation.readObservation && result.status === 'executed' && !lifetime.signal.aborted) {
@@ -1164,7 +1230,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }, async error => {
                         await complete();
                         throw error;
-                    });
+                    }).finally(() => { options?.signal?.removeEventListener('abort', abortFromOperation); });
                     return runPromise;
                 },
             });

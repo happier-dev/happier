@@ -1,4 +1,3 @@
-import { randomUUID } from '@/platform/randomUUID';
 import {
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
@@ -27,7 +26,9 @@ import {
 } from '@/sync/domains/server/serverRuntime';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { UiConnectedAccountAuthenticationModes } from './connectedAccountAuthenticationHost';
+import type { MachineRpcReadAdmission } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcReadAdmission';
+import type { UiConnectedAccountAuthenticationHost } from './connectedAccountAuthenticationHost';
+import { randomUUID } from '@/platform/randomUUID';
 
 type MountedActionExecute = (actionId: ActionId, input: unknown,
     operation?: Readonly<{ signal?: AbortSignal; actionRequestId?: string }>) => Promise<ActionExecuteResult>;
@@ -85,10 +86,7 @@ export async function describeConnectedAccountAuthenticationService(input: Reado
     expectedActiveServer?: ExpectedActiveServer;
     assertCurrent?: () => void;
     signal?: AbortSignal;
-}>): Promise<Readonly<{
-    description: ConnectedAccountDaemonControlResponse;
-    accountAuthenticationModes: UiConnectedAccountAuthenticationModes;
-}>> {
+}>): ReturnType<UiConnectedAccountAuthenticationHost['describeService']> {
     const assertExpected = createExpectedActiveServerAssertion(input.expectedActiveServer, input.serverId);
     const assertCallerCurrent = () => {
         input.signal?.throwIfAborted();
@@ -111,7 +109,7 @@ export async function describeConnectedAccountAuthenticationService(input: Reado
             .describeService(input.service, input.machineId);
         assertCurrent();
         // Correlation belongs to this UI invocation, outside the daemon response schema.
-        const description = { ...result.description, requestId };
+        const description = result.description ? { ...result.description, requestId } : null;
         return { ...result, description };
     } finally { account.dispose(); }
 }
@@ -249,6 +247,7 @@ export async function runConnectedAccountControlCommand(
         assertCurrent?: () => void;
         command: ConnectedAccountDaemonControlCommand;
         signal?: AbortSignal;
+        readAdmission?: MachineRpcReadAdmission;
         requestId?: string;
     }>,
 ): Promise<ConnectedAccountDaemonControlResponse> {
@@ -281,6 +280,7 @@ export async function runConnectedAccountControlCommand(
                 ? { onIssued: assertCurrent }
                 : {}),
             ...(input.signal ? { signal: input.signal } : {}),
+            ...(input.readAdmission ? { readAdmission: input.readAdmission } : {}),
         });
         return ConnectedAccountDaemonControlResponseSchema.parse(response);
     } catch (error) {

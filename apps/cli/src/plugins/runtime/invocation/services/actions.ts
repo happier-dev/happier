@@ -5,13 +5,15 @@ import {
     type PluginInvocationContributionIdentity,
     type PluginInvocationOriginSurface,
 } from '@happier-dev/plugin-sdk';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type {
     AdmittedTargetedOperationExecutionOptions,
     AdmittedTargetedOperationExecutionWithOriginOptions,
     AdmittedTargetedOperationExecutionHandle,
     ActionsService,
+    ActionExecutionOptions,
     ContributedActionExecutionWithOriginOptions,
     ContributedActionExecutionWithOriginResult,
     PluginActionHandlerInvocation,
@@ -27,22 +29,28 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionPluginCaller, ActionCaller, ActionId } from '@happier-dev/protocol/actions';
-import { arePluginMachineMaterializationRefsEqual, arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionRouting, PluginMachineExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionRouting, PluginMachineExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { QualifiedConnectedAccountRef, PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AdmittedTargetedOperationExecutionRequest } from '../actions/executeContributedAction';
 import { resolvePluginActionCaller, resolvePluginInvocationCallerExecutionOrigin } from './actionCaller';
-import type { PluginExternalActionContext } from './types';
+import type { AgentInvocationTurnAdmissionWitness, PluginExternalActionContext, PluginInvocationServicesSeed } from './types';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { observeContributedActionRead } from './resourceActions';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 export type PluginActionsServiceSeed = Readonly<{
+    requesterAccount?: PluginInvocationServicesSeed['requesterAccount'];
+    readApprovalProfileId?: PluginInvocationServicesSeed['readApprovalProfileId'];
+    workflowActionContext?: import('./types').WorkflowAgentActionContext;
     sessionListAccess?: ActionExecutorContext['sessionListAccess'];
     plugin: Readonly<{ id: string; version: string }>;
     /** The host-stamped immediate contribution that owns this invocation. */
@@ -62,7 +70,10 @@ export type PluginActionsServiceSeed = Readonly<{
     externalActionContext?: PluginExternalActionContext;
     /** Original admitted source, kept separate from this immediate plugin caller. */
     approvalContext?: ActionExecutorContext;
-    workflowActionContext?: import('./types').WorkflowAgentActionContext;
+    /** Captured by the admitted containing Action's service owner. */
+    resolveAccountSourceMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine'];
+    /** The canonical admitted parent, projected once by the target invocation owner. */
+    reviewedParent?: import('@happier-dev/protocol/actions/actionExecutor').HostReviewedParentV1;
     /** Host-only finite invocation cause; never a fallback for an active-turn reader. */
     actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
     /** Host-private lookup of this invocation's current plugin materialization. */
@@ -73,7 +84,7 @@ export type PluginActionsServiceSeed = Readonly<{
     /** Re-read the originating mounted UI caller immediately before provider effect. */
     isMountedCallerCurrent?: () => boolean | Promise<boolean>;
     /** Host-only current declaration reader for an opaque targeted operation. */
-    readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<readonly import('@happier-dev/plugin-sdk/host/registration').TargetedContributionManifestDeclaration[]>;
+    readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<readonly import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestDeclaration[]>;
     session?: Readonly<{ id: string }>;
     /** Host-private active-turn authority for Agent-placed Action execution. */
     readActiveTurnAdmissionWitness?(): import('./types').AgentInvocationTurnAdmissionWitness | null;
@@ -117,6 +128,21 @@ export type ContributedActionInvocationResult = Readonly<
     }
 >;
 
+/** Decode the public PluginError envelope at the generic Action/SDK boundary. */
+export function projectContributedActionExecuteResult(result: ActionExecuteResult): ContributedActionInvocationResult {
+    if (result.ok) return { status: 'executed', value: StrictJsonValueSchema.parse(result.result) };
+    const projected = StrictJsonValueSchema.safeParse(result.details);
+    const data = projected.success ? projected.data : null;
+    const record = data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+    const pluginFailure = record?.name === 'PluginError' && record.code === result.errorCode
+        && (record.message ?? record.code) === result.error ? record : null;
+    return { status: 'failed', code: result.errorCode, message: result.error,
+        ...(pluginFailure ? { data: pluginFailure,
+            ...(typeof pluginFailure.retryable === 'boolean' ? { retryable: pluginFailure.retryable } : {}),
+            ...(pluginFailure.actionHandlerInvocation === 'notStarted' ? { actionHandlerInvocation: 'notStarted' as const } : {}),
+        } : {}) };
+}
+
 export type InvokeContributedAction = (params: Readonly<{
     action: PluginContributionRef;
     /** `action.invoke` accepts omitted input; target validation retains that distinction. */
@@ -135,6 +161,9 @@ export type InvokeContributedAction = (params: Readonly<{
     initiatingActionCaller?: ActionCaller;
     /** Host-private original source context; never authored by the nested plugin. */
     approvalContext?: ActionExecutorContext;
+    resolveAccountSourceMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine'];
+    /** Account custody retained from the admitted containing Session. */
+    requesterAccount?: PluginInvocationServicesSeed['requesterAccount'];
     /** Host-private request from ActionsService.executeWithExecutionOrigin only. */
     captureExecutionOrigin?: true;
     /** Equality-only precondition from ActionsService.executeWithExecutionOrigin only. */
@@ -148,12 +177,15 @@ export type InvokeContributedAction = (params: Readonly<{
     signal: AbortSignal;
 }>) => Promise<ContributedActionInvocationResult>;
 
-export { createAdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/host/registration';
-import { requireAdmittedTargetedOperationExecutionBinding, resolveAdmittedTargetedOperationInput, type AdmittedTargetedOperationExecutionBinding } from '@happier-dev/plugin-sdk/host/registration';
+export { createAdmittedTargetedOperationExecutionHandle } from '@happier-dev/cli-common/plugins/registration';
+import { requireAdmittedTargetedOperationExecutionBinding, resolveAdmittedTargetedOperationInput, type AdmittedTargetedOperationExecutionBinding } from '@happier-dev/cli-common/plugins/registration';
 
-function composeActionSignal(retirementSignal: AbortSignal, callerSignal?: AbortSignal): AbortSignal {
-    if (!callerSignal || callerSignal === retirementSignal) return retirementSignal;
-    return AbortSignal.any([retirementSignal, callerSignal]);
+function composeActionSignal(retirementSignal: AbortSignal, ...callerSignals: readonly (AbortSignal | undefined)[]): AbortSignal {
+    const signals = [retirementSignal];
+    for (const signal of callerSignals) {
+        if (signal && !signals.includes(signal)) signals.push(signal);
+    }
+    return signals.length === 1 ? retirementSignal : AbortSignal.any(signals);
 }
 
 function readExpectedExecutionRouting(value: unknown): PluginMachineExecutionRoutingV1 | undefined {
@@ -283,7 +315,7 @@ async function resolveContributedActionCaller(
 
 function resolveInvocationActionCaller(
     seed: PluginActionsServiceSeed,
-    agentWitness = seed.surface === 'agent' ? seed.readActiveTurnAdmissionWitness?.() ?? null : null,
+    agentWitness: AgentInvocationTurnAdmissionWitness | null,
 ) {
     return resolvePluginActionCaller({ ...seed,
         ...(seed.initiatingActionCaller === undefined && agentWitness?.agentStartCaller
@@ -344,6 +376,18 @@ export function createPluginInvocationActionsService(params: Readonly<{
     actionExecutor: PluginActionsHostExecutor;
     invokeContributedAction: InvokeContributedAction;
 }>): ActionsService {
+    // A contributed Action keeps its initiating surface as provenance; it is
+    // plugin code, not an Agent runtime bound to that surface's current Session.
+    // Use only the host-stamped canonical identity, never absence of a turn reader:
+    // finite and retired Agents must retain their Agent authority restrictions.
+    const contribution = parseQualifiedPluginActionId(params.seed.contribution?.qualifiedId);
+    const isActionContribution = contribution !== null
+        && contribution.pluginId === params.seed.plugin.id
+        && contribution.localId === params.seed.contribution?.id;
+    const executionSurface = params.seed.surface === 'agent' && !isActionContribution ? 'agent' : 'plugin';
+    const readAgentWitness = () => executionSurface === 'agent'
+        ? params.seed.readActiveTurnAdmissionWitness?.() ?? null
+        : null;
     let actionInvocationSequence = 0;
     // This is invocation-local transit state, not a registry or durable
     // receipt. A fresh outer Action invocation receives a fresh service seed.
@@ -355,8 +399,12 @@ export function createPluginInvocationActionsService(params: Readonly<{
         ?? params.seed.approvalContext?.executionRunWorkflowRunId;
     const readApprovalContext = (): ActionExecutorContext | undefined => {
         const executionRunWorkflowRunId = readWorkflowRunId();
-        return executionRunWorkflowRunId
-            ? { ...params.seed.approvalContext, executionRunWorkflowRunId }
+        const approvalProfileId = params.seed.readApprovalProfileId
+            ? params.seed.readApprovalProfileId() : params.seed.approvalContext?.approvalProfileId;
+        return executionRunWorkflowRunId || approvalProfileId !== undefined
+            ? { ...params.seed.approvalContext,
+                ...(executionRunWorkflowRunId ? { executionRunWorkflowRunId } : {}),
+                ...(approvalProfileId !== undefined ? { approvalProfileId } : {}) }
             : params.seed.approvalContext;
     };
     const failWorkflowApproval = (error: PluginError): PluginError => {
@@ -377,11 +425,13 @@ export function createPluginInvocationActionsService(params: Readonly<{
     ): Promise<Extract<ContributedActionInvocationResult, { status: 'executed' }>> => {
         const admittedTargetedOperation = 'action' in target ? target : undefined;
         const action = 'action' in target ? target.action : target;
-        const signal = composeActionSignal(params.seed.signal, options?.signal);
+        const agentWitness = readAgentWitness();
+        const signal = composeActionSignal(params.seed.signal, options?.signal, agentWitness?.signal,
+            params.seed.approvalContext?.nativeRealtimeInput ? params.seed.approvalContext.signal : undefined);
         throwIfInactive(params.seed, signal, undefined, true);
         const parsedExpectedExecutionOrigin = readExpectedExecutionOrigin(expectedExecutionOrigin);
         const parsedExpectedExecutionRouting = readExpectedExecutionRouting(expectedExecutionRouting);
-        const actionCaller = resolveInvocationActionCaller(params.seed);
+        const actionCaller = resolveInvocationActionCaller(params.seed, agentWitness);
         if (!actionCaller) {
             throw createPluginActionHandlerNotStartedError({
                 code: 'plugin_action_caller_unavailable',
@@ -396,16 +446,21 @@ export function createPluginInvocationActionsService(params: Readonly<{
             });
         }
         throwIfContributedActionCallerInactive(params.seed, signal, actionCaller);
-        const approvalContext = readApprovalContext();
-        const invoke = () => params.invokeContributedAction({
-            action,
-            input,
+        const originalApprovalContext = readApprovalContext();
+        const approvalContext = agentWitness?.nativeRealtimeAdmission
+            ? { ...originalApprovalContext, nativeRealtimeInput: true as const, signal }
+            : originalApprovalContext;
+        const invoke = (invocationInput: JsonValue | undefined,
+            invocationContext: ActionExecutorContext | undefined, invokedAction: PluginContributionRef) => params.invokeContributedAction({
+            action: invokedAction,
+            input: invocationInput,
             surface: 'plugin',
             ...(readObservation ? { requiredReadOnly: true as const, readObservation } : {}),
             ...(caller.originSurface ? { originSurface: caller.originSurface } : {}),
             caller,
             initiatingActionCaller: actionCaller,
-            ...(approvalContext ? { approvalContext } : {}),
+            ...(invocationContext ? { approvalContext: invocationContext } : {}),
+            ...(params.seed.resolveAccountSourceMachine ? { resolveAccountSourceMachine: params.seed.resolveAccountSourceMachine } : {}),
             ...(captureExecutionOrigin ? { captureExecutionOrigin: true as const } : {}),
             ...(parsedExpectedExecutionOrigin === undefined
                 ? {}
@@ -427,19 +482,34 @@ export function createPluginInvocationActionsService(params: Readonly<{
                     await params.seed.readCurrentTargetedDeclarations?.(signal));
                 throwIfInactive(params.seed, signal, undefined, true);
             } } : {}),
+            ...(params.seed.requesterAccount ? { requesterAccount: params.seed.requesterAccount } : {}),
             ...(params.seed.session ? { sessionId: params.seed.session.id } : {}),
             signal,
         });
+        const dispatch = async (): Promise<ContributedActionInvocationResult> => {
+            if (!params.seed.reviewedParent || readObservation) return invoke(input, approvalContext, action);
+            const role = admittedTargetedOperation?.operation.role ?? 'actions.execute';
+            const issued = await invokeHostReviewedChildV1({
+                parent: params.seed.reviewedParent,
+                context: { ...approvalContext, surface: 'plugin', authority: 'account_automation', actionCaller, signal },
+                child: { action, role, input },
+                admittedReview: { action, role, surface: 'plugin' },
+                execute: (operand, childContext) => {
+                    // The issuer supplies the ordinary single envelope for a
+                    // contribution ref. This already-bound adapter consumes it
+                    // without reparsing or replacing its prepared operand.
+                    const envelope = operand as Readonly<{ action: PluginContributionRef; input?: JsonValue }>;
+                    return invoke(envelope.input, childContext, envelope.action);
+                },
+            });
+            if ('status' in issued) return issued;
+            throw createPluginActionHandlerNotStartedError({ code: issued.errorCode, message: issued.error });
+        };
         const result = await runTracedExternalActionInnerStage(
             'contributed.targeted_operation',
-            invoke, params.seed.correlationId ? { invocationId: params.seed.correlationId } : {});
-        throwIfContributedActionCallerInactive(params.seed, signal, actionCaller);
-        if (caller.executionOrigin !== undefined) {
-            const currentOrigin = await resolvePluginInvocationCallerExecutionOrigin(actionCaller, params.seed.resolveCurrentPluginExecutionOrigin, signal);
-            if (!currentOrigin || !arePluginMachineExecutionOriginsEqual(currentOrigin, caller.executionOrigin)) {
-                throw new PluginError({ code: 'plugin_action_caller_unavailable', message: 'Plugin contributed action caller origin is no longer current' });
-            }
-        }
+            dispatch, params.seed.correlationId ? { invocationId: params.seed.correlationId } : {});
+        // The caller was admitted before dispatch; a settled effect is reported
+        // as it happened and the caller's retirement applies at its next call.
         if (result.status !== 'executed') {
             throw contributedActionFailureError(result);
         }
@@ -509,7 +579,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
     const executeOnce = async (
         actionOrRef: PluginInvocableActionId | PluginContributionRef,
         input: unknown,
-        options?: PluginCancellationOptions,
+        options?: ActionExecutionOptions,
         executionOriginRequest?: ActionExecutorContext['contributedActionExecutionOrigin'],
     ): Promise<unknown> => {
         // Both ordinary SDK ref methods share canonical Action admission.
@@ -520,7 +590,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const canonicalInput = contributionRef
             ? { action: contributionRef, ...(input === undefined ? {} : { input }) }
             : input;
-        const signal = composeActionSignal(params.seed.signal, options?.signal);
+        const agentWitness = readAgentWitness();
+        const signal = composeActionSignal(params.seed.signal, options?.signal, agentWitness?.signal,
+            params.seed.approvalContext?.nativeRealtimeInput ? params.seed.approvalContext.signal : undefined);
         const isExecutionRunStart = actionOrRef === 'execution.run.start';
         const beforeStartDetails = isExecutionRunStart
             ? withExecutionRunStartFailureDetails(undefined, 'noRunCreated')
@@ -530,9 +602,6 @@ export function createPluginInvocationActionsService(params: Readonly<{
             signal,
             beforeStartDetails,
         );
-        const agentWitness = params.seed.surface === 'agent'
-            ? params.seed.readActiveTurnAdmissionWitness?.() ?? null
-            : null;
         const attribution = params.seed.readActiveTurnAdmissionWitness
             ? agentWitness?.actionRequestAttributionV1
             : params.seed.actionRequestAttributionV1 ?? params.seed.approvalContext?.actionRequestAttributionV1;
@@ -555,6 +624,25 @@ export function createPluginInvocationActionsService(params: Readonly<{
         }
         const actionId = parsedActionId.data;
         const spec = getActionSpec(actionId);
+        let sessionAddress: import('@happier-dev/plugin-sdk/sessions').ActionSessionAddressV1 | undefined;
+        if (options?.sessionAddress !== undefined) {
+            if (contributionRef) throw createPluginActionHandlerNotStartedError({
+                code: 'session_address_unsupported', message: 'An exact Session address requires a host Session Action',
+            });
+            const scoped = validateActionSessionAddressV1({ sessionTarget: spec.sessionTarget,
+                input: canonicalInput, sessionAddress: options.sessionAddress });
+            if (!scoped.ok) throw createPluginActionHandlerNotStartedError({ code: scoped.errorCode, message: scoped.error });
+            const source = params.seed.approvalContext;
+            const home = source?.serverId?.trim();
+            // This executor owns constructor-bound credentials and transport.
+            // A context override cannot acquire another Home's authority.
+            if (!home || !areServerProfileIdentifiersEquivalent(home, scoped.sessionAddress.serverId,
+                identifier => identifier === home || identifier === source?.serverIdentityId ? source?.serverIdentityId : undefined)) {
+                throw createPluginActionHandlerNotStartedError({ code: 'plugin_action_session_address_unavailable',
+                    message: 'The exact Session address is outside this invocation\'s bound Home' });
+            }
+            sessionAddress = scoped.sessionAddress;
+        }
         if (spec.surfaces.plugin !== true && !contributionRef) {
             throw new PluginError({
                 code: 'plugin_action_not_available',
@@ -607,11 +695,17 @@ export function createPluginInvocationActionsService(params: Readonly<{
             }
         };
         const source = readApprovalContext();
-        // Release the bound executor's invocation resources after this report,
-        // rather than accumulating them on a long-lived background source.
-        const reportRetirement = actionId === 'automation.event.source.status.report' ? new AbortController() : null;
-        const executionSignal = reportRetirement ? AbortSignal.any([signal, reportRetirement.signal]) : signal;
-        const reportExecutor = actionId === 'automation.event.source.status.report'
+        // A Discussion publication or an Event occurrence admission belongs to
+        // this invocation through approval and native settlement, even without
+        // local upload sources. Returning only an approval receipt makes a
+        // retained ingress or checkpointed observer create another Ask on every
+        // retry instead of waiting for that one consent and its result.
+        const retainsInput = actionId === 'automation.event.source.status.report'
+            || actionId === 'discussion.post' || actionId === 'discussion.reply'
+            || actionId === 'automation.event.admit';
+        const invocationRetirement = retainsInput ? new AbortController() : null;
+        const executionSignal = invocationRetirement ? AbortSignal.any([signal, invocationRetirement.signal]) : signal;
+        const invocationExecutor = retainsInput
             ? params.actionExecutor.bindInvocation?.(executionSignal, {
                 actionId, signal: executionSignal, surface: 'plugin',
                 isCurrent: () => !signal.aborted && params.seed.isOccurrenceCurrent()
@@ -623,11 +717,12 @@ export function createPluginInvocationActionsService(params: Readonly<{
             }) ?? actionExecutor
             : actionExecutor;
         const executionRunWorkflowRunId = readWorkflowRunId();
-        const result = await reportExecutor.execute(actionId, parsedPluginInput.data, {
+        const executionContext = {
             ...(executionOriginRequest ? { contributedActionExecutionOrigin: executionOriginRequest } : {}),
             // Preserve original execution/signing custody without inheriting
             // present-person authority or a bypass from the initiating call.
             ...(source?.runtimeAccountId ? { runtimeAccountId: source.runtimeAccountId } : {}),
+            ...(source?.expectedAccountId ? { expectedAccountId: source.expectedAccountId } : {}),
             ...(source?.serverId ? { serverId: source.serverId } : {}),
             ...(source?.serverIdentityId ? { serverIdentityId: source.serverIdentityId } : {}),
             ...(source?.externalActionExecutionAuthorization
@@ -637,7 +732,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.signExternalActionApprovalInput
                 ? { signExternalActionApprovalInput: source.signExternalActionApprovalInput } : {}),
             ...(source?.callerPermissionMode !== undefined ? { callerPermissionMode: source.callerPermissionMode } : {}),
+            ...(source?.approvalProfileId !== undefined ? { approvalProfileId: source.approvalProfileId } : {}),
             ...(source?.causalPermissionAuthority !== undefined ? { causalPermissionAuthority: source.causalPermissionAuthority } : {}),
+            ...(source?.nativeRealtimeInput || agentWitness?.nativeRealtimeAdmission ? { nativeRealtimeInput: true } : {}),
             ...(source?.workspaceWrites !== undefined ? { workspaceWrites: source.workspaceWrites } : {}),
             ...(source?.sessionInputSource ? { sessionInputSource: source.sessionInputSource } : {}),
             ...(executionRunWorkflowRunId ? { executionRunWorkflowRunId } : {}),
@@ -647,15 +744,16 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(params.seed.session && !params.seed.sessionListAccess
                 ? { sessionListAccess: 'current_session' as const }
                 : {}),
-            surface: params.seed.surface === 'agent' ? 'agent' : 'plugin',
+            ...(sessionAddress ? { serverId: sessionAddress.serverId, expectedSessionAddress: sessionAddress } : {}),
+            surface: executionSurface,
             authority: 'account_automation',
             actionCaller,
-            ...(params.seed.surface === 'agent'
+            ...(executionSurface === 'agent'
                 && (actionId === 'session.needs_you.raise' || actionId === 'session.user_action.answer')
                 ? { readSessionActionRpcOrigin } : {}),
             signal: executionSignal,
             ...(attribution ? { actionRequestAttributionV1: materializeActionRequestAttributionV1(attribution) } : {}),
-            ...(params.seed.surface === 'agent'
+            ...(executionSurface === 'agent'
                 ? {
                     callerPermissionMode: agentWitness?.callerPermissionMode ?? null,
                     causalPermissionAuthority:
@@ -679,8 +777,21 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(params.seed.bypassActionInterception === true
                 ? { bypassActionInterception: true }
                 : {}),
-        }).finally(() => {
-            reportRetirement?.abort();
+        } satisfies ActionExecutorContext & Readonly<{ actionCaller: ActionPluginCaller; signal: AbortSignal }>;
+        const execute = () => params.seed.reviewedParent ? invokeHostReviewedChildV1({
+            parent: params.seed.reviewedParent,
+            context: executionContext,
+            // Contribution refs already have their canonical action.invoke
+            // envelope. The shared issuer owns target preparation, not this adapter.
+            child: { action: actionId, role: 'actions.execute', input: parsedPluginInput.data as JsonValue },
+            admittedReview: { action: actionId, role: 'actions.execute', surface: executionSurface },
+            execute: (input, childContext, childActionId) => invocationExecutor.execute(childActionId, input,
+                // The issuer preserves this ordinary plugin provenance and
+                // augments it with host-private review; it does not replace the caller.
+                childContext as typeof executionContext),
+        }) : invocationExecutor.execute(actionId, parsedPluginInput.data, executionContext);
+        const result = await execute().finally(() => {
+            invocationRetirement?.abort();
         });
         const inactiveStartDetails = actionId === 'execution.run.start'
             ? withExecutionRunStartFailureDetails(undefined, 'outcomeUnknown')
@@ -688,20 +799,8 @@ export function createPluginInvocationActionsService(params: Readonly<{
         throwIfInactive(params.seed, signal, inactiveStartDetails);
         if (!result.ok) {
             if (contributionRef) {
-                const projected = StrictJsonValueSchema.safeParse(result.details);
-                const data = projected.success ? projected.data : null;
-                if (data && typeof data === 'object' && !Array.isArray(data)) {
-                    // This is the host adapter's serialized public payload,
-                    // not recognition of a thrown Error or reusable authority.
-                    const record = data as Readonly<Record<string, JsonValue | undefined>>;
-                    if (record.name === 'PluginError' && record.code === result.errorCode
-                        && (record.message ?? record.code) === result.error) {
-                        throw contributedActionFailureError({ status: 'failed', code: result.errorCode, message: result.error,
-                            ...(typeof record.retryable === 'boolean' ? { retryable: record.retryable } : {}), data,
-                            ...(record.actionHandlerInvocation === 'notStarted' ? { actionHandlerInvocation: 'notStarted' } : {}),
-                        });
-                    }
-                }
+                const failure = projectContributedActionExecuteResult(result);
+                if (failure.status !== 'executed' && failure.data) throw contributedActionFailureError(failure);
             }
             throw failWorkflowApproval(executorFailure(actionId, result));
         }
@@ -838,7 +937,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
         async getCurrentExecutionRouting(options?: PluginCancellationOptions): Promise<PluginMachineExecutionRoutingV1 | null> {
             const signal = composeActionSignal(params.seed.signal, options?.signal);
             if (signal.aborted || !params.seed.isOccurrenceCurrent()) return null;
-            const caller = resolveInvocationActionCaller(params.seed);
+            const caller = resolveInvocationActionCaller(params.seed, readAgentWitness());
             if (!caller) return null;
             const origin = await resolvePluginInvocationCallerExecutionOrigin(caller, params.seed.resolveCurrentPluginExecutionOrigin, signal);
             if (!origin || signal.aborted || !params.seed.isOccurrenceCurrent()) return null;

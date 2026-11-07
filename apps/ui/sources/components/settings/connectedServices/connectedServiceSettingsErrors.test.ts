@@ -7,6 +7,7 @@ import {
   isConnectedServiceCredentialReferencedByGroupError,
   readConnectedServiceSettingsErrorCode,
   readConnectedServiceSettingsErrorDetailsCode,
+  resolveConnectedServiceSettingsErrorRecovery,
   resolveConnectedServiceSettingsErrorMessage,
 } from './connectedServiceSettingsErrors';
 
@@ -39,18 +40,86 @@ describe('connected-service settings errors', () => {
     expect(resolveConnectedServiceSettingsErrorMessage({ status: 'unavailable', code: 'cli_update_required' }))
       .toBe(t('connectedServices.errors.browserSignInMachineUpdateRequired'));
   });
+  it.each([
+    ['claude_subscription_oauth_outcome_unknown', 'accountStateUncertain'],
+    ['claude_subscription_oauth_rejected', 'accountAuthenticationRejected'],
+    ['claude_subscription_oauth_response_invalid', 'accountAuthenticationUnavailable'],
+    ['claude_subscription_oauth_unavailable', 'accountAuthenticationUnavailable'],
+    ['claude_subscription_profile_context_unavailable', 'accountAuthenticationUnavailable'],
+    ['claude_subscription_refresh_token_unavailable', 'accountAuthenticationRestartRequired'],
+  ] as const)('gives a recovery message for the specific Claude cause (%s)', (code, copy) => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ code })).toBe(t(`connectedServices.errors.${copy}`));
+  });
   it('keeps pre-dispatch discovery failure retryable while an issued effect stays uncertain', () => {
     expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private transport diagnostics', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE)))
       .toBe(t('connectedServices.errors.accountMachineUnavailable'));
     expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private transport diagnostics', RPC_ERROR_CODES.OUTCOME_UNKNOWN)))
       .toBe(t('connectedServices.errors.accountStateUncertain'));
   });
+  it.each([
+    { status: 'rejected', code: 'cloudflare_token_rejected', message: 'The Cloudflare token is invalid, expired or revoked.' },
+    { status: 'unavailable', code: 'cloudflare_verification_unavailable', message: 'Cloudflare could not verify this connection. No token was saved; try again.' },
+    { status: 'rejected', code: 'vercel_invalid_token', message: 'The Vercel token is invalid, expired or revoked.' },
+  ])('shows the admitted probe message for $code', ({ status, code, message }) => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ status, code,
+      diagnostic: { code, severity: 'error', message } })).toBe(message);
+  });
+
+  it('preserves typed rejection when no probe message is available without exposing untyped errors', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ status: 'rejected', code: 'another_leaf_rejection' }))
+      .toBe(t('connectedServices.errors.accountAuthenticationRejected'));
+    expect(resolveConnectedServiceSettingsErrorMessage(new Error('private transport prose')))
+      .toBe(t('connectedServices.errors.generic'));
+    expect(resolveConnectedServiceSettingsErrorRecovery({ status: 'rejected', code: 'credential_unavailable' })).toBe('edit');
+  });
+
+  it('explains an unavailable saved secret without parsing it as authentication or generic failure', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage(new Error('saved-secret-unavailable')))
+      .toBe(t('connectedServices.errors.accountConfigurationRequired'));
+  });
+  it.each(['plugin_setup_unavailable', 'connected_account_configuration_unavailable'])(
+    'classifies the typed unavailable preparation outcome for %s without implying a save', code => {
+      expect(resolveConnectedServiceSettingsErrorMessage({ status: 'unavailable', code }))
+        .toBe(t('connectedServices.errors.accountServiceUnavailable'));
+    });
+
+  // Loading a sign-in (its description, its form, a waiting attempt) changes nothing: an unexplained
+  // failure there says the sign-in could not load, never that a change or a save did not finish.
+  describe('while the sign-in loads', () => {
+    const load = { phase: 'load', serviceName: 'Boat' } as const;
+    const loadFailed = t('connectedServices.errors.signInLoadFailed', { service: 'Boat' });
+
+    it.each([
+      ['an unrecognised code', { status: 'conflict', code: 'boat_setup_declaration_unreadable' }],
+      ['an untyped request failure', { code: 'connected_service_request_failed' }],
+      ['no code at all', new Error('private transport diagnostics')],
+      ['the form read failing without a typed outcome', { code: 'connected_account_configuration_unavailable' }],
+    ])('says the sign-in could not load for %s', (_case, error) => {
+      expect(resolveConnectedServiceSettingsErrorMessage(error, load)).toBe(loadFailed);
+      expect(resolveConnectedServiceSettingsErrorRecovery(error)).toBe('retry');
+    });
+
+    it('keeps a typed computer, service or rejection reason', () => {
+      expect(resolveConnectedServiceSettingsErrorMessage({ code: 'connected_account_daemon_unavailable' }, load))
+        .toBe(t('connectedServices.errors.accountMachineUnavailable'));
+      expect(resolveConnectedServiceSettingsErrorMessage({ status: 'unavailable', code: 'plugin_setup_unavailable' }, load))
+        .toBe(t('connectedServices.errors.accountServiceUnavailable'));
+      expect(resolveConnectedServiceSettingsErrorMessage({ status: 'rejected', code: 'credential_unavailable' }, load))
+        .toBe(t('connectedServices.errors.accountAuthenticationRejected'));
+    });
+
     it.each(['plugin_account_execution_unavailable', 'plugin_ui_declaration_pending',
       'plugin_ui_declaration_invalid', 'plugin_release_unavailable'])(
       'explains unavailable sign-in plugin preparation (%s)', code => {
         expect(resolveConnectedServiceSettingsErrorMessage({ code }))
           .toBe(t('sessionDrafts.availability.pluginUnavailable'));
       });
+
+    it('still reports a failed save as a save once something was written', () => {
+      expect(resolveConnectedServiceSettingsErrorMessage({ code: 'connected_account_configuration_unavailable' }))
+        .toBe(t('connectedServices.errors.accountSaveUnavailable'));
+    });
+  });
 
   // Current daemon, authentication/configuration owners and UI/API adapter errors
   // share recovery categories; raw diagnostics never become user-facing copy.
@@ -355,6 +424,12 @@ describe('connected-service settings errors', () => {
       code: 'connect_group_profile_runtime_cooldown',
     })).toBe(t('connectedServices.errors.runtimeCooldown', {
       time: t('connectedServices.errors.unknownResetTime'),
+    }));
+    const resetAtMs = Date.UTC(2026, 10, 6, 12);
+    expect(resolveConnectedServiceSettingsErrorMessage({
+      code: 'connect_group_profile_runtime_cooldown', resetAtMs,
+    })).toBe(t('connectedServices.errors.runtimeCooldown', {
+      time: new Date(resetAtMs).toLocaleString(),
     }));
   });
 

@@ -8,6 +8,10 @@ import { startRedisAdapterRecoveryCluster } from '@/testkit/redisAdapterRecovery
 
 import { buildRpcMethodRoom } from './rpcMethodRoom';
 import { discoverRpcTargets, readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
+import { forwardRpcCall } from './forwardRpcCall';
+import * as logging from '@/utils/logging/log';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 const accountId = 'discovery-account';
 const machineId = 'discovery-machine';
@@ -100,10 +104,30 @@ describe('target discovery with an unrelated slow Redis peer', () => {
     it('keeps an unanswered target unknown', async () => {
         const { io } = await setup(1, 1);
         expect(await readRegisteredRpcTargetPresence({ io, userId: accountId, method })).toBe('unknown');
-        expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100 })).toBeNull();
+        expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100 }))
+            .toMatchObject({ targets: [], methodRoomEmpty: false,
+                failureCause: { phase: 'rpc.discovery.target', errorCode: 'ETIMEDOUT' } });
         expect(await getMachineDaemonPresenceInventory({ accountId, io })).toEqual({ state: 'unavailable' });
         expect(classifyMachineDaemonPresence(await getMachineDaemonPresenceInventory({ accountId, io,
             machineIds: [machineId] }), machineId)).toBe('unknown');
+    });
+
+    it('refuses connect before dispatch and logs its code and correlation when one cluster node is silent', async () => {
+        const { io } = await setup(null, 2);
+        const log = vi.spyOn(logging, 'log');
+        const requestId = '47b52af7-e27d-4fc8-86c8-4d215a1e2140';
+        const result = await forwardRpcCall({ io, targetUserId: accountId,
+            method: `${machineId}:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`,
+            callParams: { v: 1, machineId, command: { operation: 'beginConnect',
+                service: { pluginId: 'acme.accounts', localId: 'work' }, modeId: 'oauth' } },
+            traceId: requestId, timeoutMs: null });
+        expect(result).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+            failureCause: { phase: 'rpc.discovery.target', errorCode: 'ETIMEDOUT' } });
+        const failures = log.mock.calls.filter(([data]) => typeof data === 'object' && data !== null
+            && 'event' in data && data.event === 'connected-account-rpc-failed');
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.[0]).toMatchObject({ code: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+            phase: 'rpc.discovery.target', requestId });
     });
 
     it('transports only selected daemon sockets among more than a thousand unrelated Machines', async () => {
@@ -146,15 +170,16 @@ describe('target discovery with an unrelated slow Redis peer', () => {
     it('does not use a local candidate to claim global single-client uniqueness', async () => {
         const { io } = await setup(0, 2);
         expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100,
-            answeringClient: { requireSingle: true } })).toBeNull();
+            answeringClient: { requireSingle: true } })).toMatchObject({ targets: [], methodRoomEmpty: false,
+                failureCause: { phase: 'rpc.discovery.global_uniqueness', errorCode: 'ETIMEDOUT' } });
     });
 
     it('retains exact-client selection and caller exclusion for streamed remote answers', async () => {
         const { io, socketId } = await setup(1, 2);
         expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100,
-            excludedSocketId: socketId })).toBeNull();
+            excludedSocketId: socketId })).toMatchObject({ targets: [], failureCause: { errorCode: 'ETIMEDOUT' } });
         expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100,
-            answeringClient: { clientId: 'not-connected' } })).toBeNull();
+            answeringClient: { clientId: 'not-connected' } })).toMatchObject({ targets: [], failureCause: { errorCode: 'ETIMEDOUT' } });
         expect((await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100,
             answeringClient: { clientId: socketId!, requireSingle: true } }))?.targets.map(target => target.id))
             .toEqual([socketId]);

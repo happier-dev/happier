@@ -305,13 +305,16 @@ export async function openCurrentRunnerTeamCredentialProviderBinding(
     if (response.error.code === 'team_credential_provider_selection_not_current') {
       throw new SessionTeamCredentialLaunchUnavailableError();
     }
+    const brokerCode = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(response.error.code);
     const providerCode = ProviderErrorCodeV1Schema.safeParse(response.error.code);
     if (providerCode.success) {
-      throw Object.assign(new Error(providerCode.data), createProviderErrorV1(providerCode.data, {
+      const error = brokerCode.success
+        ? new SessionTeamCredentialLaunchUnavailableError(brokerCode.data)
+        : new Error(providerCode.data);
+      throw Object.assign(error, createProviderErrorV1(providerCode.data, {
         connectionId: input.operation.resourceId,
       }));
     }
-    const brokerCode = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(response.error.code);
     if (brokerCode.success) {
       throw new SessionTeamCredentialLaunchUnavailableError(brokerCode.data);
     }
@@ -400,12 +403,26 @@ export async function resolveCurrentAgentRuntimeDaemonTurnContributions(
   ) {
     return response.result.contributions;
   }
-  throw createNativeAgentSessionEffectBoundaryError(
+  const preparationCause = !response.ok && response.error.cause
+    ? { ...response.error.cause, requestId: input.requestId } : undefined;
+  if (!response.ok
+    && response.error.code !== NATIVE_AGENT_SESSION_EFFECT_AUTHORITY_UNAVAILABLE_CODE
+    && response.error.code !== NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE) {
+    // The daemon has settled a pre-dispatch refusal. Preserve only its code
+    // and closed diagnostic; its message may contain private source content.
+    throw new PluginError({ code: response.error.code, message: 'Session input preparation was refused',
+      retryable: response.error.retryable ?? true,
+      ...(preparationCause ? { details: { cause: preparationCause } } : {}) });
+  }
+  const boundaryError = createNativeAgentSessionEffectBoundaryError(
     // Turn contributions are resolved before new-turn admission and before
     // Provider send. A lost daemon response may make the contribution result
     // unusable, but cannot make the Provider effect ambiguous.
     'authority_unavailable_before_effect',
   );
+  // The response schema already admitted this code-only cause. Keep it when
+  // the native boundary owns the outer error as well as for PluginError above.
+  throw Object.assign(boundaryError, preparationCause ? { preparationCause } : {});
 }
 
 export async function admitCurrentRunnerSessionInput(

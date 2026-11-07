@@ -15,6 +15,7 @@ import { isSameWidgetDefinitionV1, parseWidgetInstanceRefKeyV1, WidgetInstanceAc
 import type { SessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { browserMediaToStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { logger } from '@/ui/logger';
+import type { RunnerDaemonPluginServicesPreparationCauseV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 /**
  * The send-time provider resolver (D-3, INV-9, R-10).
@@ -97,6 +98,7 @@ export class StructuredInputComposerAttachmentResolutionError extends Error {
     readonly code: StructuredInputComposerAttachmentResolutionErrorCode,
     readonly retryable: boolean,
     message: string,
+    readonly preparationCause?: RunnerDaemonPluginServicesPreparationCauseV1,
   ) {
     super(message);
     this.name = 'StructuredInputComposerAttachmentResolutionError';
@@ -647,6 +649,7 @@ async function resolveComposerAttachments(params: Readonly<{
       const resolved = ResolvedComposerAttachmentDispatchV1Schema.parse({
           ...contentlessAttachment,
           ...(outcome.data === undefined ? {} : { data: outcome.data }),
+          ...(outcome.forgeEvidence === undefined ? {} : { forgeEvidence: outcome.forgeEvidence }),
         });
       resolvedByInstanceId.set(attachment.instanceId, resolved);
       contextByInstanceId.set(attachment.instanceId, Object.freeze({
@@ -904,7 +907,7 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
   }
   const browserMedia = new Map<string, BrowserScreenshotMediaReferenceV1>();
   for (const item of envelope.browserContext?.contexts ?? []) {
-    if (item.kind === 'browserScreenshot' || item.kind === 'browserAnnotation') browserMedia.set(item.media.mediaId, item.media);
+    if (item.kind === 'browserScreenshot') browserMedia.set(item.media.mediaId, item.media);
   }
   const browserImageInputs = [...browserMedia.values()].map(browserMediaToStructuredImageInput);
   const projectedImages = [...sessionMediaInputs.images, ...browserImageInputs];

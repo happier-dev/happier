@@ -1,6 +1,3 @@
-import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import type {
   SessionRuntimeTeamCredentialDenialDetailsV1,
   SessionRuntimeTemporaryThrottleDetailsV1,
@@ -11,21 +8,25 @@ import type {
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
-import { AGENT_STARTUP_FAILURE_PREVIEWS, readAgentStartupFailureCode, readSessionPreparationFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS, TEAM_CREDENTIAL_FAILURE_PREVIEW, SessionRuntimeIssueSourceV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeUsageLimitDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { AGENT_STARTUP_FAILURE_PREVIEWS, readAgentStartupFailureCode, readSessionPreparationFailureCode, readSessionRuntimeIssueNativeAuthAgentId, SESSION_PREPARATION_FAILURE_PREVIEWS, TEAM_CREDENTIAL_FAILURE_PREVIEW, SessionRuntimeIssueSourceV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeUsageLimitDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
+import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview, type AgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import axios from 'axios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
+import { readStructuredInputPreparationFailure } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
@@ -51,6 +52,8 @@ export type ClassifyPrimarySessionRuntimeIssueInput = Readonly<{
   sessionSeq?: number | null;
   cause?: PrimarySessionRuntimeIssueCause | null;
   error?: unknown;
+  /** Positive host-loop evidence; absent for unlocated/native failures. */
+  beforeProviderDispatch?: boolean;
   occurredAt?: number | null;
   /** Closed host evidence from this exact Session turn, independent of Agent error formatting. */
   teamCredentialDenial?: SessionRuntimeTeamCredentialDenialDetailsV1 | null;
@@ -81,6 +84,15 @@ const sanitizedPreviewBySource = {
   unknown: 'Session runtime failed',
 } as const satisfies Record<SessionRuntimeIssueSourceV1, string>;
 
+const startupAuthenticationFailures = {
+  refresh_bridge_unavailable: { source: 'dependency_failure', preview: 'Agent authentication is unavailable on this machine. Reconnect the machine or update Happier.' },
+  provider_account_identity_unavailable: { source: 'auth_error', preview: 'The selected account could not be identified. Sign in again or reconnect the account.' },
+  experimental_api_unavailable: { source: 'dependency_failure', preview: 'This Agent version cannot sign in with the selected account. Update the Agent on this machine.' },
+  workspace_incompatible: { source: 'auth_error', preview: 'The selected account does not match this workspace. Sign in with the required account.' },
+  credential_family_mismatch: { source: 'auth_error', preview: 'The selected account does not support this sign-in method. Sign in again with a supported account.' },
+  live_hot_auth_failed: { source: 'auth_error', preview: 'The Agent could not sign in with the selected account. Sign in again or reconnect the account.' },
+} as const satisfies Record<AgentStartupFailureDetails['reason'], { source: SessionRuntimeIssueSourceV1; preview: string }>;
+
 /** File diagnostics retain closed preparation facts before public issue classification.
  * Never copy messages, stacks, references, arbitrary codes or accessor values. */
 export function readSessionPreparationFailureDiagnostic(error: unknown): Readonly<{
@@ -106,7 +118,8 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
       return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
     } catch { return undefined; }
   };
-  const cause = readDataRecord(readDataField(readDataField(error, 'details'), 'failureCause'));
+  const cause = readDataRecord(readDataField(readDataField(error, 'details'), 'failureCause')
+    ?? readDataField(error, 'failureCause'));
   const parsedCause = SessionRuntimeFailureCauseV1Schema.safeParse(cause && {
     ...cause,
     ...(Object.hasOwn(cause, 'preparationCause')
@@ -116,29 +129,36 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
   const closedCause = parsedCause.success ? parsedCause.data : null;
   const causeReason = closedCause && closedCause.failureReason !== 'unknown'
     && closedCause.failureReason !== 'unclassified_provider_error' ? closedCause.failureReason
-    : closedCause?.code && ProviderErrorCodeV1Schema.safeParse(closedCause.code).success ? closedCause.code : null;
+    : closedCause?.code && (ProviderErrorCodeV1Schema.safeParse(closedCause.code).success
+      || readAgentStartupFailureCode(closedCause.code)) ? closedCause.code : null;
   const originalCode = readClosedField(error, 'code', preparationDiagnosticCodes);
-  const reason = readClosedField(error, 'reason', preparationDiagnosticReasons);
+  const startupDetails = readAgentStartupFailureDetails({ code: originalCode,
+    reason: readDataField(error, 'reason') ?? readDataField(readDataField(error, 'details'), 'reason') });
+  const directReason = readClosedField(error, 'reason', preparationDiagnosticReasons);
+  const reason = directReason !== 'unknown' ? directReason : projectLaunchDiagnosticCodes.has(originalCode)
+    ? readClosedField(readDataField(readDataField(error, 'details'), 'cause'), 'code', projectLaunchDiagnosticReasons)
+    : 'unknown';
   return {
     originalCode,
-    reason: reason === 'unknown' && causeReason ? causeReason
-      : reason === 'unknown' && (readAgentStartupFailureCode(originalCode)
-        || originalCode === 'agent_isolation_unavailable') ? originalCode : reason,
+    reason: startupDetails?.reason ?? (reason === 'unknown' && causeReason ? causeReason : reason === 'unknown'
+      && (providerDiagnosticCodes.has(originalCode) || readAgentStartupFailureCode(originalCode)
+        || originalCode === 'agent_isolation_unavailable') ? originalCode : reason),
     contextSource: readClosedField(error, 'contextSource', preparationDiagnosticSources),
     ...(parsedCause.success ? { failureCause: parsedCause.data } : {}),
   };
 }
 
+const providerDiagnosticCodes: ReadonlySet<string> = new Set(ProviderErrorCodeV1Schema.options);
 const preparationDiagnosticCodes = new Set([
   ...Object.keys(SESSION_PREPARATION_FAILURE_PREVIEWS),
   ...Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS),
-  ...ProviderErrorCodeV1Schema.options,
+  ...providerDiagnosticCodes,
   ...ProviderBrokerAdmissionFailureCodeV1Schema.options,
   'account_role_overrides_unavailable',
   'context_source_unavailable', 'role_overrides_unavailable', 'role_source_incomplete',
   'role_target_unavailable', 'role_policy_unenforceable', 'preparation_pending', 'attachment_unavailable',
   'profile_missing', 'invalid_target', 'identity_unobserved', 'identity_mismatch',
-  'project_requester_credentials_unavailable',
+  'project_requester_credentials_unavailable', 'project_finite_execution_unavailable',
   'metadata_tuple_ambiguous',
   DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE,
 ]);
@@ -156,6 +176,15 @@ const preparationDiagnosticReasons = new Set([
   ...['active', 'captured'].flatMap(prefix => ['account-snapshot-unavailable', 'account-scope-changed',
     'account-availability-changed', 'account-settings-changed', 'account-keys-changed', 'account-profile-changed']
     .map(reason => `${prefix}-${reason}`)),
+]);
+
+const projectLaunchDiagnosticCodes = new Set([
+  'project_requester_credentials_unavailable', 'project_finite_execution_unavailable',
+]);
+// Closed causal leaf codes emitted by the canonical Project launch refusal owner.
+const projectLaunchDiagnosticReasons = new Set([
+  'invocation_retired', 'runner_authority_unavailable', 'requester_not_current', 'ingress_missing',
+  'settings_context_missing', 'settings_scope_unavailable', 'finite_runtime_unavailable',
 ]);
 
 function extractErrorTextParts(error: unknown): string[] {
@@ -518,18 +547,32 @@ function readTeamCredentialDenial(error: unknown): TeamCredentialDenial | null {
 export function classifyPrimarySessionRuntimeIssue(
   input: ClassifyPrimarySessionRuntimeIssueInput,
 ): SessionRuntimeIssueV1 {
+  const attachedDiagnostic = input.cause === 'session_error'
+    ? AgentRuntimeDiagnosticDataV1Schema.safeParse(readRecord(input.error)?.diagnostic) : null;
+  if (attachedDiagnostic?.success) {
+    // Native open carries the same strict diagnostic on its Error. Normalize
+    // once so source, recovery, privacy and preview use the ordinary owner path.
+    return classifyPrimarySessionRuntimeIssue({ ...input, error: attachedDiagnostic.data });
+  }
   const diagnostic = input.cause === 'session_error'
     ? AgentRuntimeDiagnosticDataV1Schema.safeParse(input.error)
     : null;
   const typedDiagnostic = diagnostic?.success ? diagnostic.data : null;
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
+  const structuredInputFailure = readStructuredInputPreparationFailure(input.error);
   const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(diagnosticDetails?.failureCause
-    ?? readRecord(readRecord(input.error)?.details)?.failureCause);
+    ?? readRecord(readRecord(input.error)?.details)?.failureCause
+    ?? (structuredInputFailure?.preparationCause ? {
+      phase: 'turn_start', failureReason: 'unknown', preparationCause: structuredInputFailure.preparationCause,
+    } : undefined));
   const requestErrorCode = typeof diagnosticDetails?.requestErrorCode === 'number'
     && Number.isSafeInteger(diagnosticDetails.requestErrorCode) ? diagnosticDetails.requestErrorCode : null;
   // Reuse SessionRuntimeIssueV1.sanitizedPreview's existing 2,000-code-unit boundary.
   const diagnosticPreview = typedDiagnostic?.message?.trim()
     ? redactBugReportSensitiveText(`${requestErrorCode === null ? '' : `ACP ${requestErrorCode}: `}${typedDiagnostic.message}`).slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)
+    : null;
+  const nativeFailurePreview = failureCause.success && failureCause.data.providerErrorMessage?.trim()
+    ? redactBugReportSensitiveText(failureCause.data.providerErrorMessage).slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)
     : null;
   const errorCode = inspectOwnErrorCodeDataProperty(input.error);
   // Home adapters preserve only their status; machine bootstrap can also throw
@@ -563,8 +606,17 @@ export function classifyPrimarySessionRuntimeIssue(
   const teamCredentialDenial = input.teamCredentialDenial
     ? { details: input.teamCredentialDenial } : readTeamCredentialDenial(input.error);
   const teamCredential = teamCredentialDenial?.details ?? null;
+  const providerCode = !teamCredentialDenial && input.cause === 'session_error' && errorCode.kind === 'string'
+    ? ProviderErrorCodeV1Schema.safeParse(errorCode.value) : null;
+  // Reconstruct only the closed code's policy; binding context and upstream prose stay private.
+  const providerFailure = providerCode?.success ? createProviderErrorV1(providerCode.data) : null;
   const startupFailureCode = !teamCredentialDenial && input.cause === 'session_error'
     && errorCode.kind === 'string' ? readAgentStartupFailureCode(errorCode.value) : null;
+  const startupDetails = startupFailureCode === 'codex_refresh_free_auth_unsupported'
+    ? readAgentStartupFailureDetails(input.error) ?? readAgentStartupFailureDetails({
+      code: startupFailureCode, reason: failureCause.success ? failureCause.data.reason : undefined,
+    }) : null;
+  const startupAuthenticationFailure = startupDetails ? startupAuthenticationFailures[startupDetails.reason] : null;
   const sessionPreparationFailureCode = !teamCredentialDenial && input.cause === 'session_error'
     && errorCode.kind === 'string' ? brokerStartupCode
       ?? (brokerCode?.success ? null : readSessionPreparationFailureCode(errorCode.value)) : null;
@@ -580,6 +632,7 @@ export function classifyPrimarySessionRuntimeIssue(
   // Host turn publication reclassifies its typed diagnostic, not the original Error instance.
   const promptPreparationCode = teamCredentialDenial ? null
     : homeHttpFailure ? 'preparation_pending'
+    : structuredInputFailure ? structuredInputFailure.retryable ? 'preparation_pending' : 'attachment_unavailable'
     : input.error instanceof PromptStackPreparationError
       ? input.error.cause instanceof HomeTargetResolutionError ? input.error.cause.code : input.error.code
     : input.cause === 'session_error' && errorCode.kind === 'string'
@@ -591,12 +644,18 @@ export function classifyPrimarySessionRuntimeIssue(
       && (errorCode.value === 'preparation_pending' || errorCode.value === 'attachment_unavailable'
         || errorCode.value === 'profile_missing' || errorCode.value === 'invalid_target'
         || errorCode.value === 'identity_unobserved' || errorCode.value === 'identity_mismatch')
-    ? errorCode.value : null;
+    ? errorCode.value
+    : input.beforeProviderDispatch === true && !typedDiagnostic && !providerFailure
+      && !startupFailureCode && !sessionPreparationFailureCode && !runtimeAuthSource && !declaredSource
+    ? 'preparation_pending' : null;
   const source = missingCli || catalogUnavailable || metadataPrivacyUpgradeRequired || promptPreparationCode
+    || sessionPreparationFailureCode === 'agent_isolation_unavailable'
     || sessionPreparationFailureCode === 'agent_cli_not_runnable'
     ? 'dependency_failure' as const
     : teamCredentialDenial || brokerStartupCode
     ? 'team_credential' as const
+    : startupAuthenticationFailure
+    ? startupAuthenticationFailure.source
     : runtimeAuthSource
     ? runtimeAuthSource
     : declaredSource
@@ -616,16 +675,24 @@ export function classifyPrimarySessionRuntimeIssue(
   const agentId = normalizeNonEmptyString(input.provider);
   const agentTurnId = normalizeNonEmptyString(input.agentTurnId);
   const sessionSeq = normalizeNonNegativeInteger(input.sessionSeq);
+  const code = missingCli ? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
+    : catalogUnavailable ? DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE
+    : metadataPrivacyUpgradeRequired ? 'metadata_privacy_upgrade_required'
+    : promptPreparationCode ?? startupFailureCode ?? sessionPreparationFailureCode ?? providerFailure?.code ?? (temporaryThrottle ? 'provider_temporary_throttle'
+      : source === 'agent_session_error' ? typedDiagnostic?.code ?? source : source);
+  const nativeAuthAgentId = startupAuthenticationFailure ? null
+    : readSessionRuntimeIssueNativeAuthAgentId({ code, source, ...(agentId ? { agentId } : {}) });
+  const nativeAuthAgentTitle = nativeAuthAgentId ? resolveAgentDisplayTitle(nativeAuthAgentId) : null;
+  const nativeAuthPreview = nativeAuthAgentId
+    ? nativeAuthAgentTitle ? `Sign in to ${nativeAuthAgentTitle} or choose a ${nativeAuthAgentTitle} account.`
+      : 'Sign in to the Agent or choose an account.'
+    : null;
 
   return {
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: missingCli ? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
-      : catalogUnavailable ? DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE
-      : metadataPrivacyUpgradeRequired ? 'metadata_privacy_upgrade_required'
-      : promptPreparationCode ?? startupFailureCode ?? sessionPreparationFailureCode ?? (temporaryThrottle ? 'provider_temporary_throttle'
-        : source === 'agent_session_error' ? typedDiagnostic?.code ?? source : source),
+    code,
     source,
     occurredAt,
     ...(sessionSeq === null ? {} : { sessionSeq }),
@@ -638,13 +705,16 @@ export function classifyPrimarySessionRuntimeIssue(
         ? 'Session state could not be confirmed. Check the Home connection, then retry the Session.' : null)
       ?? (homeHttpFailure ? 'Session startup could not reach a ready Home. Check the Home connection, then retry the Session.' : null)
       ?? (promptPreparationCode ? 'Prompt context could not be prepared. Check the selected documents and Home connection, then retry the Session.' : null)
+      ?? startupAuthenticationFailure?.preview
       ?? (sessionPreparationFailureCode === 'agent_cli_not_runnable'
         ? readSessionStartupFailurePreview(sessionPreparationFailureCode, agentId ? resolveAgentDisplayTitle(agentId) : null) : null)
-      ?? (startupFailureCode ? AGENT_STARTUP_FAILURE_PREVIEWS[startupFailureCode] : null)
-      ?? (sessionPreparationFailureCode ? SESSION_PREPARATION_FAILURE_PREVIEWS[sessionPreparationFailureCode] : null)
+      ?? (startupFailureCode ? nativeFailurePreview ?? AGENT_STARTUP_FAILURE_PREVIEWS[startupFailureCode] : null)
+      ?? (sessionPreparationFailureCode ? readSessionStartupFailurePreview(sessionPreparationFailureCode) : null)
+      ?? nativeAuthPreview
+      ?? (providerFailure ? presentProviderCliRefusal(providerFailure).slice(0, 2).join(' ') : null)
       ?? buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests'
-        : source === 'agent_session_error' ? diagnosticPreview ?? sanitizedPreviewBySource[source] : sanitizedPreviewBySource[source]),
+        : source === 'agent_session_error' ? nativeFailurePreview ?? diagnosticPreview ?? sanitizedPreviewBySource[source] : sanitizedPreviewBySource[source]),
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),

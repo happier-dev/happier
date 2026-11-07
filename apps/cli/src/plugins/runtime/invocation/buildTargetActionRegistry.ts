@@ -1,4 +1,5 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { deriveActivationTargetRegistrationRights } from '../lifecycle/activation/targets';
 import type { PluginActionPresentUserGatePolicy, PluginSourceCustodyV1 } from '@happier-dev/protocol';
@@ -6,7 +7,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import type { InputOption } from '@happier-dev/protocol/inputs';
-import { resolveInputTypeOptions, readInputFieldOptionsConstraint, validateInputFieldValue } from '@happier-dev/protocol/inputs/runtime';
+import { resolveInputTypeOptions, readInputFieldOptionsConstraint, readInputFieldSelectedValues, validateInputTypeValue, validateInputFieldValue } from '@happier-dev/protocol/inputs/runtime';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createRegistryInputTypeDeps } from './actions/createCommittedContributedActionDeps';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
@@ -36,7 +37,7 @@ import {
     resolveTargetActionAvailability,
     type TargetActionAuthorizationFacts,
 } from '../policy/evaluate';
-import type { BeginPluginInvocationDiagnosticScope, CreatePluginInvocationServices } from './services/types';
+import type { BeginPluginInvocationDiagnosticScope, CreatePluginInvocationServices, PluginInvocationServicesSeed } from './services/types';
 import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
 import {
     revalidateRegistryConnectedAccountActionFormInput,
@@ -50,10 +51,19 @@ import type {
     PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler, PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, isPluginError } from '@happier-dev/plugin-sdk';
 import { PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE } from '../context/storage';
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
 import { readPluginActionInputParser, readPluginActionReadObserver, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
+import { admitDeploymentTargetRoleForHost, type DeploymentTargetRoleAdmissionHost } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
+import { admitDeploymentTargetCredentialPrincipalForHost } from '@/deployments/targets/admitDeploymentTargetCredentialPrincipalForHost';
+import { DeploymentTargetCredentialPrincipalV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import { createDeploymentTargetRoleSourceAdmissionForHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
+import { createDeploymentTargetRoleWorkloadBindingForHost } from '@/deployments/targets/createDeploymentTargetRoleWorkloadBindingForHost';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -107,9 +117,11 @@ function createAccountInvocationContext(context: PluginInvocationContext, accoun
         invokedAtMs: context.invokedAtMs, signal: context.signal,
         ...(context.caller ? { caller: context.caller } : {}),
         ...(accountScope ? { accountScope } : {}),
+        ...(context.sessionTargetsV1 ? { sessionTargetsV1: context.sessionTargetsV1 } : {}),
         services: Object.freeze({
             http: context.services.http,
             secrets: context.services.secrets,
+            machineProvisioners: context.services.machineProvisioners,
             ...(context.services.machineConnectorSecrets ? { machineConnectorSecrets: context.services.machineConnectorSecrets } : {}),
             connectedAccounts: context.services.connectedAccounts,
             storage: Object.freeze({ get account() {
@@ -132,7 +144,9 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     /** Authenticated scope captured by the Account runtime; absent is unavailable. */
     readAccountScope?(signal: AbortSignal): Promise<PluginAccountActionContext['accountScope']>;
     /** The same runtime-owned Resource reader used by Action options discovery. */
-    readRuntimeRegistry?(): Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'readUiResource'> | null;
+    readRuntimeRegistry?(): (Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'readUiResource'>
+        & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'projectManagedServices'>>) | null;
+    ensureEnvironmentServices?(): Promise<void>;
     readCurrentPluginOccurrenceId?(pluginId: string): PluginRuntimeOccurrenceId | null;
     readCurrentPluginSourceCustody?(pluginId: string): PluginSourceCustodyV1 | null;
     /** Resolved runtime-owned dispatch-time caller provenance lookup. */
@@ -151,7 +165,9 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     resolveHostBinding: ResolveTargetActionHostBinding;
     resolveHostPolicy: ResolveTargetActionHostPolicy;
     createServices: CreatePluginInvocationServices;
-    readCurrentTargetedDeclarations?(pluginId: string, signal?: AbortSignal): Promise<readonly import('@happier-dev/plugin-sdk/host/registration').TargetedContributionManifestDeclaration[]>;
+    readCurrentTargetedDeclarations?(pluginId: string, signal?: AbortSignal,
+        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<readonly import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestDeclaration[]>;
+    createAccountSourceMachineResolver?(seed: PluginInvocationServicesSeed): PluginInvocationServicesSeed['resolveAccountSourceMachine'];
     prepareInvocationServices?(input: Readonly<{ pluginId: string; localId: string }>): Promise<void>;
     beginDiagnosticScope?: BeginPluginInvocationDiagnosticScope;
     redactDiagnosticText?: (
@@ -166,14 +182,17 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     actionFormConnectedAccounts?: Pick<
         ConnectedAccountPurposeBindingOwner,
         'resolveBindingIntent'
-    > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>>;
+    > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings' | 'resolveBindingIntentSelection'>>;
     /**
      * Canonical host-only source resolver for declared history-gap recovery
      * bindings. The target Action lifecycle remains the operation owner.
      */
     resolveAutomationEventHistoryGapSource?: ResolveRegistryCurrentAutomationEventHistoryGapSource;
-    resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
+    /** Captured invocation custody, never ambient daemon credential fallback. */
+    readDeploymentTargetRoleAdmissionHost?(context: import('@happier-dev/protocol').ActionExecutorContext):
+        Promise<DeploymentTargetRoleAdmissionHost | null>;
+    resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
 }>) {
     const expectedActions = params.contributes.activationTargets.flatMap((target) => (
         deriveActivationTargetRegistrationRights(target).flatMap((right) => right.family === 'actions'
@@ -227,8 +246,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 pluginId: entry.pluginId,
                 localId: entry.registration.localId,
             });
-            const actionRegistryKey = buildQualifiedPluginContributionKey(actionIdentity);
-            const resolvedAction = params.contributes.actionsById?.get(actionRegistryKey);
+            const resolvedAction = readResolvedActionContribution(params.contributes, actionIdentity);
             if (
                 !resolvedAction
                 || resolvedAction.pluginId !== entry.pluginId
@@ -254,7 +272,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             ];
             const secretInputLabels = Object.fromEntries((actionDefinition.inputHints?.fields ?? [])
                 .filter(field => field.widget === 'secret')
-                .map(field => [field.path, typeof field.title === 'string' ? field.title : field.title.fallback]));
+                .map(field => [field.path, resolvePluginLocalizedStringV2Text(field.title)]));
             if (occurrenceId == null || occurrenceId !== entry.occurrenceId || sourceCustody == null) {
                 throw new Error(`Target action '${entry.pluginId}/actions/${entry.registration.localId}' lacks host-stamped occurrence or source custody`);
             }
@@ -363,9 +381,13 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             : {}),
         resolveAuthorizationFacts: params.resolveAuthorizationFacts,
         resolveHostBinding: params.resolveHostBinding,
-        createServices: params.readCurrentTargetedDeclarations ? (seed, ...args) => params.createServices({ ...seed,
-            readCurrentTargetedDeclarations: signal => params.readCurrentTargetedDeclarations!(seed.plugin.id, signal),
-        }, ...args) : params.createServices,
+        createServices: params.readCurrentTargetedDeclarations ? (seed, ...args) => {
+            const resolveAccountSourceMachine = params.createAccountSourceMachineResolver?.(seed);
+            return params.createServices({ ...seed,
+                ...(resolveAccountSourceMachine ? { resolveAccountSourceMachine } : {}),
+                readCurrentTargetedDeclarations: signal => params.readCurrentTargetedDeclarations!(seed.plugin.id, signal, resolveAccountSourceMachine),
+            }, ...args);
+        } : params.createServices,
         ...(params.prepareInvocationServices ? { prepareInvocationServices: params.prepareInvocationServices } : {}),
         ...(params.beginDiagnosticScope
             ? { beginDiagnosticScope: params.beginDiagnosticScope }
@@ -390,7 +412,65 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             : {}),
         revalidateActionFormInput: async (input) => {
             const identity = createPluginContributionIdentity({ pluginId: input.pluginId, localId: input.localId });
-            const definition = params.contributes.actionsById?.get(buildQualifiedPluginContributionKey(identity))?.definition;
+            const contribution = readResolvedActionContribution(params.contributes, identity);
+            const definition = contribution?.definition;
+            const roles = contribution?.admittedTarget?.deploymentTargetRoles;
+            let admittedPurposeTarget: import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingTargetV1 | undefined;
+            let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
+            let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
+            if (roles?.length) {
+                const unavailable = (code = 'deployment_target_role_unavailable') => ({ status: 'unavailable' as const, code, message: code });
+                const context = { ...input.approvalContext, signal: input.signal };
+                const host = await params.readDeploymentTargetRoleAdmissionHost?.(context);
+                if (!host) return unavailable();
+                const qualifiedActionId = buildQualifiedPluginContributionKey(identity);
+                const purposeAuthorization = resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({ registry: params.contributes,
+                    qualifiedActionId, fieldPath: 'credentialRef', requireSelect: false,
+                    ...(params.resolveOptionalAccess ? { resolveOptionalAccess: params.resolveOptionalAccess } : {}) });
+                const executionTarget = contribution?.admittedTarget?.declaration.execution.target;
+                if (executionTarget !== 'account' && executionTarget !== 'daemon') return unavailable();
+                try {
+                    const admitted = await admitDeploymentTargetRoleForHost({ pluginId: input.pluginId, localId: input.localId,
+                        bindings: roles, executionTarget, input: input.input, context, purposeAuthorization }, host);
+                    if (admitted.input.credentialPrincipal.kind === 'account') admittedPurposeTarget = admitted.input.credentialPrincipal.target;
+                    if (executionTarget === 'daemon' && params.ensureEnvironmentServices) {
+                        managedWorkloads = createDeploymentTargetRoleWorkloadBindingForHost({ admission: admitted, host, context,
+                            ensureEnvironmentServices: params.ensureEnvironmentServices,
+                            readOwner: () => params.readRuntimeRegistry?.()?.projectManagedServices });
+                    }
+                    if (admitted.role === 'uploadDeploy' && executionTarget === 'daemon' && admitted.receipt
+                        && readHostReviewedChildOperationV1(context, formatQualifiedPluginActionId(identity), input.input)) {
+                        deploymentSource = { identity: { environmentId: admitted.environment.environment.id, deploymentId: admitted.receipt.deployment.id },
+                            admit: createDeploymentTargetRoleSourceAdmissionForHost({ ...admitted,
+                                receipt: admitted.receipt }, host, context) };
+                    }
+                } catch (error) {
+                    if (input.signal.aborted) throw error;
+                    if (isPluginError(error)) throw error;
+                    if (error instanceof Error && 'code' in error && typeof error.code === 'string') return unavailable(error.code);
+                    throw error;
+                }
+                if (!input.isCurrent()) return unavailable('plugin_action_generation_retired');
+            } else if (readInputPath(input.input, 'credentialPrincipal') !== undefined
+                && definition?.connectedAccountPurposeBindings?.some(binding => binding.path === 'credentialRef')) {
+                const unavailable = (code: string) => ({ status: 'unavailable' as const, code, message: code });
+                const principal = DeploymentTargetCredentialPrincipalV1Schema.safeParse(readInputPath(input.input, 'credentialPrincipal'));
+                const credentialRef = QualifiedConnectedAccountRefSchema.safeParse(readInputPath(input.input, 'credentialRef'));
+                if (!principal.success || !credentialRef.success) return unavailable('deployment_invalid');
+                const host = await params.readDeploymentTargetRoleAdmissionHost?.({ ...input.approvalContext, signal: input.signal });
+                if (!host) return unavailable('deployment_target_role_unavailable');
+                try {
+                    admittedPurposeTarget = admitDeploymentTargetCredentialPrincipalForHost({
+                        credentialPrincipal: principal.data, credentialRef: credentialRef.data,
+                    }, host.credentialOwnerAccountId).target;
+                } catch (error) {
+                    if (input.signal.aborted) throw error;
+                    if (isPluginError(error)) throw error;
+                    if (error instanceof Error && 'code' in error && typeof error.code === 'string') return unavailable(error.code);
+                    throw error;
+                }
+                if (!input.isCurrent()) return unavailable('plugin_action_generation_retired');
+            }
             const runtime = params.readRuntimeRegistry?.() ?? { contributes: params.contributes };
             const inputTypeDeps = createRegistryInputTypeDeps(runtime);
             const context = { signal: input.signal, ...(input.sessionId ? { defaultSessionId: input.sessionId } : {}) };
@@ -404,22 +484,33 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 if (type === null) return { status: 'unavailable', code: 'input_type_unavailable', message: 'Input type is unavailable' };
                 let options: readonly InputOption[] | undefined;
                 if (type && readInputFieldOptionsConstraint(field, type).kind === 'dynamic') {
-                    const resolved = await resolveInputTypeOptions({ deps: inputTypeDeps, ctx: context, identity: field.inputType,
-                        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-                        readFailure: result => {
-                            const parsed = ActionExecuteFailureSchema.safeParse(result);
-                            return parsed.success ? parsed.data : null;
-                        },
-                    });
-                    if (!resolved.ok) return { status: 'unavailable', code: resolved.errorCode, message: 'Input choices are unavailable' };
-                    options = resolved.result;
+                    const pages: InputOption[] = [];
+                    let cursor: string | undefined;
+                    do {
+                        const resolved = await resolveInputTypeOptions({ deps: inputTypeDeps, ctx: context, identity: field.inputType,
+                            query: { draftInput: input.input, fieldPath: field.path, ...(cursor === undefined ? {} : { cursor }) },
+                            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                            readFailure: result => {
+                                const parsed = ActionExecuteFailureSchema.safeParse(result);
+                                return parsed.success ? parsed.data : null;
+                            },
+                        });
+                        if (!resolved.ok) return { status: 'unavailable', code: resolved.errorCode, message: 'Input choices are unavailable' };
+                        pages.push(...resolved.result);
+                        cursor = resolved.nextCursor;
+                        // A selected value may live beyond the first provider page. Stop once
+                        // all selections are admitted; static field narrowing is applied below.
+                        if (readInputFieldSelectedValues(field, selected.data).every(value =>
+                            validateInputTypeValue(type, value, pages).status === 'valid')) break;
+                    } while (cursor !== undefined);
+                    options = pages;
                 }
                 const validation = validateInputFieldValue({ field, value: selected.data, type, options });
                 if (validation.status !== 'valid') return { status: validation.status, code: validation.reasonCode, message: 'Input value is invalid' };
                 input.signal.throwIfAborted();
                 if (!input.isCurrent()) return { status: 'unavailable', code: 'input_type_retired', message: 'Input invocation is retired' };
             }
-            return await revalidateRegistryConnectedAccountActionFormInput({
+            const revalidation = await revalidateRegistryConnectedAccountActionFormInput({
                 registry: params.contributes,
                 qualifiedActionId: buildQualifiedPluginContributionKey(
                     createPluginContributionIdentity({
@@ -428,6 +519,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }),
                 ),
                 value: input.input,
+                ...(admittedPurposeTarget ? { admittedPurposeTarget } : {}),
                 ...(params.resolveOptionalAccess
                     ? { resolveOptionalAccess: params.resolveOptionalAccess }
                     : {}),
@@ -437,6 +529,12 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 signal: input.signal,
                 isCurrent: input.isCurrent,
             });
+            if (revalidation) return revalidation;
+            return admittedPurposeTarget || managedWorkloads
+                ? { status: 'admitted' as const,
+                    ...(admittedPurposeTarget ? { connectedAccountPurposeTarget: admittedPurposeTarget } : {}),
+                    ...(deploymentSource ? { deploymentSource } : {}),
+                    ...(managedWorkloads ? { managedWorkloads } : {}) } : null;
         },
         bindConnectedAccountActionOperation: async (input) => {
             const snapshot = await resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
@@ -448,6 +546,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }),
                 ),
                 value: input.input,
+                ...(input.admittedPurposeTarget ? { admittedPurposeTarget: input.admittedPurposeTarget } : {}),
                 ...(params.resolveOptionalAccess
                     ? { resolveOptionalAccess: params.resolveOptionalAccess }
                     : {}),
@@ -484,6 +583,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 },
                 purposes: snapshot.purposes,
                 bindings: snapshot.bindings,
+                ...(snapshot.bindingSelections ? { bindingSelections: snapshot.bindingSelections } : {}),
                 ...(input.recordOperationCredentialUse ? { recordOperationCredentialUse: input.recordOperationCredentialUse } : {}),
             });
             if (!input.isCurrent()) {

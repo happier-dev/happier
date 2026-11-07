@@ -7,12 +7,14 @@ import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTar
     DaemonPluginTargetedSourceDeclarationV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
+import { resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
 
 const { machineRpc } = vi.hoisted(() => ({ machineRpc: vi.fn() }));
 vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
@@ -22,6 +24,13 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
     callExactMachineRpc: machineRpc,
 }));
 afterEach(() => vi.restoreAllMocks());
+
+it('keeps the selected Machine for a declared optional Session operand that is absent', async () => {
+    expect(await resolveAccountMachineSourceActionMachine({ credentials: { token: 'owner', encryption: null, credentialProvenance: 'stored_session' },
+        serverUrl: 'http://unused-home.test', machineId: 'selected-machine',
+        declaration: { field: 'sessionId', cardinality: 'one' }, input: { entry: 'account-entry' } }))
+        .toEqual({ status: 'available', machineId: 'selected-machine' });
+});
 
 const inputSchema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
 const resultSchema = defineProtocolObject({ key: defineProtocolString(), machine: defineProtocolLiteral(true) }, { policy: 'closed' });
@@ -36,10 +45,22 @@ const provider = definePlugin({ id: 'acme.account-source-provider', version: '1.
     provider: protocol.contribute({ operations: { read: protocol.operations.read.bind('read') } }),
 } } } });
 
-it.each(['acknowledged', 'lostAck', 'notSent'] as const)('keeps an authored Account aggregate local and preserves its selected Machine source outcome (%s)', async outcome => {
+it.each([
+    { outcome: 'acknowledged', placement: 'selected' },
+    { outcome: 'lostAck', placement: 'selected' },
+    { outcome: 'notSent', placement: 'selected' },
+    { outcome: 'acknowledged', placement: 'session' },
+    { outcome: 'acknowledged', placement: 'sessionLookup' },
+] as const)('keeps an authored Account aggregate local and preserves its $placement Machine source outcome ($outcome)', async ({ outcome, placement }) => {
     const app = fastify();
     const endpoint = 'http://account-machine.test';
     const features = registerAccountHomeHttp(app, { accountId: 'owner', serverId: 'account-machine' });
+    if (placement === 'sessionLookup') app.get('/v2/sessions/bound-session', async () => ({ session: {
+        id: 'bound-session', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'selected-machine' }), metadataVersion: 1,
+        dataEncryptionKey: null, agentState: null, agentStateVersion: 0, responsibleAccountId: null, responsibleAccount: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+    } }));
     const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner');
     const manifest = normalizePluginManifestV2(provider.manifest);
     const source = DaemonPluginTargetedSourceDeclarationV1Schema.parse({ manifest: { id: manifest.id, contributes: {
@@ -68,9 +89,16 @@ it.each(['acknowledged', 'lostAck', 'notSent'] as const)('keeps an authored Acco
         const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`,
             encryption: null, credentialProvenance: 'stored_session' as const };
         const cli = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-machine',
-            serverIdentityId: 'account-machine', serverApiUrl: endpoint, machineId: 'selected-machine' });
+            serverIdentityId: 'account-machine', serverApiUrl: endpoint,
+            ...(placement === 'selected' ? { machineId: 'selected-machine' } : {}) });
         const result = await cli.execute('action.invoke', { action: { pluginId, localId: 'source' }, input: { key: 'provider' } },
-            { surface: 'cli', runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine' });
+            { surface: 'cli', runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine',
+                ...(placement !== 'selected' ? { defaultSessionId: 'bound-session' } : {}),
+                ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}) });
+        expect(result, JSON.stringify(result)).toMatchObject(outcome === 'notSent'
+            ? { ok: false, errorCode: 'plugin_action_execution_origin_unavailable' }
+            : outcome === 'lostAck' ? { ok: false, errorCode: 'plugin_action_outcome_unknown' }
+            : { ok: true, result: { key: 'provider', machine: true } });
         expect(requests.length).toBeGreaterThanOrEqual(2);
         for (const request of requests) {
             expect(request.machineId).toBe('selected-machine');
@@ -87,10 +115,6 @@ it.each(['acknowledged', 'lostAck', 'notSent'] as const)('keeps an authored Acco
                 expect(input.invocation?.kind === 'clientPluginAction' && input.invocation.clientActionBinding.materializationRef).toBeUndefined();
             }
         }
-        expect(result, JSON.stringify(result)).toMatchObject(outcome === 'notSent'
-            ? { ok: false, errorCode: 'plugin_action_execution_origin_unavailable' }
-            : outcome === 'lostAck' ? { ok: false, errorCode: 'plugin_action_outcome_unknown' }
-            : { ok: true, result: { key: 'provider', machine: true } });
         expect(providerEffects).toBe(outcome === 'notSent' ? 0 : 1);
     } finally { restore(); await app.close(); }
 });

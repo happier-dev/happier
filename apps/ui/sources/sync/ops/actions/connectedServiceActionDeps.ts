@@ -1,10 +1,9 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedServiceApiError, throwConnectedServiceApiError } from '@/sync/api/account/connectedServiceApiError';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
-import { invalidateConnectedServiceGroupsRefreshSignal } from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import type { PreparedConnectedMetadataCleanup } from '@/sync/api/account/apiConnectedMetadataCatalog';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
@@ -12,13 +11,13 @@ import { getAccountConnectedServiceConfigurationMode } from '@/sync/domains/conn
 import type { ProviderAccountUsageQuotaReadOptions } from '@/sync/api/account/apiProviderAccountUsage';
 import { listProviderGatewayContributionsV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
-import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { canExecuteConnectedServiceAction, getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
-import { resolveConnectedAccountPurposeDefaultTargetV1, resolveConnectedAccountPurposeDefaultOriginV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
-
 import { createUiConnectedAccountContent } from '@/sync/ops/connectedAccounts/connectedAccountContent';
 import { randomUUID } from '@/platform/randomUUID';
+import { publishMachineContributionRegistryProjectionRefresh } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { resolveConnectedAccountPurposeDefaultTargetV1, resolveConnectedAccountPurposeDefaultOriginV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
 
 export function createUiConnectedServiceAction(account: LazyActionAccountContext, quotaReadOptions?: Pick<ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'projectionDocuments' | 'includePendingWork'>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
     const content = createUiConnectedAccountContent(account);
@@ -60,8 +59,9 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     return (await createSavedSecretResourcesWithConnectedAccountCredentialInContext(account, {
                         scope: { serverId: account.serverId, accountId: account.accountId }, secrets, credential })).status;
                 },
-                readSetupCatalog: async () => {
+                readSetupCatalog: async input => {
                     assertCurrent();
+                    if (input.refresh) publishMachineContributionRegistryProjectionRefresh(account.serverId);
                     const registry = getConnectedServiceRegistrySnapshot(account.accountLifetime.scope);
                     const entries = registry.entries.filter(entry => entry.service);
                     const projected = new Set(entries.map(entry => `${entry.service!.pluginId}/${entry.service!.localId}`));
@@ -76,7 +76,7 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     return {
                         status: registry.status === 'ready' ? 'ready' : entries.length ? 'partial' : 'unavailable',
                         services: [...entries.map(entry => ({ service: entry.service!, descriptor: entry.projectedDescriptor ?? null,
-                            canAdd: entry.executable === true, reason: entry.executable === true ? null
+                            canAdd: canExecuteConnectedServiceAction(entry, 'advertised-v4'), reason: canExecuteConnectedServiceAction(entry, 'advertised-v4') ? null
                                 : entry.availability?.state !== 'available' ? entry.availability?.reason ?? registry.errorReason ?? registry.status
                                 : entry.projectionStatus ?? registry.status,
                         })), ...unavailableBundled],
@@ -110,10 +110,6 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                         ? QualifiedConnectedAccountCredentialMutationSuccessV4Schema.safeParse(result) : null;
                     if (definiteCredentialCreate && !definiteCredentialCreate.success) throw new ConnectedServiceApiError({ code: 'outcome_unknown' });
                     if (!definiteDelete && !definiteCredentialCreate?.success) account.assertCurrent();
-                    // Publish every acknowledged patch, including a prefix of a reorder that later fails.
-                    if (method !== 'GET' && path.startsWith('/v4/connect/qualified/group') && account.accountLifetime.isCurrent()) {
-                        invalidateConnectedServiceGroupsRefreshSignal();
-                    }
                     return definiteDelete ?? (definiteCredentialCreate?.success ? definiteCredentialCreate.data : result);
                 },
                 mutatePurposeBindings: async mutate => {
@@ -144,10 +140,14 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                             assertCurrent();
                         }
                     } else {
-                        const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+                        const [{ loadDaemonMergedProjectionCacheEntry }, { CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS }] = await Promise.all([
+                            import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
+                            import('@/sync/domains/plugins/ui/projectionSections'),
+                        ]);
                         // Explicit Machine inputs never borrow Account declarations or retained/offline projections.
                         const entry = await loadDaemonMergedProjectionCacheEntry({ machineId: origin.machineId, serverId: account.serverId,
-                            accountLifetime: account.accountLifetime, reuseFreshReady: false, signal });
+                            accountLifetime: account.accountLifetime, reuseFreshReady: false, signal,
+                            sections: CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS });
                         assertCurrent();
                         if (entry?.kind !== 'ready' || !entry.inputs.pluginUiProjection) return null;
                         declaration = { purpose: input.purpose, projection: entry.inputs.pluginUiProjection,
@@ -188,13 +188,15 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     await cleanupConnectedMetadataInContext(account, subject, signal, preparedMetadataCleanup);
                 },
                 resolveAgent: async (agentId, machineId) => {
-                    const [{ AGENT_IDS }, { getResolvedAgentCatalogEntries }, { loadDaemonMergedProjectionInputs }] = await Promise.all([
+                    const [{ AGENT_IDS }, { getResolvedAgentCatalogEntries }, { loadDaemonMergedProjectionInputs }, { DAEMON_AGENT_CATALOG_SECTIONS }] = await Promise.all([
                         import('@/agents/catalog/catalog'),
                         import('@/agents/backendCatalog/agentCatalogProjection'),
                         import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
+                        import('@/agents/backendCatalog/agentCatalogSections'),
                     ]);
                     // Catalog provenance is selected explicitly, never borrowed from the focused Home.
-                    const projection = await loadDaemonMergedProjectionInputs({ machineId, serverId: account.serverId, accountLifetime: account.accountLifetime, signal });
+                    const projection = await loadDaemonMergedProjectionInputs({ machineId, serverId: account.serverId, accountLifetime: account.accountLifetime, signal,
+                        sections: DAEMON_AGENT_CATALOG_SECTIONS });
                     return getResolvedAgentCatalogEntries({ enabledAgentIds: AGENT_IDS,
                         mergedProviderProjectionById: projection?.mergedProviderProjectionById ?? null,
                         mergedBackendProjectionById: projection?.mergedBackendProjectionById ?? null,
@@ -250,6 +252,9 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     return await withActionAccountRequestSignal(account, signal, ownedSignal =>
                         createUiConnectedAccountAuthenticationHost(account, ownedSignal, context.actionRequestId ?? undefined).controlCommand(machineId, command));
                 },
+                listPendingAuthenticationAttempts: ({ machineId, service }) => host.controlCommand!(machineId, {
+                    operation: 'listPendingAttempts', service,
+                }),
                 authenticationCommand: async (machineId, command) => {
                     const { createUiConnectedAccountAuthenticationHost } = await import('@/sync/ops/connectedAccounts/connectedAccountAuthenticationHost');
                     assertCurrent();

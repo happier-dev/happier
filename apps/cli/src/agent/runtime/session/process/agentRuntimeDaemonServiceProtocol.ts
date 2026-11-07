@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { AgentSessionConnectedAccountIdentityObservedEventV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
 import { SessionAgentStartAllowListsV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentStartAllowListsV1';
 import { RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS, RUNNER_EXECUTION_RUN_SNAPSHOT_RESULTS } from './executionRunSnapshotProtocol';
@@ -52,6 +53,7 @@ import {
 } from './agentRuntimeDaemonPluginServicesProtocol';
 import {
   AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+  NativeRealtimeInputAdmissionV1Schema,
 } from './agentRuntimeDaemonServiceTurnWitness';
 
 export {
@@ -61,6 +63,8 @@ export {
 
 export {
   AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+  NativeRealtimeInputAdmissionV1Schema,
+  type NativeRealtimeInputAdmissionV1,
 } from './agentRuntimeDaemonServiceTurnWitness';
 
 export const AGENT_RUNTIME_DAEMON_SERVICES_PATH =
@@ -156,6 +160,10 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.strictObject({
     executionRunSnapshotId: z.optional(z.uuid()),
   }),
   operation: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('connected_account.identity.observe'),
+      observation: asHostProtocolZod(AgentSessionConnectedAccountIdentityObservedEventV1Schema) }),
+    z.strictObject({ kind: z.literal('native_realtime.input.admit'), admission: NativeRealtimeInputAdmissionV1Schema }),
+    z.strictObject({ kind: z.literal('native_realtime.input.retire'), admission: NativeRealtimeInputAdmissionV1Schema }),
     z.strictObject({ kind: z.literal('agent_start.policy.read') }),
     z.strictObject({ kind: z.literal('execution_run.review_plugin_authority.resolve_v1'),
       pluginId: asHostProtocolZod(PluginIdSchema) }),
@@ -330,6 +338,9 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
     z.strictObject({
       ok: z.literal(true),
       result: z.union([
+        z.strictObject({ kind: z.literal('connected_account.identity.observed') }),
+        z.strictObject({ kind: z.literal('native_realtime.input.admission'), admission: NativeRealtimeInputAdmissionV1Schema }),
+        z.strictObject({ kind: z.literal('native_realtime.input.retired') }),
         z.strictObject({ kind: z.literal('agent_start.policy'), policy: AgentStartPolicyV1Schema }),
         z.strictObject({ kind: z.literal('execution_run.review_plugin_authority'),
           authority: z.nullable(z.strictObject({ sourceCustody: asHostProtocolZod(PluginSourceCustodyV1Schema),
@@ -462,6 +473,7 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
         code: OpaqueIdSchema,
         message: z.string().check(z.maxLength(4_096)),
         cause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
+        retryable: z.optional(z.boolean()),
       }),
     }),
   ]);

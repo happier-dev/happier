@@ -8,6 +8,8 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { artifactKindListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 export type CounterWidgetFixture = Readonly<{
     pluginId: string;
@@ -52,9 +54,10 @@ export function createCounterWidgetFixture(): CounterWidgetFixture {
 
 /** The Home features and Account facts every CLI Action composition reads before an Artifact write. */
 export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ accountId: string; serverId: string;
-    settings?: Pick<AccountSettings, 'actionsSettingsV1'> }>) {
-    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
-    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+    settings?: Pick<AccountSettings, 'actionsSettingsV1'>; encryptionMode?: 'plain' | 'e2ee' }>) {
+    const mode = input.encryptionMode ?? 'plain';
+    app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
+    app.get('/v1/account/encryption/currentness', async () => ({ mode, version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v1/account/profile', async () => ({ id: input.accountId }));
     app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: input.settings ?? {} }, version: 1 }));
@@ -63,8 +66,9 @@ export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ 
 }
 
 type ArtifactRow<Mode extends 'plain' | 'e2ee'> = {
-    id: string; ownerAccountId: string; access: 'owner'; encryptionMode: Mode; publicAudience: 'none';
+    id: string; ownerAccountId: string; access: ArtifactCallerAccessV1; encryptionMode: Mode; publicAudience: 'none';
     header: string; body: string; dataEncryptionKey: string;
+    provenance?: string; provenanceDataEncryptionKey?: string;
     headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number;
 };
 
@@ -72,9 +76,10 @@ type ArtifactRow<Mode extends 'plain' | 'e2ee'> = {
 export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee'>(app: FastifyInstance, accountId: string,
     { encryptionMode }: Readonly<{ encryptionMode: Mode }>) {
     const rows = new Map<string, ArtifactRow<Mode>>();
-    const seed = (id: string, header: string, body: string, dataEncryptionKey = ARTIFACT_PLAIN_DATA_KEY_MARKER) => {
+    const seed = (id: string, header: string, body: string, dataEncryptionKey = ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        ownership: Readonly<{ ownerAccountId: string; access: ArtifactCallerAccessV1 }> = { ownerAccountId: accountId, access: 'owner' }) => {
         if (isPlainArtifactDataKeyMarker(dataEncryptionKey) !== (encryptionMode === 'plain')) throw new Error('artifact_mode_mismatch');
-        rows.set(id, { id, ownerAccountId: accountId, access: 'owner', encryptionMode, publicAudience: 'none', header, body,
+        rows.set(id, { id, ...ownership, encryptionMode, publicAudience: 'none', header, body,
             dataEncryptionKey, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
     };
     const idOf = (params: unknown) => String((params as { id: string }).id);
@@ -82,36 +87,44 @@ export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee
         const query = new URL(request.url, 'http://fixture.test').searchParams;
         const kind = query.get('kind');
         const exactKinds = query.get('kinds');
+        const indexedKinds = query.get('indexedKinds');
         const unclassified = query.get('unclassified');
-        if ([kind, exactKinds, unclassified].filter(value => value !== null).length > 1) {
+        if ([kind, exactKinds, indexedKinds, unclassified].filter(value => value !== null).length > 1) {
             return reply.code(400).send({ error: 'Failed to get artifacts' });
         }
         let selectedKinds: string[] | undefined;
-        if (exactKinds !== null) {
+        if (exactKinds !== null || indexedKinds !== null) {
             try {
-                selectedKinds = z.array(z.string().check(z.minLength(1))).parse(JSON.parse(exactKinds));
+                selectedKinds = z.array(z.string().check(z.minLength(1))).parse(JSON.parse((exactKinds ?? indexedKinds)!));
             } catch {
                 return reply.code(400).send({ error: 'Failed to get artifacts' });
             }
         }
         const items = [...rows.values()];
         if (kind === null && selectedKinds === undefined && unclassified === null) return items;
-        return { items: unclassified !== null ? [] : items.filter(row => {
+        if (encryptionMode === 'e2ee') return {
+            items: unclassified !== null ? items : [], hasUnclassified: items.length > 0,
+            coverage: items.length > 0 ? { status: 'partial', unclassifiedCount: items.length, reason: 'unclassified_legacy_rows' }
+                : { status: 'complete', unclassifiedCount: 0 },
+        };
+        return artifactKindListResponse(unclassified !== null ? [] : items.filter(row => {
             const classification = deriveArtifactKindV1(z.looseObject({}).parse(decodePlainArtifactStoredContent(row.header)));
             return kind !== null ? classification.kind === kind
                 : classification.kindHint !== null && selectedKinds?.includes(classification.kindHint) === true;
-        }), hasUnclassified: false };
+        }));
     });
+    app.post('/v1/artifacts/read', async request => artifactReadResponse(request.body, id => rows.get(id) ?? null).data);
     app.get('/v1/artifacts/:id', async (request, reply) => rows.get(idOf(request.params)) ?? reply.code(404).send({ error: 'not_found' }));
     app.get('/v1/artifacts/:id/access/recipients', async (request, reply) => {
         const row = rows.get(idOf(request.params));
-        return row ? { artifactId: row.id, ownerAccountId: accountId, access: 'owner', encryptionMode,
+        return row ? { artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, encryptionMode,
             dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey,
-            provenanceDataEncryptionKey: null, callerProvenanceDataEncryptionKey: null, recipients: [] } : reply.code(404).send({ error: 'not_found' });
+            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ?? null,
+            callerProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey ?? null, recipients: [] } : reply.code(404).send({ error: 'not_found' });
     });
     app.get('/v1/artifacts/:id/access/grants', async (request, reply) => {
         const row = rows.get(idOf(request.params));
-        return row ? { artifactId: row.id, ownerAccountId: accountId, access: 'owner', grants: [] } : reply.code(404).send({ error: 'not_found' });
+        return row ? { artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, grants: [] } : reply.code(404).send({ error: 'not_found' });
     });
     app.post('/v1/artifacts', async (request, reply) => {
         const parsed = ArtifactJsonCreateHttpInputV1Schema.safeParse(request.body);
@@ -120,14 +133,20 @@ export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee
         const incumbent = rows.get(create.id);
         if (incumbent) return incumbent;
         seed(create.id, create.header, create.body, create.dataEncryptionKey);
-        return rows.get(create.id);
+        const row = rows.get(create.id)!;
+        if (create.provenance != null) row.provenance = create.provenance;
+        if (create.provenanceDataEncryptionKey != null) row.provenanceDataEncryptionKey = create.provenanceDataEncryptionKey;
+        return row;
     });
     app.post('/v1/artifacts/:id', async request => {
         const row = rows.get(idOf(request.params));
         if (!row) throw new Error('artifact_missing');
-        const update = z.looseObject({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number() }).parse(request.body);
+        const update = z.looseObject({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number(),
+            provenance: z.optional(z.string()), provenanceDataEncryptionKey: z.optional(z.string()) }).parse(request.body);
         if (update.expectedHeaderVersion !== row.headerVersion || update.expectedBodyVersion !== row.bodyVersion) return { success: false, error: 'version-mismatch' };
-        const next = { ...row, header: update.header, body: update.body, headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
+        const next = { ...row, header: update.header, body: update.body, headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1,
+            ...(update.provenance === undefined ? {} : { provenance: update.provenance }),
+            ...(update.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: update.provenanceDataEncryptionKey }) };
         rows.set(row.id, next);
         return { success: true, headerVersion: next.headerVersion, bodyVersion: next.bodyVersion };
     });

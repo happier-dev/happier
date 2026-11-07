@@ -1,6 +1,9 @@
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import { readSessionPreparationFailureCode, RunnerDaemonPluginServicesPreparationCauseV1Schema, type RunnerDaemonPluginServicesPreparationCauseV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
+import { formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 import type { ComposerAttachmentValueV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveResultV1, PluginContributionIdentityV1, ProviderBoundModelRef } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { UsagePromptCompositionSchema, type UsagePromptComposition, type UsagePromptCompositionComponent } from '@happier-dev/protocol/usage/coach/usagePromptComposition';
@@ -10,6 +13,7 @@ import { renderRunFollowNotice } from '@/agent/runtime/session/follow/sessionFol
 import { normalizePermissionModeQueuedPromptLocalIds, type PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import type { SessionClientInteractionApi } from '@/api/session/client/transport/sessionClientInteractionApi';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
 import { DiscussionAttachmentPreparationError, type DiscussionAttachmentDispatchInput,
   type DiscussionAttachmentDispatchResult } from '@/discussions/materializeDiscussionInputAttachments';
 import {
@@ -122,10 +126,25 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
           return await attachmentResolver(projectSessionComposerAttachmentDispatchInput(request, sessionId));
         } catch (error) {
           if (isAbortLikeError(error) || error instanceof StructuredInputComposerAttachmentResolutionError) throw error;
+          const pluginError = isPluginError(error);
+          const pluginDetails = pluginError ? error.details : undefined;
+          const pluginCause = pluginDetails && typeof pluginDetails === 'object' && 'cause' in pluginDetails
+            ? pluginDetails.cause : undefined;
+          const retainedCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(pluginError
+            ? pluginCause
+            : error instanceof Error ? Object.getOwnPropertyDescriptor(error, 'preparationCause')?.value : undefined);
+          const errorCode = inspectOwnErrorCodeDataProperty(error);
+          const preparationCause = retainedCause.success ? retainedCause
+            : RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse({
+              code: pluginError ? error.code : errorCode.kind === 'string'
+                ? readSessionPreparationFailureCode(errorCode.value) : undefined,
+              stage: 'dispatch',
+            });
           throw new StructuredInputComposerAttachmentResolutionError(
             'composer_attachment_resolution_failed',
-            true,
+            pluginError ? error.retryable : true,
             'Composer attachment resolver failed before provider dispatch',
+            preparationCause.success ? preparationCause.data : undefined,
           );
         }
       },
@@ -166,7 +185,9 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
     // Keep primary slash/native command grammar untouched in queue custody.
     // Informational review facts join only the final actual provider input.
     const reviewNoteText = input.providerNativeCommand ? ''
-      : (input.prompt.fileReviewNoteContext ?? []).map(note => note.text).join('\n\n');
+      : (input.prompt.fileReviewNoteContext ?? []).map(({ note }) =>
+        `<happier_review_note>${JSON.stringify({ text: formatFileReviewNoteV1(note, 'agent') })
+          .replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')}</happier_review_note>`).join('\n\n');
     finalPrompt = [rendered, reviewNoteText].filter(Boolean).join('\n\n');
     finalPrompt = [finalPrompt, ...runFollowNotices].filter(Boolean).join('\n');
     return finalPrompt;
@@ -242,7 +263,7 @@ class SessionInputDispatchAdmissionError extends Error {
   }
 }
 
-export function readStructuredInputPreparationFailure(error: unknown): Readonly<{ code: string; message: string; retryable: boolean }> | null {
+export function readStructuredInputPreparationFailure(error: unknown): Readonly<{ code: string; message: string; retryable: boolean; preparationCause?: RunnerDaemonPluginServicesPreparationCauseV1 }> | null {
   if (error instanceof DiscussionAttachmentPreparationError) return { code: error.code, message: error.message, retryable: error.retryable };
   if (error instanceof SessionInputDispatchAdmissionError) return { code: error.code, message: error.message, retryable: error.retryable };
   if (error instanceof StructuredInputComposerAttachmentResolutionError) {
@@ -250,6 +271,7 @@ export function readStructuredInputPreparationFailure(error: unknown): Readonly<
       code: error.code,
       message: error.message,
       retryable: error.retryable,
+      ...(error.preparationCause ? { preparationCause: error.preparationCause } : {}),
     };
   }
   if (error instanceof StructuredInputComposerReferenceUnavailableError) {

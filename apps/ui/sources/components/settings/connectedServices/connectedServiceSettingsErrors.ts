@@ -184,6 +184,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_oauth_transaction_unavailable':
         case 'connected_account_attempt_transaction_not_found':
         case 'connected_account_configuration_settings_cancelled':
+        case 'claude_subscription_refresh_token_unavailable':
             return t('connectedServices.errors.accountAuthenticationRestartRequired');
         case 'connected_account_attempt_in_progress':
         case 'connected_account_attempt_capacity_exhausted':
@@ -337,8 +338,12 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_service_request_failed':
             break;
         default:
-            // Leaf diagnostics carry plugin-specific codes. The admitted host outcome
-            // still establishes rejection; diagnostic prose is not a display contract.
+            // The authentication owner redacts these structured probe messages.
+            // Transport Error.message remains outside this display contract.
+            if ((errorLike.status === 'rejected' || errorLike.status === 'unavailable')
+                && errorLike.diagnostic !== null && typeof errorLike.diagnostic === 'object'
+                && 'message' in errorLike.diagnostic && typeof errorLike.diagnostic.message === 'string'
+                && errorLike.diagnostic.message.trim()) return errorLike.diagnostic.message;
             if (errorLike.status === 'rejected') return t('connectedServices.errors.accountAuthenticationRejected');
             if (errorLike.status === 'unavailable') return t('connectedServices.errors.accountServiceUnavailable');
             if (code) return unexplained;

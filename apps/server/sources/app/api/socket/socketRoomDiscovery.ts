@@ -5,6 +5,22 @@ import { z } from 'zod';
 
 const QUERY_EVENT = 'happier:socket-room:query:v1';
 const RESPONSE_PREFIX = 'happier:socket-room:response:';
+const JOIN_EVENT = 'happier:socket-room:joined:v1';
+const joinedSchema = z.object({ room: z.string().startsWith('rpc:') }).strict();
+const roomJoinSubscribers = new WeakMap<Server, Map<string, Set<() => void>>>();
+
+/** Hints only: subscribers still discover and authorize targets through the census owner. */
+export function subscribeToSocketRoomJoins(io: Server, room: string, listener: () => void): () => void {
+    let rooms = roomJoinSubscribers.get(io);
+    if (!rooms) { rooms = new Map(); roomJoinSubscribers.set(io, rooms); }
+    let listeners = rooms.get(room);
+    if (!listeners) { listeners = new Set(); rooms.set(room, listeners); }
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) rooms.delete(room);
+    };
+}
 const roomSelectionSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 const querySchema = z.object({
     room: roomSelectionSchema,
@@ -45,6 +61,20 @@ export function readLocalSocketRoom(io: Server, room: string | string[]): Socket
 
 /** Positive replies supplement the adapter census; they never establish absence or uniqueness. */
 export function registerSocketRoomDiscovery(io: Server): void {
+    const notify = (room: string) => {
+        for (const listener of roomJoinSubscribers.get(io)?.get(room) ?? []) listener();
+    };
+    io.sockets.adapter.on('join-room', (room: string) => {
+        // Only RPC method rooms have a waiting consumer. Socket ids/Account rooms
+        // and Machine availability projections do not create another hint stream.
+        if (!room.startsWith('rpc:')) return;
+        notify(room);
+        if (io.sockets.adapter instanceof ClusterAdapter) io.serverSideEmit(JOIN_EVENT, { room });
+    });
+    io.on(JOIN_EVENT, (raw: unknown) => {
+        const joined = joinedSchema.safeParse(raw);
+        if (joined.success) notify(joined.data.room);
+    });
     io.on(QUERY_EVENT, (raw: unknown) => {
         const query = querySchema.safeParse(raw);
         if (!query.success) return;

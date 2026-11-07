@@ -1,10 +1,8 @@
-import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/connectedServices/connectedAccountBrowserSignInMachineSupport';
-import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/connectedServices/connectedAccountBrowserSignInMachineSupport';
 import { readUiAccountConnectedServiceDeclarations, type AccountConnectedServiceDeclaration } from '@/sync/domains/connectedServices/accountDeclarations';
+import { getConnectedAccountAuthentication, getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginUiAccountConnectedAccountRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
@@ -12,6 +10,10 @@ import { listQualifiedConnectedAccountsV4 } from '@/sync/api/account/apiQualifie
 import { createUiConnectedAccountAttemptTransactionApi } from './connectedAccountAttemptTransactions';
 import { createUiConnectedAccountCredentialPersistence } from './connectedAccountCredentialPersistence';
 import { createUiConnectedAccountAuthenticationRuntime } from './connectedAccountAuthenticationRuntime';
+import { createUiConnectedAccountNativeConfigurationReadAdmission } from './connectedAccountNativeConfigurationRead';
+import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { runConnectedAccountAuthenticationCommand, runConnectedAccountControlCommand,
     type ConnectedAccountDaemonCommand, type ConnectedAccountAttemptResponse,
     type ConnectedAccountDaemonControlCommand, type ConnectedAccountDaemonControlResponse } from './connectedAccountDaemon';
@@ -27,7 +29,7 @@ export type UiConnectedAccountAuthenticationHost = Readonly<{
     controlCommand(machineId: string | undefined, command: ConnectedAccountDaemonControlCommand): Promise<ConnectedAccountDaemonControlResponse>;
     readAccountAuthenticationModes(service: Service): Promise<UiConnectedAccountAuthenticationModes>;
     describeService(service: Service, machineId?: string): Promise<Readonly<{
-        description: ConnectedAccountDaemonControlResponse;
+        description: ConnectedAccountDaemonControlResponse | null;
         accountAuthenticationModes: UiConnectedAccountAuthenticationModes;
     }>>;
 }>;
@@ -52,6 +54,11 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     const hasAccountArtifact = (service: Service) => Boolean(declaration(service)?.descriptor.authentication.account
         ?? projectedDeclaration(service)?.definition.authentication.account);
     const selection = async (service: Service) => {
+        const known = declaration(service);
+        const authentication = known?.descriptor.authentication
+            ?? getConnectedAccountAuthentication(service, getConnectedServiceRegistrySnapshot(account.accountLifetime.scope));
+        // A native declaration describes the draft; its Machine admits execution on submission.
+        if (authentication && !authentication.account) return { declaration: known, selected: null };
         const admitted = await readPluginAccountAvailability(account.accountLifetime.scope)
             .ensureCurrentAccountExecution(service.pluginId);
         if (admitted.kind === 'unavailable') return fail(admitted.code);
@@ -67,10 +74,11 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     };
     const runtime = async (selected: Awaited<ReturnType<typeof selection>>) => {
         const slot = selected.selected?.registration.connectedAccountAuthentication;
-        if (!selected.selected || !slot) return fail('connected_account_authentication_mode_unavailable');
+        const declared = selected.declaration;
+        if (!selected.selected || !declared || !slot) return fail('connected_account_authentication_mode_unavailable');
         const registered = selected.selected;
         return slot.acquire(() => createUiConnectedAccountAuthenticationRuntime({ selected: registered,
-            declaration: selected.declaration }));
+            declaration: declared }));
     };
     // This is the one placement policy for presentation and start. Once begun,
     // the addressed attempt record, rather than the current platform, routes work.
@@ -93,18 +101,22 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     };
     const nativeControl = (machineId: string, command: ConnectedAccountDaemonControlCommand) =>
         runConnectedAccountControlCommand({ serverId: account.serverId, machineId, command, signal, requestId,
-            assertCurrent: account.assertCurrent });
+            assertCurrent: account.assertCurrent,
+            readAdmission: createUiConnectedAccountNativeConfigurationReadAdmission(account, machineId, command) });
     const readBrowserSignInMachineSupport = (machineId: string) => {
         account.assertCurrent();
         const machine = resolveMachineForActiveServerFromState(getStorage().getState(), machineId, account.accountLifetime.scope);
         return readConnectedAccountBrowserSignInMachineSupport(machine);
     };
     const describeService = async (service: Service, machineId?: string): Promise<Readonly<{
-        description: ConnectedAccountDaemonControlResponse;
+        description: ConnectedAccountDaemonControlResponse | null;
         accountAuthenticationModes: UiConnectedAccountAuthenticationModes;
     }>> => {
         const accountAuthenticationModes = await readAccountAuthenticationModes(service);
         const known = declaration(service);
+        if (!known && !machineId && accountAuthenticationModes.status === 'available' && !accountAuthenticationModes.modeIds.length) {
+            return { description: null, accountAuthenticationModes };
+        }
         if (machineId && (!known && !hasAccountArtifact(service)
             || accountAuthenticationModes.status === 'available' && !accountAuthenticationModes.modeIds.length)) {
             if (accountAuthenticationModes.status === 'available' && accountAuthenticationModes.machineRequiredModeIds?.length) {
@@ -170,13 +182,18 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     };
     const controlCommand = async (machineId: string | undefined,
         command: ConnectedAccountDaemonControlCommand): Promise<ConnectedAccountDaemonControlResponse> => {
-        if (command.operation === 'listPendingAttempts') return { status: 'pendingAttempts',
-            attempts: await api.listPending({ service: command.service, ...(machineId ? { machineId } : {}) }) };
+        if (command.operation === 'listPendingAttempts') {
+            if (machineId) return nativeControl(machineId, command);
+            const pending = await api.listPending({ service: command.service });
+            return { status: 'pendingAttempts', attempts: pending.length === 0 ? pending
+                : await (await runtime(await selection(command.service))).attempts.selectResumableAttempts(pending) };
+        }
         if (command.operation === 'describeService') {
             // Operation admission belongs to the selected Machine; an authentication
             // description cannot replace the Action's requested operation.
             if (machineId && command.requiredOperation) return nativeControl(machineId, command);
-            return (await describeService(command.service, machineId)).description;
+            return (await describeService(command.service, machineId)).description
+                ?? unavailable('connected_account_service_unavailable');
         }
         if (command.operation === 'readConfiguration' || command.operation === 'replaceConfiguration') {
             try {
@@ -188,14 +205,16 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                     const retained = await runtime(await selection(record.scope.service));
                     const basis = await retained.attempts.resolveConfigurationControlTarget({ attemptId: requested.attemptId });
                     if (!basis) return unavailable('connected_account_configuration_target_unavailable');
-                    if (command.operation === 'readConfiguration') return { status: 'configuration', ...basis,
-                        configuration: await retained.configuration.inspect(basis) };
+                    if (command.operation === 'readConfiguration') {
+                        const { mode, ...configuration } = await retained.configuration.inspect(basis);
+                        return { status: 'configuration', ...basis, mode, configuration };
+                    }
                     const replacement = await retained.configuration.replaceForControl({ ...basis,
                         expectedRevision: command.expectedRevision, values: command.values,
                         secretValues: command.secretValues });
                     if (replacement.status !== 'committed') return replacement;
-                    return { status: 'configurationCommitted', ...basis,
-                        configuration: replacement.configuration };
+                    const { mode, ...configuration } = replacement.configuration;
+                    return { status: 'configurationCommitted', ...basis, mode, configuration };
                 }
                 const service = requested.kind === 'account' ? requested.account.service : requested.service;
                 if (!hasAccountArtifact(service)) return machineId
@@ -204,14 +223,16 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 const known = selected.declaration;
                 const modeId = requested.kind === 'account'
                     ? (await persistence.accounts.readExact(requested.account))?.authenticationModeId : requested.modeId;
-                const mode = known.descriptor.authentication.modes.find(candidate => candidate.id === modeId);
-                if (!mode || !selected.selected?.runtime.authentication.modes[mode.id]) return machineId
+                const mode = known?.descriptor.authentication.modes.find(candidate => candidate.id === modeId);
+                if (!known || !mode || !selected.selected?.runtime.authentication.modes[mode.id]) return machineId
                     ? nativeControl(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
                 const retained = await runtime(selected);
                 const basis = { target: { ...requested, modeId: mode.id }, mode,
                     occurrenceId: known.occurrenceId, sourceCustody: known.sourceCustody };
-                if (command.operation === 'readConfiguration') return { status: 'configuration', ...basis,
-                    configuration: await retained.configuration.inspect(basis) };
+                if (command.operation === 'readConfiguration') {
+                    const { mode: effectiveMode, ...configuration } = await retained.configuration.inspect(basis);
+                    return { status: 'configuration', ...basis, mode: effectiveMode, configuration };
+                }
                 return unavailable('connected_account_configuration_unavailable');
             } catch (error) { return unavailable(failureCode(error)); }
         }

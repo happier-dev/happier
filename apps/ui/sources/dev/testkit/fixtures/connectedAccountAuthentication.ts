@@ -1,6 +1,7 @@
 import type { ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS } from '@happier-dev/cli-common/connectedAccounts';
+import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 /** Passed by the suite's hoisted packaged-inventory and native asset IO mocks. */
 export type ConnectedAccountAuthenticationPackagedBoundary = {
@@ -10,7 +11,64 @@ export type ConnectedAccountAuthenticationPackagedBoundary = {
     reads: number;
 };
 
-const { compileUniversalPluginUiCommonJs } = await import('../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler');
+const [{ compileUniversalPluginUiCommonJs }, { definePlugin }] = await Promise.all([
+    import('../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler'),
+    import('../../../../../../packages/plugin-sdk/src/definePlugin'),
+]);
+
+/** The maintained SDK public example, compiled and activated by the real host. */
+export async function preparePublicAuthorInventory(packaged: ConnectedAccountAuthenticationPackagedBoundary,
+    includePrivateAction = false, options: Readonly<{ requireAccountConfiguration?: boolean;
+        deferDeclaration?: boolean; onDeclarationLoad?: () => void; pluginId?: string }> = {}) {
+    const { portableAuthentication } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/portableAuthentication');
+    const { inspectAccountMaterial, materializationAuthentication } = await import('./connectedAccountMaterializationAction');
+    const accountRuntime = includePrivateAction ? materializationAuthentication : portableAuthentication;
+    const target = { artifactId: 'portable-auth', exportName: 'activate' };
+    const nativeRuntime = {
+        ...accountRuntime,
+        async refresh() { return { status: 'connected' as const }; },
+        async revoke() { return { status: 'remoteUnsupported' as const }; },
+        async status() { return { status: 'connected' as const }; },
+        async materialize() { return { kind: 'httpHeaders' as const, headers: { Authorization: 'native' } }; },
+    };
+    // Match registrationScope.account.test.ts's public authoring declaration.
+    const authored = definePlugin({ id: options.pluginId ?? (includePrivateAction ? 'acme.portable-materialization'
+        : options.requireAccountConfiguration ? 'acme.portable-staging-auth'
+        : options.deferDeclaration ? 'acme.portable-cold-auth' : 'acme.portable-auth'), version: '1.0.0',
+        ...(includePrivateAction ? { hostAccess: { required: [{ id: 'provision', capability: 'connectedAccounts', reason: 'Use the selected account',
+            scope: { serviceRefs: ['example', { pluginId: 'acme.portable-cold-materialization-auth', localId: 'example' }], operations: ['use'], materializationKinds: ['httpHeaders'] } },
+            { id: 'network', capability: 'network', reason: 'Read the authenticated service response',
+                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://public-materialization.test' }], methods: ['GET'] } }] },
+        actions: { inspect: { title: 'Inspect account', surfaces: ['ui', 'plugin'], readOnly: true, dangerLevel: 'safe',
+            execution: { target: 'account', account: target },
+            inputSchema: { type: 'object', properties: { account: QualifiedConnectedAccountRefJsonSchema,
+                fail: { type: 'boolean' }, list: { type: 'boolean' } }, required: ['account'], additionalProperties: false },
+            connectedAccountPurposeBindings: [{ path: 'account', purpose: 'provision' }],
+            hostAccess: ['provision', 'network'], run: inspectAccountMaterial } } } : {}), connectedAccountDescriptors: {
+        example: { declaration: { title: 'Example', authentication: { account: target, defaultModeId: 'manual', modes: [{
+            id: 'manual', kind: 'manual', outcomeReconciliation: 'none', credentialFieldKeys: { token: 'token' }, fields: [{
+                id: 'token', title: 'Token', secret: true, schema: { type: 'string' },
+            }],
+            ...(options.requireAccountConfiguration ? { configuration: {
+                scope: 'account' as const, changeBehavior: 'reconnect' as const,
+                // Generic staging uses Vercel's current field semantics, not
+                // its provider runtime: team required, project optional.
+                fields: [{ id: 'teamId', title: 'Team', schema: { type: 'string' as const, minLength: 1 }, required: true, secret: false },
+                    { id: 'projectId', title: 'Project', schema: { type: 'string' as const, minLength: 1 }, required: false, secret: false }],
+            } } : {}),
+        }, ...(includePrivateAction ? [{ id: 'configured' as const, kind: 'manual' as const, outcomeReconciliation: 'none' as const,
+            fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' as const } }],
+            configuration: { scope: 'account' as const, changeBehavior: 'reconnect' as const,
+                fields: [{ id: 'region', title: 'Region', required: false, secret: false as const, schema: { type: 'string' as const } }] },
+        }] : [])] } }, runtime: nativeRuntime, accountRuntime },
+    } });
+    return prepareAuthenticationInventory(packaged, { manifest: authored.manifest, target,
+        projectPath: includePrivateAction ? 'apps/ui' : 'packages/plugin-sdk',
+        entryPath: includePrivateAction ? 'apps/ui/sources/dev/testkit/fixtures/connectedAccountMaterializationAction.ts'
+            : 'packages/plugin-sdk/examples/public-authoring/portableAuthentication.ts',
+        packageName: '@acme/portable-auth', deferDeclaration: options.deferDeclaration,
+        onDeclarationLoad: options.onDeclarationLoad });
+}
 
 /** Packaged inventory is the boundary; normalization and compilation stay real. */
 export async function prepareAuthenticationInventory(packaged: ConnectedAccountAuthenticationPackagedBoundary,
