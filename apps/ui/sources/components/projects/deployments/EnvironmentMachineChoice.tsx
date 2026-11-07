@@ -6,6 +6,7 @@ import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNam
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { DOCKER_ENGINE_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { prepareMachineSetupSoftwareApplyInput } from '@/components/settings/machines/managed/machineSetupSoftware';
 import type { MachineSetupPreparedApply } from '@/components/settings/machines/managed/machineSetupReview';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -79,10 +80,10 @@ export function EnvironmentMachineChoice(
 
 /**
  * The Docker host software a Machine needs before it runs a Compose Environment: the bundled recipe's own
- * selection (`happier.machine.recipes` / `docker-engine`), planned by the existing Machine setup Plan.
+ * selection (the protocol's `DOCKER_ENGINE_RECIPE_REF_V1`, which the recipes plugin declares), planned by the existing Machine setup Plan.
  */
 export const DEPLOY_HOST_DOCKER_ITEM = { kind: 'softwareRecipe', selection: {
-  ref: { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' }, inputs: {},
+  ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: {},
 } } as const satisfies MachinePresetItemV1;
 
 export type DeployHostReadiness = 'ready' | 'needsSetup' | 'unknown';
