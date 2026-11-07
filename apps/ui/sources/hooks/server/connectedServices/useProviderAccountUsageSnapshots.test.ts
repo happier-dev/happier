@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } from '@happier-dev/protocol';
+import { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { createRenderCommitCounter, createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -13,10 +13,15 @@ import { getProviderAccountUsageCacheState, subscribeProviderAccountUsageCache, 
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { handleEphemeralSocketUpdate } from '@/sync/engine/socket/socket';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
-import { createQualifiedQuotaTestHarness, quotaTestProviderUsageSnapshot, quotaTestProviderUsageResponse } from './qualifiedConnectedAccountQuotaTestHarness';
+import { createQualifiedQuotaTestHarness, quotaTestProviderUsageSnapshot, quotaTestProviderUsageResponse,
+    quotaTestRef, quotaTestResponse, quotaTestSnapshot } from './qualifiedConnectedAccountQuotaTestHarness';
 import { useProviderAccountUsageSnapshots } from './useProviderAccountUsageSnapshots';
+import { useQualifiedConnectedAccountQuota } from './useQualifiedConnectedAccountQuota';
+import { useUsageSummary } from '@/components/hub/usage/useUsageSummary';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const runtime = vi.hoisted(() => ({ active: true, listeners: new Set<() => void>() }));
 // Visibility is an environment boundary. Auth, Home, mode, features, cache and opening remain real.
@@ -69,6 +74,72 @@ describe('useProviderAccountUsageSnapshots', () => {
     afterEach(async () => {
         standardCleanup(); await boundary.dispose(); resetServerFeaturesClientForTests();
         vi.useRealTimers(); vi.restoreAllMocks();
+    });
+
+    it('shares Home and Connected Account meter acquisition and leaves settled or hidden Home without Provider connection reads', async () => {
+        const snapshot = quotaTestProviderUsageSnapshot();
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...quotaTestSnapshot, meters: snapshot.meters })));
+        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(snapshot)));
+        storage.getState().applyProfile({ ...storage.getState().profile, connectedAccountsV4: [{ ref: quotaTestRef,
+            status: 'connected', authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
+            configurationReady: true, configurationRevision: null, scopes: [] }] });
+        let home!: ReturnType<typeof useUsageSummary>;
+        let meter!: ReturnType<typeof useProviderAccountUsageSnapshots>;
+        function HomeReader() { home = useUsageSummary({ load: 'visible' }); return null; }
+        function MeterReader() {
+            const quota = useQualifiedConnectedAccountQuota(quotaTestRef);
+            meter = useProviderAccountUsageSnapshots(quota.usageRecordId ? [quota.usageRecordId] : []);
+            return null;
+        }
+        // Home, the existing account detail meter, and a second meter share the real
+        // authority stores. Neither qualified quota transport nor PAU record opening is mocked.
+        const page = (visible: boolean, peers: boolean) => React.createElement(Wrapper, null,
+            React.createElement(PluginSurfaceFocusEligibilityProvider, { active: visible, presentationActive: visible,
+                children: React.createElement(HomeReader) }), peers ? React.createElement(React.Fragment, null,
+                React.createElement(MeterReader), React.createElement(MeterReader)) : null);
+        const screen = await renderScreen(page(true, true));
+        await flushHookEffects({ cycles: 16, turns: 16 });
+        expect(home.accounts).toEqual([expect.objectContaining({ accountId: quotaTestRef.accountId, state: 'ready' })]);
+        expect(meter.snapshotsByRecordId[snapshot.recordId]).toEqual(snapshot);
+        expect(boundary.read).toHaveBeenCalledTimes(1);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(1);
+        const connectionReads = () => boundary.socket.mock.calls.filter(([, method]) => method === RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH);
+        expect(connectionReads()).toHaveLength(0);
+        vi.useFakeTimers();
+        // Exercise the real source-status producer while the minute settles;
+        // those pushes change no Provider allowance or its admitted record.
+        for (let index = 0; index < 12; index++) await act(async () => {
+            await handleEphemeralSocketUpdate({ sourceServerId: getActiveServerSnapshot().serverId,
+                update: { type: 'usage-sources-invalidated', machineId: 'idle-source-machine', installationId: 'idle-source-installation' },
+                addActivityUpdate: () => {}, addMachineActivityUpdate: () => {},
+                getSessionEncryption: () => null, getSession: () => undefined, applyMessages: () => {},
+            });
+            await vi.advanceTimersByTimeAsync(5_000);
+        });
+        expect(boundary.read).toHaveBeenCalledTimes(1);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(1);
+        expect(connectionReads()).toHaveLength(0);
+        const changed = { ...snapshot, fetchedAtMs: snapshot.fetchedAtMs + 1, planLabel: 'Changed allowance plan' };
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...quotaTestSnapshot,
+            fetchedAt: changed.fetchedAtMs, planLabel: changed.planLabel ?? null, meters: changed.meters })));
+        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(changed)));
+        await act(async () => { wake(); });
+        await flushHookEffects({ cycles: 16, turns: 16 });
+        expect(meter.snapshotsByRecordId[snapshot.recordId]).toEqual(changed);
+        expect(boundary.read).toHaveBeenCalledTimes(2);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(2);
+        await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+        expect(boundary.read).toHaveBeenCalledTimes(2);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(2);
+        expect(connectionReads()).toHaveLength(0);
+        await screen.update(page(false, false));
+        boundary.read.mockClear(); boundary.usageRead.mockClear();
+        await act(async () => { wake(); await vi.advanceTimersByTimeAsync(10 * 60_000); });
+        await flushHookEffects({ cycles: 8, turns: 8 });
+        expect(boundary.read).not.toHaveBeenCalled();
+        expect(boundary.usageRead).not.toHaveBeenCalled();
+        expect(connectionReads()).toHaveLength(0);
+        await screen.unmount();
     });
 
     it('withdraws hidden presentation reads and renders without disturbing a visible peer, then reopens fresh', async () => {

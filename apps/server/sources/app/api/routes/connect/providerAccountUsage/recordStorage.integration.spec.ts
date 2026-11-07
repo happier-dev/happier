@@ -468,7 +468,9 @@ describe("provider account usage record storage (integration)", () => {
         await write(first, 'first');
         const initial = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
         expect(initial).toMatchObject({ hint: null });
-        await write(first, 'first');
+        const unchangedWrites: string[] = [];
+        for (let second = 0; second < 60; second++) unchangedWrites.push(await write(first, 'first'));
+        expect(unchangedWrites.filter(outcome => outcome === 'written'), 'identical observations perform zero record writes').toHaveLength(0);
         await write({ ...first, fetchedAtMs: first.fetchedAtMs - 1, observedAtMs: first.observedAtMs - 1, planLabel: 'rejected old tier' }, 'older');
         const unchanged = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
         expect(unchanged?.cursor).toEqual(initial?.cursor);
