@@ -20,9 +20,20 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
     if (!machine.resource || !['start', 'resume', 'stop', 'suspend'].includes(machine.desired)) {
         throw new ManagedMachineControllerError('native_intent_unsupported');
     }
-    const result = MachineProvisionerPowerResultV1Schema.parse(await invoke('power', {
-        resource: machine.resource.value, intent: machine.desired,
-    }, io));
+    // Stored observations describe the last reconciliation, not vendor power now.
+    // Inspect at this one native-effect owner before deciding whether wake is needed.
+    const waking = machine.desired === 'start' || machine.desired === 'resume';
+    const beforeWake = waking
+        ? ProviderObservationV1Schema.parse(await invoke('inspect', { resource: machine.resource.value }, { signal: io?.signal }))
+        : undefined;
+    if (beforeWake && (beforeWake.availability !== 'present' || beforeWake.storage === 'lost'
+        || beforeWake.power !== 'running' && beforeWake.power !== 'stopped' && beforeWake.power !== 'suspended')) {
+        throw new ManagedMachineControllerError('provider_unavailable');
+    }
+    const result = beforeWake?.power === 'running' ? { kind: 'confirmed' as const }
+        : MachineProvisionerPowerResultV1Schema.parse(await invoke('power', {
+            resource: machine.resource.value, intent: machine.desired,
+        }, io));
     const complete = async (observation: ProviderObservationV1) => {
         const power = { result, observation };
         if (result.kind !== 'confirmed' || machine.desired !== 'start' && machine.desired !== 'resume'
@@ -44,6 +55,7 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
                 : new ManagedMachineControllerError(io?.signal?.aborted ? 'cancelled' : 'native_boot_unconfirmed') };
         }
     };
+    if (beforeWake?.power === 'running') return await complete(beforeWake);
     // A native acknowledgement is not a power observation. Keep ambiguous
     // delivery for the existing retained-intent owner, never resubmit it here.
     while (result.kind !== 'refused' && !io?.signal?.aborted) {

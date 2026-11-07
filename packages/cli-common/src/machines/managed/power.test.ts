@@ -12,6 +12,45 @@ const machine = ManagedMachineV1Schema.parse({
 });
 
 describe('shared admitted native power', () => {
+    it.each(['start', 'resume'] as const)('observes vendor power before %s and never wakes already running compute', async desired => {
+        const calls: string[] = [];
+        const observation = { observedAt: 5, availability: 'present' as const, power: 'running' as const, storage: 'retained' as const };
+        const value = await executeManagedMachinePowerIntent({ machine: { ...machine, desired,
+            observation: { ...observation, observedAt: 1, power: 'stopped' } },
+            invoke: async role => { calls.push(role); return role === 'inspect' ? observation : { kind: 'confirmed' }; } });
+        expect(value).toEqual({ result: { kind: 'confirmed' }, observation });
+        expect(calls).toEqual(['inspect']);
+    });
+
+    it('wakes a vendor-stopped Machine despite a stored running observation', async () => {
+        const calls: string[] = [];
+        let powerApplied = false;
+        const value = await executeManagedMachinePowerIntent({ machine: { ...machine,
+            observation: { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' } },
+            invoke: async (role): Promise<JsonValue> => {
+                calls.push(role);
+                if (role === 'power') { powerApplied = true; return { kind: 'confirmed' }; }
+                return { observedAt: 5, availability: 'present', power: powerApplied ? 'running' : 'stopped', storage: 'retained' };
+            } });
+        expect(value.observation?.power).toBe('running');
+        expect(calls).toEqual(['inspect', 'power', 'inspect']);
+    });
+
+    const unavailableInspectResponses: readonly JsonValue[] = [
+        { observedAt: 5, availability: 'unavailable' as const, reason: 'transport' },
+        { observedAt: 5, availability: 'absent' as const },
+        { observedAt: 5, availability: 'present' as const, power: 'unknown' as const },
+        { observedAt: 5, availability: 'present' as const, power: 'stopped' as const, storage: 'lost' as const },
+    ];
+    it.each(unavailableInspectResponses)('observes vendor power without dispatching a wake when Inspect cannot confirm power ($availability)', async observation => {
+        const calls: string[] = [];
+        await expect(executeManagedMachinePowerIntent({ machine, invoke: async (role): Promise<JsonValue> => {
+            calls.push(role);
+            return role === 'inspect' ? observation : { kind: 'confirmed' };
+        } })).rejects.toMatchObject({ code: 'provider_unavailable' });
+        expect(calls).toEqual(['inspect']);
+    });
+
     it.each([
         { desired: 'start' as const, initialPower: 'running' as const },
         { desired: 'resume' as const, initialPower: 'running' as const },
@@ -34,7 +73,8 @@ describe('shared admitted native power', () => {
             },
         });
         expect(value.result.kind).toBe('confirmed');
-        expect(calls.map(call => call.role)).toEqual(['power', 'inspect', 'bootstrap', 'exec']);
+        expect(calls.map(call => call.role)).toEqual(initialPower === 'running'
+            ? ['inspect', 'bootstrap', 'exec'] : ['inspect', 'power', 'inspect', 'bootstrap', 'exec']);
         expect(calls.at(-1)?.body).toMatchObject({ resource: machine.resource!.value,
             processConfig: { environment: { HOME: '/persistent/home', HAPPIER_HOME_DIR: '/persistent/home/.happier' },
                 detachedDaemonStartArgv: ['sh', '-c', expect.stringContaining("'daemon' 'start' '--json'")] } });
@@ -91,7 +131,7 @@ describe('shared admitted native power', () => {
                 return role === 'power' ? { kind: 'confirmed' } : { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' };
             },
         });
-        expect(roles).toEqual(['power', 'inspect']);
+        expect(roles).toEqual(fields.desired === 'stop' ? ['power', 'inspect'] : ['inspect']);
     });
 
     it('executes the selected role once and keeps native acknowledgement separate from observed power', async () => {
@@ -101,24 +141,25 @@ describe('shared admitted native power', () => {
             calls.push({ role, body });
             return role === 'power' ? { kind: 'confirmed' } : observation;
         } });
-        expect(calls).toEqual([{ role: 'power', body: { resource: { id: 'same-native' }, intent: 'start' } },
+        expect(calls).toEqual([{ role: 'inspect', body: { resource: { id: 'same-native' } } },
+            { role: 'power', body: { resource: { id: 'same-native' }, intent: 'start' } },
             { role: 'inspect', body: { resource: { id: 'same-native' } } }]);
         expect(value).toEqual({ result: { kind: 'confirmed' }, observation });
     });
-    it('does not inspect a definite refusal and does not retry ambiguous delivery', async () => {
+    it('does not inspect a definite Stop refusal and does not retry ambiguous delivery', async () => {
         const roles: string[] = [];
-        expect(await executeManagedMachinePowerIntent({ machine, invoke: async role => {
+        expect(await executeManagedMachinePowerIntent({ machine: { ...machine, desired: 'stop' }, invoke: async role => {
             roles.push(role); return { kind: 'refused', code: 'provider_unavailable' };
         } })).toEqual({ result: { kind: 'refused', code: 'provider_unavailable' } });
         expect(roles).toEqual(['power']);
         roles.length = 0;
-        await expect(executeManagedMachinePowerIntent({ machine, invoke: async role => {
+        await expect(executeManagedMachinePowerIntent({ machine: { ...machine, desired: 'stop' }, invoke: async role => {
             roles.push(role); throw new Error('connection lost after dispatch');
         } })).rejects.toThrow('connection lost after dispatch');
         expect(roles).toEqual(['power']);
     });
     it('preserves acknowledgement when observation is unavailable', async () => {
-        expect(await executeManagedMachinePowerIntent({ machine, invoke: async role => {
+        expect(await executeManagedMachinePowerIntent({ machine: { ...machine, desired: 'stop' }, invoke: async role => {
             if (role === 'inspect') throw new Error('temporarily unavailable');
             return { kind: 'confirmed' };
         } })).toEqual({ result: { kind: 'confirmed' } });
@@ -136,7 +177,7 @@ describe('shared admitted native power', () => {
                     power: waits ? 'running' : 'stopped', storage: 'retained' };
             } });
         expect(value.observation?.power).toBe('running');
-        expect(roles).toEqual(['power', 'inspect', 'inspect']);
+        expect(roles).toEqual(['inspect', 'power', 'inspect', 'inspect']);
         expect(published).toEqual(['stopped']);
         expect(waits).toBe(1);
     });
