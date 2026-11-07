@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: 'Não foi possível ler a tua página pública',
       readFailedBody: 'Nada mudou. Tenta novamente daqui a pouco.',
       serviceUnavailable: 'Não é possível ler a tua página pública agora',
+      imageFrom: 'Imagem de',
+      imageFrom_usage: 'Seu uso',
+      imageFrom_public_profile: 'Perfil público',
+      unpublished_image: 'Publique seu perfil para criar uma imagem a partir dele',
+      imageFromProfileNote: 'Mostra só o que sua página pública mostra. Criada neste dispositivo.',
       metricHidden: ({ metric }: { metric: string }) =>
         `${metric} não é público na tua página`,
       metricHiddenBody: 'Um selo mostra apenas o que tornaste público. Partilha-o no teu perfil ou escolhe outro número.',

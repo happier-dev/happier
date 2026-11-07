@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: 'Deine öffentliche Seite konnte nicht gelesen werden',
       readFailedBody: 'Nichts wurde geändert. Versuche es gleich noch einmal.',
       serviceUnavailable: 'Deine öffentliche Seite kann gerade nicht gelesen werden',
+      imageFrom: 'Bild aus',
+      imageFrom_usage: 'Deine Nutzung',
+      imageFrom_public_profile: 'Öffentliches Profil',
+      unpublished_image: 'Veröffentliche dein Profil, um daraus ein Bild zu machen',
+      imageFromProfileNote: 'Zeigt nur, was deine öffentliche Seite zeigt. Auf diesem Gerät erstellt.',
       metricHidden: ({ metric }: { metric: string }) =>
         `${metric} ist auf deiner Seite nicht öffentlich`,
       metricHiddenBody: 'Ein Badge zeigt nur, was du öffentlich gemacht hast. Teile es in deinem Profil oder wähle eine andere Zahl.',

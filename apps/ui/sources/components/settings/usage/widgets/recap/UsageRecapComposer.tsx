@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { UsageRecapComposeResultSchema, UsageRecapDeliveryResultSchema, USAGE_RECAP_FIELDS,
+import { UsageRecapComposeResultSchema, UsageRecapDeliveryResultSchema, USAGE_RECAP_FIELDS, USAGE_RECAP_PUBLIC_FIELDS,
   resolveUsageRecapQuery, type UsageRecapSourceSelection } from '@happier-dev/protocol/usage/usageRecap';
 import { type UsageRecapField } from '@happier-dev/protocol/usage/usageRecap';
 import {
@@ -32,6 +32,8 @@ import {
   type UsagePeriod,
 } from '@/sync/api/account/usagePeriods';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { RECAP_STAGE_INSET_PX, RecapComposerFrame } from './RecapComposerFrame';
 import { UsageRecapPublicOutput, type UsageRecapPublicOutputKind } from './UsageRecapPublicOutput';
 import { t } from '@/text';
@@ -102,8 +104,9 @@ export function openUsageRecapComposer(props: UsageRecapComposerProps,
 type ComposeState =
   /** `shown` keeps the last composed card on screen (dimmed, not exportable) until the new one arrives. */
   | Readonly<{ kind: 'composing'; shown?: UsageRecapComposed }>
-  | Readonly<{ kind: 'ready'; result: UsageRecapComposed; query: UsageQuery }>
-  | Readonly<{ kind: 'unavailable' }>
+  /** `query` is the private read the card was composed from; a public-profile card has none. */
+  | Readonly<{ kind: 'ready'; result: UsageRecapComposed; query: UsageQuery | null }>
+  | Readonly<{ kind: 'unavailable'; reason?: string }>
   | Readonly<{ kind: 'failed'; code: string }>;
 
 /** Only typed issue paths/codes enter the existing collapsed diagnostic slot. */
@@ -147,6 +150,12 @@ export function UsageRecapComposer(
   const [fields, setFields] =
     React.useState<readonly UsageRecapField[]>(DEFAULT_FIELDS);
   const [sourceSelection, setSourceSelection] = React.useState<UsageRecapSourceSelection>('whole_usage');
+  // Where the Image's facts come from: private Usage, or the current published public profile (only where
+  // public profiles exist). The choice is explicit and shown; there is no fallback from one to the other.
+  const [imageSource, setImageSource] = React.useState<RecapImageSource>('usage');
+  const router = useRouter();
+  const { onClose } = props;
+  const openProfile = React.useCallback(() => { onClose(); router.push(SETTINGS_ROUTES.accountPublicProfile); }, [onClose, router]);
   // A selection keeps its bound invocation; the mounted output supplies its own read lifetime.
   const invocation = React.useRef(props.invocation);
   const shown = publicProfiles ? output : 'image';
@@ -181,7 +190,8 @@ export function UsageRecapComposer(
           query={props.query}
           serverId={props.serverId}
           invocation={invocation}
-          selection={{ style, format, period, fields, sourceSelection }}
+          selection={{ style, format, period, fields, sourceSelection, imageSource: publicProfiles ? imageSource : 'usage' }}
+          {...(publicProfiles ? { setImageSource, openProfile } : {})}
           setStyle={setStyle}
           setFormat={setFormat}
           setPeriod={setPeriod}
@@ -196,6 +206,10 @@ export function UsageRecapComposer(
 }
 
 type RecapOutput = 'image' | UsageRecapPublicOutputKind;
+type RecapImageSource = 'usage' | 'public_profile';
+const RECAP_IMAGE_SOURCES = ['usage', 'public_profile'] as const satisfies readonly RecapImageSource[];
+const isPublicRecapField = (field: UsageRecapField): field is (typeof USAGE_RECAP_PUBLIC_FIELDS)[number] =>
+  (USAGE_RECAP_PUBLIC_FIELDS as readonly UsageRecapField[]).includes(field);
 const USAGE_RECAP_SOURCE_SELECTIONS = ['whole_usage', 'happier_only'] as const satisfies readonly UsageRecapSourceSelection[];
 const OUTPUTS = [
   { id: 'image', icon: 'image' },
@@ -216,7 +230,10 @@ function UsageRecapImageOutput(
     serverId: string;
     invocation: React.MutableRefObject<CurrentUiContextCommandInvocation | undefined>;
     selection: Readonly<{ style: UsageRecapStyle; format: UsageRecapFormat; period: UsagePeriod; fields: readonly UsageRecapField[];
-      sourceSelection: UsageRecapSourceSelection }>;
+      sourceSelection: UsageRecapSourceSelection; imageSource: RecapImageSource }>;
+    /** Present only where public profiles exist: the Image may then come from the current public profile. */
+    setImageSource?: (source: RecapImageSource) => void;
+    openProfile?: () => void;
     setStyle: (style: UsageRecapStyle) => void;
     setFormat: (format: UsageRecapFormat) => void;
     setPeriod: (period: UsagePeriod) => void;
@@ -228,7 +245,8 @@ function UsageRecapImageOutput(
   const phone = useDeviceType() === 'phone';
   const reducedMotion = useReducedMotionPreference();
   const tone = theme.dark ? 'dark' : 'light';
-  const { style, format, period, fields, sourceSelection } = props.selection;
+  const { style, format, period, fields, sourceSelection, imageSource } = props.selection;
+  const fromProfile = imageSource === 'public_profile';
   const { setStyle, setFormat, setPeriod, setFields, setSourceSelection } = props;
   const [state, setState] = React.useState<ComposeState>({ kind: 'composing' });
   const [composeAttempt, retryCompose] = React.useReducer((attempt: number) => attempt + 1, 0);
@@ -251,7 +269,7 @@ function UsageRecapImageOutput(
   const compositionQuery = React.useMemo(() => UsageQuerySchema.parse(JSON.parse(queryKey)), [queryKey]);
   const fieldsKey = USAGE_RECAP_FIELDS.filter(field => fields.includes(field)).join(',');
   const selectedFields = React.useMemo(() => USAGE_RECAP_FIELDS.filter(field => fields.includes(field)), [fieldsKey]);
-  React.useEffect(() => () => deliveryController.current?.abort(), [style, format, selectedFields, period, sourceSelection, compositionQuery, props.serverId]);
+  React.useEffect(() => () => deliveryController.current?.abort(), [style, format, selectedFields, period, sourceSelection, imageSource, compositionQuery, props.serverId]);
 
   // Every selected presentation is admitted with its period and fields by the same compose Action.
   React.useEffect(() => {
@@ -274,6 +292,21 @@ function UsageRecapImageOutput(
         setState({ kind: 'failed', code: 'usage_scope_unavailable' });
         return;
       }
+      const operation = { signal: controller.signal };
+      if (fromProfile) {
+        // The captured Account's current public profile: the public Action reads no private Usage.
+        const input = { source: { kind: 'public_profile' as const }, style, format, selectedFields: selectedFields.filter(isPublicRecapField) };
+        const executed = origin
+          ? await origin.execute(executionRef.current, 'usage.recap.compose', input, operation)
+          : await execute('usage.recap.compose', input, operation);
+        if (controller.signal.aborted || !isCurrent()) return;
+        if (!executed.ok) { setState({ kind: 'failed', code: queryFailureDiagnostic(executed) }); return; }
+        const parsed = UsageRecapComposeResultSchema.safeParse(executed.result);
+        if (!parsed.success) { setState({ kind: 'failed', code: 'usage_recap_result_invalid' }); return; }
+        setState(parsed.data.kind === 'composed' ? { kind: 'ready', result: parsed.data, query: null }
+          : { kind: 'unavailable', reason: parsed.data.reason });
+        return;
+      }
       const nowMs = Date.now();
       const offset = compositionQuery.timeZoneOffsetMinutes ?? 0;
       const query = UsageQuerySchema.parse({
@@ -288,7 +321,6 @@ function UsageRecapImageOutput(
           format,
           selectedFields: [...selectedFields],
         };
-      const operation = { signal: controller.signal };
       const executed = origin
         ? await origin.execute(executionRef.current, 'usage.recap.private.compose', input, operation)
         : await execute('usage.recap.private.compose', input, operation);
@@ -313,7 +345,7 @@ function UsageRecapImageOutput(
       }
     });
     return () => { retirement?.dispose(); controller.abort(); };
-  }, [style, format, period, sourceSelection, selectedFields, compositionQuery, execution.binding, composeAttempt]);
+  }, [style, format, period, sourceSelection, imageSource, selectedFields, compositionQuery, execution.binding, composeAttempt]);
 
   const composed =
     state.kind === 'ready' ? state.result : null;
@@ -344,16 +376,21 @@ function UsageRecapImageOutput(
       setNotice(null);
       try {
         // The render port captures this mounted preview, so it travels with the invocation.
-        const executed = await invocation.execute(execution, 'usage.recap.private.deliver',
-          { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent },
-          { signal: cancellation.signal, executorOptions: { usageRecapRender: async (result, context) => {
+        const render = {
+          signal: cancellation.signal, executorOptions: { usageRecapRender: async (result, context) => {
             // Capture the existing preview only when its exact selected/as-of model is still current.
             if (JSON.stringify(result) !== JSON.stringify(composed) || !cardRef.current) {
               return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context, CommandBridge);
             }
             return { kind: 'rendered', base64: await captureUsageViewPng(cardRef.current,
               { signal: context.signal, isCurrent: executionIsCurrent }) };
-          } } });
+          } } };
+        // The same source that composed the card delivers it: public through the public Action, never a private fallback.
+        const executed = state.query === null
+          ? await invocation.execute(execution, 'usage.recap.deliver', { source: { kind: 'public_profile' }, style, format,
+            selectedFields: fields.filter(isPublicRecapField), intent }, render)
+          : await invocation.execute(execution, 'usage.recap.private.deliver',
+            { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent }, render);
         cancellation.signal.throwIfAborted();
         if (!executionIsCurrent() || !executed.ok) throw new Error('usage_recap_export_unavailable');
         const result = UsageRecapDeliveryResultSchema.parse(executed.result);
@@ -392,6 +429,8 @@ function UsageRecapImageOutput(
     );
   }, [setFields]);
 
+  // A public-profile card offers only the fields a public page can carry; names and dollars never appear.
+  const offeredFields = fromProfile ? USAGE_RECAP_FIELDS.filter(isPublicRecapField) : USAGE_RECAP_FIELDS;
   const commands = useCurrentUiContextLocalCommands([
     ...USAGE_STAT_CARD_STYLES.map(id => ({ key: `style:${id}`,
       title: `${t('usage.board.recap.styleLabel')}: ${t(`usage.board.recap.style_${id}`)}`,
@@ -399,13 +438,17 @@ function UsageRecapImageOutput(
     ...FORMATS.map(id => ({ key: `format:${id}`,
       title: t(`usage.board.recap.format_${id === 'link-preview' ? 'linkPreview' : id}`),
       invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setFormat(id); } })),
-    ...PERIODS.map(id => ({ key: `period:${id}`,
+    ...(props.setImageSource ? RECAP_IMAGE_SOURCES.map(id => ({ key: `imageSource:${id}`,
+      title: `${t('publicIdentity.share.imageFrom')}: ${t(`publicIdentity.share.imageFrom_${id}`)}`,
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; props.setImageSource?.(id); } })) : []),
+    // Period and execution source shape only a private read; the public profile carries its own.
+    ...(fromProfile ? [] : PERIODS.map(id => ({ key: `period:${id}`,
       title: `${t('usage.board.recap.periodLabel')}: ${t(getUsagePeriodDefinition(id).shortTranslationKey)}`,
-      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setPeriod(id); } })),
-    ...USAGE_RECAP_SOURCE_SELECTIONS.map(id => ({ key: `source:${id}`,
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setPeriod(id); } }))),
+    ...(fromProfile ? [] : USAGE_RECAP_SOURCE_SELECTIONS.map(id => ({ key: `source:${id}`,
       title: `${t('usage.board.recap.sourceLabel')}: ${t(`usage.board.recap.source_${id}`)}`,
-      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setSourceSelection(id); } })),
-    ...USAGE_RECAP_FIELDS.map(field => ({ key: `field:${field}`,
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setSourceSelection(id); } }))),
+    ...offeredFields.map(field => ({ key: `field:${field}`,
       title: `${t('usage.board.recap.fieldsLabel')}: ${t(`usage.board.recap.field_${field}`)}`,
       invoke: (input: PluginUiJsonValueV1 | undefined, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; toggle(field, typeof input === 'boolean' ? input : !fields.includes(field)); } })),
     ...(state.kind === 'failed' ? [{ key: 'retry', title: t('common.retry'),
@@ -460,6 +503,25 @@ function UsageRecapImageOutput(
             reducedMotion={reducedMotion}
           />
         </View>
+      ) : state.kind === 'unavailable' && fromProfile ? (
+        // The prerequisite says itself where the card would be, with the way to meet it.
+        state.reason === 'public_profile_unavailable' ? (
+          <SurfaceStateCard
+            kind="empty"
+            layout="inline"
+            iconName="globe"
+            title={t('publicIdentity.share.unpublished_image')}
+            reason={t('publicIdentity.share.unpublishedBody')}
+            {...(props.openProfile ? { action: { label: t('publicIdentity.share.previewProfile'), onPress: props.openProfile } } : {})}
+          />
+        ) : (
+          <SurfaceStateCard
+            kind="empty"
+            layout="inline"
+            title={t('publicIdentity.share.serviceUnavailable')}
+            reason={t('publicIdentity.share.readFailedBody')}
+          />
+        )
       ) : state.kind === 'unavailable' ? (
         <SurfaceStateCard
           kind="empty"
@@ -508,8 +570,22 @@ function UsageRecapImageOutput(
     </>
   );
 
+  const imageSourceControl = props.setImageSource ? (
+    <ItemGroup title={t('publicIdentity.share.imageFrom')} surface="none">
+      <SegmentedTabBar
+        testIDPrefix="usage-recap-image-source"
+        compact
+        segmentSizing="content"
+        activeTabId={imageSource}
+        onSelectTab={id => { void commands.invoke(`imageSource:${id}`); }}
+        accessibilityLabel={t('publicIdentity.share.imageFrom')}
+        tabs={RECAP_IMAGE_SOURCES.map(id => ({ id, label: t(`publicIdentity.share.imageFrom_${id}`) }))}
+      />
+    </ItemGroup>
+  ) : null;
   const controls = (
     <>
+      {imageSourceControl}
       {/* The style tiles and the period control are their own surfaces: no sheet around them, which
           clipped the last tile row's caption and pressed the tiles against its edge. */}
       <ItemGroup title={t('usage.board.recap.styleLabel')} surface="none">
@@ -523,6 +599,7 @@ function UsageRecapImageOutput(
           accessibilityLabel={t('usage.board.recap.styleLabel')}
         />
       </ItemGroup>
+      {fromProfile ? null : <>
       <ItemGroup title={t('usage.board.recap.periodLabel')} surface="none">
         <SegmentedTabBar
           testIDPrefix="usage-recap-period"
@@ -553,8 +630,9 @@ function UsageRecapImageOutput(
           tabs={USAGE_RECAP_SOURCE_SELECTIONS.map((id) => ({ id, label: t(`usage.board.recap.source_${id}`) }))}
         />
       </ItemGroup>
+      </>}
       <ItemGroup title={t('usage.board.recap.fieldsLabel')}>
-        {USAGE_RECAP_FIELDS.map((field) => {
+        {offeredFields.map((field) => {
           const on = fields.includes(field);
           const missing = composed?.unavailableFields.includes(field) === true;
           return (
@@ -630,7 +708,8 @@ function UsageRecapImageOutput(
       stageTestID="usage-recap-composer.stage"
       onStageWidth={setStageWidth}
       controls={controls}
-      note={notice ?? t('usage.board.recap.madeLocally')}
+      note={notice ?? (fromProfile ? t('publicIdentity.share.imageFromProfileNote') : t('usage.board.recap.madeLocally'))}
+      noteTestID="usage-recap-composer.note"
       actions={actions}
     />
   );

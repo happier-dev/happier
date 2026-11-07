@@ -275,6 +275,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: '无法读取你的公开页面',
       readFailedBody: '未做任何更改。请稍后再试。',
       serviceUnavailable: '现在无法读取你的公开页面',
+      imageFrom: '图片来源',
+      imageFrom_usage: '你的用量',
+      imageFrom_public_profile: '公开资料',
+      unpublished_image: '发布你的资料后即可用它生成图片',
+      imageFromProfileNote: '只显示你的公开页面所显示的内容。在此设备上生成。',
       metricHidden: ({ metric }: { metric: string }) =>
         `“${metric}”未在你的页面上公开`,
       metricHiddenBody: '徽章只显示你公开的内容。请在主页中公开，或选择其他数值。',

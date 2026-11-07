@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: '公開ページを読み込めませんでした',
       readFailedBody: '何も変更されていません。少し待ってからもう一度お試しください。',
       serviceUnavailable: '公開ページを今は読み込めません',
+      imageFrom: '画像の元',
+      imageFrom_usage: 'あなたの使用状況',
+      imageFrom_public_profile: '公開プロフィール',
+      unpublished_image: '画像にするにはプロフィールを公開してください',
+      imageFromProfileNote: '公開ページに表示される内容のみ。このデバイス上で作成されます。',
       metricHidden: ({ metric }: { metric: string }) =>
         `${metric}はページで公開されていません`,
       metricHiddenBody: 'バッジには公開した内容だけが表示されます。プロフィールから共有するか、別の数値を選んでください。',

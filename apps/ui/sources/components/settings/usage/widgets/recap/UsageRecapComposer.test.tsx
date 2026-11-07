@@ -380,6 +380,33 @@ const choice = (screen: Awaited<ReturnType<typeof mount>>['screen'], prefix: str
 const textOf = (node: { props: { children?: unknown } } | null) => [node?.props.children].flat().join('');
 
 describe('recap composer public outputs', () => {
+  it('makes the Image from the current public profile only through the public Action, saying so, with its prerequisite', async () => {
+    const requests: string[] = [];
+    const { screen } = await mount(publicHome(false, requests), undefined, undefined, { publicProfiles: true });
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    const privateReads = () => requests.filter(row => row.includes('/v2/usage/query')).length;
+    const before = privateReads();
+    await act(async () => { choice(screen, 'usage-recap-image-source').props.onSelectTab('public_profile'); });
+    // The public source reads the captured Account's public page, never private Usage, and says what it is.
+    await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).some(node =>
+      node.props.title === 'publicIdentity.share.unpublished_image')).toBe(true));
+    expect(requests.some(row => row.startsWith('GET /v1/account/public-profile'))).toBe(true);
+    expect(privateReads()).toBe(before);
+    expect(textOf(screen.findByTestId('usage-recap-composer.note'))).toBe('publicIdentity.share.imageFromProfileNote');
+    // Controls that only shape a private read leave; private-only fields are not offered.
+    expect(screen.findAllByType(SegmentedTabBar).some(node => node.props.testIDPrefix === 'usage-recap-period')).toBe(false);
+    expect(screen.findByTestId('usage-recap-field-dollars')).toBeNull();
+    expect(screen.findByTestId('usage-recap-composer.save')!.props.accessibilityState.disabled).toBe(true);
+    // An agent reaches the same choice through the mounted command, and the private Image comes back whole.
+    const back = commandReader!.readCurrentUiContext()!.commands.find(command =>
+      command.title === 'publicIdentity.share.imageFrom: publicIdentity.share.imageFrom_usage');
+    expect(back).toBeDefined();
+    await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: back!.id }, context: { surface: 'agent' } }); });
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    expect(choice(screen, 'usage-recap-image-source').props.activeTabId).toBe('usage');
+    expect(screen.findByTestId('usage-recap-field-dollars')).not.toBeNull();
+  });
   it('retains agent policy when the mounted Copy command reaches the clipboard Action', async () => {
     const { screen } = await mount(publicHome(true, []), undefined, undefined, { publicProfiles: true, initialOutput: 'badge' });
     await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.snippet'))).toBe('markdown|badge|tokens|auto'));

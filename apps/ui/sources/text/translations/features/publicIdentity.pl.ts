@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: 'Nie udało się odczytać Twojej strony publicznej',
       readFailedBody: 'Nic się nie zmieniło. Spróbuj ponownie za chwilę.',
       serviceUnavailable: 'Twojej strony publicznej nie można teraz odczytać',
+      imageFrom: 'Obraz z',
+      imageFrom_usage: 'Twoje użycie',
+      imageFrom_public_profile: 'Profil publiczny',
+      unpublished_image: 'Opublikuj profil, aby zrobić z niego obraz',
+      imageFromProfileNote: 'Pokazuje tylko to, co twoja strona publiczna. Utworzony na tym urządzeniu.',
       metricHidden: ({ metric }: { metric: string }) =>
         `${metric} nie jest publiczne na Twojej stronie`,
       metricHiddenBody: 'Odznaka pokazuje tylko to, co upubliczniono. Udostępnij to w profilu lub wybierz inną liczbę.',

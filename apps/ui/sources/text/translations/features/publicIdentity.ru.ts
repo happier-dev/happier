@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: 'Не удалось прочитать вашу публичную страницу',
       readFailedBody: 'Ничего не изменилось. Попробуйте ещё раз чуть позже.',
       serviceUnavailable: 'Сейчас не удаётся прочитать вашу публичную страницу',
+      imageFrom: 'Изображение из',
+      imageFrom_usage: 'Ваше использование',
+      imageFrom_public_profile: 'Публичный профиль',
+      unpublished_image: 'Опубликуйте профиль, чтобы сделать из него изображение',
+      imageFromProfileNote: 'Показывает только то, что показывает ваша публичная страница. Создано на этом устройстве.',
       metricHidden: ({ metric }: { metric: string }) =>
         `«${metric}» не опубликовано на вашей странице`,
       metricHiddenBody: 'Бейдж показывает только то, что вы сделали публичным. Откройте доступ в профиле или выберите другой показатель.',

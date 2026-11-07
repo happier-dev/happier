@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: 'Impossible de lire ta page publique',
       readFailedBody: 'Rien n’a changé. Réessaie dans un instant.',
       serviceUnavailable: 'Ta page publique ne peut pas être lue pour l’instant',
+      imageFrom: 'Image depuis',
+      imageFrom_usage: 'Ton usage',
+      imageFrom_public_profile: 'Profil public',
+      unpublished_image: 'Publie ton profil pour en faire une image',
+      imageFromProfileNote: 'N’affiche que ce que montre ta page publique. Créée sur cet appareil.',
       metricHidden: ({ metric }: { metric: string }) =>
         `${metric} n’est pas public sur ta page`,
       metricHiddenBody: 'Un badge ne montre que ce que tu as rendu public. Partage-le depuis ton profil ou choisis un autre chiffre.',

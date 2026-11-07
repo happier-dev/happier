@@ -276,6 +276,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: 'No s’ha pogut llegir la teva pàgina pública',
       readFailedBody: 'No ha canviat res. Torna-ho a provar d’aquí a un moment.',
       serviceUnavailable: 'Ara mateix no es pot llegir la teva pàgina pública',
+      imageFrom: 'Imatge de',
+      imageFrom_usage: 'El teu ús',
+      imageFrom_public_profile: 'Perfil públic',
+      unpublished_image: 'Publica el teu perfil per fer-ne una imatge',
+      imageFromProfileNote: 'Només mostra el que mostra la teva pàgina pública. Creada en aquest dispositiu.',
       metricHidden: ({ metric }: { metric: string }) =>
         `${metric} no és públic a la teva pàgina`,
       metricHiddenBody: 'Una insígnia només mostra el que has fet públic. Comparteix-ho des del teu perfil o tria una altra xifra.',

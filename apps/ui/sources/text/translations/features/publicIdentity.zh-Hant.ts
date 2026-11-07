@@ -275,6 +275,11 @@ export const publicIdentity: PublicIdentityTranslations = {
       readFailed: '無法讀取你的公開頁面',
       readFailedBody: '沒有任何變更。請稍後再試。',
       serviceUnavailable: '目前無法讀取你的公開頁面',
+      imageFrom: '圖片來源',
+      imageFrom_usage: '你的用量',
+      imageFrom_public_profile: '公開檔案',
+      unpublished_image: '發佈你的檔案後即可用它產生圖片',
+      imageFromProfileNote: '只顯示你的公開頁面所顯示的內容。在此裝置上產生。',
       metricHidden: ({ metric }: { metric: string }) =>
         `「${metric}」未在你的頁面上公開`,
       metricHiddenBody: '徽章只會顯示你公開的內容。請在個人頁面中公開，或選擇其他數值。',

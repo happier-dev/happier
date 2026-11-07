@@ -273,6 +273,11 @@ export const publicIdentityEn = {
         'This picture is on this device only. Applying uploads one copy to your public page; make sure you may share it, and that it shows nothing private.',
       missingTitle: ({ name }: { name: string }) =>
         `“${name}” isn’t on this device`,
+      imageFrom: 'Image from',
+      imageFrom_usage: 'Your usage',
+      imageFrom_public_profile: 'Public profile',
+      unpublished_image: 'Publish your profile to make an image from it',
+      imageFromProfileNote: 'Shows only what your public page shows. Made on this device.',
       missingBody:
         'Pick it again on the device you added it from, or choose another picture. Your public page keeps its current header.',
       choosePicture: 'Choose a picture',
