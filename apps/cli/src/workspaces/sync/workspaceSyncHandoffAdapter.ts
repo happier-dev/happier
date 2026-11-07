@@ -15,6 +15,7 @@ import type {
   PreparedWorkspaceSyncRelationship,
   WorkspaceSyncRelationshipOwner,
 } from './workspaceSyncRelationshipOwner';
+import { WorkspaceSyncPreparationRefusal } from './workspaceSyncRelationshipOwner';
 import { assertWorkspaceSyncStatusClean, prepareWorkspaceSyncRelationship } from './workspaceSyncPreparation';
 import {
   WorkspaceSyncHandoffSourceInputV1Schema,
@@ -30,6 +31,7 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier
 import { isDeepStrictEqual } from 'node:util';
 import type { WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { StoredCredentials } from '@/persistence';
 import type { ActiveProjectAccountRowsSnapshot, ProjectAccountSessionCustody } from '@/workspaces/projectAccountRows';
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -61,6 +63,9 @@ export type WorkspaceSyncPrivateExecution = Readonly<{
   bindTargetPhaseContext?: (context: RpcHandlerContext) => void;
   /** The receiving admitted relationship refreshes its Account graph at this owner. */
   recoverConflictResolutionHere?: (request: Parameters<PrivateProjectNativeSync['recoverConflictResolutionHere']>[0],
+    signal?: AbortSignal) => ReturnType<PrivateProjectNativeSync['recoverConflictResolutionHere']>;
+  /** A successful signed TARGET prepare already settled this exact endpoint's recovery. */
+  recoverConflictResolutionAtTarget?: (request: Parameters<PrivateProjectNativeSync['recoverConflictResolutionHere']>[0],
     signal?: AbortSignal) => ReturnType<PrivateProjectNativeSync['recoverConflictResolutionHere']>;
   assertTransferCurrent(): Promise<void>;
   retainRelationship?(relationshipId: string): Promise<void>;
@@ -102,9 +107,12 @@ export type PrepareWorkspaceSyncHandoffInput = Readonly<{
   sourceRootPath: string;
   targetRootPath: string;
   signal?: AbortSignal;
+  /** Host-only effect notification, after execution/Account admission and before mutation. */
+  onEffectsIssued?: () => void;
   /** Host-bound transport retains the actual caller authority; never serialized. */
   callWorkspaceSourcePhase?: (descriptor: Readonly<{
     machineId: string;
+    physicalEndpoint?: MachineInstallationPublicIdentityV1;
     request: WorkspaceSyncHandoffSourcePhaseRequestV1;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
@@ -138,6 +146,7 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
     context?: RpcHandlerContext) => Promise<Readonly<{
     input: PrepareWorkspaceSyncHandoffInput;
     targetPreflight?: HandoffTargetReplacementPreflightResultV1;
+    sourcePhysicalEndpoint?: MachineInstallationPublicIdentityV1;
   }>>;
   relationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
   prepareBetween?: (
@@ -185,6 +194,8 @@ export interface WorkspaceSyncHandoffAdapter {
 export async function materializeWorkspaceSyncForOpen(adapter: WorkspaceSyncHandoffAdapter, request: PrepareWorkspaceSyncHandoffInput,
   context?: RpcHandlerContext, authority?: WorkspaceSyncHandoffSourcePhaseAuthority): Promise<void> {
   const prepared = await adapter.prepare(request, authority, context);
+  // A retained prepare can be reused; finalization still starts forward effects.
+  request.onEffectsIssued?.();
   await adapter.finalize({ operationId: request.operationId, prepared, signal: request.signal });
   await adapter.commit({ operationId: request.operationId, prepared, signal: request.signal });
 }
@@ -203,7 +214,8 @@ type PreparedOperation = Readonly<{
   finalizedRoute?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed'];
   finalized?: boolean;
   relationshipTransaction?: PreparedWorkspaceSyncRelationship;
-  remoteSource?: Readonly<{ machineId: string; input: WorkspaceSyncHandoffSourceInputV1 }>;
+  remoteSource?: Readonly<{ machineId: string; input: WorkspaceSyncHandoffSourceInputV1;
+    physicalEndpoint?: MachineInstallationPublicIdentityV1 }>;
   sourcePhaseAuthority?: WorkspaceSyncHandoffSourcePhaseAuthority;
   /** Original verified host context stays private; cleanup never replays its bearer or canceled callbacks. */
   sourcePhaseContext?: RpcHandlerContext;
@@ -246,6 +258,7 @@ async function callSourcePhase(operation: Pick<PreparedOperation, 'admittedInput
   try {
     const result = WorkspaceSyncHandoffSourcePhaseResultV1Schema.parse(await operation.admittedInput.callWorkspaceSourcePhase({
       machineId: operation.remoteSource.machineId, request,
+      ...(operation.remoteSource.physicalEndpoint ? { physicalEndpoint: operation.remoteSource.physicalEndpoint } : {}),
       ...(signal ? { signal } : {}),
     }));
     const expected = { prepare: 'prepared', finalize: 'finalized', commit: 'committed', abort: 'aborted' } as const;
@@ -453,7 +466,9 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         && admittedInput.sourceMachineId !== input.sourceMachineId
         && deps.localMachineId !== undefined && input.sourceMachineId !== deps.localMachineId
         && !sameExecutionWorkspace(input)) {
-        const remoteSource = { machineId: input.sourceMachineId, input: sourcePhaseInput(admittedInput) };
+        const remoteSource = { machineId: input.sourceMachineId, input: sourcePhaseInput(admittedInput),
+          ...(execution?.sourcePhysicalEndpoint ? { physicalEndpoint: execution.sourcePhysicalEndpoint } : {}) };
+        input.onEffectsIssued?.();
         const result = await callSourcePhase({ admittedInput, remoteSource }, { v: 1, phase: 'prepare', input: remoteSource.input }, input.signal);
         if (result.phase !== 'prepared' || result.prepared.operationId !== input.operationId
           || !isDeepStrictEqual(result.prepared.action, input.action)) {
@@ -463,7 +478,9 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           remoteSource });
         return result.prepared;
       }
-      const relationshipOwner = await deps.resolveRelationshipOwner?.(input, context) ?? deps.relationshipOwner;
+      const relationshipOwner = input.action.kind === 'create_relationship'
+        || input.action.kind === 'copy_once' && (!input.sourceWorkspaceRefId || !input.targetWorkspaceRefId)
+        ? await deps.resolveRelationshipOwner?.(input, context) ?? deps.relationshipOwner : undefined;
       if (input.action.kind === 'create_relationship') {
         if (!relationshipOwner) {
           throw Object.assign(new Error('Workspace relationship owner is unavailable'), { code: 'workspace_sync_unavailable' });
@@ -472,6 +489,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         if (!accountServerId) {
           throw Object.assign(new Error('Workspace relationship Account Home is unavailable'), { code: 'workspace_ref_not_ready' });
         }
+        input.onEffectsIssued?.();
         const relationshipTransaction = await relationshipOwner.prepareCreate({
           operationId: input.operationId,
           serverId: accountServerId,
@@ -494,6 +512,11 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           } : {}),
           flushBeforeCommit: true,
           ...(input.signal ? { signal: input.signal } : {}),
+        }).catch(async (error: unknown) => {
+          if (error instanceof WorkspaceSyncPreparationRefusal) {
+            await adapter.releasePrivateExecution!(input.operationId);
+          }
+          throw error;
         });
         let preparedStatus: WorkspaceSyncStatusV1;
         try {
@@ -526,6 +549,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         if (!relationshipOwner || !accountServerId) {
           throw Object.assign(new Error('Workspace copy Account Home is unavailable'), { code: 'workspace_ref_not_ready' });
         }
+        input.onEffectsIssued?.();
         const endpoints = await relationshipOwner.materializeEndpoints({
           serverId: accountServerId,
           sourceMachineId: input.sourceMachineId,
@@ -547,8 +571,11 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       }
       const sameWorkspace = (input.action.kind === 'linked_workspace' || input.action.kind === 'copy_once')
         && sameExecutionWorkspace(input);
-      const fence = input.action.kind === 'none' || sameWorkspace ? undefined
-        : await deps.bootstrap(effectiveInput, admittedInput, authority, context, execution?.targetPreflight);
+      let fence: PreparedOperation['fence'];
+      if (input.action.kind !== 'none' && !sameWorkspace) {
+        input.onEffectsIssued?.();
+        fence = await deps.bootstrap(effectiveInput, admittedInput, authority, context, execution?.targetPreflight);
+      }
       try {
         if (input.action.kind === 'copy_once' && fence?.targetWorkspace) {
           const target = fence.targetWorkspace;

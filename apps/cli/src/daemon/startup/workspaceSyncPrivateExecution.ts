@@ -79,9 +79,13 @@ export async function preparePrivateWorkspaceSyncExecution(request: PrepareWorks
     },
   };
   const nativeSync = await request.createNativeSync({ configuration: { serverId: request.accountRowsCustody.serverId,
-    machineId: request.input.targetMachineId, accountId: request.accountRowsCustody.accountId,
+    machineId: request.executionIdentity?.kind === 'isolated'
+      ? request.executionIdentity.requester.machineId : request.input.targetMachineId,
+    accountId: request.accountRowsCustody.accountId,
     snapshot, agent: await dependencies.resolveNativeAgent() }, network });
   return { credentials: request.credentials, accountRowsCustody: request.accountRowsCustody,
+    ...(request.callTargetPhase ? { callTargetPhase: request.callTargetPhase } : {}),
+    ...(request.recoverConflictResolutionAtTarget ? { recoverConflictResolutionAtTarget: request.recoverConflictResolutionAtTarget } : {}),
     ...(request.executionIdentity ? { executionIdentity: request.executionIdentity } : {}), nativeSync,
     getSnapshot: () => snapshot,
     bindTargetPhaseContext: context => { targetPhaseContext = context; },

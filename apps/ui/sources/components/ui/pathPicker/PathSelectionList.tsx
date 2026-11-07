@@ -21,7 +21,7 @@
  */
 
 import * as React from 'react';
-import { Pressable, View, type GestureResponderEvent } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -52,6 +52,7 @@ import {
     shouldShowPathSelectionBrowseSuggestions,
     type PathSelectionInitialSuggestionMode,
 } from './createPathSelectionInputBehavior';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 export type PathSelectionListFavorite = Readonly<{ path: string; label?: string }>;
@@ -96,6 +97,8 @@ export type PathSelectionListProps = Readonly<{
     favorites: ReadonlyArray<PathSelectionListFavorite>;
     recents: ReadonlyArray<PathSelectionListRecent>;
     machineHomeDir: string;
+    /** Initial tree-browser folder for an empty draft; home still owns tilde expansion. */
+    browseStartPath?: string;
     /**
      * RUX-3: predicate that decides whether a given absolute path is currently
      * a favorite. When omitted (back-compat), the favorite-toggle accessory is
@@ -157,18 +160,18 @@ function PathDrillDownButton(props: Readonly<{
 }>): React.ReactElement {
     const { testID, accessibilityLabel, onPress } = props;
     const { theme } = useUnistyles();
-    const handlePress = React.useCallback((event?: GestureResponderEvent) => {
-        event?.stopPropagation();
+    const handlePress = React.useCallback((event?: Readonly<{ stopPropagation?: () => void }>) => {
+        event?.stopPropagation?.();
         onPress();
     }, [onPress]);
 
     return (
-        <Pressable
+        <HappierPressable
             testID={testID}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
             onPress={handlePress}
-            hitSlop={8}
+            hitReach={0}
             style={{
                 width: 28,
                 height: 28,
@@ -178,7 +181,7 @@ function PathDrillDownButton(props: Readonly<{
             }}
         >
             <Icon name="caret-right" size={16} color={theme.colors.text.tertiary} />
-        </Pressable>
+        </HappierPressable>
     );
 }
 
@@ -267,6 +270,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         favorites,
         recents,
         machineHomeDir,
+        browseStartPath,
         machineId,
         serverId,
         machinePlatform = 'auto',
@@ -453,7 +457,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         const { openMachinePathBrowserModal } = await import('@/components/ui/pathBrowser/openMachinePathBrowserModal');
         const browseStart = inputValue.trim().length > 0
             ? inputValue
-            : resolvePathSelectionEmptyInputPath({
+            : browseStartPath ?? resolvePathSelectionEmptyInputPath({
                 initialValue,
                 initialSuggestionMode,
                 machineHomeDir,
@@ -473,6 +477,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         initialSuggestionMode,
         initialValue,
         machineHomeDir,
+        browseStartPath,
         machineId,
         modalPortalTarget,
         onBeforeBrowseMachinePath,

@@ -33,6 +33,7 @@ export type DaemonTerminalError = z.infer<typeof DaemonTerminalErrorSchema>;
 
 export const DaemonTerminalListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workspace: z.optional(WorkspaceAddressV1Schema),
+  machineShell: z.optional(z.literal(true)),
 }));
 export type DaemonTerminalListRequestV1 = z.infer<typeof DaemonTerminalListRequestV1Schema>;
 
@@ -50,13 +51,25 @@ export const DaemonTerminalListEntryV1Schema = lazyZodSchema(() => z.strictObjec
 }));
 export type DaemonTerminalListEntryV1 = z.infer<typeof DaemonTerminalListEntryV1Schema>;
 
+/** Requester default for the existing Machine Shell admission, never Machine metadata. */
+export const DaemonTerminalShellAvailabilityV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), cwd: z.string().check(z.minLength(1), z.maxLength(10_000)) }),
+  DaemonTerminalErrorSchema,
+]));
+export type DaemonTerminalShellAvailabilityV1 = z.infer<typeof DaemonTerminalShellAvailabilityV1Schema>;
+
 export const DaemonTerminalListResponseV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), terminals: z.array(DaemonTerminalListEntryV1Schema) }),
+  z.strictObject({ ok: z.literal(true), terminals: z.array(DaemonTerminalListEntryV1Schema),
+    machineShell: z.optional(DaemonTerminalShellAvailabilityV1Schema) }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(DaemonTerminalErrorSchema),
 ]));
 export type DaemonTerminalListResponseV1 = z.infer<typeof DaemonTerminalListResponseV1Schema>;
 
 export const DaemonTerminalLaunchIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('shell_command'),
+    command: z.string().check(z.maxLength(100_000)),
+  }),
   z.strictObject({
     kind: z.literal('package_script'),
     runTargetId: z.string().check(z.trim(), z.minLength(1)),
@@ -88,16 +101,27 @@ export const DaemonTerminalEnsureRequestSchema = lazyZodSchema(() => z.strictObj
   workspace: z.optional(WorkspaceAddressV1Schema),
   cols: z.optional(z.number().check(z.int(), z.minimum(2), z.maximum(500))),
   rows: z.optional(z.number().check(z.int(), z.minimum(2), z.maximum(500))),
-  initialCommand: z.optional(z.string().check(z.maxLength(100_000))),
   launch: z.optional(DaemonTerminalLaunchIntentSchema),
+  // Reader-only 0.2 seam; normalize before either RPC or Action admission.
+  initialCommand: z.optional(z.string().check(z.maxLength(100_000))),
   // Attribution is not authority: the receiving Session owner must prove this
   // identity before admitting a Session-scoped terminal.
   sessionId: z.optional(z.string().check(z.minLength(1), z.maxLength(256))),
-}).check(z.refine((value) => value.initialCommand === undefined || value.launch === undefined, { message: 'initialCommand and launch are mutually exclusive' }),
+}).check(
+  z.refine(value => value.initialCommand === undefined || value.launch === undefined,
+    { path: ['initialCommand'], message: 'initialCommand cannot be combined with launch' }),
   z.refine(value => value.launch?.kind !== 'service_shell'
     || value.cwd === undefined && value.workspace === undefined && value.sessionId === undefined,
-    { path: ['launch'], message: 'service_shell resolves its target context on the daemon' })));
-export type DaemonTerminalEnsureRequest = z.infer<typeof DaemonTerminalEnsureRequestSchema>;
+    { path: ['launch'], message: 'service_shell resolves its target context on the daemon' }),
+  z.overwrite(value => {
+    const { initialCommand, ...request } = value;
+    return initialCommand === undefined ? request : {
+      ...request, launch: { kind: 'shell_command' as const, command: initialCommand },
+    };
+  }),
+));
+// Current writers never emit the reader-only predecessor field.
+export type DaemonTerminalEnsureRequest = Omit<z.infer<typeof DaemonTerminalEnsureRequestSchema>, 'initialCommand'>;
 
 export const DaemonTerminalEnsureResponseSchema = lazyZodSchema(() => z.union([
   z.looseObject({
@@ -201,7 +225,7 @@ export const DaemonTerminalCloseResponseSchema = lazyZodSchema(() => z.union([
 export type DaemonTerminalCloseResponse = z.infer<typeof DaemonTerminalCloseResponseSchema>;
 
 export const DaemonTerminalRestartRequestSchema = DaemonTerminalEnsureRequestSchema;
-export type DaemonTerminalRestartRequest = z.infer<typeof DaemonTerminalRestartRequestSchema>;
+export type DaemonTerminalRestartRequest = DaemonTerminalEnsureRequest;
 
 export const DaemonTerminalRestartResponseSchema = DaemonTerminalEnsureResponseSchema;
 export type DaemonTerminalRestartResponse = z.infer<typeof DaemonTerminalRestartResponseSchema>;

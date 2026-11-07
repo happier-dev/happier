@@ -35,11 +35,10 @@ export type WorkspaceSyncRelationshipPreparation = Readonly<{
   targetReplacementApprovalActionInput?: unknown;
 }>;
 
-/** Exact requester-admitted inputs consumed by the incumbent controller, never a new definition source. */
+/** Exact requester-admitted finite effect, including its physical endpoint selection. */
 export type WorkspaceSyncFlushExpectation = Readonly<{
   relationship: WorkspaceSyncRelationshipV1;
   workspaceRefs: readonly WorkspaceRefV1[];
-  assertCurrent(): Promise<void>;
 }>;
 
 /** A read-only participant in a root already fenced by a linked workspace. */
@@ -71,8 +70,8 @@ export interface ManagedWorkspaceSync {
   resume(relationshipId: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1>;
   terminate(relationshipId: string, signal?: AbortSignal): Promise<void>;
   listConflicts(request: WorkspaceSyncConflictPageRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncConflictPageV1>;
-  listRelationships(request: WorkspaceSyncRelationshipsListRpcRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncRelationshipsListRpcResultV1>;
-  inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncConflictInspectRpcResultV1>;
+  listRelationships(request: WorkspaceSyncRelationshipsListRpcRequestV1, signal?: AbortSignal, admittedRelationshipIds?: ReadonlySet<string>, admittedDefinitions?: readonly WorkspaceSyncRelationshipV1[] | null): Promise<WorkspaceSyncRelationshipsListRpcResultV1>;
+  inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal, admittedRelationshipIds?: ReadonlySet<string>): Promise<WorkspaceSyncConflictInspectRpcResultV1>;
   resolveConflict(
     request: WorkspaceSyncConflictResolutionV1,
     signal: AbortSignal | undefined,

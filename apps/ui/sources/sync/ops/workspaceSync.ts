@@ -1,7 +1,12 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ReadWorkspaceSyncFileResultV1Schema, ReadWorkspaceSyncFileV1Schema, WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncLegacyStateInspectionV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, type WorkspaceSyncConflictResolutionV1, type WorkspaceSyncConflictResolutionResultV1, type WorkspaceSyncConflictInspectRpcRequestV1, type WorkspaceSyncConflictInspectRpcResultV1, type ReadWorkspaceSyncFileResultV1, type ReadWorkspaceSyncFileV1, type WorkspaceSyncConflictPageV1, type WorkspaceSyncStatusV1, type WorkspaceSyncLegacyStateInspectionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { WorkspaceSyncRelationshipsListActionOutputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncRelationshipsListRpcRequestV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema,
+    type WorkspaceSyncRequesterAvailabilityV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createRpcCallError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectWorkerCopyRetireInputV1Schema, type ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { WorkspaceSyncCommittedCopyPreviewV1, WorkspaceSyncCommittedCopyPreviewResultV1,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
@@ -13,6 +18,7 @@ import { WorkspaceSyncStatusWatchRequestV1Schema, WorkspaceSyncStatusWatchResult
 type WorkspaceSyncControllerScope = Readonly<{
     controllerMachineId: string;
     serverId?: string | null;
+    accountId?: string | null;
     signal?: AbortSignal;
 }>;
 
@@ -67,22 +73,28 @@ async function callWorkspaceSync<R>(
     const response = await machineRpcWithServerScope<R, unknown>({
         machineId: scope.controllerMachineId,
         serverId: scope.serverId,
+        accountId: scope.accountId,
         method,
         payload,
         ...(scope.signal ? { signal: scope.signal } : {}),
     });
     // An encrypted transport hands a daemon handler's refusal back as the response value. Raise it here, once,
     // so every caller keeps the daemon's typed code instead of reading it as an unsupported response.
-    if (isHandlerRefusal(response)) throw createRpcCallError({ error: response.error, errorCode: response.errorCode });
+    assertWorkspaceSyncRpcSuccess(response);
     return response;
 }
 
-function isHandlerRefusal(value: unknown): value is Readonly<{ error: string; errorCode?: string }> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const record = value as Readonly<Record<string, unknown>>;
-    return typeof record.error === 'string'
-        && (record.errorCode === undefined || typeof record.errorCode === 'string')
-        && Object.keys(record).every((key) => key === 'error' || key === 'errorCode');
+/** Filesystem roots belong to the addressed requester, separately from Machine metadata. */
+export async function readWorkspaceSyncRequesterAvailability(scope: WorkspaceSyncControllerScope): Promise<WorkspaceSyncRequesterAvailabilityV1 | null> {
+    const result = WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(await callWorkspaceSync(scope,
+        RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST,
+        WorkspaceSyncRelationshipsListRpcRequestV1Schema.parse({ requesterAvailability: true })));
+    return result.requesterAvailability ?? null;
+}
+
+/** Preserve handler refusals on both the direct observation transport and subordinate Action reads. */
+export function assertWorkspaceSyncRpcSuccess(response: unknown): void {
+    readMachineActionRpcResult(response);
 }
 
 function parseStatusEnvelope(raw: unknown, method: string): WorkspaceSyncStatusV1 {
@@ -156,16 +168,18 @@ async function runRelationshipLifecycleCommand(
 export async function listWorkspaceSyncStatuses(
     scope: WorkspaceSyncControllerScope,
 ): Promise<readonly WorkspaceSyncStatusV1[]> {
-    const method = RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST;
-    const record = strictRecord(await callWorkspaceSync(scope, method, {}), ['statuses'], method);
-    if (!Array.isArray(record.statuses)) unsupported(method);
-    const statuses: WorkspaceSyncStatusV1[] = [];
-    for (const value of record.statuses) {
-        const parsed = WorkspaceSyncStatusV1Schema.safeParse(value);
-        if (!parsed.success) unsupported(method);
-        statuses.push(parsed.data);
-    }
-    return statuses;
+    const result = WorkspaceSyncRelationshipsListActionOutputV1Schema.parse(await executeWorkspaceSyncRead(
+        scope, 'workspace.sync.relationships.list', { controllerMachineId: scope.controllerMachineId },
+    ));
+    return result.relationships.flatMap(({ status }) => status ? [status] : []);
+}
+
+async function executeWorkspaceSyncRead(scope: WorkspaceSyncControllerScope, actionId: ActionId, input: unknown): Promise<unknown> {
+    // Status-store imports participate in bootstrap; resolve the Action graph only for a read.
+    const { createFrontDoorUiActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    return createFrontDoorUiActionExecutor(undefined, { serverId: scope.serverId ?? undefined })(actionId, input, {
+        ...(scope.signal ? { signal: scope.signal } : {}),
+    });
 }
 
 export async function watchWorkspaceSyncStatuses(
@@ -239,7 +253,8 @@ export async function listWorkspaceSyncConflicts(
         ...(scope.cursor ? { cursor: scope.cursor } : {}),
         limit: scope.limit ?? 100,
     });
-    const parsed = WorkspaceSyncConflictPageV1Schema.safeParse(await callWorkspaceSync(scope, method, payload));
+    const parsed = WorkspaceSyncConflictPageV1Schema.safeParse(await executeWorkspaceSyncRead(scope,
+        'workspace.sync.conflicts.list', { controllerMachineId: scope.controllerMachineId, ...payload }));
     return parsed.success ? parsed.data : unsupported(method);
 }
 
@@ -248,7 +263,8 @@ export async function inspectWorkspaceSyncConflict(
 ): Promise<WorkspaceSyncConflictInspectRpcResultV1> {
     const method = RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT;
     const request = WorkspaceSyncConflictInspectRpcRequestV1Schema.parse(input.request);
-    const parsed = WorkspaceSyncConflictInspectRpcResultV1Schema.safeParse(await callWorkspaceSync(input, method, request));
+    const parsed = WorkspaceSyncConflictInspectRpcResultV1Schema.safeParse(await executeWorkspaceSyncRead(input,
+        'workspace.sync.conflict.inspect', { controllerMachineId: input.controllerMachineId, ...request }));
     return parsed.success ? parsed.data : unsupported(method);
 }
 

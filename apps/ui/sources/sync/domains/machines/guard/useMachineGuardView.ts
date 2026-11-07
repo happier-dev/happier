@@ -26,7 +26,7 @@ export function isMachineGuardOn(policy: MachineGuardPolicyV1): boolean {
 
 /** The machine's Guard view, live while shown (one parked watch shared by every surface showing it). */
 export function useMachineGuardView(input: MachineDaemonReadTargetInput): MachineGuardViewHookResult {
-    const { key, enabled, offline } = useMachineDaemonReadTarget(input);
+    const { key, enabled, offline } = useMachineDaemonReadTarget({ ...input, observeDaemonStateVersion: false });
     const settings = useMachineResourcesPolicy({ serverId: key.serverId, machineId: key.machineId });
     const subscribe = React.useCallback((listener: () => void) => machineGuardStore.observeView(key, listener), [key]);
     const getSnapshot = React.useCallback(() => machineGuardStore.getView(key), [key]);

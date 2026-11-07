@@ -3,6 +3,7 @@ import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, Da
 import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamAckResponse, TerminalStreamInputRequest, TerminalStreamInputResponse, TerminalStreamReadRequest, TerminalStreamReadResponse } from '@happier-dev/protocol';
+import type { DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -14,10 +15,11 @@ import { logger } from '@/ui/logger';
 import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
+import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
-import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
+import { resolveLocalServiceRunTargetScriptName } from '@/daemon/local/services/launch/runTargets';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
@@ -31,7 +33,7 @@ import {
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { openServiceShellTerminal } from './serviceShellTerminal';
-import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager, type TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
@@ -85,7 +87,6 @@ export type MachineTerminalRpcRegistration = Readonly<{
 export type MachineTerminalRpcHandlerDeps = Readonly<{
   /** Captured Home of the installed Machine RPC owner, not a request field. */
   serverId?: string;
-  /** Canonical Home held by the installed Machine owner, never a request field. */
   /** Canonical Home held by the installed Machine owner, never a request field. */
   resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
   env?: NodeJS.ProcessEnv;
@@ -141,6 +142,12 @@ function terminalStreamInvalidRequest(): { ok: false; code: 'terminal_invalid_re
   };
 }
 
+function isIdleByteStreamRead(response: TerminalStreamReadResponse): boolean {
+  // Unread bytes with no credit are flow control, not idleness: the viewer owns that wait.
+  return response.ok && response.frames.length === 0 && !response.done
+    && response.availableByteOffset <= response.nextByteOffset;
+}
+
 function terminalStreamDisabled(): { ok: false; code: 'terminal_disabled'; message: string } {
   return {
     ok: false,
@@ -153,7 +160,24 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   deps?: MachineTerminalRpcHandlerDeps;
 }>): MachineTerminalRpcRegistration {
-  const { rpcHandlerManager } = params;
+  const rpcHandlerManager: RpcHandlerRegistrar = {
+    registerHandler(method, handler) {
+      params.rpcHandlerManager.registerHandler(method, async (raw, context) => {
+        // A Machine grant admits placement, not a person identity. Admitted finite
+        // work is not interactive: its launch delegates to the existing finite
+        // Project Action, and its output byte read is decided by the PTY's retained
+        // custody alone. All other PTY discovery and control require host-stamped presence.
+        const finite = (method === RPC_METHODS.DAEMON_TERMINAL_ENSURE || method === RPC_METHODS.DAEMON_TERMINAL_RESTART)
+          && DaemonTerminalEnsureRequestSchema.safeParse(raw).data?.launch?.kind === 'package_script'
+          || method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES
+          && isFiniteOutputRead(TerminalStreamReadRequestSchema.safeParse(raw).data?.terminalId);
+        if (!finite && (context?.callerAuthority !== 'present_user' || context.sessionActionOrigin)) {
+          throw new RpcError(RPC_ERROR_MESSAGES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN);
+        }
+        return handler(raw, context);
+      });
+    },
+  };
   const env = params.deps?.env ?? process.env;
   const config = readDaemonTerminalPtyConfig(env);
   const workingDirectory =
@@ -175,6 +199,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   };
 
   let sessionManager: TerminalBridgeSessionManager | null = params.deps?.sessionManager ?? null;
+  /** Admitted finite output: its retained custody, not a person floor, decides the read. */
+  const isFiniteOutputRead = (terminalId: string | undefined): boolean =>
+    terminalId !== undefined && sessionManager?.isFiniteRun(terminalId) === true;
   const getSessionManager = (): TerminalBridgeSessionManager => {
     if (sessionManager) return sessionManager;
     sessionManager = createTerminalPtySessionManager({
@@ -216,6 +243,33 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const unavailableIdentityTransport = () => ({ ...err('terminal_unavailable'), error: 'agent_isolation_unavailable' });
 
+  const resolveMachineShellAvailability = async (context?: RpcHandlerContext,
+    selectedIdentity?: HostRequesterExecutionIdentity): Promise<DaemonTerminalShellAvailabilityV1> => {
+    const admission = context?.machineAdmission;
+    if (!context || !admission || context.signal.aborted || params.deps?.requiredSessionId) return err('terminal_forbidden');
+    const identity = selectedIdentity ?? (await resolveRequesterIdentity(context)).identity;
+    if (identity.kind === 'unknown') return unavailableIdentityTransport();
+    const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
+    const placement = memberRequester.kind === 'isolated'
+      ? resolveHostRequesterAgentPlacementForHost({ identity: memberRequester, snapshot: params.deps?.agentIsolation?.read(),
+        platform: params.deps?.platform }) : undefined;
+    if (admission.role !== 'manage') {
+      if (identity.kind !== 'isolated' || !identity.presentPerson || placement !== 'member') return err('terminal_forbidden');
+      if (!params.deps?.nativeOperationRuntime) return unavailableIdentityTransport();
+    }
+    if (placement === 'member' && (admission.actorAccountId !== admission.custodianAccountId || admission.role !== 'manage')) {
+      if (memberRequester.kind !== 'isolated' || !params.deps?.agentIsolation?.readMember) return unavailableIdentityTransport();
+      try {
+        const member = await params.deps.agentIsolation.readMember({
+          requesterIdentity: { ...memberRequester, homeServerIdentityId: memberRequester.requester.serverId },
+          rpcContext: context, signal: context.signal,
+        });
+        return resolveCwd(member.identity.workspaceRoot);
+      } catch { return unavailableIdentityTransport(); }
+    }
+    return resolveCwd(undefined);
+  };
+
   const runServiceShell = async (request: Pick<import('@happier-dev/protocol').DaemonTerminalEnsureRequest, 'terminalKey' | 'cols' | 'rows'> & Readonly<{
     launch: Extract<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'service_shell' }>;
   }>, context: RpcHandlerContext | undefined, actionId: 'machines.terminal.open' | 'machines.terminal.restart', homeServerIdentityId: string | null) => {
@@ -230,12 +284,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       ...(params.deps.admissionDrain ? { admissionDrain: params.deps.admissionDrain } : {}) });
   };
 
-  const admissionCurrent = async (context: RpcHandlerContext): Promise<boolean> => {
-    try { return !context.signal.aborted && !!context.verifyMachineAdmissionCurrent
-      && await context.verifyMachineAdmissionCurrent() && !context.signal.aborted; }
-    catch { return false; }
-  };
-
   const hasRequiredSessionAuthority = (context?: RpcHandlerContext): boolean => {
     if (!params.deps?.requiredSessionId) return false;
     // The restricted Runner's existing receiver proves this Session before
@@ -247,7 +295,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const resolveOwnSessionCustody = async (sessionId: string, cwdInput: string | undefined, context: RpcHandlerContext)
     : Promise<Readonly<{ ok: true; cwd: string; custody: TerminalPtyCustody }> | ReturnType<typeof err>> => {
     const admission = context.machineAdmission;
-    if (!admission || !await admissionCurrent(context)) return err('terminal_forbidden');
+    if (!admission || context.signal.aborted) return err('terminal_forbidden');
     const runtime = await params.deps?.accountReadRuntime?.(context);
     if (!runtime) return err('terminal_unavailable');
     if (runtime.accountId !== admission.actorAccountId) return err('terminal_forbidden');
@@ -267,15 +315,15 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         const requested = resolveCwd(workspace.requestedPath ?? cwdInput);
         if (!requested.ok || normalizeWorkspaceRootPathV1(requested.cwd) !== normalizeWorkspaceRootPathV1(root.cwd)) return err('terminal_cwd_denied');
       }
-      if (!await admissionCurrent(context)) return err('terminal_forbidden');
-      if (runtime.isCurrent && !await runtime.isCurrent()) return err('terminal_forbidden');
+      if (context.signal.aborted) return err('terminal_forbidden');
       return { ok: true, cwd: root.cwd, custody: { kind: 'session', serverId: runtime.serverId,
         requesterAccountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId,
         sessionId, rootPath: root.cwd } };
     } catch { return err('terminal_forbidden'); }
   };
 
-  const resolveTerminalCustody = async (input: Readonly<{ workspace?: WorkspaceAddressV1; cwd?: string; sessionId?: string; launch?: import('@happier-dev/protocol').DaemonTerminalLaunchIntent }>, context?: RpcHandlerContext)
+  const resolveTerminalCustody = async (input: Readonly<{ workspace?: WorkspaceAddressV1; cwd?: string; sessionId?: string; launch?: import('@happier-dev/protocol').DaemonTerminalLaunchIntent }>, context?: RpcHandlerContext,
+    requesterIdentity?: HostRequesterExecutionIdentity)
     : Promise<Readonly<{ ok: true; cwd: string; custody?: TerminalPtyCustody }> | ReturnType<typeof err>> => {
     if (hasRequiredSessionAuthority(context)) {
       if (input.workspace) return err('terminal_invalid_request');
@@ -293,13 +341,17 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
     if (context.signal.aborted) return err('terminal_forbidden');
     const admission = context.machineAdmission;
-    // An unqualified Manage shell belongs to the Machine, not an accepted
-    // Project checkout. Explicit Project and Session targets keep their owners.
+    // The Machine owns a person's shell; Project and Session targets keep
+    // their accepted custody. Use can select only its native member root.
     if (!input.workspace) {
-      if (admission.role !== 'manage') return err('terminal_forbidden');
       if (!params.deps?.serverId) return err('terminal_unavailable');
-      const cwd = resolveCwd(input.cwd);
+      const shell = admission.role === 'manage' && input.cwd !== undefined
+        ? resolveCwd(input.cwd) : await resolveMachineShellAvailability(context, requesterIdentity);
+      if (!shell.ok) return shell;
+      const cwd = admission.role === 'manage' || input.cwd === undefined ? shell : resolveCwd(input.cwd);
       if (!cwd.ok) return cwd;
+      if (admission.role !== 'manage'
+        && normalizeWorkspaceRootPathV1(cwd.cwd) !== normalizeWorkspaceRootPathV1(shell.cwd)) return err('terminal_cwd_denied');
       return { ok: true, cwd: cwd.cwd, custody: { kind: 'machine', serverId: params.deps.serverId,
         requesterAccountId: admission.actorAccountId, machineId: admission.machineId,
         installationId: admission.installationId, rootPath: cwd.cwd } };
@@ -340,7 +392,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     } catch { return err('terminal_forbidden'); }
   };
 
-  const authorizeTerminal = async (terminalId: string, context?: RpcHandlerContext, purpose: 'control' | 'census' = 'control',
+  /** Open-ended viewers end on Machine access loss; other reads end at their next admission. */
+  const heldByteStreamReaders = new Set<Readonly<{ terminalId: string; retire: () => void }>>();
+
+  const authorizeTerminal = async (terminalId: string, context?: RpcHandlerContext, purpose: 'control' | 'census' | 'retire' | 'finite_output' = 'control',
     admittedCensusCustody?: TerminalPtyCustody): Promise<boolean> => {
     // Person provenance belongs to the canonical selector. Matching the
     // requester key/root alone never isolates a legacy daemon-user payload.
@@ -350,9 +405,13 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const manager = getSessionManager();
     const custody = manager.getCustody(terminalId);
     const terminal = manager.list().find(candidate => candidate.terminalId === terminalId);
-    if (!terminal) return !context?.machineAdmission && !params.deps?.requiredSessionId;
+    // Removal ends terminal custody. A still-admitted reader must reach the
+    // manager's not-found result; only a live owner can require custody checks.
+    if (!terminal) return context?.machineAdmission
+      ? !context.signal.aborted
+      : !params.deps?.requiredSessionId;
     if (requesterIdentity?.kind === 'isolated'
-      && resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) === 'member') {
+      && resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) !== 'daemon') {
       const nativeIdentity = manager.getNativeExecutionIdentity?.(terminalId);
       if (!nativeIdentity) return false;
       try {
@@ -361,7 +420,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       } catch { return false; }
     }
     if (params.deps?.requiredSessionId && terminal.sessionId !== params.deps.requiredSessionId) return false;
-    if (hasRequiredSessionAuthority(context)) return !context?.machineAdmission || await admissionCurrent(context);
+    if (hasRequiredSessionAuthority(context)) return !context?.machineAdmission || !context.signal.aborted;
     if (!context?.machineAdmission) {
       if (custody !== null) logger.debug('[terminal] Authorization denied', { reason: 'machine_admission_required' });
       return custody === null;
@@ -369,15 +428,14 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const admission = context.machineAdmission;
     if (!custody || custody.requesterAccountId !== admission.actorAccountId || custody.machineId !== admission.machineId
       || custody.installationId !== admission.installationId) return false;
-    if (custody.kind === 'machine') return custody.serverId === params.deps?.serverId && await admissionCurrent(context);
+    if (custody.kind === 'machine') return (admission.role === 'manage' || !!manager.getNativeExecutionIdentity?.(terminalId))
+      && custody.serverId === params.deps?.serverId && !context.signal.aborted;
     if (custody.kind === 'session') {
       if (terminal.sessionId !== custody.sessionId) return false;
-      // The retained owner already proved this Account's Session at birth.
-      // Discovery exposes only that owner's census under current installed
-      // Machine admission; private Session reads/effects keep their authority.
-      if (purpose === 'census') return custody.serverId === params.deps?.serverId && await admissionCurrent(context);
-      const current = await resolveOwnSessionCustody(custody.sessionId, custody.rootPath, context);
-      return current.ok && current.custody.serverId === custody.serverId;
+      // The native owner retained Session custody at birth. Each incoming
+      // control already has current Machine admission; private Session content
+      // is not an authority for this retained PTY.
+      return custody.serverId === params.deps?.serverId && !context.signal.aborted;
     }
     if (terminal.sessionId && terminal.sessionId !== params.deps?.requiredSessionId
       && terminal.sessionId !== context.sessionActionOrigin?.caller.sessionId) return false;
@@ -440,9 +498,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         import('@/workspaces/projectSetup/projectSetupExecution'), import('@/plugins/runtime/invocation/services/exec'),
       ]);
       const assertCurrent = async () => {
-        if (!await admissionCurrent(context) || runtime.isCurrent && !await runtime.isCurrent()) {
-          throw Object.assign(new Error('machine_admission_changed'), { code: 'machine_admission_changed' });
-        }
+        context.signal.throwIfAborted();
       };
       await assertCurrent();
       const accountAccess = projectRuntimeAccountRowsInput(runtime);
@@ -493,18 +549,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         agentIsolation, ...execution, requesterIdentity, agentLaunchKind: 'terminal',
         assertCurrent() {
           if (context.signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-          if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()) throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
+          if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()) throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
         }, ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}),
       });
-      const validate = async () => {
-        const current = await inspect();
-        if (current.plan.executionEnvironmentEffectDigest !== plan.executionEnvironmentEffectDigest) {
-          throw Object.assign(new Error('project_setup_effect_changed'), { code: 'project_setup_effect_changed' });
-        }
-      };
-      await validate();
       return { ok: true as const, authorizedProjectLaunch: authorized,
-        validate, release };
+        validate: assertCurrent, release };
     } catch (error) {
       // The capture owner waits for physical settlement without holding the caller's
       // observation open or interpreting uncertainty as permission to spawn.
@@ -563,10 +612,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const refused = (code: string, details?: unknown) => ({ ...err('terminal_invalid_request'), error: code,
       ...(details === undefined ? {} : { details }) });
     const admission = context?.machineAdmission;
-    if (!context || !admission || !context.verifyMachineAdmissionCurrent) return refused('machine_admission_required');
-    const isCurrent = async () => !context.signal.aborted && await context.verifyMachineAdmissionCurrent!() && !context.signal.aborted;
+    if (!context || !admission) return refused('machine_admission_required');
     try {
-      if (!await isCurrent()) return refused('machine_admission_changed');
+      if (context.signal.aborted) return refused('machine_admission_changed');
       const runtime = await params.deps?.projectFiniteRuntime?.(context);
       if (!runtime || !params.deps?.projectScriptExecutor) return refused('project_finite_execution_unavailable');
       if (admission.machineId !== runtime.machineId) return refused('target_mismatch');
@@ -575,25 +623,26 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (admission.actorAccountId !== runtime.accountId) {
         return refused('project_requester_credentials_unavailable');
       }
+      const selectedHomeServerId = await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal: context.signal,
+        selection: { kinds: ['workspace-ref'], serverId: selectedHomeServerId },
       }));
-      if (!await isCurrent()) return refused('machine_admission_changed');
+      if (context.signal.aborted) return refused('machine_admission_changed');
       // Directory selects only an exact accepted checkout. Its stored Project anchor,
       // never an inferred enclosing root, supplies preparation/trust association.
       const homeServerId = await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
       const accepted = resolveWorkspaceRefV1(rows.workspaceRefs, { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: cwd },
         { normalizeServerId: id => id === runtime.serverId ? homeServerId : id });
       if (accepted.kind !== 'resolved' || !accepted.ref.projectKey) return refused('project_workspace_unavailable');
-      const targets = await discoverLocalServiceRunTargets({ roots: [accepted.ref.rootPath] });
-      if (!await isCurrent()) return refused('machine_admission_changed');
-      const target = targets.find(candidate => candidate.id === runTargetId && candidate.cwd === accepted.ref.rootPath);
-      if (!target) return refused('native_target_missing');
+      const scriptName = await resolveLocalServiceRunTargetScriptName({ cwd: accepted.ref.rootPath, runTargetId });
+      if (context.signal.aborted) return refused('machine_admission_changed');
+      if (!scriptName) return refused('native_target_missing');
       // The receiving producer must borrow the incumbent PTY, including its rings and holds.
       if (runtime.terminalSessions !== getSessionManager()) return refused('project_terminal_owner_mismatch');
       const result = await dispatchProjectAction(runtime, context, 'projects.script.run',
         { workspace: workspaceAddressFromRefV1(accepted.ref), selection: { kind: 'native', source: {
-          kind: 'native', tool: 'package_script', file: 'package.json', target: target.scriptName,
+          kind: 'native', tool: 'package_script', file: 'package.json', target: scriptName,
         } } });
       if (!result.ok) return refused(result.errorCode, result.details);
       const output = ProjectCommandActionOutputV1Schema.safeParse(result.result);
@@ -601,7 +650,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const operation = await runtime.operationRuntime.waitForProjectTerminalAttachment(
         { accountId: admission.actorAccountId, machineId: runtime.machineId }, output.data.operation.operationId, context.signal,
       );
-      if (!await isCurrent()) return refused('machine_admission_changed');
+      if (context.signal.aborted) return refused('machine_admission_changed');
       if (operation?.domainRef?.kind !== 'projectCommand' || operation.domainRef.purpose !== 'script' || !operation.domainRef.terminalId) {
         return refused(operation?.error?.errorCode ?? operation?.observation?.code ?? (operation?.state === 'cancelled' ? 'cancelled' : 'project_terminal_unavailable'));
       }
@@ -616,7 +665,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!config.enabled) return err('terminal_disabled');
     const parsed = DaemonTerminalListRequestV1Schema.safeParse(raw);
     if (!parsed.success) return err('terminal_invalid_request');
-    if (context?.machineAdmission && !await admissionCurrent(context)) return err('terminal_forbidden');
+    if (context?.machineAdmission && context.signal.aborted) return err('terminal_forbidden');
     let qualifiedCustody: TerminalPtyCustody | undefined;
     if (parsed.data.workspace) {
       const admitted = await resolveTerminalCustody({ workspace: parsed.data.workspace }, context);
@@ -629,9 +678,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (qualifiedCustody && !sameTerminalCustody(sessionManager?.getCustody(terminal.terminalId) ?? null, qualifiedCustody)) continue;
       if (await authorizeTerminal(terminal.terminalId, context, 'census', qualifiedCustody)) terminals.push(terminal);
     }
-    if (context?.machineAdmission && !await admissionCurrent(context)) return err('terminal_forbidden');
+    if (context?.machineAdmission && context.signal.aborted) return err('terminal_forbidden');
     return DaemonTerminalListResponseV1Schema.parse({
       ok: true,
+      ...(parsed.data.machineShell ? { machineShell: await resolveMachineShellAvailability(context) } : {}),
       terminals: params.deps?.requiredSessionId
         ? terminals.filter((terminal) => terminal.sessionId === params.deps?.requiredSessionId)
         : terminals,
@@ -664,7 +714,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.open', homeServerIdentityId);
     }
 
-    const cwd = await resolveTerminalCustody(parsed.data, context);
+    const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
     const launch = resolveRequestedLaunch(parsed.data.launch);
     if (!launch.ok) return launch;
@@ -709,7 +759,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         ...(homeServerIdentityId ? { homeServerIdentityId } : {}) } } : {}),
       cols: parsed.data.cols,
       rows: parsed.data.rows,
-      initialCommand: parsed.data.initialCommand,
       ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
       ...(prepared ? { authorizedProjectLaunch: prepared.authorizedProjectLaunch } : {}),
       ...(nativeOperation?.memberIdentity ? { nativeExecutionIdentity: nativeOperation.memberIdentity } : {}),
@@ -737,14 +786,41 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!config.enabled) return terminalStreamDisabled();
     const parsed = TerminalStreamReadRequestSchema.safeParse(raw);
     if (!parsed.success) return terminalStreamInvalidRequest();
-    if (!await authorizeTerminal(parsed.data.terminalId, context)) return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
+    if (!await authorizeTerminal(parsed.data.terminalId, context,
+      isFiniteOutputRead(parsed.data.terminalId) ? 'finite_output' : 'control')) return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
 
     const manager = getSessionManager();
     if (typeof manager.readByteStream !== 'function') {
       return terminalStreamUnavailable();
     }
-    const response = await manager.readByteStream(parsed.data);
-    return TerminalStreamReadResponseSchema.parse(response);
+    const { holdForOutput, ...request } = parsed.data;
+    // Read and subscribe synchronously: an await between an empty snapshot and
+    // registering its wake would miss output produced in that microtask turn.
+    let response = manager.readByteStream(request);
+    const canHold = holdForOutput === true && context?.machineAdmission && manager.waitForByteStreamChange;
+    // Machine admission owns access-loss retirement. An unbounded RPC keeps
+    // that same cancellable lifetime instead of manufacturing an idle deadline.
+    if (canHold && context) {
+      const retirement = new AbortController();
+      const reader = { terminalId: request.terminalId, retire: () => retirement.abort() };
+      const signal = AbortSignal.any([context.signal, retirement.signal]);
+      // Half the caller's RPC budget leaves the idle reply its way back.
+      const holdEndsAtMs = context.deadlineAtMs === undefined ? undefined
+        : Date.now() + (context.deadlineAtMs - Date.now()) / 2;
+      heldByteStreamReaders.add(reader);
+      try {
+        const { ackedByteOffset: _applied, ...reread } = request;
+        while (isIdleByteStreamRead(response)) {
+          const outcome = await canHold({ terminalId: request.terminalId, signal,
+            ...(holdEndsAtMs === undefined ? {} : { remainingMs: Math.max(0, holdEndsAtMs - Date.now()) }) });
+          if (outcome === 'aborted') return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
+          if (outcome === 'deadline') break;
+          response = manager.readByteStream(reread);
+        }
+      } finally { heldByteStreamReaders.delete(reader); }
+    }
+    // Older strict clients never opted in, so their response shape is unchanged.
+    return TerminalStreamReadResponseSchema.parse(response.ok && canHold ? { ...response, holdForOutput: true } : response);
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, async (raw: unknown, context) => {
@@ -765,13 +841,14 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!config.enabled) return terminalStreamDisabled();
     const parsed = TerminalStreamInputRequestSchema.safeParse(raw);
     if (!parsed.success) return terminalStreamInvalidRequest();
-    if (!await authorizeTerminal(parsed.data.terminalId, context)) return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
-
     const manager = getSessionManager();
     if (typeof manager.inputEvent !== 'function') {
       return terminalStreamUnavailable();
     }
-    const response = await manager.inputEvent(parsed.data);
+    if (!await authorizeTerminal(parsed.data.terminalId, context)) return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
+    const response = await manager.inputEvent(parsed.data, {
+      signal: context?.signal,
+    });
     return TerminalStreamInputResponseSchema.parse(response);
   });
 
@@ -780,7 +857,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const parsed = DaemonTerminalInputRequestSchema.safeParse(raw);
     if (!parsed.success) return err('terminal_invalid_request');
     if (!await authorizeTerminal(parsed.data.terminalId, context)) return err('terminal_forbidden');
-    return getSessionManager().input(parsed.data);
+    return getSessionManager().input(parsed.data, {
+      signal: context?.signal,
+    });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_TERMINAL_RESIZE, async (raw: unknown, context) => {
@@ -795,7 +874,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!config.enabled) return err('terminal_disabled');
     const parsed = DaemonTerminalCloseRequestSchema.safeParse(raw);
     if (!parsed.success) return err('terminal_invalid_request');
-    if (!await authorizeTerminal(parsed.data.terminalId, context)) return err('terminal_forbidden');
+    if (!await authorizeTerminal(parsed.data.terminalId, context, 'retire')) return err('terminal_forbidden');
     if (getSessionManager().isFiniteHeld(parsed.data.terminalId)) return err('terminal_busy');
     return getSessionManager().getCustody(parsed.data.terminalId) || params.deps?.requiredSessionId
       ? await settleTerminalClose(parsed.data.terminalId, context?.signal)
@@ -828,7 +907,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);
     }
 
-    const cwd = await resolveTerminalCustody(parsed.data, context);
+    const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
     if (params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
     const launch = resolveRequestedLaunch(parsed.data.launch);
@@ -908,7 +987,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           ...(homeServerIdentityId ? { homeServerIdentityId } : {}) } } : {}),
         cols: parsed.data.cols,
         rows: parsed.data.rows,
-        initialCommand: parsed.data.initialCommand,
         ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
         ...(prepared ? { authorizedProjectLaunch: prepared.authorizedProjectLaunch } : {}),
         ...(nativeOperation?.memberIdentity ? { nativeExecutionIdentity: nativeOperation.memberIdentity } : {}),
@@ -939,6 +1017,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         if (!custody || custody.serverId !== input.serverId || custody.requesterAccountId !== input.requesterAccountId
           || custody.machineId !== input.machineId || custody.installationId !== input.installationId) return;
         if (input.remainingRole === 'use' && custody.kind !== 'machine') return;
+        for (const reader of heldByteStreamReaders) if (reader.terminalId === terminal.terminalId) reader.retire();
         // Admitted finite work finishes naturally; its output view does not
         // promote presentation cleanup into task cancellation.
         if (sessionManager?.isFiniteHeld(terminal.terminalId)) return;

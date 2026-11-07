@@ -65,7 +65,8 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
       if (!alpha || !beta || !roles) continue;
       const target = roles.targetEndpointRole === 'alpha' ? alpha : beta;
       const source = roles.targetEndpointRole === 'alpha' ? beta : alpha;
-      if ((endpointRole === 'source' ? source.machineId : target.machineId) !== input.boundary.machineId) continue;
+      const localWorkspace = endpointRole === 'source' || target.machineId !== input.boundary.machineId ? source : target;
+      if (localWorkspace.machineId !== input.boundary.machineId) continue;
       const executionInput = { operationId: relationshipId, accountServerId: input.serverId,
         action: { kind: 'relationship' as const, relationshipId, flushBeforeCommit: false },
         sourceMachineId: source.machineId, targetMachineId: target.machineId,
@@ -92,7 +93,7 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
           accountRowsCustody: custody, executionIdentity, snapshot, assertTransferCurrent,
           createNativeSync: async ({ configuration, network }) => {
             const native = await recoverPrivateProjectSyncCheckout({ runtime: privateCheckout,
-              requesterIdentity: executionIdentity, target, relationship, configuration, network,
+              requesterIdentity: executionIdentity, target: localWorkspace, relationship, configuration, network,
               signal: input.boundary.signal ?? new AbortController().signal });
             releaseNative = native.release;
             return native.native;

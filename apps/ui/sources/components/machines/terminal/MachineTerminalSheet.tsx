@@ -1,16 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import type { DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
 
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useTerminalApprovalOpener } from '@/components/terminal/embedded/useTerminalApprovalOpener';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { useMachine } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import { MachineTerminalGuardWarning } from './MachineTerminalGuardWarning';
@@ -19,6 +18,7 @@ export type MachineTerminalSheetTarget = Readonly<{
   serverId: string;
   machineId: string;
   machineName: string;
+  machineShell: Extract<DaemonTerminalShellAvailabilityV1, { ok: true }>;
 }>;
 
 /**
@@ -47,37 +47,8 @@ export function showMachineTerminalSheet(
   });
 }
 
-/** The shell opens in the machine's home folder, read from its decrypted details (`readMachineTerminalHomeDir`). */
-export function readMachineTerminalHomeDir(
-  machine: Readonly<{ metadata?: Readonly<{ homeDir?: string | null }> | null }> | null | undefined,
-): string | null {
-  return machine?.metadata?.homeDir?.trim() || null;
-}
-
 const MachineTerminalModal = React.memo(function MachineTerminalModal(
   props: MachineTerminalSheetTarget,
-) {
-  const machine = useMachine(props.machineId);
-  const homeDir = readMachineTerminalHomeDir(machine);
-  // Until this device can read the machine's details there is no folder to open in: the card says so and the
-  // shell starts by itself once they arrive (no fallback folder, no request that can only be refused).
-  if (homeDir === null) {
-    return (
-      <View style={[styles.frame, styles.waiting]}>
-        <SurfaceStateCard
-          testID="machine-terminal-waiting"
-          kind="loading"
-          title={t('machineDetailPage.terminalSheetWaitingTitle', { machine: props.machineName })}
-          reason={t('machineDetailPage.terminalSheetWaitingBody')}
-        />
-      </View>
-    );
-  }
-  return <MachineTerminalShell {...props} homeDir={homeDir} />;
-});
-
-const MachineTerminalShell = React.memo(function MachineTerminalShell(
-  props: MachineTerminalSheetTarget & Readonly<{ homeDir: string }>,
 ) {
   const presence = useMachinePresenceSummary(props.serverId, props.machineId);
   const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
@@ -89,7 +60,7 @@ const MachineTerminalShell = React.memo(function MachineTerminalShell(
   const controller = useMachineTerminalSession({
     machineId: props.machineId,
     serverId: props.serverId,
-    cwd: props.homeDir,
+    cwd: props.machineShell.cwd,
     machineReachable: presence.reachability === 'unknown' ? null : presence.reachability === 'reachable',
     machineRpcTargetAvailable: true,
     terminalKey,
@@ -120,9 +91,6 @@ const MachineTerminalShell = React.memo(function MachineTerminalShell(
 });
 
 const styles = StyleSheet.create(() => ({
-  waiting: {
-    justifyContent: 'center',
-  },
   frame: {
     flex: 1,
     minHeight: 360,

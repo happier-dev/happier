@@ -12,17 +12,21 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
 export async function createInstalledFilesystemMachineFixture(options: Readonly<{
     accountSettings?: Readonly<Record<string, unknown>>;
     credentials?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['credentials'];
+    accountId?: string;
     readAdditionalHttpResponse?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['readAdditionalHttpResponse'];
     machineEncryption?: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'dataKey' }>;
     boundSessionId?: string;
     directTransferExport?: Parameters<ApiMachineClient['setRPCHandlers']>[0]['directTransferExport'];
     agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
+    readWorkspaceSync?: () => ApiMachineClientLifecycleDependencies['workspaceSync'];
     createProjectFiniteRuntime?: ApiMachineClientLifecycleDependencies['createProjectFiniteRuntime'];
 }> = {}) {
+    const accountId = options.accountId ?? 'requester';
     const homeServerIdentityId = 'srv_filesystem_held_owner';
     const f = await createProjectSessionRuntimeFixture({ serverId: 'filesystem-profile',
         homeServerIdentityId, serverUrl: 'https://session-home.test',
         ...(options.credentials ? { credentials: options.credentials } : {}),
+        accountId,
         ...(options.readAdditionalHttpResponse ? { readAdditionalHttpResponse: options.readAdditionalHttpResponse } : {}),
         ...(options.boundSessionId ? { boundSessionId: options.boundSessionId } : {}),
         ...(options.accountSettings ? { accountSettings: options.accountSettings } : {}) });
@@ -33,8 +37,8 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
             || !('context' in body) || !('proof' in body) || !('method' in body)) throw new Error('Unexpected Home admission request');
         const context = SocketRpcMachineAdmissionContextV1Schema.parse(body.context);
         const proof = MachineInstallationProofV1Schema.parse(body.proof);
-        const ok = context.custodianAccountId === 'requester' && verifyMachineInstallationProof({ publicKey: f.installation.publicKey, proof,
-            payload: { version: 1, accountId: 'requester', machineId: 'machine', installationId: f.installation.installationId,
+        const ok = context.custodianAccountId === accountId && verifyMachineInstallationProof({ publicKey: f.installation.publicKey, proof,
+            payload: { version: 1, accountId, machineId: 'machine', installationId: f.installation.installationId,
                 rpcAdmission: { context, method: String(body.method) } } });
         homeChecks++;
         return { status: ok && f.isHomeCurrent() ? 200 : 403,
@@ -44,6 +48,7 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
         ...(options.machineEncryption ? { encryptionMode: 'e2ee' as const, ...options.machineEncryption } : { encryptionMode: 'plain' as const }),
         metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
         { resolveCurrentServerIdentityId: () => heldHome,
+            get workspaceSync() { return options.readWorkspaceSync?.(); },
             ...(options.createProjectFiniteRuntime ? { createProjectFiniteRuntime: options.createProjectFiniteRuntime } : {}),
             ...(options.agentIsolation ? { agentIsolation: options.agentIsolation } : {}) });
     machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
@@ -66,7 +71,7 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
             callerAuthority: ingress.callerAuthority ?? 'present_user',
             ...(ingress.sessionActionOrigin ? { sessionActionOrigin: ingress.sessionActionOrigin } : {}),
             ...(ingress.callerInputAuthorization ? { callerInputAuthorization: ingress.callerInputAuthorization } : {}),
-            machineAdmission: { actorAccountId: ingress.actorAccountId ?? 'requester', custodianAccountId: 'requester',
+            machineAdmission: { actorAccountId: ingress.actorAccountId ?? accountId, custodianAccountId: accountId,
                 machineId: 'machine', installationId: f.installation.installationId, role: ingress.role ?? 'manage', encryptionMode: options.machineEncryption ? 'e2ee' : 'plain' } }),
     };
 }

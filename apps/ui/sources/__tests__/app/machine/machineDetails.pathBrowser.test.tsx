@@ -7,9 +7,9 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { DEFAULT_MACHINE_ONLINE_GRACE_MS } from '@happier-dev/protocol/machines/machineReachabilityV1';
 
 const boundary = vi.hoisted(() => ({
     params: { id: 'machine-1' } as Record<string, string>,
@@ -41,11 +41,11 @@ const { MachinePageScreen } = await import('@/components/machines/page/MachinePa
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { Modal, ModalProvider } = await import('@/modal');
 const { EmbeddedTerminalPaneFrame } = await import('@/components/terminal/embedded/EmbeddedTerminalPaneFrame');
-const { showMachineTerminalSheet } = await import('@/components/machines/terminal/MachineTerminalSheet');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 
 describe('Machine detail navigation and terminal entry', () => {
     let serverId: string;
+    let scopeServerId: string;
     // The census and the exact by-id Machine read (read-batch) answer the same row.
     const answerMachineRow = (row: ReturnType<typeof createPlainMachineRowFixture>) => {
         home.answer(serverId, '/v1/machines', { body: [row] });
@@ -61,13 +61,16 @@ describe('Machine detail navigation and terminal entry', () => {
         boundary.rpc.mockReset();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method === RPC_METHODS.DAEMON_TERMINAL_ENSURE) return { ok: true, terminalId: 'machine-shell-pty', reused: false };
-            if (method === RPC_METHODS.DAEMON_TERMINAL_LIST) return { ok: true, terminals: [] };
+            if (method === RPC_METHODS.DAEMON_TERMINAL_LIST) return { ok: true, terminals: [], machineShell: { ok: true, cwd: '/Users/tester' } };
             if (method === RPC_METHODS.DAEMON_TERMINAL_CLOSE) return { ok: true };
+            if (method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ) return { ok: true, terminalId: 'machine-shell-pty',
+                events: [], nextCursor: 0, done: true };
             if (method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) return { ok: true, terminalId: 'machine-shell-pty',
                 frames: [], nextByteOffset: 0, availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true };
             return { supported: false, reason: 'not-supported' };
         });
-        serverId = await home.addHome({ name: 'Machine Home', serverUrl: 'https://machine-detail.test', accountId: 'account-a', currentAccount: true });
+        serverId = await home.addHome({ name: 'Machine Home', serverUrl: 'https://machine-detail.test', serverIdentityId: 'srv_machine_detail', accountId: 'account-a', currentAccount: true });
+        scopeServerId = getActiveServerSnapshot().serverId;
         answerMachineRow(createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }));
         await storage.getState().activateProfileScope({ serverId, accountId: 'account-a' });
         await storage.getState().activateSettingsScope({ serverId, accountId: 'account-a' });
@@ -131,53 +134,43 @@ describe('Machine detail navigation and terminal entry', () => {
 
     it.each([
         { isShared: false, active: true, visible: true },
-        { isShared: true, active: true, visible: false },
+        { isShared: true, active: true, visible: true },
         { isShared: false, active: false, visible: false },
-    ])('offers a header terminal only for an online machine the person manages ($isShared, $active)', async ({ isShared, active, visible }) => {
+    ])('offers an admitted header Shell while online, including shared Machines ($isShared, $active)', async ({ isShared, active, visible }) => {
         const row = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
         const access = { ...row.access!, role: isShared ? 'use' as const : 'manage' as const };
-        const activeAt = active ? row.activeAt : Date.now() - DEFAULT_MACHINE_ONLINE_GRACE_MS - 1;
-        answerMachineRow({ ...row, active, activeAt, access });
-        // Replace fixture membership before publishing an offline observation; the store correctly retains newer heartbeats.
-        storage.getState().applyMachines([], true);
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt, isShared, active, access })], true);
+        const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared, active, access,
+            presenceProtocolVersion: 1 });
+        answerMachineRow(createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine }));
+        storage.getState().applyMachines([machine], true, { sourceServerId: scopeServerId, sourceAccountId: 'account-a' });
+        observeMachinePresenceForTest({ serverId: scopeServerId, accountId: 'account-a' }, [machine.id]);
         const screen = await render(<MachinePageScreen />);
-        expect(screen.findAll(node => node.props?.testID === 'machine-detail-open-terminal' && typeof node.props.onPress === 'function').length > 0).toBe(visible);
+        await waitForHomeGovernance(() => expect(screen.findAll(node => node.props?.testID === 'machine-detail-open-terminal' && typeof node.props.onPress === 'function').length > 0).toBe(visible));
     });
 
-    it('offers no header terminal while the machine\'s home folder is unknown on this device', async () => {
+    it('opens the admitted requester root even when Machine metadata has no home folder', async () => {
         const row = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
         const metadata = { ...createMachineFixture().metadata!, homeDir: '' };
         answerMachineRow({ ...row, metadata: encodePlainMachineStoredContent(metadata) });
         storage.getState().applyMachines([], true);
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared: false, metadata })], true);
         const screen = await render(<MachinePageScreen />);
-        expect(screen.findAll(node => node.props?.testID === 'machine-detail-open-terminal')).toHaveLength(0);
-    });
-
-    it('waits in the sheet without asking the daemon until the home folder is known, then opens there', async () => {
-        const metadata = { ...createMachineFixture().metadata!, homeDir: '' };
-        const row = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
-        answerMachineRow({ ...row, metadata: encodePlainMachineStoredContent(metadata) });
-        storage.getState().applyMachines([], true);
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared: false, metadata })], true);
-        const screen = await render(<MachinePageScreen />);
-        await act(async () => showMachineTerminalSheet({ serverId, machineId: 'machine-1', machineName: 'tester' }));
-        await flushHookEffects({ cycles: 3, turns: 2 });
-        expect(screen.findAll(node => node.props?.testID === 'machine-terminal-waiting').length).toBeGreaterThan(0);
-        expect(screen.findAllByType(EmbeddedTerminalPaneFrame)).toHaveLength(0);
-        expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE)).toHaveLength(0);
-        await act(async () => {
-            storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared: false, seq: 2, metadataVersion: 2 })], true);
-        });
-        await flushHookEffects({ cycles: 3, turns: 2 });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-detail-open-terminal')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-detail-open-terminal');
         expect(screen.findAll(node => node.props?.testID === 'machine-terminal-waiting')).toHaveLength(0);
         expect(screen.findAllByType(EmbeddedTerminalPaneFrame).length).toBeGreaterThan(0);
+        await act(async () => {
+            for (const frame of screen.findAllByType(EmbeddedTerminalPaneFrame)) frame.props.controller.onReady(80, 24);
+        });
+        await flushHookEffects({ cycles: 3, turns: 2 });
+        await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE)?.[0])
+            .toMatchObject({ payload: { cwd: '/Users/tester' } }));
     });
 
     it('says the terminal waits on the person and offers the Approvals shortcut when Ask first holds the open', async () => {
         await home.requireUiApproval(serverId, 'machines.terminal.open');
         const screen = await render(<MachinePageScreen />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-detail-open-terminal')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-detail-open-terminal');
         await act(async () => {
             for (const frame of screen.findAllByType(EmbeddedTerminalPaneFrame)) frame.props.controller.onReady(80, 24);
@@ -204,9 +197,10 @@ describe('Machine detail navigation and terminal entry', () => {
             } });
         }
         const screen = await render(<MachinePageScreen />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-detail-open-terminal')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-detail-open-terminal');
         expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
-            props: expect.objectContaining({ serverId, machineId: 'machine-1' }),
+            props: expect.objectContaining({ serverId: scopeServerId, machineId: 'machine-1' }),
             chrome: expect.objectContaining({ testID: 'machine-terminal-modal' }),
         }));
         // react-test-renderer cannot deliver DOM geometry; deliver the actual renderer readiness event.
@@ -222,7 +216,7 @@ describe('Machine detail navigation and terminal entry', () => {
         }
         await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE)).toHaveLength(1));
         const request = boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE)?.[0];
-        expect(request).toMatchObject({ serverId, machineId: 'machine-1', payload: {
+        expect(request).toMatchObject({ serverId: scopeServerId, machineId: 'machine-1', payload: {
             cwd: '/Users/tester', terminalKey: expect.stringMatching(/^machine-shell:machine-1:/),
         } });
     });

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
+import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,21 +15,22 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { MachineReplacementPickerModal, type MachineReplacementPickerCandidate } from '@/components/machines/MachineReplacementPickerModal';
 import { useAccountEncryptionMode } from '@/components/settings/account/useAccountEncryptionMode';
 import type { ManagedMachineHeaderIdentity } from '@/components/settings/machines/managed/ManagedMachineSections';
-import { showMachineEnvironmentApplySheet } from '@/components/settings/machines/managed/MachineEnvironmentApplySheet';
+import { showMachineSetupApplySheet } from '@/components/settings/machines/managed/MachineSetupApplySheet';
 import { showMachineShareSheet } from '@/components/sharing/machines/MachineSharingSection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
-import { Modal } from '@/modal';
+import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 
-import { readMachineTerminalHomeDir, showMachineTerminalSheet } from '@/components/machines/terminal/MachineTerminalSheet';
+import { showMachineTerminalSheet } from '@/components/machines/terminal/MachineTerminalSheet';
+import { useMachineShellAvailability } from '@/hooks/machine/useMachineShellAvailability';
 import { useMachineStartSession } from './useMachineStartSession';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -57,6 +60,10 @@ import { describeMachineUptime } from '@/components/machines/vitals/vitalsFormat
 import { formatMachineBytes, resolveMachineCoreCount } from '@/components/machines/vitals/machineVitalsPresentation';
 import type { MachineVitalsHostFactsV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { machineHeaderOriginKey, takeMachineHeaderOrigin } from './machineHeaderOrigin';
+import { machineDeploymentRoleSummary } from '@/components/machines/services/machineServicesPresentation';
+import { useMachineDeploymentRoles } from '@/components/machines/services/useMachineServiceEnvironments';
+import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useMachinePagePresenceTarget, type MachinePageTarget } from './useMachinePageTarget';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
@@ -89,6 +96,8 @@ function replacementCandidateSubtitle(machine: Machine, label: string): string {
  * Happier created states its power and provider facts instead of a bare "Online". Plan 20's host facts
  * (cores and memory, uptime while online) follow the platform; plan 50 appends keep-awake here.
  */
+type MachineRoleEnvironment = Readonly<{ environmentId: string; title: string; projectSourceId: string; roles: readonly string[] }>;
+
 export function composeMachinePageHeaderFacts(input: Readonly<{
     machine: Machine;
     online: boolean | null;
@@ -97,6 +106,10 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     replacedByMachineLabel: string | null;
     /** The machine's published host facts (plan 20): cores and memory, and when it booted. */
     hostFacts?: MachineVitalsHostFactsV1 | null;
+    /** The Environments that reference this Machine, with their exact roles (lab J13 role chips). */
+    roleEnvironments?: readonly MachineRoleEnvironment[];
+    /** Opens an Environment a role chip names, when the chip names exactly one. */
+    onOpenEnvironment?: (environment: MachineRoleEnvironment) => void;
     nowMs?: number;
 }>): PageHeaderMetaFact[] {
     const { machine } = input;
@@ -108,6 +121,26 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
         text: t('machineDetailPage.online'),
         testID: 'machine-detail-presence',
     }]), ...(input.managedMeta ?? [])];
+    // What the Machine does for Environments follows its presence (lab J13 "Online · Controller · Hetzner"): each role
+    // once, saying what it means and for which Environments. A Machine with no role names none.
+    const { onOpenEnvironment } = input;
+    const roles: PageHeaderMetaFact[] = machineDeploymentRoleSummary(input.roleEnvironments ?? []).map(({ role, environments }) => {
+        const only = environments.length === 1 ? environments[0]! : null;
+        return {
+            key: `role-${role}`,
+            testID: `machine-detail-role-${role}`,
+            text: t(`machineServices.roles.role.${role}`),
+            // Which Environments it does this for, read out with the role (the chip's title in lab J13).
+            accessibilityLabel: [t(`machineServices.roles.role.${role}`), ...environments.map(environment => environment.title)].join(' · '),
+            ...(only && onOpenEnvironment ? { onPress: () => onOpenEnvironment(only) } : {}),
+        };
+    });
+    const presenceEnd = facts.findIndex(fact => fact.key === 'presence' || fact.key === 'managed-power') + 1;
+    facts.splice(presenceEnd, 0, ...roles);
+    // A machine shared with you says whose it is next (lab `m-share` T "Online · Ben's"); an owner without a public
+    // name is left out, never drawn as a bare "'s".
+    const owner = machine.isShared ? machine.access?.custodian.displayName?.trim() : undefined;
+    if (owner) facts.push({ key: 'owner', testID: 'machine-detail-owner', text: t('machines.destinations.ownerOnly', { owner }) });
     const platform = formatOSPlatform(machine.metadata?.platform);
     const arch = machine.metadata?.arch?.trim();
     if (platform) facts.push({ key: 'platform', text: arch ? t('machineDetailPage.platformFact', { platform, arch }) : platform });
@@ -119,6 +152,7 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
         if (input.online) facts.push({ key: 'uptime', testID: 'machine-detail-uptime', text: describeMachineUptime(input.hostFacts.bootedAt, input.nowMs ?? Date.now()) });
     }
     const host = machine.metadata?.host;
+    // Managed identity has provider/native facts; the raw host remains in the machine's technical details.
     if (input.managedMeta === undefined && host && machine.metadata?.displayName && host !== machine.metadata.displayName) facts.push({ key: 'host', text: host });
     if (input.encryptionMode) {
         facts.push(input.encryptionMode === 'e2ee'
@@ -150,6 +184,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const router = useRouter();
     const target = useMachinePagePresenceTarget(props.target);
     const machine = target.machine;
+    const thisComputerMachineId = useThisComputerMachineId();
     const activeAccountScope = useActiveServerAccountScope();
     const { binding } = useServerCredentialAccountScopeBinding(target.serverId);
     const machineAccountScope = binding?.isCurrent() ? binding.scope : null;
@@ -176,16 +211,26 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     // machine's recent paths, so the page hands off with the machine and its Home seeded rather than
     // keeping a second launcher of its own.
     const handleStartSession = useMachineStartSession(target);
-    // A shell on the machine opens through the terminal Action's own admission (agent parity); only the person
-    // who manages the machine is offered one, only while it is online and its home folder is known (its details are
-    // decrypted on this device); the sheet opens in that folder.
+    // The terminal owner supplies the requester's admitted Shell root while this page is presented.
     const machineId = machine?.id;
-    const machineName = props.managedIdentity && machine ? getMachineDisplayName({ ...machine, managedName: props.managedIdentity.name }) : target.machineName;
+    const presented = useLayoutPresentationActive();
+    const machineShell = useMachineShellAvailability({ serverId: target.serverId, machineId,
+        enabled: presented && target.online === true });
+    const machineName = props.managedIdentity && machine
+        ? getMachineDisplayName({ ...machine, managedName: props.managedIdentity.name }) : target.machineName;
     const handleOpenTerminal = React.useCallback(() => {
-        if (machineId) showMachineTerminalSheet({ serverId: target.serverId, machineId, machineName });
-    }, [machineId, machineName, target.serverId]);
-    const canOpenTerminal = target.online && machine?.isShared === false && readMachineTerminalHomeDir(machine) !== null;
+        if (machineId && machineShell?.ok) showMachineTerminalSheet({ serverId: target.serverId, machineId, machineName, machineShell });
+    }, [machineId, machineName, machineShell, target.serverId]);
+    const canOpenTerminal = target.online && machineShell?.ok === true;
 
+    // Roles come from the exact deployment references (plan 30 row 28), read only while the page is presented.
+    const deploymentRoles = useMachineDeploymentRoles({ serverId: target.serverId, machineId: target.machineId ?? '',
+        active: presented && Boolean(target.machineId) });
+    const roleEnvironments = deploymentRoles.environments;
+    const openRoleEnvironment = React.useCallback((environment: MachineRoleEnvironment) => {
+        router.push(deploymentEnvironmentRoute({ serverId: target.serverId, projectSourceId: environment.projectSourceId,
+            environmentId: environment.environmentId }));
+    }, [router, target.serverId]);
     const meta = React.useMemo(() => machine ? composeMachinePageHeaderFacts({
         machine,
         online: target.online,
@@ -193,10 +238,13 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         encryptionMode,
         replacedByMachineLabel: replacement.replacedByMachineLabel,
         hostFacts: published?.host ?? null,
-    }) : [], [language, encryptionMode, machine, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online]);
+        roleEnvironments,
+        onOpenEnvironment: openRoleEnvironment,
+    }) : [], [language, encryptionMode, machine, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, roleEnvironments, openRoleEnvironment]);
 
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const { onRename, renaming } = props;
+    const terminalInMenu = needsYouAction !== null && canOpenTerminal;
     const menuActions = React.useMemo((): PageHeaderMenuAction[] => {
         if (!machine) return [];
         const rename: PageHeaderMenuAction = {
@@ -206,8 +254,8 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         const environmentApply: PageHeaderMenuAction[] = target.online && target.serverId ? [{
             id: 'environment-apply',
             testID: 'machine-detail-menu-environment-apply',
-            title: t('machinePresets.environment.apply'),
-            onSelect: () => showMachineEnvironmentApplySheet({ serverId: target.serverId, machineId: machine.id, machineName: target.machineName }),
+            title: t('machinePresets.setup.apply'),
+            onSelect: () => showMachineSetupApplySheet({ serverId: target.serverId, machineId: machine.id, machineName }),
         }] : [];
         // "Share…" opens the machine's one share sheet, full, with search and Done (lab m-share S); the
         // sheet's title names the machine, so the menu item doesn't repeat (and truncate) it.
@@ -216,11 +264,16 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             id: 'share',
             testID: 'machine-detail-menu-share',
             title: t('shareSheet.documents.shareMenu'),
-            onSelect: () => showMachineShareSheet({ machineId: machine.id, machineName: target.machineName,
-                scope: activeAccountScope, online: target.online, subtitle: meta.map(fact => fact.text).join(' · ') || undefined }),
+            // The sheet's sentences name the machine as copy does ("this machine" while locked), like its Sharing page.
+            onSelect: (intent) => showMachineShareSheet({ machineId: machine.id, machineName: target.machineSentenceName,
+                scope: activeAccountScope, online: target.online, shared: machine.isShared === true,
+                subtitle: meta.map(fact => fact.text).join(' · ') || undefined, anchor: intent?.anchor }),
         }] : [];
-        return [rename, ...share, ...environmentApply, ...replacement.menuActions];
-    }, [language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, target.machineName, target.online, target.serverId]);
+        // A leading needs-you action takes the third button's place, so the row keeps its size and the title never wraps.
+        const terminal: PageHeaderMenuAction[] = terminalInMenu ? [{ id: 'open-terminal', testID: 'machine-detail-menu-open-terminal',
+            title: t('machineDetailPage.openTerminalAction'), onSelect: handleOpenTerminal }] : [];
+        return [...terminal, rename, ...share, ...environmentApply, ...replacement.menuActions];
+    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, machineName, target.online, target.serverId]);
 
     const fallbackDescription = props.managedIdentity?.description ?? t('machineDetailPage.description');
     return (
@@ -228,9 +281,9 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             testID="machine-detail-header"
             wrapPart={wrapPart}
             alwaysShowTitle
-            // The mark and the actions hang from the name's line; the sentence and facts wrap beneath it.
-            actionsLayout="inline"
-            title={machine ? target.machineName : t('machineDetailPage.placeholderTitle')}
+            // The mark and the actions hang from the name's line; the sentence and facts run beneath both (lab `rm` R).
+            actionsLayout="hang"
+            title={machine ? machineName : t('machineDetailPage.placeholderTitle')}
             description={machine && (published || !target.online) ? (
                 <MachineWorkingCountsProvider>
                     <MachineSentence serverId={target.serverId} machineId={machine.id} attention={published?.attention ?? null}
@@ -240,7 +293,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             ) : fallbackDescription}
             leading={(
                 <PageHeaderMarkSlot testID={props.managedIdentity ? 'machine-detail-managed-mark' : undefined}>
-                    {props.managedIdentity?.mark ?? <Icon name="desktop" size={22} color={theme.colors.text.secondary} />}
+                    {props.managedIdentity?.mark ?? <Icon name={resolveMachineKindGlyph({ isThisComputer: machine?.id === thisComputerMachineId, platform: machine?.metadata?.platform })} size={22} color={theme.colors.text.secondary} />}
                 </PageHeaderMarkSlot>
             )}
             meta={meta}
@@ -265,7 +318,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                         disabled={!machineCanSpawn}
                         onPress={handleStartSession}
                     />
-                    {canOpenTerminal ? (
+                    {canOpenTerminal && !terminalInMenu ? (
                         <RoundButton
                             testID="machine-detail-open-terminal"
                             display="secondary"
@@ -339,28 +392,27 @@ const MachineSentence = React.memo(function MachineSentence(props: Readonly<{
     );
 });
 
-/** Replace this machine with another, or undo that: the header `⋯` owns both, with their confirmations. */
-function useMachineReplacementActions(target: MachinePageTarget, accountScope: MachineReachabilityScope | null): Readonly<{
-    menuActions: readonly PageHeaderMenuAction[];
-    replacedByMachineLabel: string | null;
-}> {
-    const language = usePreferredLanguage();
-    const machineListByServerId = useMachineListByServerId();
-    const machine = target.machine;
-    const machineId = target.machineId;
-    const execution = useMountedActionExecution(target.serverId);
-    const [replacingMachineId, setReplacingMachineId] = React.useState<string | null>(null);
-    const [isClearingReplacement, setIsClearingReplacement] = React.useState(false);
-    const allMachines = React.useMemo(
-        () => machineListByServerId[target.serverId] ?? [],
-        [machineListByServerId, target.serverId],
-    );
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const nowMs = useMachinePresenceNowMs(allMachines);
+function isReplacementCandidate(candidate: Machine, machineId: string): boolean {
+    return candidate.id !== machineId && !candidate.revokedAt && !candidate.replacedByMachineId;
+}
 
+/**
+ * The machines that can replace this one, with their names and presence, built only while the picker is
+ * open: the closed header `⋯` needs just whether one exists, so other machines' publications and presence
+ * clocks never redraw the page header.
+ */
+function MachineReplacementPicker(props: CustomModalInjectedProps & Readonly<{
+    serverId: string;
+    machineId: string;
+    accountScope: MachineReachabilityScope | null;
+    onSelectCandidate: (machineId: string) => void;
+}>) {
+    const { serverId, machineId, accountScope } = props;
+    const machines = useMachineListForServer(serverId) ?? EMPTY_MACHINES;
+    const eligible = React.useMemo(() => machines.filter((candidate) => isReplacementCandidate(candidate, machineId)), [machineId, machines]);
+    const reachabilityRevision = useMachineReachabilityRevision();
+    const nowMs = useMachinePresenceNowMs(eligible);
     const candidates = React.useMemo<MachineReplacementPickerCandidate[]>(() => {
-        if (!machineId) return [];
-        const eligible = allMachines.filter((candidate) => candidate.id !== machineId && !candidate.revokedAt && !candidate.replacedByMachineId);
         // Candidates are shown together, so same-named machines are told apart by the naming owner.
         const names = resolveMachineDisplayNames(eligible);
         return eligible.map((candidate) => {
@@ -373,7 +425,34 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
                 online: reachability === 'unknown' ? null : reachability === 'reachable',
             };
         });
-    }, [accountScope, allMachines, machineId, nowMs, reachabilityRevision]);
+    }, [accountScope, eligible, nowMs, reachabilityRevision]);
+    return <MachineReplacementPickerModal onClose={props.onClose} candidates={candidates} onSelectCandidate={props.onSelectCandidate} />;
+}
+
+const EMPTY_MACHINES: readonly Machine[] = [];
+
+/** Replace this machine with another, or undo that: the header `⋯` owns both, with their confirmations. */
+function useMachineReplacementActions(target: MachinePageTarget, accountScope: MachineReachabilityScope | null): Readonly<{
+    menuActions: readonly PageHeaderMenuAction[];
+    replacedByMachineLabel: string | null;
+}> {
+    const language = usePreferredLanguage();
+    const machine = target.machine;
+    const machineId = target.machineId;
+    const execution = useMountedActionExecution(target.serverId);
+    const [replacingMachineId, setReplacingMachineId] = React.useState<string | null>(null);
+    const [isClearingReplacement, setIsClearingReplacement] = React.useState(false);
+    const replacedById = machine?.replacedByMachineId;
+    // A boolean and a name from the Home's list: unchanged by other machines' daemon publications.
+    const hasCandidates = useMachineListForServerSelection(target.serverId, React.useCallback(
+        (machines: readonly Machine[]) => Boolean(machineId) && machines.some((candidate) => isReplacementCandidate(candidate, machineId)),
+        [machineId]));
+    const replacedByMachineLabel = useMachineListForServerSelection(target.serverId, React.useCallback((machines: readonly Machine[]) => {
+        if (!replacedById) return null;
+        const replacement = machines.find((candidate) => candidate.id === replacedById);
+        return replacement ? getMachineDisplayName(replacement) : replacedById;
+    // `language`: the fallback name is localized.
+    }, [replacedById, language]));
 
     const replace = React.useCallback((replacementMachineId: string) => {
         if (!machineId || replacingMachineId) return;
@@ -400,10 +479,10 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
     }, [execution, machine, machineId, replacingMachineId, target.serverId]);
 
     const openPicker = React.useCallback(() => {
-        if (!machineId || replacingMachineId || candidates.length === 0) return;
+        if (!machineId || replacingMachineId || !hasCandidates) return;
         Modal.show({
-            component: MachineReplacementPickerModal,
-            props: { candidates, onSelectCandidate: replace },
+            component: MachineReplacementPicker,
+            props: { serverId: target.serverId, machineId, accountScope, onSelectCandidate: replace },
             chrome: {
                 kind: 'card',
                 title: t('machine.replacementRepair.pickerTitle'),
@@ -414,7 +493,7 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
             },
             closeOnBackdrop: true,
         });
-    }, [candidates, machineId, replace, replacingMachineId]);
+    }, [accountScope, hasCandidates, machineId, replace, replacingMachineId, target.serverId]);
 
     const clear = React.useCallback(() => {
         if (!machineId || isClearingReplacement) return;
@@ -437,24 +516,17 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
         })(), { tag: 'MachinePage.clearMachineReplacement' });
     }, [execution, isClearingReplacement, machineId, target.serverId]);
 
-    const replacedById = machine?.replacedByMachineId;
-    const replacedByMachineLabel = React.useMemo(() => {
-        if (!replacedById) return null;
-        const replacement = allMachines.find((candidate) => candidate.id === replacedById);
-        return replacement ? getMachineDisplayName(replacement) : replacedById;
-    }, [allMachines, replacedById]);
-
     const menuActions = React.useMemo((): PageHeaderMenuAction[] => {
         if (replacedById) {
             return [{ id: 'undo-replacement', testID: 'machine-replacement-repair-undo', title: t('machine.replacementRepair.undo'),
                 loading: isClearingReplacement, onSelect: clear }];
         }
-        if (candidates.length > 0) {
+        if (hasCandidates) {
             return [{ id: 'replace', testID: 'machine-replacement-repair-open', title: t('machine.replacementRepair.replaceWithMachine'),
                 loading: replacingMachineId !== null, onSelect: openPicker }];
         }
         return [];
-    }, [language, candidates.length, clear, isClearingReplacement, openPicker, replacedById, replacingMachineId]);
+    }, [language, hasCandidates, clear, isClearingReplacement, openPicker, replacedById, replacingMachineId]);
 
     return { menuActions, replacedByMachineLabel };
 }

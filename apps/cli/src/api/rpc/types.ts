@@ -1,4 +1,3 @@
-import type { AuthenticatedLocalRootCustody } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 /**
  * Common RPC types and interfaces for both session and machine clients
  */
@@ -9,6 +8,8 @@ import type { CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTok
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import type { AuthenticatedLocalRootCustody } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type {
     SocketRpcRequestPayload,
     SessionActionRpcOriginV1,
@@ -34,6 +35,7 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     ActionExecutorContext,
     'surface' | 'authority' | 'callerPermissionMode' | 'causalPermissionAuthority' | 'callerInputConstraints' | 'actionRequestId' | 'actionCaller'
     | 'externalActionExecutionAuthorization' | 'approvalOrigin' | 'approvedActionReplay'
+    | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
 >> & {
     /** Captured authenticated private-root identity; never serialized in an RPC request. */
@@ -88,8 +90,8 @@ export type RpcHandlerContext = Readonly<{
     requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
     /** Daemon-observed executable facts, supplied only to the private requester effect pipe. */
     capabilitySessionFactories?: import('@/agent/catalog/runtimeEntry').AgentSessionFactoryObservations;
-    /** Host-owned handoff acceptance immediately before physical launch; never transported. */
-    beforeSessionRunnerLaunch?: () => Promise<boolean>;
+    /** Host-owned admission immediately before physical launch; never transported. */
+    beforeSessionRunnerLaunch?: SpawnSessionOptions['beforeSessionRunnerLaunch'];
     /** Verified server ingress authority; never read from decrypted caller input. */
     callerAuthority?: ActionExecutorContext['authority'];
     /** Validated Home stamp from the Session caller's currently hosting Machine. */
@@ -119,7 +121,7 @@ export type RpcHandlerContext = Readonly<{
     workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
     /** Home-validated installed seed request retaining the original SOURCE actor and Target prepare. */
     workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
-    /** Host-bound final admission check after preparation, never accepted from caller input. */
+    /** Host-bound lifetime of the admitted request; checks local cancellation, never caller input. */
     verifyMachineAdmissionCurrent?: () => Promise<boolean>;
     /** Same current Machine admission owner, independent of a completed/cancelled transport request. */
     verifyMachineAuthorityCurrent?: () => Promise<boolean>;
@@ -165,12 +167,14 @@ export const RPC_ADMISSION_PREDICATES = [
     'machine_currentness', 'machine_authority_currentness', 'request_cancelled',
     'session_authorization', 'session_target', 'authorization_unavailable',
     'discussion_approval', 'discussion_reply_custody', 'discussion_reply_result', 'discussion_publication',
+    'prepared_transfer_phase',
 ] as const;
 export type RpcAdmissionPredicate = (typeof RPC_ADMISSION_PREDICATES)[number];
 
 export type RpcAuthorizationResult =
     | Readonly<{ ok: true; workspaceSyncPrivateExecution?: RpcHandlerContext['workspaceSyncPrivateExecution'] }>
-    | Readonly<{ ok: false; error: string; errorCode?: string; admissionPredicate?: RpcAdmissionPredicate }>;
+    | Readonly<{ ok: false; error: string; errorCode?: string; admissionPredicate?: RpcAdmissionPredicate;
+        failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1 }>;
 
 export type RpcHandlerActiveExecution = Readonly<{
     method: string;
@@ -190,7 +194,6 @@ type RpcHandlerCommonConfig = {
     scopePrefix: string;
     /** Installed receiving lifecycle, never a caller-selected RPC parameter. */
     scopeKind?: 'session';
-
     /** Actual local runtime Machine, independently of Session metadata. */
     localMachineId?: string | null;
     /** Opens only the owner Session's existing codec after live Home admission. */
@@ -215,6 +218,8 @@ type RpcHandlerCommonConfig = {
         machineAdmission?: SocketRpcMachineAdmissionContextV1;
         /** Host-private admitted Session wake lifetime; never read from RPC input. */
         verifyMachineAdmissionCurrent?: () => Promise<boolean>;
+        /** Home-only physical receiver fact; authorizer verifies provenance and exact tuple. */
+        receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
@@ -223,7 +228,7 @@ type RpcHandlerCommonConfig = {
         /** Whole original SOURCE root, independently verified by Home before retention. */
         callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
         signal?: AbortSignal;
-    }>) => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
+    }>, source?: 'authenticated_home_socket') => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
     /** Installation-private custody, opened only after the Home transport admission above. */
     prepareRequesterAccountContext?: import('@/daemon/externalActions/executeExternalAction').PrepareExternalActionRequesterAccountContext;
     /** The actual receiving Machine's incumbent V2 envelope key owner; never a relay's Account material. */

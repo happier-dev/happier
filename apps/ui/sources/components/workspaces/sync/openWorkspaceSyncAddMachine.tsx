@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol';
+import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -30,14 +30,16 @@ import {
     buildWorkspaceContentPolicy,
     parseSessionHandoffIgnoredIncludeGlobs,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
-import { useMachineListByServerId, useMachineListStatusByServerId, useMachineRecordValues } from '@/sync/domains/state/storage';
+import { useMachineListStatusByServerId, useMachineRecordValues, useMachineListByServerId } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
 import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate } from '@/sync/ops/workspaceSyncRelationshipCreate';
 import { useWorkspaceSyncTargetFolderState } from './useWorkspaceSyncTargetFolderState';
+import { useWorkspaceSyncRequesterAvailability } from '@/hooks/machine/useWorkspaceSyncRequesterAvailability';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
@@ -51,9 +53,11 @@ import { randomUUID } from '@/platform/randomUUID';
 import { WorkspaceActivationContentPolicyFields, WorkspaceActivationDestinationFields, WorkspaceActivationModeField } from '@/components/workspaces/activation/WorkspaceActivationEditor';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
-type SourceWorkspace = Readonly<{ id?: string; serverId: string; machineId: string; rootPath: string }>;
+type SourceWorkspace = Readonly<{ serverId: string; machineId: string }> & (
+    Readonly<{ id?: string; rootPath: string }> | Readonly<{ id: string; rootPath?: string }>
+);
 type AddMachineOperation = { inFlight: boolean; abortController: AbortController | null };
-type AddMachineOptions = Readonly<{ targetMachineId?: string; purpose?: 'worker_clean_copy' }>;
+type AddMachineOptions = Readonly<{ targetMachineId?: string; purpose?: 'worker_clean_copy'; replace?: WorkspaceSyncRelationshipSummary }>;
 type AddMachineProps = CustomModalInjectedProps & Readonly<{
     source: SourceWorkspace;
     onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void;
@@ -104,11 +108,15 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     const machineListStatusByServerId = useMachineListStatusByServerId();
     const activeMachines = useMachineRecordValues() ?? [];
     const summaries = useWorkspaceSyncRelationshipSummaries(undefined, props.source.serverId);
+    const sourceRef = useProjectAccountWorkspaceRef(props.source.rootPath === undefined ? props.source.id ?? null : null, props.source.serverId);
+    const source = props.source.rootPath !== undefined
+        ? { ...props.source, rootPath: props.source.rootPath }
+        : sourceRef?.machineId === props.source.machineId ? sourceRef : null;
     const linkedSource = summaries.some((summary) => props.source.id
         && (summary.alpha.workspaceRefId === props.source.id || summary.beta.workspaceRefId === props.source.id));
     const hub = linkedSource
         ? selectWorkspaceSyncAddMachineHub(summaries, props.source.id ?? '')
-        : props.source;
+        : source;
     const hubConflict = linkedSource && !hub;
     const allMachines = React.useMemo(() => resolveServerScopedMachines({
         serverId: props.source.serverId,
@@ -135,13 +143,14 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     }, [props.source.serverId]);
 
     const [machineId, setMachineId] = React.useState<string | null>(props.options.targetMachineId ?? null);
-    const [targetPath, setTargetPath] = React.useState('');
-    const [mode, setMode] = React.useState<WorkspaceSyncPersistentModeV1>('keep_synced');
+    const replacement = props.options.replace;
+    const [targetPath, setTargetPath] = React.useState(replacement?.beta.workspaceRef?.rootPath ?? '');
+    const [mode, setMode] = React.useState<WorkspaceSyncPersistentModeV1>(replacement?.relationship.mode ?? 'keep_synced');
     const [chosenDestinationIntent, setDestinationIntent] = React.useState<WorkspaceSyncDestinationIntentV1>(
         props.options.purpose === 'worker_clean_copy' ? 'materialize_from_source_workspace' : 'use_existing');
-    const [contentSelection, setContentSelection] = React.useState<'git_worktree' | 'all_files'>('git_worktree');
-    const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>('exclude');
-    const [patternsDraft, setPatternsDraft] = React.useState('');
+    const [contentSelection, setContentSelection] = React.useState<'git_worktree' | 'all_files'>(replacement?.relationship.contentPolicy.selection ?? 'git_worktree');
+    const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>(replacement?.relationship.contentPolicy.extraIncludePatterns.length ? 'include_selected' : 'exclude');
+    const [patternsDraft, setPatternsDraft] = React.useState(replacement?.relationship.contentPolicy.extraIncludePatterns.join('\n') ?? '');
     const [openMenu, setOpenMenu] = React.useState<'mode' | 'destination' | null>(null);
     const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
     const [pendingApprovalId, setPendingApprovalId] = React.useState<string | null>(null);
@@ -154,7 +163,13 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     const submissionInFlight = React.useRef(false);
 
     const selectedMachine = machines.find((machine: Machine) => machine.id === machineId) ?? null;
-    const homeDir = String(selectedMachine?.metadata?.homeDir ?? '').trim() || '/home';
+    const sourceAvailability = useWorkspaceSyncRequesterAvailability({ serverId: props.source.serverId, machineId: hub?.machineId });
+    const destinationAvailability = useWorkspaceSyncRequesterAvailability({ serverId: props.source.serverId,
+        machineId: selectedMachine?.id === hub?.machineId ? null : selectedMachine?.id });
+    const targetAvailability = selectedMachine?.id === hub?.machineId ? sourceAvailability : destinationAvailability;
+    const sourceRoots = sourceAvailability?.kind === 'available' ? sourceAvailability : null;
+    const targetRoots = targetAvailability?.kind === 'available' ? targetAvailability : null;
+    const homeDir = targetRoots?.homeDir ?? '';
     const resolvedPath = resolveAbsolutePath(targetPath.trim(), homeDir);
     const pathSafety = evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
         sourcePath: resolvedPath,
@@ -176,13 +191,13 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     // A Git link needs a checkout already in the folder to "use"; an empty or missing folder can only be
     // prepared, so that is the effective choice while the folder is such (the person's own choice returns
     // when the folder changes).
-    const folderChoiceValid = !targetPath.trim() || !pathSafety.allowed || insideSource ? null : resolvedPath;
+    const folderChoiceValid = !targetRoots || !targetPath.trim() || !pathSafety.allowed || insideSource ? null : resolvedPath;
     const targetFolderState = useWorkspaceSyncTargetFolderState({
         machineId: selectedMachine?.id ?? null, serverId: props.source.serverId, path: folderChoiceValid,
     });
     const useExistingNeedsFiles = contentSelection === 'git_worktree'
         && (targetFolderState === 'missing' || targetFolderState === 'empty');
-    const destinationIntent: WorkspaceSyncDestinationIntentV1 = useExistingNeedsFiles
+    const destinationIntent: WorkspaceSyncDestinationIntentV1 = replacement ? 'use_existing' : useExistingNeedsFiles
         ? 'materialize_from_source_workspace' : chosenDestinationIntent;
 
     const invalidateDraft = React.useCallback(() => {
@@ -196,6 +211,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         ? t('workspaceSync.start.blocked.targetMachine')
         : !canAttemptMachineSpawn({ machine: selectedMachine, selectedMachineId: machineId, scope })
             ? t('workspaceSync.start.blocked.targetMachineOffline')
+        : !sourceRoots || !targetRoots
+            ? t('workspaceSync.error.needsAttention')
         : !targetPath.trim() || !pathSafety.allowed || insideSource
             ? t('workspaceSync.start.blocked.destinationFolder')
             : null;
@@ -251,7 +268,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     const submit = React.useCallback(async () => {
         if (submissionInFlight.current || busy || phase === 'linked' || inspectRequired) return;
         if (!binding?.isCurrent()) return;
-        if (existing) {
+        if (existing && !replacement) {
             props.onOpenExisting(existing);
             props.onClose();
             return;
@@ -267,6 +284,10 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             await confirmAndApprove(pendingApprovalId, controller.signal);
             return;
         }
+        if (replacement && !await Modal.confirm(
+            t('workspaceSync.replace.title'), t('workspaceSync.replace.confirm'),
+            { cancelText: t('common.cancel'), confirmText: t('workspaceSync.replace.action'), destructive: true },
+        )) return;
         setError(null);
         setPhase('submitting');
         let sourceWorkspaceRefId = hub.id ?? materializedSourceRefId;
@@ -275,7 +296,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
                 const opened = await createDefaultActionExecutor().execute('projects.open', {
                     serverId: props.source.serverId, machineId: props.source.machineId,
-                    source: { kind: 'folder', path: props.source.rootPath }, materialization: { kind: 'attach' },
+                    source: { kind: 'folder', path: hub.rootPath }, materialization: { kind: 'attach' },
                 }, { surface: 'ui', serverId: props.source.serverId, signal: controller.signal });
                 if (!opened.ok) {
                     // A declined approval ran nothing: the person answered, nothing failed.
@@ -302,6 +323,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         const input = {
             v: 1 as const,
             sourceWorkspaceRefId,
+            ...(replacement ? { replaceRelationshipId: replacement.relationship.relationshipId } : {}),
             targetMachineId: selectedMachine.id,
             targetPath: resolvedPath,
             mode,
@@ -311,6 +333,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 contentSelection,
                 includeIgnoredMode,
                 ignoredIncludeGlobs: parseSessionHandoffIgnoredIncludeGlobs(patternsDraft),
+                ...(replacement ? { extraIgnorePatterns: replacement.relationship.contentPolicy.extraIgnorePatterns } : {}),
             }),
         };
         const fingerprint = JSON.stringify(input);
@@ -359,7 +382,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             <RoundButton display="inverted" title={t(phase === 'linked' ? 'common.done' : 'common.cancel')} onPress={props.onClose} />
             <RoundButton
                 testID="workspace-sync-add-machine-submit"
-                title={existing ? t('workspaceSync.diagnostics.title') : pendingApprovalId ? t('sessionHandoff.targetApproval.title') : t('settings.addMachine')}
+                title={replacement ? t('workspaceSync.replace.action') : existing ? t('workspaceSync.diagnostics.title') : pendingApprovalId ? t('sessionHandoff.targetApproval.title') : t('settings.addMachine')}
                 onPress={() => void submit()}
                 disabled={Boolean(blockedReason) || busy || phase === 'linked' || inspectRequired}
                 accessibilityHint={blockedReason ?? undefined}
@@ -368,24 +391,24 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     ), [blockedReason, busy, existing, inspectRequired, pendingApprovalId, phase, props.onClose, submit]);
     const chrome = React.useMemo(() => ({
         kind: 'card',
-        title: t('settings.addMachine'),
+        title: t(replacement ? 'workspaceSync.replace.title' : 'settings.addMachine'),
         subtitle: t('workspaceSync.title'),
         testID: 'workspace-sync-add-machine-modal',
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92 },
         footer,
-    } as const), [footer]);
+    } as const), [footer, replacement]);
     useModalCardChrome(props.setChrome, chrome);
 
     return (
         <ItemList presentation="grouped" keyboardAware style={{ paddingTop: 0 }}>
             {hub ? <Item
                 title={t('workspaceSync.endpoint.source', {
-                    label: formatPathRelativeToHome(hub.rootPath, hubMachine?.metadata?.homeDir ?? undefined),
+                    label: formatPathRelativeToHome(hub.rootPath, sourceRoots?.homeDir),
                 })}
                 detail={hubMachineLabel}
                 mode="info"
             /> : null}
-            <WorkspaceActivationDestinationFields
+            {replacement ? <Item title={t('settingsSession.handoff.targetBootstrap.title')} subtitle={replacement.beta.workspaceRef?.rootPath} mode="info" /> : <WorkspaceActivationDestinationFields
                 machine={{
                     machines, selectedMachine, serverId: props.source.serverId, showSearch: true, presentation: 'dropdown',
                     showCliGlyphs: false, autoDetectCliGlyphs: false, disableOfflineMachines: true, describeMachine,
@@ -395,7 +418,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 }}
                 path={{
                     machineHomeDir: homeDir, initialValue: targetPath, initialSuggestionMode: 'history',
-                    favorites: emptyPaths, recents: emptyPaths, machineId,
+                    favorites: emptyPaths, recents: emptyPaths, machineId: targetRoots ? machineId : null,
+                    browseStartPath: targetRoots?.workspaceRoot ?? undefined,
                     serverId: props.source.serverId,
                     machinePlatform: machineMetadataPlatformToTarget(selectedMachine?.metadata?.platform),
                     onCommit: (path) => { setTargetPath(path); invalidateDraft(); },
@@ -404,7 +428,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 }}
                 pathTitle={t('settingsSession.handoff.targetBootstrap.title')}
                 blockedReason={blockedReason}
-            />
+            />}
             <ItemGroup>
                 <WorkspaceActivationModeField
                     open={openMenu === 'mode'} onOpenChange={(open) => setOpenMenu(open ? 'mode' : null)}
@@ -413,7 +437,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                     onSelect={(value) => { setMode(value as WorkspaceSyncPersistentModeV1); setOpenMenu(null); invalidateDraft(); }}
                 />
                 {mode === 'keep_both_in_sync' ? <Item title={t('workspaceSync.addMachine.editableCopyHint')} mode="info" /> : null}
-                <WorkspaceActivationModeField
+                {replacement ? null : <WorkspaceActivationModeField
                     open={openMenu === 'destination'} onOpenChange={(open) => setOpenMenu(open ? 'destination' : null)}
                     selectedId={destinationIntent} title={t('workspaceSync.addMachine.folderSetup')}
                     subtitle={t(destinationIntent === 'use_existing' ? 'settingsSession.handoff.targetBootstrap.useExistingSubtitle' : 'settingsSession.handoff.targetBootstrap.materializeSubtitle')}
@@ -424,7 +448,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                         { id: 'materialize_from_source_workspace', title: t('settingsSession.handoff.targetBootstrap.materializeTitle'), subtitle: t('settingsSession.handoff.targetBootstrap.materializeSubtitle') },
                     ]}
                     onSelect={(value) => { setDestinationIntent(value as WorkspaceSyncDestinationIntentV1); setOpenMenu(null); invalidateDraft(); }}
-                />
+                />}
             </ItemGroup>
             <ExpandableItem
                 expanded={advancedExpanded}
@@ -441,7 +465,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                     testIdPrefix="workspace-sync-add-machine"
                 />
             </ExpandableItem>
-            {existing ? <Item title={t('settingsSession.handoff.workspaceMode.relationshipSelected')} mode="info" /> : null}
+            {existing && !replacement ? <Item title={t('settingsSession.handoff.workspaceMode.relationshipSelected')} mode="info" /> : null}
             {statusLine ? (
                 <SurfaceStateCard
                     testID="workspace-sync-add-machine-status"
@@ -469,7 +493,7 @@ export function openWorkspaceSyncAddMachine(source: SourceWorkspace, onOpenExist
     Modal.show({
         component: WorkspaceSyncAddMachineModal,
         props: { source, onOpenExisting, operation, options },
-        accessibilityLabel: t('settings.addMachine'),
+        accessibilityLabel: t(options.replace ? 'workspaceSync.replace.title' : 'settings.addMachine'),
         closeOnBackdrop: true,
         onDismissRequest: () => {
             if (!operation.inFlight) return true;
@@ -481,7 +505,8 @@ export function openWorkspaceSyncAddMachine(source: SourceWorkspace, onOpenExist
 }
 
 /** U3's explicit recovery action opens Sync's incumbent creator; it never retries Run. */
-export function openWorkspaceSyncWorkerCopySetup(workspace: WorkspaceAddressV1, refusal: unknown,
+export function openWorkspaceSyncWorkerCopySetup(workspace: Pick<WorkspaceAddressV1, 'serverId' | 'workspaceId' | 'machineId'>
+    & Partial<Pick<WorkspaceAddressV1, 'rootPath'>>, refusal: unknown,
     onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void): boolean {
     const parsed = ProjectWorkerNoAcceptanceFailureDetailsV1Schema.safeParse(refusal);
     if (!parsed.success || parsed.data.reason !== 'worker_copy_missing' || !parsed.data.workerCopy) return false;
@@ -492,4 +517,17 @@ export function openWorkspaceSyncWorkerCopySetup(workspace: WorkspaceAddressV1, 
         machineId: workspace.machineId, rootPath: workspace.rootPath }, onOpenExisting,
         { targetMachineId: facts.targetMachineId, purpose: 'worker_clean_copy' });
     return true;
+}
+
+/** Immutable mode and policy changes always use the explicit replacement Action. */
+export function openWorkspaceSyncReplaceRelationship(summary: WorkspaceSyncRelationshipSummary,
+    onOpenExisting: (summary: WorkspaceSyncRelationshipSummary) => void): void {
+    const source = summary.alpha.workspaceRef;
+    const target = summary.beta.workspaceRef;
+    if (!source || !target) return;
+    openWorkspaceSyncAddMachine(source, onOpenExisting, {
+        targetMachineId: target.machineId,
+        ...(summary.relationship.provenance?.kind === 'worker_clean_copy' ? { purpose: 'worker_clean_copy' } : {}),
+        replace: summary,
+    });
 }

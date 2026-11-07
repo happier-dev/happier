@@ -1,8 +1,9 @@
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { CliActionDepsParams } from './types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { ManagedMachineActionIdV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -16,15 +17,14 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import type { callExactMachineRpc, callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-export function executionRunAuthorityCeiling(opts?: Pick<ActionExecutorContext, 'authority'>): Readonly<{
-    authorityCeiling?: 'account_automation';
-  }> {
-    return opts?.authority === 'account_automation' ? { authorityCeiling: 'account_automation' } : {};
-  }
+
+export { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
+
 export type CliMachineActionCall = (input: Readonly<{
     processEnvironmentRead?: RpcLocalActionContext['processEnvironmentRead'];
     machineId: string;
@@ -95,6 +95,7 @@ export function createCliMachineActionTransport(
       ...ACTION_ID_FAMILIES_V1.machine_work_summary,
       ...ACTION_ID_FAMILIES_V1.machine_vitals,
       ...ACTION_ID_FAMILIES_V1.machine_resources,
+      ...ACTION_ID_FAMILIES_V1.machine_reachability,
       ...ACTION_ID_FAMILIES_V1.machine_processes,
       ...ACTION_ID_FAMILIES_V1.machine_storage,
       ...ACTION_ID_FAMILIES_V1.machine_guard,
@@ -103,11 +104,14 @@ export function createCliMachineActionTransport(
       const method = getActionSpec(actionId).bindings?.rpcMethod;
       return method ? [method] : [];
     }),
+    // The command Action's installed transport uses the legacy shell method.
+    RPC_METHODS.BASH,
     // Native browser stores belong to the OS user. Always spend authenticated
     // Machine ingress so a shared-Machine Use requester cannot bypass Manage locally.
     RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES,
     RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
     RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY,
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY,
     RPC_METHODS.DAEMON_VITALS_WATCH, RPC_METHODS.DAEMON_PROCESSES_WATCH,
     RPC_METHODS.DAEMON_STORAGE_WATCH, RPC_METHODS.DAEMON_GUARD_WATCH,
     // Issuer-side approval has no receiving Machine stamp. Open's ordinary
@@ -117,6 +121,10 @@ export function createCliMachineActionTransport(
     // approval replay does not carry. Direct-only hosts can still install
     // bundled tools; configured definitions remain refused without admission.
     ...(params.credentials ? [
+      // Workflow materialization also observes the same Machine after durable
+      // approval replay. Native detection needs fresh Home admission, not the
+      // unadmitted direct hop available to this host-local executor.
+      RPC_METHODS.CAPABILITIES_DETECT,
       RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
       RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
       RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL,
@@ -143,7 +151,10 @@ export function createCliMachineActionTransport(
     if (!await isMachineActionServerScopeCurrent(input)) {
       throw Object.assign(new Error('server_scope_mismatch'), { code: 'server_scope_mismatch' });
     }
-    if (input.context?.actionCaller?.kind === 'workflowRun' && !input.context.externalActionExecutionAuthorization
+    const workflowCaller = input.context?.actionCaller;
+    const workflowOrigin = input.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
+    if (input.context && workflowCaller?.kind === 'workflowRun'
+      && (!workflowOrigin || workflowOrigin.runId !== workflowCaller.runId || workflowOrigin.requestId !== input.context?.actionRequestId)
       && input.effectActionId && ManagedMachineActionIdV1Schema.safeParse(input.effectActionId).success) {
       const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
       if (!params.credentials || !publisherMachineId || !params.serverIdentityId
@@ -161,20 +172,6 @@ export function createCliMachineActionTransport(
       return execution.result;
     }
     const direct = params.machineActionDirectTargetTransport;
-    const templateUpdateRoot = input.context?.externalActionExecutionAuthorization;
-    if (input.method === RPC_METHODS.MACHINE_SETUP_PLAN && input.effectActionId === 'machines.setup.plan'
-      && templateUpdateRoot?.binding.actionId === 'template.updates.apply' && input.context?.originalActionEnvelope) {
-      if (!params.credentials || !params.serverIdentityId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-      const execution = await dispatchOriginalAccountAction({ actionId: 'machines.setup.plan', input: input.request,
-        requestId: templateUpdateRoot.binding.requestId, target: { kind: 'machine', machineId: input.machineId },
-        credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-        serverIdentityId: params.serverIdentityId, authority: input.authority ?? input.context.authority,
-        templateRequesterSetupPlanContinuation: { authorization: templateUpdateRoot, originalActionEnvelope: input.context.originalActionEnvelope },
-        ...(input.signal ? { signal: input.signal } : {}) });
-      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode),
-        execution.details === undefined ? {} : { details: execution.details });
-      return execution.result;
-    }
     const externalRequest = input.context?.externalActionCredential !== undefined
       || input.context?.externalActionExecutionAuthorization !== undefined;
     if (externalRequest && (!params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId
@@ -185,6 +182,22 @@ export function createCliMachineActionTransport(
     // serialized self-RPC drops its private readers; spend it at this installed owner.
     const [{ readRequesterAccountActionContext }, { callExactMachineRpc, callMachineRpc }] = await Promise.all([import("@/daemon/sessionEncryption/requesterAccountActionContext"), import("@/session/transport/rpc/machineRpc")]);
     const requester = readRequesterAccountActionContext(input.context?.externalActionExecutionAuthorization);
+    const normalSyncRoot = input.context?.externalActionExecutionAuthorization;
+    if (direct?.workspaceSyncPreflightTarget && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
+      && normalSyncRoot && isWorkspaceSyncRelationshipWriteActionId(normalSyncRoot.binding.actionId)
+      && normalSyncRoot.binding.machineId === direct.machineId && input.context) {
+      return direct.workspaceSyncPreflightTarget(HandoffTargetReplacementPreflightV1Schema.parse(input.request), {
+        signal: input.signal ?? input.context.abortSignal ?? new AbortController().signal,
+        machineAdmission: input.context.machineAdmission,
+        verifyMachineAdmissionCurrent: input.context.verifyMachineAdmissionCurrent,
+        callerAuthority: input.authority ?? input.context.authority,
+        callerInputAuthorization: normalSyncRoot, originalActionEnvelope: input.context.originalActionEnvelope,
+        callerInputConstraints: input.context.callerInputConstraints, sessionActionOrigin: input.context.sessionActionOrigin,
+        localActionContext: { ...input.context,
+          executionRunTargetMachineId: input.context.executionRunTargetMachineId ?? undefined,
+          executionRunWorkflowRunId: input.context.executionRunWorkflowRunId ?? undefined },
+      });
+    }
     const admittedLocalRequester = requester?.authorization.binding.machineId === input.machineId;
     const managedBinding = input.context?.externalActionExecutionAuthorization?.binding;
     const managedAdmission = input.context?.machineAdmission;
@@ -193,25 +206,38 @@ export function createCliMachineActionTransport(
       && managedBinding.installationId === managedAdmission.installationId
       && managedBinding.accountId === managedAdmission.actorAccountId
       && managedBinding.custodianAccountId === managedAdmission.custodianAccountId);
-    // This in-process admission was installed only after opening the exact
-    // controller codec and rechecking Home. Reuse it for the two scoped reads;
-    // serializing a self-RPC would lose that private receiver authority.
-    const admittedLocalManaged = Boolean(managedBinding && managedAdmission
-      && isManagedControllerCodecActionV1(managedBinding)
-      && managedBinding.managedAdmission?.actionId === input.effectActionId
-      && managedBinding.actionId === input.effectActionId
-      && (input.effectActionId === 'action.operations.list' && input.method === ACTION_OPERATION_RPC_METHODS_V2.list
-        || input.effectActionId === 'action.operations.get' && input.method === ACTION_OPERATION_RPC_METHODS_V2.get)
-      && managedBinding.machineId === input.machineId && managedAdmission.machineId === input.machineId
-      && managedBinding.installationId === managedAdmission.installationId
-      && managedBinding.accountId === managedAdmission.actorAccountId
-      && managedBinding.custodianAccountId === managedAdmission.custodianAccountId
-      && input.context?.verifyMachineAdmissionCurrent && await input.context.verifyMachineAdmissionCurrent());
-    // Spend the installed native Action admission, including its exact-target preview.
+    // The receiving signed Action already owns this native invocation. Delegate
+    // its exact method with that private context: a serialized self-RPC loses
+    // operation acceptance and cannot reuse an Action-envelope proof as an RPC proof.
+    // Role/target authorization for this method was decided once by Home's Action
+    // admission (machineAccess method policy); invokeLocal spends that receiving
+    // Machine admission and does not re-authorize the role.
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && managedBinding.actionId === input.effectActionId
       && resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId);
+    // This in-process admission was installed only after opening the exact
+    // controller codec at Home. Reuse it for the two scoped reads; serializing
+    // a self-RPC would lose that private receiver authority. A foreign requester
+    // reaches only the effects named here, so the allowlist stays.
+    const admittedLocalManaged = Boolean(boundToThisMachine && managedBinding
+      && isManagedControllerCodecActionV1(managedBinding)
+      && managedBinding.managedAdmission?.actionId === input.effectActionId
+      && managedBinding.actionId === input.effectActionId
+      && (input.effectActionId === 'action.operations.list' && input.method === ACTION_OPERATION_RPC_METHODS_V2.list
+        || input.effectActionId === 'action.operations.get' && input.method === ACTION_OPERATION_RPC_METHODS_V2.get));
+    const originalRequester = input.context?.verifiedExternalActionRequester;
+    // Options admission already authorized discovery at this installed Machine.
+    // Keep that original proof through the native effect gate, rather than
+    // re-entering Account HTTP under the child's ungranted inventory Action.
+    const admittedLocalDiscovery = Boolean(boundToThisMachine && input.context?.externalActionCredential && managedBinding
+      && managedBinding.actionId === 'action.options.resolve'
+      && input.method === RPC_METHODS.CAPABILITIES_INVOKE
+      && input.request && typeof input.request === 'object' && 'method' in input.request
+      && (input.effectActionId === 'agents.models.list' && input.request.method === 'probeModels'
+        || input.effectActionId === 'agents.config_options.list' && input.request.method === 'probeConfigOptions')
+      && originalRequester && originalRequester.authorization === input.context.externalActionExecutionAuthorization
+      && managedBinding.installationId === params.externalActionMachineInstallationId);
     const admittedProcessRead = admittedLocalRequester && input.processEnvironmentRead !== undefined
       && [RPC_METHODS.MACHINES_PROCESSES_LIST, RPC_METHODS.MACHINES_PROCESSES_GET, RPC_METHODS.MACHINES_PROCESSES_CHECK]
         .some(method => method === input.method);
@@ -220,9 +246,15 @@ export function createCliMachineActionTransport(
     // and let the canonical protocol map classify ordinary SCM callers.
     const requiresScmSessionIngress = input.authorization && !admittedLocalRequester
       && input.method.startsWith('scm.') && resolveSocketRpcSessionAuthorization(input.method) !== null;
-    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequester || admittedLocalManaged || admittedLocalAction)
-      && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalAction)) {
+    // Native command delegation retains its host-private receiving admission;
+    // the installed receiver still owns target/currentness and execution identity.
+    const admittedLocalCommand = input.method === RPC_METHODS.BASH && input.effectActionId === 'machines.command.run'
+      && input.context?.machineAdmission?.machineId === input.machineId;
+    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
+      && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalCommand || admittedLocalAction)) {
       const localActionContext: RpcLocalActionContext = {
+        ...(input.context?.originalActionEnvelope
+          ? { originalActionEnvelope: input.context.originalActionEnvelope } : {}),
         ...(input.context?.authenticatedLocalRootCustody
           ? { authenticatedLocalRootCustody: input.context.authenticatedLocalRootCustody } : {}),
         ...(admittedProcessRead ? { processEnvironmentRead: input.processEnvironmentRead } : {}),
@@ -231,7 +263,7 @@ export function createCliMachineActionTransport(
           && typeof input.request === 'object' && 'type' in input.request && input.request.type === 'resume-session'
           ? { resumeActionContext: input.context } : {}),
         ...(input.context?.surface ? { surface: input.context.surface } : {}),
-        ...((admittedLocalRequester || admittedLocalManaged || admittedLocalAction) && input.context?.externalActionExecutionAuthorization
+        ...((admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction) && input.context?.externalActionExecutionAuthorization
           ? { externalActionExecutionAuthorization: input.context.externalActionExecutionAuthorization } : {}),
         ...((input.authority ?? input.context?.authority) ? { authority: input.authority ?? input.context?.authority } : {}),
         ...(input.context?.actionCaller ? { actionCaller: input.context.actionCaller } : {}),
@@ -261,7 +293,8 @@ export function createCliMachineActionTransport(
         machineAdmission: host.machineAdmission,
         verifyMachineAdmissionCurrent: host.verifyMachineAdmissionCurrent,
         callerAuthority: input.authority ?? host.authority,
-        callerInputAuthorization: host.callerInputAuthorization,
+        callerInputAuthorization: host.callerInputAuthorization
+          ?? (admittedLocalDiscovery ? host.externalActionExecutionAuthorization : undefined),
         callerInputConstraints: host.callerInputConstraints,
         sessionActionOrigin: host.sessionActionOrigin,
         originalActionEnvelope: host.originalActionEnvelope,
@@ -287,8 +320,8 @@ export function createCliMachineActionTransport(
     const reviewedOpinionDirectoryRead = input.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
       && input.effectActionId === 'session.spawn_new'
       && requester?.authorization.binding.actionId === 'discussion.second_opinion.start';
-    const reviewedSetupPlanRead = input.method === RPC_METHODS.MACHINE_SETUP_PLAN && input.effectActionId === 'machines.setup.plan'
-      && (requester?.authorization.binding.actionId === 'machines.setup.plan' || requester?.authorization.binding.actionId === 'machines.setup.apply');
+    const reviewedSetupPlanRead = isMachineSetupPlanRpcChildV1({ rootActionId: requester?.authorization.binding.actionId,
+      effectActionId: input.effectActionId, method: input.method });
     const credentials = reviewedOpinionDirectoryRead || reviewedSetupPlanRead ? requester!.credentials : params.credentials;
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
@@ -303,7 +336,7 @@ export function createCliMachineActionTransport(
         && params.externalActionMachineRequestPrivateKey ? { externalAction: { context: input.context, effectActionId: input.effectActionId,
           installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey } } : {}),
       ...(input.authorization ? { authorization: input.authorization } : {}),
-      ...executionRunAuthorityCeiling(input),
+      ...executionRunAuthorityCeiling({ authority: input.authority ?? input.context?.authority }),
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
       ...(input.waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),

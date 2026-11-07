@@ -1,17 +1,22 @@
-import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
-import { createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
-import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
-import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
-import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
-import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { Buffer } from 'node:buffer';
 import axios from 'axios';
 import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+
+const nativeTerminalFilesystem = vi.hoisted(() => ({ workspace: undefined as undefined | { path: string; backing: string } }));
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  return { ...actual, async realpath(path: Parameters<typeof actual.realpath>[0]) {
+    if (String(path) === nativeTerminalFilesystem.workspace?.path) {
+      await actual.realpath(nativeTerminalFilesystem.workspace.backing);
+      return String(path);
+    }
+    return actual.realpath(path);
+  } };
+});
 
 import {
   TERMINAL_STREAM_MAX_FRAMES,
@@ -25,7 +30,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerMachineTerminalRpcHandlers as registerUnadmittedMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import * as ptyBoundary from '@/terminal/pty/provider';
 import * as processBoundary from '@happier-dev/cli-common/process';
@@ -51,7 +56,6 @@ import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncr
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import nacl from 'tweetnacl';
 import { updateSettings } from '@/persistence';
 import { reloadConfiguration } from '@/configuration';
@@ -62,6 +66,20 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { DaemonTerminalListResponseV1Schema } from '@happier-dev/protocol/daemon/terminal';
+import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
+import { createAgentIsolationOperationContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
+import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
+import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { buildAgentIsolationProvisioningSteps } from '@/daemon/agentIsolation/provisioning';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
+import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 
 /** Held authenticated Home at this fixture's installed Machine boundary. */
 function registerMachineTerminalRpcHandlers(params: Parameters<typeof registerUnadmittedMachineTerminalRpcHandlers>[0]) {
@@ -135,7 +153,7 @@ class FakeInteractivePty implements PtyProcess {
     this.emitBytes(Buffer.from(`ran:${line.trim()}\r\n`, 'utf8'));
   }
 
-  resize(): void { if (this.resizeError) throw this.resizeError; }
+  resize(_cols: number, _rows: number): void { if (this.resizeError) throw this.resizeError; }
   kill(): void { }
   onData(_listener: (data: string) => void): { dispose: () => void } { return { dispose: () => { } }; }
   onDataBytes(listener: (data: Buffer | string) => void): { dispose: () => void } {
@@ -235,6 +253,223 @@ describe('registerMachineTerminalRpcHandlers', () => {
     }
   });
 
+  const openHeldOutputFixture = async (terminalKey: string, holdUntilExit: boolean, requesterAccountId = 'owner') => {
+    const provider = new FakeInteractivePtyProvider();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider,
+      config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux',
+      stopProcessTree: async ({ pid }) => { provider.spawned.find(entry => entry.pty.pid === pid)!.pty.exit(0); } });
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { sessionManager: manager, env: {}, serverId: 'home' },
+    });
+    const opened = await manager.ensure({ terminalKey, cwd: tmpdir(),
+      ...(holdUntilExit ? { holdUntilExit: true, launchProcess: { file: '/managed/tool', args: [] } } : {}),
+      custody: { kind: 'machine', serverId: 'home', requesterAccountId, machineId: 'machine',
+        installationId: 'installation', rootPath: tmpdir() } });
+    if (!opened.ok) throw new Error('Fixture terminal did not open');
+    onTestFinished(() => registration.dispose());
+    return { provider, manager, registration, terminalId: opened.terminalId,
+      read: handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)! };
+  };
+  const settleTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+  const lossInput = () => ({ serverId: 'home', requesterAccountId: 'owner', machineId: 'machine',
+    installationId: 'installation', signal: new AbortController().signal, isCurrentInstallation: () => true });
+
+  it.each(['use', 'removed'] as const)('evicts a grantee Machine terminal on Manage→%s without cancelling retained Project Use', async remaining => {
+    const { manager, registration, terminalId, read } = await openHeldOutputFixture(`downgrade-${remaining}`, false, 'bob');
+    const exited = manager.waitForExit({ terminalId });
+    const project = await manager.ensure({ terminalKey: `project-${remaining}`, cwd: tmpdir(),
+      custody: { serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation',
+        rootPath: tmpdir(), workspaceRefId: 'project-workspace', projectKey: 'project' } });
+    if (!project.ok) throw new Error('Project terminal did not open');
+    const owner = await manager.ensure({ terminalKey: `owner-${remaining}`, cwd: tmpdir(),
+      custody: { kind: 'machine', serverId: 'home', requesterAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', rootPath: tmpdir() } });
+    if (!owner.ok) throw new Error('Owner terminal did not open');
+    const handlers = new Map<string, RpcHandler>();
+    registerMachineAccessLossReceiver({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+      serverId: 'home', machineId: 'machine', resolveInstallationId: () => 'installation',
+      cleanupRequesterMachineTerminals: input => registration.cleanupRequesterMachineTerminals({ ...input, serverId: 'home' }),
+    });
+    const rpc = createMachineTerminalRpcIngress(handlers, async () => true);
+    expect(await rpc.handleRequest({ method: `machine:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`,
+      authorization: MACHINE_ACCESS_LOSS_SERVER_ORIGIN, machineAdmission: ownerIngress().machineAdmission,
+      params: { v: 1, subjectAccountId: 'bob', ...(remaining === 'use' ? { remainingRole: 'use' } : {}) },
+    }, undefined, 'authenticated_home_socket')).toEqual({ kind: 'settled' });
+    expect(manager.list().some(terminal => terminal.terminalId === terminalId)).toBe(false);
+    expect(await exited).toMatchObject({ kind: 'exited', terminationCause: 'stop_requested' });
+    expect(manager.list().some(terminal => terminal.terminalId === project.terminalId)).toBe(remaining === 'use');
+    expect(manager.list().some(terminal => terminal.terminalId === owner.terminalId)).toBe(true);
+    if (remaining === 'use') expect(await manager.input({ terminalId: project.terminalId, data: 'still usable\n' })).toEqual({ ok: true });
+    expect(await read({ terminalId, byteOffset: 0 }, { ...ownerIngress(), machineAdmission: {
+      actorAccountId: 'bob', custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation',
+      role: 'use', encryptionMode: 'plain',
+    } })).toMatchObject({ ok: false, code: 'terminal_not_found' });
+  });
+
+  it('holds an idle output read until bytes arrive, then releases the next held read on cancellation', async () => {
+    const { provider, terminalId, read } = await openHeldOutputFixture('idle-held-output', false);
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    onTestFinished(() => vi.useRealTimers());
+    const controller = new AbortController();
+    const context = { ...ownerIngress(), signal: controller.signal };
+    let completedIdleReads = 0;
+    const pending = Promise.resolve(read({ terminalId, byteOffset: 0, controlCursor: 0, holdForOutput: true }, context))
+      .then(value => { completedIdleReads++; return TerminalStreamReadResponseSchema.parse(value); });
+    await settleTurn();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(completedIdleReads, 'idle output stays one pending RPC, with zero empty completions').toBe(0);
+    provider.spawned[0]!.pty.emitBytes(Buffer.from('held-output'));
+    const output = await pending;
+    expect(output).toMatchObject({ ok: true, nextByteOffset: 11, done: false, holdForOutput: true });
+    if (!output.ok) throw new Error('Fixture output read failed');
+    expect(Buffer.concat(output.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
+      .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8')).toBe('held-output');
+
+    let settledAfterOutput: unknown;
+    const waiting = Promise.resolve(read({ terminalId, byteOffset: output.nextByteOffset, controlCursor: output.nextControlCursor ?? 0,
+      ackedByteOffset: output.nextByteOffset, creditBytes: 1024, holdForOutput: true }, context))
+      .then(value => { settledAfterOutput = value; });
+    await settleTurn();
+    expect(settledAfterOutput, 'a consumed cursor waits for new output').toBeUndefined();
+    controller.abort();
+    await waiting;
+    expect(settledAfterOutput).toMatchObject({ ok: false, code: 'terminal_forbidden' });
+  });
+
+  it('answers an ordinary read and a credit-blocked read at once, and gives back an idle hold before half the RPC budget', async () => {
+    const { provider, terminalId, read } = await openHeldOutputFixture('unheld-reads', false);
+    const ordinary = await read({ terminalId, byteOffset: 0 }, ownerIngress());
+    expect(ordinary).toMatchObject({ ok: true, frames: [] });
+    expect(ordinary).not.toHaveProperty('holdForOutput');
+    provider.spawned[0]!.pty.emitBytes(Buffer.from('waiting'));
+    expect(await read({ terminalId, byteOffset: 0, creditBytes: 0, holdForOutput: true },
+      { ...ownerIngress(), deadlineAtMs: Date.now() + 60_000 }))
+      .toMatchObject({ ok: true, frames: [], availableByteOffset: 7 });
+    const startedAt = Date.now();
+    const idle = await read({ terminalId, byteOffset: 7, holdForOutput: true },
+      { ...ownerIngress(), deadlineAtMs: startedAt + 40 });
+    expect(idle).toMatchObject({ ok: true, frames: [], nextByteOffset: 7 });
+    expect(Date.now() - startedAt).toBeLessThan(40);
+    provider.spawned[0]!.pty.emitBytes(Buffer.from('after-deadline'));
+    const resumed = TerminalStreamReadResponseSchema.parse(await read({ terminalId, byteOffset: 7 }, ownerIngress()));
+    expect(resumed).toMatchObject({ ok: true, nextByteOffset: 21 });
+    if (!resumed.ok) throw new Error('Resume failed');
+    expect(resumed.frames.filter(frame => frame.t === 'bytes').map(frame =>
+      Buffer.from(decodeTerminalStreamBytesFrame(frame)).toString()).join('')).toBe('after-deadline');
+  });
+
+  it('delivers output produced in the same turn as a held read without another RPC', async () => {
+    const { provider, terminalId, read } = await openHeldOutputFixture('snapshot-wake-gap', false);
+    const pending = read({ terminalId, byteOffset: 0, controlCursor: 0, holdForOutput: true }, ownerIngress());
+    queueMicrotask(() => provider.spawned[0]!.pty.emitBytes(Buffer.from('between')));
+    await expect(pending).resolves.toMatchObject({ ok: true, nextByteOffset: 7 });
+  });
+
+  it.each(['exit', 'close'] as const)('wakes an unbounded idle read when its PTY is %s', async event => {
+    const { provider, manager, terminalId, read } = await openHeldOutputFixture(`held-${event}`, false);
+    let settled = false;
+    const held = Promise.resolve(read({ terminalId, byteOffset: 0, controlCursor: 0, holdForOutput: true }, ownerIngress()))
+      .then(value => { settled = true; return value; });
+    await settleTurn();
+    expect(settled).toBe(false);
+    if (event === 'exit') provider.spawned[0]!.pty.exit(17);
+    else await manager.close({ terminalId });
+    const result = await held;
+    if (event === 'exit') expect(result).toMatchObject({ ok: true, done: true,
+      frames: [expect.objectContaining({ t: 'exit', exitCode: 17 })] });
+    else expect(result).toMatchObject({ ok: false, code: 'terminal_not_found' });
+  });
+
+  it.each([{ kind: 'interactive', holdUntilExit: false }, { kind: 'finite', holdUntilExit: true }])(
+    'ends a held $kind output read when Machine access is lost and delivers no later byte', async ({ kind, holdUntilExit }) => {
+      const { manager, registration, terminalId, read } = await openHeldOutputFixture(`held-loss-${kind}`, holdUntilExit);
+      let settled: unknown;
+      const held = Promise.resolve(read({ terminalId, byteOffset: 0, holdForOutput: true },
+        { ...ownerIngress(), deadlineAtMs: Date.now() + 60_000 }))
+        .then(value => { settled = value; });
+      await settleTurn();
+      expect(settled).toBeUndefined();
+      await expect(registration.cleanupRequesterMachineTerminals(lossInput())).resolves.toEqual({ kind: 'settled' });
+      await held;
+      expect(settled).toMatchObject({ ok: false, code: 'terminal_forbidden' });
+      // The finite task keeps running; only its viewer's open read ended.
+      expect(manager.list().some(terminal => terminal.terminalId === terminalId)).toBe(holdUntilExit);
+    });
+
+  it('reports removed terminals as not found while revoked or foreign terminal reads remain forbidden', async () => {
+    const provider = new FakeInteractivePtyProvider();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider,
+      config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux' });
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { sessionManager: manager, env: {} },
+    });
+    let current = true;
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => current };
+    const rpc = createMachineTerminalRpcIngress(handlers, async () => current);
+    const opened = await manager.ensure({ terminalKey: 'guard-closed', cwd: tmpdir(), custody: { kind: 'machine',
+      serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation', rootPath: tmpdir() } });
+    if (!opened.ok) throw new Error('Fixture terminal did not open');
+    const bytes = { terminalId: opened.terminalId, byteOffset: 0 };
+    try {
+      expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, bytes, { rpcContext: context })).toMatchObject({ ok: true });
+      const foreign = { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'recipient' } };
+      expect(await handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!(bytes, foreign))
+        .toMatchObject({ ok: false, code: 'terminal_forbidden' });
+      provider.spawned[0]!.pty.exit(0);
+      expect(manager.close({ terminalId: opened.terminalId })).toMatchObject({ ok: true });
+      expect(manager.list()).toHaveLength(0);
+      expect(await handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!(bytes, context))
+        .toMatchObject({ ok: false, code: 'terminal_not_found' });
+      expect(await handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: opened.terminalId, cursor: 0 }, context))
+        .toMatchObject({ ok: false, errorCode: 'terminal_not_found' });
+      current = false;
+      expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, bytes, { rpcContext: context }))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    } finally { registration.dispose(); }
+  });
+
+  it('opens and restarts a Use guest Project shell under the daemon user when member provisioning is off', async () => {
+    const h = await finiteHarness({ observeInteractiveStop: true });
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager,
+        agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [h.root] }) },
+        projectFiniteRuntime: async () => h.runtime, accountReadRuntime: async () => h.runtime },
+    });
+    const context: RpcHandlerContext = { ...h.ingress,
+      machineAdmission: { ...h.ingress.machineAdmission!, custodianAccountId: 'custodian', role: 'use' } };
+    const input = { terminalKey: 'guest-fallback', workspace: {
+      serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
+    try {
+      // OWNER-RULINGS 2026-11-02 Guest execution fallback amends MI-1.
+      const opened = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, context);
+      expect(opened).toMatchObject({ ok: true, reused: false });
+      const terminalId = h.sessionManager.list()[0]!.terminalId;
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'guest-command\n' }, context))
+        .resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESIZE)!({ terminalId, cols: 101, rows: 37 }, context))
+        .resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId, cursor: 0 }, context))
+        .resolves.toMatchObject({ ok: true });
+      const foreign = { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'other' } };
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'foreign\n' }, foreign))
+        .resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      const restarted = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, context);
+      expect(restarted).toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned).toHaveLength(2);
+      expect(h.provider.spawned[0]!.pty.exited).toBe(true);
+      expect(h.sessionManager.list()).toHaveLength(1);
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+
   it.skipIf(process.platform !== 'linux')('opens a Use member own-Project Shell with the bound member OS identity', async () => {
     const h = await finiteHarness({ observeInteractiveStop: true });
     const context: RpcHandlerContext = { ...h.ingress,
@@ -321,18 +556,292 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { registration.dispose(); await h.dispose(); }
   });
 
+  it('refuses member shells before Project preparation, warm reuse, or own-Session adoption when native PTY identity custody is unavailable', async () => {
+    const h = await finiteHarness();
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager,
+        agentIsolation: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+          status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [h.root] }) },
+        projectFiniteRuntime: async () => h.runtime, accountReadRuntime: async () => h.runtime },
+    });
+    // Retained daemon-user processes are an OS-boundary fixture. A matching
+    // requester/root tuple cannot attest the identity of the existing payload.
+    const custody = { serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation',
+      workspaceRefId: 'accepted', projectKey: 'project', rootPath: h.root };
+    const retained = await h.sessionManager.ensure({ terminalKey: 'retained-member', cwd: h.root, custody });
+    expect(retained.ok).toBe(true);
+    const spawned = h.provider.spawned.length;
+    try {
+      for (const role of ['use'] as const) {
+        const context: RpcHandlerContext = { ...h.ingress,
+          machineAdmission: { ...h.ingress.machineAdmission!, custodianAccountId: 'custodian', role } };
+        for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+          for (const target of [
+            { terminalKey: 'new-member', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } },
+            { terminalKey: 'retained-member', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } },
+            { terminalKey: 'own-session', sessionId: 'member-session', cwd: h.root },
+            { terminalKey: 'attach', launch: { kind: 'session_attach', sessionId: 'member-session' } },
+          ]) {
+            await expect(handlers.get(method)!(target, context)).resolves.toMatchObject({
+              ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable',
+            });
+          }
+        }
+        if (retained.ok) {
+          for (const [method, request] of [
+            [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId: retained.terminalId, cursor: 0 }],
+            [RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: retained.terminalId, data: 'member-effect\n' }],
+            [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId: retained.terminalId, cols: 100, rows: 30 }],
+          ] as const) {
+            await expect(handlers.get(method)!(request, context)).resolves.toMatchObject({
+              ok: false, errorCode: 'terminal_forbidden',
+            });
+          }
+        }
+      }
+      expect(h.provider.spawned).toHaveLength(spawned);
+      expect(h.sessionManager.list()).toHaveLength(1);
+      if (retained.ok) expect(h.sessionManager.list()[0]?.terminalId).toBe(retained.terminalId);
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'unknown-owner', cwd: h.root },
+        { ...h.ingress, machineAdmission: undefined })).resolves.toMatchObject({
+        ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable',
+      });
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+
+  it('refuses Agent access to custodian terminals even with the same requester Machine grant', async () => {
+    await withTempDir('terminal-person-agent-boundary-', async root => {
+      const provider = new FakeInteractivePtyProvider();
+      // forkpty is the OS boundary; RPC admission, retained custody and terminal
+      // control all use their production owners.
+      const sessions = createTerminalPtySessionManager({ ptyProvider: provider, env: {}, platform: 'linux',
+        config: readDaemonTerminalPtyConfig({}).sessionManager });
+      const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+      const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain',
+        authorizeRequest: request => authorizeMachineRpcRequest(request, {
+          machineId: 'machine', resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+          resolveHomeServerIdentityId: async () => 'stable-home',
+          // Home's current-grant check is the external authority boundary.
+          verifyMachineAdmission: async () => true,
+        }) });
+      const registration = registerUnadmittedMachineTerminalRpcHandlers({
+        rpcHandlerManager: rpc,
+        deps: { serverId: 'home', resolveHostHomeServerIdentityId: async () => 'stable-home', env: {}, workingDirectory: root, sessionManager: sessions },
+      });
+      const origin = {
+        v: 1, caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 },
+        sourceTurnId: 'turn', callerPermissionMode: null, requestId: 'agent-terminal-request',
+      } satisfies NonNullable<RpcHandlerContext['sessionActionOrigin']>;
+      const invoke = (method: string, params: unknown, agent = false, includeOrigin = true) => rpc.handleRequest({
+        method: `machine:${method}`, params, machineAdmission,
+        callerAuthority: agent ? 'account_automation' : 'present_user',
+        ...(agent && includeOrigin ? { sessionActionOrigin: origin } : {}),
+      });
+      try {
+        const opened: unknown = await invoke(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'person', cwd: root });
+        expect(opened).toMatchObject({ ok: true, reused: false, terminalId: expect.any(String) });
+        if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') {
+          throw new Error('Person terminal fixture did not open');
+        }
+        await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'person', cwd: root }))
+          .resolves.toMatchObject({ ok: true, reused: true, terminalId: opened.terminalId });
+        await expect(rpc.handleRequest({ method: `machine:${RPC_METHODS.DAEMON_TERMINAL_LIST}`, params: {}, machineAdmission }))
+          .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        for (const [method, params] of [
+          [RPC_METHODS.DAEMON_TERMINAL_LIST, {}],
+          [RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'agent-host-shell', cwd: root }],
+          [RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'forged', cwd: root, executionKind: 'person_break_glass' }],
+          [RPC_METHODS.DAEMON_TERMINAL_RESTART, { terminalKey: 'person', cwd: root }],
+          [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId: opened.terminalId, cursor: 0 }],
+          [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { terminalId: opened.terminalId, byteOffset: 0 }],
+          [RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, { terminalId: opened.terminalId, ackedByteOffset: 0 }],
+          [RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT, { terminalId: opened.terminalId, event: { t: 'text', text: 'host-effect' } }],
+          [RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: opened.terminalId, data: 'host-effect\n' }],
+          [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId: opened.terminalId, cols: 100, rows: 30 }],
+          [RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId: opened.terminalId }],
+        ] as const) {
+          await expect(invoke(method, params, true)).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+          // Account automation has no Session-origin carrier to reject. Its
+          // current Machine grant still cannot grant present-person custody.
+          await expect(invoke(method, params, true, false)).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        }
+        await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: opened.terminalId, data: 'person-command\n' }))
+          .resolves.toMatchObject({ ok: true });
+        expect(provider.spawned).toHaveLength(1);
+        expect(provider.spawned[0].pty.writes.join('')).toContain('person-command');
+        expect(provider.spawned[0].pty.writes.join('')).not.toContain('host-effect');
+      } finally {
+        for (const { pty } of provider.spawned) pty.exit(0);
+        registration.dispose();
+      }
+    });
+  });
+
+  it.skipIf(process.platform !== 'linux')('retains Manage requester custody across native and host PTYs while refusing foreign and Agent controls', async () => {
+    await withTempDir('terminal-native-member-controls-', async root => {
+      // forkpty and its native identity/handshake are the OS boundary. The
+      // canonical material projection, Exec finalizer, PTY and RPC owners run.
+      class NativePty extends FakeInteractivePty {
+        frameAccepted = false;
+        readonly dimensions: Array<{ cols: number; rows: number }> = [];
+        override write(data: string) {
+          if (!this.frameAccepted) {
+            this.frameAccepted = true;
+            queueMicrotask(() => this.emitBytes(AGENT_LAUNCH_TERMINAL_ACCEPTED));
+            return;
+          }
+          super.write(data);
+        }
+        override resize(cols: number, rows: number) { this.dimensions.push({ cols, rows }); }
+        override kill() { this.exit(0); }
+      }
+      const spawned: NativePty[] = [];
+      const spawnParams: PtySpawnParams[] = [];
+      const sessions = createTerminalPtySessionManager({ ptyProvider: { spawn(params) {
+        spawnParams.push(params);
+        const pty = new NativePty(4500 + spawned.length);
+        spawned.push(pty);
+        queueMicrotask(() => pty.emitBytes(AGENT_LAUNCH_TERMINAL_READY));
+        return pty;
+      } }, env: { SHELL: '/bin/sh' }, platform: 'linux', config: readDaemonTerminalPtyConfig({}).sessionManager,
+        probeProcessGroup: group => spawned.find(pty => pty.pid === group)?.exited ? 'absent' : 'alive',
+        stopProcessTree: async ({ pid }) => { spawned.find(pty => pty.pid === pid)?.exit(0); } });
+      const signal = new AbortController().signal;
+      const requesterIdentity = selectHostRequesterExecutionIdentity({ rpcContext: { signal, callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'owner', machineId: 'machine',
+          installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true },
+        hostHomeServerIdentityId: 'stable-home', hostCustodianAccountId: 'owner' });
+      if (requesterIdentity.kind !== 'isolated') throw new Error('Admitted member provenance is unavailable');
+      const memberRequester = { ...requesterIdentity, homeServerIdentityId: 'stable-home' };
+      const member = { ...deriveAgentIsolationMemberIdentity(memberRequester), agentUid: 41001, agentGid: 41001 };
+      nativeTerminalFilesystem.workspace = { path: member.workspaceRoot, backing: root };
+      onTestFinished(() => { nativeTerminalFilesystem.workspace = undefined; sessions.dispose(); });
+      const material = { materializationKey: 'retained-terminal', environment: {}, selectedMaterials: [] };
+      const agentIsolation = createAgentIsolationOperationContext({ requesterIdentity: memberRequester, memberIdentity: member, signal,
+        managedHappierBinaryPath: '/opt/happier/cli/current/happier', readMaterial: () => material,
+        machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
+          workspaceRoots: [root] }) } });
+      const launch = await authorizeResolvedProjectExecLaunchForHost({ launch: { command: '/bin/sh', args: [], cwd: root, env: {} },
+        requesterIdentity, agentIsolation, agentLaunchKind: 'terminal', signal, assertCurrent() { signal.throwIfAborted(); } });
+      const custody = { kind: 'machine' as const, serverId: 'home', requesterAccountId: 'member-a', machineId: 'machine',
+        installationId: 'installation', rootPath: root };
+      const native = await sessions.ensure({ terminalKey: 'native', cwd: root, custody,
+        nativeExecutionIdentity: member, authorizedNativeLaunch: launch });
+      const shared = await sessions.ensure({ terminalKey: 'legacy-shared', cwd: root, custody });
+      if (!native.ok || !shared.ok) throw new Error('Retained PTY fixture did not open');
+      expect(spawnParams[0]).toMatchObject({ file: 'sudo', args: ['-n', '-u', member.username, '--',
+        '/opt/happier/cli/current/happier', 'agent-launch'] });
+      // The non-native retained process represents the former daemon-user shell,
+      // not a second preparation or an invented matching native witness.
+      spawned[1]!.frameAccepted = true;
+      const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain',
+        authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+          resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+          resolveHomeServerIdentityId: async () => 'stable-home', verifyMachineAdmission: async () => true }) });
+      const registration = registerUnadmittedMachineTerminalRpcHandlers({ rpcHandlerManager: rpc,
+        deps: { serverId: 'home', resolveHostHomeServerIdentityId: async () => 'stable-home', env: {}, sessionManager: sessions,
+          agentIsolation: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+            status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [root] }) } } });
+      type CallerSource = Partial<Pick<RpcHandlerContext, 'callerAuthority' | 'sessionActionOrigin' | 'localActionContext' | 'callerInputAuthorization'>>;
+      const invoke = (method: string, params: unknown, accountId = 'member-a', source: CallerSource = {}) => {
+        const { localActionContext, ...networkSource } = source;
+        const machineAdmission = { actorAccountId: accountId, custodianAccountId: 'owner',
+          machineId: 'machine', installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+        // Host-private Action provenance never travels in a network packet.
+        // Use the real in-process owner so it survives installed admission.
+        return localActionContext
+          ? rpc.invokeLocal(method, params, { localActionContext, rpcContext: { callerAuthority: 'present_user', ...networkSource,
+            machineAdmission, verifyMachineAdmissionCurrent: async () => true } })
+          : rpc.handleRequest({ method: `machine:${method}`, params, callerAuthority: 'present_user', ...networkSource, machineAdmission });
+      };
+      try {
+        await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: native.terminalId, data: 'member-command\n' }))
+          .resolves.toMatchObject({ ok: true });
+        const output = TerminalStreamReadResponseSchema.parse(await invoke(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+          { terminalId: native.terminalId, byteOffset: 0, maxBytes: 4096, maxFrames: 8 }));
+        if (!output.ok) throw new Error('Matching member output was refused');
+        expect(Buffer.concat(output.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
+          .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8')).toContain('ran:member-command');
+        await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId: native.terminalId, cols: 101, rows: 37 }))
+          .resolves.toMatchObject({ ok: true });
+        expect(spawned[0]!.dimensions.at(-1)).toEqual({ cols: 101, rows: 37 });
+        for (const [terminalId, accountId] of [[native.terminalId, 'member-b'], [native.terminalId, 'owner']] as const) {
+          for (const [method, params] of [
+            [RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'foreign-command\n' }],
+            [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId, cols: 111, rows: 41 }],
+            [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { terminalId, byteOffset: 0 }],
+          ] as const) expect(await invoke(method, params, accountId)).toMatchObject({ ok: false });
+        }
+        await expect(invoke(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: shared.terminalId, data: 'manage-own-host\n' }))
+          .resolves.toMatchObject({ ok: true });
+        const caller = { kind: 'session' as const, sessionId: 'member-agent', starterDepth: 0, turnDepth: 0 };
+        const workflow = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'workflow-member-root', binding: {
+          accountId: 'member-a', custodianAccountId: 'owner', serverIdentityId: 'stable-home', machineId: 'machine',
+          installationId: 'installation', authentication: { kind: 'account', tokenEpoch: 1 }, actionId: 'projects.compute.exec',
+          requestId: 'workflow-member', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+          workflowActionOrigin: { runId: 'member-workflow', requestId: 'workflow-member', sessionAuthority: {
+            authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'session', sessionId: caller.sessionId } },
+            runDepth: 0, directory: root, workspaceWrites: 'allow' } },
+        } });
+        const sources: ReadonlyArray<Readonly<{ name: string; source: CallerSource }>> = [
+          { name: 'automation', source: { callerAuthority: 'account_automation' } },
+          { name: 'local-session-agent', source: { localActionContext: { actionCaller: caller } } },
+          { name: 'session-origin', source: { sessionActionOrigin: { v: 1, caller, sourceTurnId: 'agent-turn', callerPermissionMode: null, requestId: 'agent-request' } } },
+          { name: 'workflow-root', source: { callerInputAuthorization: workflow } },
+        ];
+        for (const { name, source } of sources) {
+          const selected = selectHostRequesterExecutionIdentity({ rpcContext: { signal, callerAuthority: 'present_user', ...source,
+            machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'owner', machineId: 'machine',
+              installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true },
+            hostHomeServerIdentityId: 'stable-home', hostCustodianAccountId: 'owner' });
+          expect(selected).not.toHaveProperty('presentPerson');
+          for (const [method, params] of [
+            [RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId: native.terminalId, data: 'agent-command\n' }],
+            [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId: native.terminalId, cols: 111, rows: 41 }],
+            [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { terminalId: native.terminalId, byteOffset: 0 }],
+          ] as const) {
+            const response = await invoke(method, params, 'member-a', source).catch(error => {
+              // Local handler refusals throw before a transport can encode them.
+              const errorCode = readRpcErrorCode(error);
+              if (errorCode !== RPC_ERROR_CODES.FORBIDDEN) throw error;
+              return { ok: false, errorCode };
+            });
+            const errorCode = response && typeof response === 'object'
+              ? 'errorCode' in response ? response.errorCode : 'code' in response ? response.code : undefined
+              : undefined;
+            expect(response, `${name}:${method}`).not.toMatchObject({ ok: true });
+            expect(['agent_isolation_unavailable', RPC_ERROR_CODES.FORBIDDEN, 'terminal_forbidden'], `${name}:${method}`).toContain(errorCode);
+          }
+        }
+        expect(spawned[0]!.writes).toEqual(['member-command\n']);
+        expect(spawned[1]!.writes).toEqual(['manage-own-host\n']);
+        expect(sessions.getNativeExecutionIdentity?.(native.terminalId)).toEqual(member);
+        expect(sessions.getNativeExecutionIdentity?.(shared.terminalId)).toBeNull();
+      } finally {
+        for (const pty of spawned) pty.exit(0);
+        registration.dispose();
+        sessions.dispose();
+        await launch.release();
+      }
+    });
+  });
+
   it('keeps qualified Project census latency independent of retained PTY count through real requester ports', async () => {
     const h = await finiteHarness();
     const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'terminal-list-root', binding: {
-      accountId: 'owner', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
       accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
       actionId: 'machines.terminal.list', requestId: 'census', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
     } });
     const originalPost = h.post.getMockImplementation()!;
     let measure = false;
     let retireOnRows = false;
-    let live = true;
+    const current = { machineAdmission: true, externalActionGrant: true, accountCredentials: true, installation: true };
+    let admissions = 0;
     const boundaryReads: string[] = [];
     // HTTP is the only substituted authority/read boundary. The actual Account
     // and signed HTTP projections, runtime factory, RPC and PTY owners stay real.
@@ -348,9 +857,9 @@ describe('registerMachineTerminalRpcHandlers', () => {
     });
     h.post.mockImplementation(async (...args) => {
       await latency(args[0]);
-      if (String(args[0]).endsWith('/execution-authorization/verify')) return { status: live ? 200 : 403, data: live ? { ok: true } : {} };
+      if (String(args[0]).endsWith('/execution-authorization/verify')) return { status: current.externalActionGrant ? 200 : 403, data: current.externalActionGrant ? { ok: true } : {} };
       const result = await originalPost(...args);
-      if (measure && retireOnRows) live = false;
+      if (measure && retireOnRows) current.machineAdmission = false;
       return result;
     });
     const http = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
@@ -360,27 +869,32 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const authorization = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: 'stable-home',
       bootstrap: { credentials: { token: 'requester', encryption: null }, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl,
         attribution: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
-        isCurrent: async () => live } });
+        isCurrent: async () => current.accountCredentials } });
     if (!authorization) throw new Error('Missing Account custody');
-    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain' });
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+        resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+        resolveHomeServerIdentityId: async () => 'stable-home', verifyMachineAdmission: async () => { admissions++; return current.machineAdmission; } }) });
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: rpc, deps: {
       serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager,
       accountReadRuntime: ingress => resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: 'home', machineId: 'machine',
-        installationId: 'installation', isInstalledCurrent: () => live }),
+        installationId: 'installation', isInstalledCurrent: () => current.installation }),
     } });
-    const rpcContext = { machineAdmission: { ...h.ingress.machineAdmission!, custodianAccountId: 'custodian' },
-      callerInputAuthorization: authorization, verifyMachineAdmissionCurrent: async () => live };
+    const rpcContext = { callerAuthority: 'present_user' as const, machineAdmission: h.ingress.machineAdmission,
+      callerInputAuthorization: authorization, verifyMachineAdmissionCurrent: async () => current.machineAdmission };
     const workspace = { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root };
     const sample = async () => {
       boundaryReads.length = 0;
       measure = true;
+      const admittedBefore = admissions;
       const started = performance.now();
       const result = await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_LIST, { workspace }, { rpcContext });
-      return { result, durationMs: performance.now() - started, reads: [...boundaryReads] };
+      return { result, durationMs: performance.now() - started, reads: [...boundaryReads], admissions: admissions - admittedBefore };
     };
     try {
       const empty = await sample();
       expect(DaemonTerminalListResponseV1Schema.parse(empty.result)).toEqual({ ok: true, terminals: [] });
+      expect(empty.admissions).toBe(1);
       measure = false;
       const custody = { serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation',
         workspaceRefId: 'accepted', projectKey: 'project', rootPath: h.root };
@@ -390,6 +904,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await h.sessionManager.ensure({ terminalKey: 'other-project', cwd: h.root, custody: { ...custody, workspaceRefId: 'other', projectKey: 'other' } });
       await h.sessionManager.ensure({ terminalKey: 'session-attribution', cwd: h.root, sessionId: 'other-session', custody });
       const populated = await sample();
+      expect(populated.admissions).toBe(1);
       const parsed = DaemonTerminalListResponseV1Schema.parse(populated.result);
       expect(parsed).toMatchObject({ ok: true, terminals: retained.map(terminal => ({ terminalId: terminal.ok ? terminal.terminalId : '' })) });
       console.info('terminal census boundary latency', JSON.stringify({ empty: { durationMs: Math.round(empty.durationMs), reads: empty.reads.length },
@@ -399,19 +914,24 @@ describe('registerMachineTerminalRpcHandlers', () => {
       // authorization phase. Local custody filtering still rejects neighbors.
       expect(populated.reads).toEqual(empty.reads);
       retireOnRows = true;
-      expect(await sample()).toMatchObject({ result: { ok: false, errorCode: 'terminal_forbidden' } });
+      // One admitted census finishes; withdrawal is observed by the next RPC.
+      expect(await sample()).toMatchObject({ result: { ok: true, terminals: retained.map(terminal => ({ terminalId: terminal.ok ? terminal.terminalId : '' })) } });
+      expect(await sample()).toMatchObject({ result: { errorCode: RPC_ERROR_CODES.FORBIDDEN } });
     } finally {
       for (const { pty } of h.provider.spawned) pty.exit(0);
       registration.dispose();
       await h.dispose();
     }
   });
-  it('discovers only retained own-Session custody from current Machine admission without borrowing private Account reads', async () => {
+  it('discovers only the requesting person\'s retained Session custody without borrowing private Account reads', async () => {
     await withTempDir('terminal-retained-census-', async root => {
       const provider = new FakeInteractivePtyProvider();
       const sessions = createTerminalPtySessionManager({ ptyProvider: provider,
         config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux' });
-      const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain' });
+      const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
+        authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+          resolveCustodianAccountId: async () => 'recipient', resolveInstallationId: () => 'installation',
+          resolveHomeServerIdentityId: async () => 'stable-home', verifyMachineAdmission: async () => current }) });
       const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: rpc,
         deps: { serverId: 'home', env: {}, workingDirectory: root, sessionManager: sessions } });
       const custody = { kind: 'session' as const, serverId: 'home', requesterAccountId: 'recipient',
@@ -426,22 +946,22 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await sessions.ensure({ terminalKey: 'foreign-installation', cwd: root, sessionId: custody.sessionId,
         custody: { ...custody, installationId: 'another-installation' } });
       let current = true;
-      const rpcContext = { machineAdmission: { actorAccountId: 'recipient', custodianAccountId: 'custodian',
+      const rpcContext = { callerAuthority: 'present_user' as const, machineAdmission: { actorAccountId: 'recipient', custodianAccountId: 'recipient',
         machineId: 'machine', installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
         verifyMachineAdmissionCurrent: async () => current };
       try {
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_LIST, {}, { rpcContext }))
           .toMatchObject({ ok: true, terminals: [{ terminalId: own.terminalId, terminalKey: 'own' }] });
-        // Census authority neither exposes a sibling Account's PTY nor grants
-        // private Session output/control authority to a raw Machine caller.
+        // Native Session custody belongs to this same physical custodian and
+        // requester; retained output needs no private Session reread.
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId: own.terminalId, cursor: 0 }, { rpcContext }))
-          .toMatchObject({ ok: false, error: 'terminal_forbidden' });
+          .toMatchObject({ ok: true });
         const foreign = await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_LIST, {}, { rpcContext: { ...rpcContext,
           machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'unrelated-granted-account' } } });
         expect(foreign).toEqual({ ok: true, terminals: [] });
         current = false;
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_LIST, {}, { rpcContext }))
-          .toMatchObject({ ok: false, error: 'terminal_forbidden' });
+          .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
       } finally {
         for (const { pty } of provider.spawned) pty.exit(0);
         registration.dispose();
@@ -484,7 +1004,8 @@ describe('registerMachineTerminalRpcHandlers', () => {
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'echo portable\n' }, h.ingress)).resolves.toMatchObject({ ok: true });
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: { ...workspace, serverId: 'other-home' } }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
         await updateSettings(settings => ({ ...settings, servers: {} }));
-        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!({ terminalId }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!({ terminalId }, h.ingress)).resolves.toMatchObject({ ok: true });
+        expect(h.sessionManager.list()).toEqual([]);
       } finally {
         registration.dispose();
         await h.dispose();
@@ -548,17 +1069,19 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const handlers = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
       deps: { serverId: 'home', env: {}, sessionManager: h.sessionManager } });
+    const rpc = createMachineTerminalRpcIngress(handlers, h.ingress.verifyMachineAdmissionCurrent!);
     try {
       const terminal = await h.sessionManager.ensure({ terminalKey: 'setup', cwd: h.root,
         custody: { kind: 'machine', serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation', rootPath: h.root } });
       if (!terminal.ok) throw new Error('Setup output terminal missing');
       h.provider.spawned[0]!.pty.emitBytes(Buffer.from('setup output'));
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, h.ingress)).resolves.toMatchObject({ ok: true });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId: terminal.terminalId, cursor: 0 }, { rpcContext: h.ingress })).resolves.toMatchObject({ ok: true });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, h.ingress)).resolves.toMatchObject({ ok: true, terminals: [{ terminalId: terminal.terminalId }] });
       for (const admission of [{ ...h.ingress.machineAdmission!, actorAccountId: 'other' }, { ...h.ingress.machineAdmission!, installationId: 'replaced' }]) {
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, { ...h.ingress, machineAdmission: admission })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
       }
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, { ...h.ingress, verifyMachineAdmissionCurrent: async () => false })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      h.retire();
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId: terminal.terminalId, cursor: 0 }, { rpcContext: h.ingress })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     } finally { registration.dispose(); await h.dispose(); }
   });
   it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('opens an admitted own-Project Shell without setup consent through %s and retains native refusals', async method => {
@@ -587,7 +1110,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       if (!withoutSetupInputs || typeof withoutSetupInputs !== 'object' || !('terminalId' in withoutSetupInputs)
         || typeof withoutSetupInputs.terminalId !== 'string') throw new Error('Missing Shell without setup inputs');
       await handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!({ terminalId: withoutSetupInputs.terminalId }, h.ingress);
-      await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+      await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
       await writeFile(join(h.root, 'mise.toml'), '[env]\nVALUE = "native"\n');
       const unavailable = { ...h.runtime, nativeIo: { resolveTool: async () => null } };
       const missingRegistration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(id, handler) { handlers.set(id, handler); } },
@@ -597,7 +1120,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       // Child namespace inspection reads the published Machine row. A mode-only
       // response is not a Machine; the real no-child row must be represented.
       h.get.mockImplementation(async url => String(url).endsWith('/v1/machines/machine')
-        ? { status: 200, data: { machine: { id: 'machine', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain' } } }
+        ? { status: 200, data: { machine: { id: 'machine', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain', managedMachineRef: null } } }
         : { status: 200, data: { mode: 'plain', updatedAt: 1 } });
       await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'child_required' });
       expect(h.provider.spawned).toHaveLength(2);
@@ -605,10 +1128,10 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { registration.dispose(); await h.dispose(); }
   });
 
-  it('launches an interactive Project shell with the complete native environment and reuses it without activating again', async () => {
+  it('launches a person Project shell with isolation enabled and the complete custodian native environment', async () => {
     const h = await finiteHarness({ observeInteractiveStop: true });
     await mkdir(join(h.root, '.happier'));
-    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
     await writeFile(join(h.root, 'mise.toml'), '[env]\nVALUE = "native"\n');
     const nativeRun = vi.fn(async () => ({ exitCode: 0, stdout: 'PATH=/native/bin\0VALUE=native\0' }));
     const nativeIo = { resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }) };
@@ -627,19 +1150,21 @@ describe('registerMachineTerminalRpcHandlers', () => {
       { v: 1, workspaceRefId: 'accepted', ...reviewed.plan.successBasis, completedAtMs: 1 });
     const handlers = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(id, handler) { handlers.set(id, handler); } },
-      deps: { env: { REMOVE: 'ambient' }, sessionManager: h.sessionManager, accountReadRuntime: async () => runtime, projectFiniteRuntime: async () => runtime } });
+      deps: { env: { REMOVE: 'ambient' }, sessionManager: h.sessionManager, accountReadRuntime: async () => runtime, projectFiniteRuntime: async () => runtime,
+        agentIsolation: { read: () => ({ enabled: true, status: { kind: 'unavailable', code: 'provisioning_unavailable' }, workspaceRoots: [h.root] }) } } });
     const input = { terminalKey: 'native-shell', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
+    const person = { ...h.ingress, callerAuthority: 'present_user' as const };
     try {
-      const opened = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, h.ingress);
+      const opened = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, person);
       expect(opened).toMatchObject({ ok: true, reused: false });
       expect(h.provider.spawned[0]!.params.options.env).toMatchObject({ PATH: '/native/bin', VALUE: 'native' });
       expect(h.provider.spawned[0]!.params.options.env).not.toHaveProperty('REMOVE');
       if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') throw new Error('Missing shell');
       expect(h.sessionManager.isFiniteHeld(opened.terminalId)).toBe(false);
       await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, h.ingress)).resolves.toMatchObject({ ok: true, terminalId: opened.terminalId, reused: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, person)).resolves.toMatchObject({ ok: true, terminalId: opened.terminalId, reused: true });
       expect(nativeRun).toHaveBeenCalledTimes(1);
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, h.ingress)).resolves.toMatchObject({ ok: true, reused: false });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, person)).resolves.toMatchObject({ ok: true, reused: false });
       expect(h.provider.spawned).toHaveLength(2);
       expect(h.provider.spawned[0]!.pty.exited).toBe(true);
     } finally { registration.dispose(); await h.dispose(); }
@@ -686,7 +1211,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const provider = new FakeInteractivePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, env: {}, platform: 'linux',
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const refs = [{ id: 'accepted', projectKey: 'project-one' }, { id: 'other-accepted', projectKey: 'project-two' }];
     const rows = refs.map(ref => {
       const key = { kind: 'workspace-ref', serverId: 'home', id: ref.id };
@@ -699,6 +1224,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
       deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: manager,
         accountReadRuntime: async () => h.runtime, projectFiniteRuntime: async () => ({ ...h.runtime, terminalSessions: manager }) } });
+    const rpc = createMachineTerminalRpcIngress(handlers, h.ingress.verifyMachineAdmissionCurrent!);
     try {
       const addresses = refs.map(ref => ({ serverId: 'home', workspaceId: ref.id, machineId: 'machine', rootPath: h.root }));
       const terminalIds: string[] = [];
@@ -710,13 +1236,14 @@ describe('registerMachineTerminalRpcHandlers', () => {
       }
       expect(new Set(terminalIds).size).toBe(2);
       for (const [index, workspace] of addresses.entries()) {
-        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace }, h.ingress)).resolves.toEqual({ ok: true,
+        await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_LIST, { workspace }, { rpcContext: h.ingress })).resolves.toEqual({ ok: true,
           terminals: [expect.objectContaining({ terminalId: terminalIds[index], terminalKey: 'copied-key', cwd: h.root })] });
       }
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, h.ingress)).resolves.toMatchObject({ ok: true,
         terminals: terminalIds.map(terminalId => expect.objectContaining({ terminalId })) });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: { ...addresses[0]!, workspaceId: 'guessed' } }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] }))
+        .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
       const foreign = { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'cara' } };
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] }, foreign)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_unavailable' });
       expect(manager.list()).toHaveLength(2);
@@ -727,7 +1254,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] }, h.ingress)).resolves.toEqual({ ok: true,
         terminals: [expect.objectContaining({ terminalId: terminalIds[0] })] });
       h.retire();
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace: addresses[0] }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_LIST, { workspace: addresses[0] }, { rpcContext: h.ingress })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
       expect(provider.spawned).toHaveLength(2);
     } finally { registration.dispose(); await h.dispose(); }
   });
@@ -765,7 +1292,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const admissionDrain = createDaemonAdmissionDrain();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, env: {}, platform: 'linux',
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
       stopProcessTree: async () => { await new Promise<void>(resolve => { releaseStop = resolve; }); provider.spawned[0]!.pty.exit(0); } });
     const handlers = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
@@ -820,13 +1347,21 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ ...input, cwd: join(h.root, 'unadmitted') }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ ...input, sessionId: 'session-two' }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
       const foreign = { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'cara' } };
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, foreign)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, foreign)).resolves.toMatchObject({ ok: false,
+        errorCode: 'terminal_forbidden', error: 'terminal_forbidden' });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId: opened.terminalId, data: 'own\n' }, h.ingress)).resolves.toEqual({ ok: true });
       replacement = false;
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESIZE)!({ terminalId: opened.terminalId, cols: 100, rows: 30 }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESIZE)!({ terminalId: opened.terminalId, cols: 100, rows: 30 }, h.ingress)).resolves.toMatchObject({ ok: true });
+      for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+        await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      }
       replacement = true;
       owner = false;
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: opened.terminalId, cursor: 0 }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: opened.terminalId, cursor: 0 }, h.ingress)).resolves.toMatchObject({ ok: true });
+      for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+        await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      }
+      expect(h.provider.spawned).toHaveLength(1);
       expect(h.sessionManager.list()).toHaveLength(1);
       owner = true;
       h.sessionManager.close({ terminalId: opened.terminalId });
@@ -848,7 +1383,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const stopped: number[] = [];
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: {}, platform: 'linux',
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
       stopProcessTree: async ({ pid }) => {
         if (pid === undefined) throw new Error('PTY process id is missing');
         stopped.push(pid);
@@ -890,15 +1425,21 @@ describe('registerMachineTerminalRpcHandlers', () => {
   });
 
   it('admits a standalone accepted Project shell and rejects guessed ids and next operations after revoke', async () => {
-    const h = await finiteHarness({ waived: true });
+    const h = await finiteHarness({ waived: true, unrelatedOrganizations: true });
     try {
       const handlers = new Map<string, RpcHandler>();
       registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
         deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager,
           accountReadRuntime: async () => h.runtime, projectFiniteRuntime: async () => h.runtime } });
+      const rpc = createMachineTerminalRpcIngress(handlers, h.ingress.verifyMachineAdmissionCurrent!);
       const workspace = { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root };
-      const ensured = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'shell', workspace }, h.ingress);
+      const ensured = await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'shell', workspace }, { rpcContext: h.ingress });
       expect(ensured).toMatchObject({ ok: true, reused: false });
+      expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-rows/list')).map(([, body]) => body))
+        .toEqual([{ kinds: ['workspace-ref'], serverId: 'home' }]);
+      for (const [, body] of h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-rows/read'))) {
+        expect(body).toEqual({ key: { kind: 'workspace-ref', serverId: 'home', id: 'accepted' } });
+      }
       if (!ensured || typeof ensured !== 'object' || !('terminalId' in ensured) || typeof ensured.terminalId !== 'string') throw new Error('Actual terminal missing');
       const terminalId = ensured.terminalId;
       const foreign = { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'cara' } };
@@ -912,21 +1453,34 @@ describe('registerMachineTerminalRpcHandlers', () => {
       for (const caller of [undefined, foreign,
         { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, installationId: 'replacement-installation' } },
       ]) {
+        if (!caller) {
+          await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!({ terminalId, byteOffset: 0 }))
+            .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+          await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)!({ terminalId, event: { t: 'text', text: 'guessed' } }))
+            .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+          continue;
+        }
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!({ terminalId, byteOffset: 0 }, caller)).resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)!({ terminalId, event: { t: 'text', text: 'guessed' } }, caller)).resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
       }
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, foreign)).resolves.toMatchObject({ ok: true, terminals: [] });
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'shell', workspace }, foreign)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_unavailable' });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'shell', workspace }, foreign)).resolves.toMatchObject({
+        ok: false, errorCode: 'terminal_unavailable' });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'forged', workspace, requesterAccountId: 'owner' }, foreign)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'other-home', workspace: { ...workspace, serverId: 'another-home' } }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
       h.post.mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete', rows: [{
         key: { kind: 'workspace-ref', serverId: 'home', id: 'accepted' }, revision: 2, content: null,
       }] } });
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId, cursor: 0 }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, h.ingress)).resolves.toMatchObject({ ok: true, terminals: [] });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId, cursor: 0 }, h.ingress)).resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, h.ingress)).resolves.toMatchObject({ ok: true, terminals: [{ terminalId }] });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({ workspace }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
+      for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+        await expect(handlers.get(method)!({ terminalKey: 'shell', workspace }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
+      }
       h.retire();
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'revoked\n' }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'shell', workspace }, h.ingress)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'revoked\n' }, { rpcContext: h.ingress })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'shell', workspace }, { rpcContext: h.ingress })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(h.provider.spawned).toHaveLength(1);
       expect(h.provider.spawned[0]!.pty.writes).toEqual([]);
     } finally { await h.dispose(); }
   });
@@ -963,7 +1517,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     }
   });
 
-  async function finiteHarness(options: Readonly<{ setup?: boolean; waived?: boolean; setupWaived?: boolean; acceptedRootTrailingSlash?: boolean; acceptedRoot?: string; unenriched?: boolean; observeInteractiveStop?: boolean; machineComposition?: boolean; homeServerId?: string }> = {}) {
+  async function finiteHarness(options: Readonly<{ setup?: boolean; waived?: boolean; setupWaived?: boolean; acceptedRootTrailingSlash?: boolean; acceptedRoot?: string; unenriched?: boolean; observeInteractiveStop?: boolean; machineComposition?: boolean; homeServerId?: string; daemonProfileId?: string; unrelatedOrganizations?: boolean }> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-finite-terminal-')));
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'web; echo untrusted', packageManager: 'yarn@1', scripts: { dev: 'echo selected' } }));
     if (options.setup) {
@@ -978,7 +1532,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
       if (!String(url).includes(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`)) throw new Error('unexpected network request');
       const key = { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.id };
       // Exact checkout reads use /read and census reads use /list; both answer from the same accepted row.
-      return projectAccountRowsReadHttpResponse([{ key, revision: 1, content: { t: 'plain', v: { key, value: workspace } } }], String(url), body);
+      return projectAccountRowsReadHttpResponse([
+        { key, revision: 1, content: { t: 'plain', v: { key, value: workspace } } },
+        ...Array.from({ length: options.unrelatedOrganizations ? 1024 : 0 }, (_, index) => {
+          const key = { kind: 'project-organization', serverId: workspace.serverId, projectKey: `unrelated-${index}` };
+          return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+        }),
+      ], String(url), body);
     });
     const provider = new FakeInteractivePtyProvider();
     const probeProcessGroup = (groupId: number) => {
@@ -992,7 +1552,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       if (options.observeInteractiveStop) provider.spawned.find(entry => entry.pty.pid === pid)!.pty.exit(0);
     },
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const operationRuntime = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine',
       custodyBinding: { serverId: 'home', installationId: 'installation' },
       resolveAccountId: async () => 'owner', generateOperationId: () => 'operation' });
@@ -1008,7 +1568,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
         provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' }) })).toString('base64url')}.signature`
       : `requester:${root}`;
     const runtime = {
-      serverId: 'home', machineId: 'machine', accountId: 'owner', credentials: { token, encryption: null,
+      serverId: options.daemonProfileId ?? 'home', machineId: 'machine', accountId: 'owner', credentials: { token, encryption: null,
         ...(options.machineComposition ? { credentialProvenance: 'stored_session' as const } : {}) }, serverHttpBaseUrl: 'https://home.example',
       operationRuntime, terminalSessions: sessionManager,
       resolveHostHomeServerIdentityId: async () => 'stable-home',
@@ -1044,12 +1604,14 @@ describe('registerMachineTerminalRpcHandlers', () => {
       handlers: { spawnSession: async () => ({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'not installed' }),
         stopSession: async () => true, requestShutdown() {} },
       deps: { currentMachineId: 'machine', currentServerId: 'home', workingDirectory: root,
+        resolveHostHomeServerIdentityId: async () => 'stable-home',
         actionOperations: operationRuntime, actionsSettingsProvider,
         accountReadRuntime: async () => runtime,
         createProjectFiniteRuntime: async ports => ({ ...runtime, ...ports }),
       },
     }) : registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
-      deps: { env: {}, workingDirectory: root, sessionManager, admissionDrain, accountReadRuntime: async () => runtime, projectFiniteRuntime: async () => runtime,
+      deps: { ...(options.daemonProfileId ? { serverId: options.daemonProfileId } : {}),
+        env: {}, workingDirectory: root, sessionManager, admissionDrain, accountReadRuntime: async () => runtime, projectFiniteRuntime: async () => runtime,
         projectScriptExecutor: (boundRuntime, context) => createCliActionExecutorHarness({ token: runtime.credentials.token, credentials: runtime.credentials, mode: 'plain', ctx: null,
           isCredentialCurrent: async () => current.accountCredentials,
           sessionId: 'cli-global', serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
@@ -1067,6 +1629,48 @@ describe('registerMachineTerminalRpcHandlers', () => {
     return { root, ingress, invoke, handlers, provider, sessionManager, operationRuntime, runtime, admissionDrain, get, post, retire: () => { current.machineAdmission = false; },
       dispose: async () => { await registration.dispose(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); } };
   }
+
+  it.each(['base', 'scoped'] as const)('mounts accepted finite work with a %s package identity after drain closes and retains bytes after nonzero exit', async identity => {
+    const h = await finiteHarness({ waived: true, acceptedRootTrailingSlash: true });
+    const sibling = identity === 'scoped' ? await realpath(await mkdtemp(join(tmpdir(), 'happier-package-identity-'))) : undefined;
+    const unsubscribe = h.operationRuntime.store.subscribe(() => {
+      const progress = h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.progress;
+      if (progress?.kind === 'phase' && progress.phase === 'preparing') h.admissionDrain.beginUnusedStopDrain();
+    });
+    try {
+      let runTargetId = 'web; echo untrusted:dev';
+      if (sibling) {
+        await writeFile(join(sibling, 'package.json'), JSON.stringify({ name: 'web; echo untrusted', scripts: { dev: 'vite' } }));
+        const target = (await discoverLocalServiceRunTargets({ roots: [h.root, sibling] })).find(candidate => candidate.cwd === h.root);
+        if (!target) throw new Error('Accepted package target missing');
+        expect(target.id).not.toBe(runTargetId);
+        runTargetId = target.id;
+      }
+      const ensured = await h.invoke(undefined, undefined, undefined, runTargetId);
+      expect(ensured).toMatchObject({ ok: true, terminalId: expect.any(String), reused: false });
+      expect(h.admissionDrain.isQuiescing()).toBe(true);
+      expect(h.provider.spawned).toHaveLength(1);
+      expect(h.provider.spawned[0]!.params).toMatchObject({ file: '/managed/yarn', args: ['run', 'dev'], options: { cwd: h.root } });
+      expect(h.provider.spawned[0]!.pty.writes).toEqual([]);
+      const snapshot = h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation');
+      expect(snapshot).toMatchObject({ state: 'running', domainRef: { kind: 'projectCommand', workspaceRefId: 'accepted', terminalId: expect.any(String) } });
+      if (snapshot?.domainRef?.kind !== 'projectCommand' || !snapshot.domainRef.terminalId) throw new Error('actual terminal missing');
+      expect(h.sessionManager.getCustody(snapshot.domainRef.terminalId)).toMatchObject({
+        serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation',
+        workspaceRefId: 'accepted', projectKey: 'project', rootPath: `${h.root}/`,
+      });
+      h.provider.spawned[0]!.pty.emitBytes(Buffer.from('finite output', 'utf8'));
+      expect(await h.sessionManager.ensure({ terminalKey: 'competing', cwd: h.root })).toMatchObject({ ok: true });
+      expect(h.sessionManager.isFiniteHeld(snapshot.domainRef.terminalId)).toBe(true);
+      h.provider.spawned[0]!.pty.exit(7);
+      expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation')).toMatchObject({ state: 'failed', domainRef: { terminalId: snapshot.domainRef.terminalId } });
+      const read = await h.sessionManager.readByteStream({ terminalId: snapshot.domainRef.terminalId, byteOffset: 0, maxBytes: 1000, maxFrames: 10 });
+      expect(read).toMatchObject({ ok: true });
+      if (!read.ok) throw new Error(read.code);
+      const bytes = read.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes');
+      expect(Buffer.concat(bytes.map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8')).toBe('finite output');
+    } finally { unsubscribe(); await h.dispose(); if (sibling) await rm(sibling, { recursive: true, force: true }); }
+  });
 
   it('lets the requester Session read its admitted finite script output while other people and interactive control stay refused', async () => {
     const h = await finiteHarness({ waived: true });
@@ -1172,41 +1776,60 @@ describe('registerMachineTerminalRpcHandlers', () => {
     }
   });
 
-  it('mounts accepted finite work after drain closes and retains the same bytes after a nonzero exit', async () => {
-    const h = await finiteHarness({ waived: true, acceptedRootTrailingSlash: true });
-    const unsubscribe = h.operationRuntime.store.subscribe(() => {
-      const progress = h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.progress;
-      if (progress?.kind === 'phase' && progress.phase === 'preparing') h.admissionDrain.beginUnusedStopDrain();
+  it('lets the requester read its finite Run output when the Run addressed the portable Home id of the daemon profile', async () => {
+    // REPLAY13 shape: the daemon's terminal owner is bound to its saved profile id, while the
+    // Agent's projects.script.run addresses the accepted checkout by the portable Home id.
+    const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+    await withTempDir('terminal-finite-portable-home-', async home => {
+      const profileId = 'terminal-finite-profile';
+      const homeId = 'srv_terminalFiniteHome';
+      scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
+      reloadConfiguration();
+      const h = await finiteHarness({ waived: true, homeServerId: homeId, daemonProfileId: profileId });
+      const serverUrl = h.runtime.serverHttpBaseUrl;
+      await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: {
+        id: profileId, name: 'Terminal Home', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({
+          v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }],
+        }),
+      } } }));
+      const rpc = createMachineTerminalRpcIngress(h.handlers, async () => true);
+      const admission = h.ingress.machineAdmission!;
+      const asRequester = (params: unknown, machineAdmission: RpcHandlerContext['machineAdmission'] = admission) =>
+        rpc.handleRequest({ method: `machine:${RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES}`, params,
+          machineAdmission, callerAuthority: 'account_automation' });
+      try {
+        const ran = await h.invoke();
+        if (!ran || typeof ran !== 'object' || !('terminalId' in ran) || typeof ran.terminalId !== 'string') throw new Error('finite run did not attach');
+        const terminalId = ran.terminalId;
+        h.provider.spawned[0]!.pty.emitBytes(Buffer.from('cap-b-ok', 'utf8'));
+        h.provider.spawned[0]!.pty.exit(0);
+        expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation'))
+          .toMatchObject({ state: 'succeeded', domainRef: { terminalId } });
+        const read = { terminalId, byteOffset: 0, maxBytes: 1000, maxFrames: 10 };
+        const own = TerminalStreamReadResponseSchema.parse(await asRequester(read));
+        if (!own.ok) throw new Error(own.code);
+        expect(Buffer.concat(own.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
+          .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8')).toBe('cap-b-ok');
+        // Another Account, a foreign installation and a caller without Machine admission
+        // stay refused by the same retained custody at the terminal owner.
+        for (const foreign of [{ ...admission, actorAccountId: 'recipient', role: 'use' as const },
+          { ...admission, installationId: 'previous-installation' }, undefined]) {
+          await expect(h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!(read, { signal: new AbortController().signal,
+            callerAuthority: 'account_automation', ...(foreign ? { machineAdmission: foreign } : {}) }))
+            .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
+        }
+      } finally {
+        for (const { pty } of h.provider.spawned) if (!pty.exited) pty.exit(0);
+        await h.dispose();
+        scope.restore(); reloadConfiguration();
+      }
     });
-    try {
-      const ensured = await h.invoke();
-      expect(ensured).toMatchObject({ ok: true, terminalId: expect.any(String), reused: false });
-      expect(h.admissionDrain.isQuiescing()).toBe(true);
-      expect(h.provider.spawned).toHaveLength(1);
-      expect(h.provider.spawned[0]!.params).toMatchObject({ file: '/managed/yarn', args: ['run', 'dev'], options: { cwd: h.root } });
-      expect(h.provider.spawned[0]!.pty.writes).toEqual([]);
-      const snapshot = h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation');
-      expect(snapshot).toMatchObject({ state: 'running', domainRef: { kind: 'projectCommand', workspaceRefId: 'accepted', terminalId: expect.any(String) } });
-      if (snapshot?.domainRef?.kind !== 'projectCommand' || !snapshot.domainRef.terminalId) throw new Error('actual terminal missing');
-      expect(h.sessionManager.getCustody(snapshot.domainRef.terminalId)).toMatchObject({
-        serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation',
-        workspaceRefId: 'accepted', projectKey: 'project', rootPath: `${h.root}/`,
-      });
-      h.provider.spawned[0]!.pty.emitBytes(Buffer.from('finite output', 'utf8'));
-      expect(h.sessionManager.ensure({ terminalKey: 'competing', cwd: h.root })).toMatchObject({ ok: true });
-      expect(h.sessionManager.isFiniteHeld(snapshot.domainRef.terminalId)).toBe(true);
-      h.provider.spawned[0]!.pty.exit(7);
-      expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: 'machine' }, 'operation')).toMatchObject({ state: 'failed', domainRef: { terminalId: snapshot.domainRef.terminalId } });
-      const read = await h.sessionManager.readByteStream({ terminalId: snapshot.domainRef.terminalId, byteOffset: 0, maxBytes: 1000, maxFrames: 10 });
-      expect(read).toMatchObject({ ok: true });
-      if (!read.ok) throw new Error(read.code);
-      const bytes = read.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes');
-      expect(Buffer.concat(bytes.map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8')).toBe('finite output');
-    } finally { unsubscribe(); await h.dispose(); }
   });
 
   it('does not turn an invocation waiver into setup consent or infer a Project from an enclosing cwd', async () => {
     const h = await finiteHarness({ waived: true, setup: true });
+    const rpc = createMachineTerminalRpcIngress(h.handlers, h.ingress.verifyMachineAdmissionCurrent!);
     try {
       // The mounted RPC waits for the real script attachment while D18 keeps
       // the original operation/reservation available to the human review UI.
@@ -1231,7 +1854,9 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(h.provider.spawned).toHaveLength(0);
       await expect(h.invoke(RPC_METHODS.DAEMON_TERMINAL_ENSURE, h.root, { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'teammate' } })).resolves.toMatchObject({ ok: false, error: 'project_requester_credentials_unavailable' });
       h.retire();
-      await expect(h.invoke()).resolves.toMatchObject({ ok: false, error: 'machine_admission_changed' });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, {
+        terminalKey: 'mounted', cwd: h.root, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev' },
+      }, { rpcContext: { ...h.ingress, callerAuthority: 'account_automation' } })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
       expect(h.provider.spawned).toHaveLength(0);
     } finally { await h.dispose(); }
   });
@@ -1257,7 +1882,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
         const env = { SHELL: '/bin/bash', ComSpec: 'cmd.exe' };
         const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env, platform,
           config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-            bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+            urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
         const registered = new Map<string, RpcHandler>();
         registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => registered.set(method, handler) } as unknown as RpcHandlerManager,
           deps: { env, platform, workingDirectory: root, sessionManager } });
@@ -1270,14 +1895,14 @@ describe('registerMachineTerminalRpcHandlers', () => {
       }
     } finally { await rm(root, { recursive: true, force: true }); }
   });
-  it('shares the lazy PTY owner with host finite execution and preserves interactive shell commands', async () => {
+  it('normalizes a 0.2 startup command through the shared typed PTY owner without changing plain shells', async () => {
     const provider = new FakeInteractivePtyProvider();
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: { SHELL: '/bin/bash' },
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
-    const handlers = new Map<string, (params: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+    const handlers = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) {
-      handlers.set(method, async (raw, context) => Reflect.apply(handler, undefined, [raw, context]));
+      handlers.set(method, handler);
     } }, deps: { env: {}, sessionManager } });
     try {
       expect(registration.getSessionManager()).toBe(sessionManager);
@@ -1289,12 +1914,18 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { registration.dispose(); }
   });
   it('lists existing terminals through the owner, rejects unknown input, and narrows restricted sessions', async () => {
-    const provider = new FakePtyProvider();
+    const provider = new FakeInteractivePtyProvider();
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: { SHELL: '/bin/bash' },
+      stopProcessTree: async ({ pid }) => { provider.spawned.find(entry => entry.pty.pid === pid)?.pty.exit(0); },
+      probeProcessGroup: groupId => provider.spawned.find(entry => entry.pty.pid === groupId)?.pty.exited ? 'absent' : 'alive',
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
-    sessionManager.ensure({ terminalKey: 'one', cwd: '/one', sessionId: 'session-one' });
-    sessionManager.ensure({ terminalKey: 'two', cwd: '/two', sessionId: 'session-two' });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+    const custody = { kind: 'session' as const, serverId: 'home', requesterAccountId: 'owner',
+      machineId: 'machine', installationId: 'installation' };
+    await sessionManager.ensure({ terminalKey: 'one', cwd: '/one', sessionId: 'session-one',
+      custody: { ...custody, sessionId: 'session-one', rootPath: '/one' } });
+    await sessionManager.ensure({ terminalKey: 'two', cwd: '/two', sessionId: 'session-two',
+      custody: { ...custody, sessionId: 'session-two', rootPath: '/two' } });
     let restart: RpcHandler | undefined;
     const register = (requiredSessionId?: string) => {
       const registered = new Map<string, RpcHandler>();
@@ -1333,13 +1964,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const provider = new FakePtyProvider();
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: { SHELL: '/bin/bash' },
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const register = (requiredSessionId?: string) => {
       const registered = new Map<string, RpcHandler>();
       registerMachineTerminalRpcHandlers({ rpcHandlerManager: {
         // The RPC registrar is the boundary; invoke its generic handler with wire input.
-        registerHandler: (method, handler) => registered.set(method, async params => {
-          const result: unknown = await Reflect.apply(handler, undefined, [params]);
+        registerHandler: (method, handler) => registered.set(method, async (params, context) => {
+          const result: unknown = await handler(params, context);
           return result;
         }),
       }, deps: { env: {}, sessionManager, requiredSessionId } });
@@ -1389,7 +2020,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: new FakeInteractivePtyProvider(), env: { SHELL: '/bin/bash' },
       platform: 'linux', stopProcessTree: async () => {},
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const registration = registerMachineTerminalRpcHandlers({
       rpcHandlerManager: { registerHandler() {} }, deps: { env: {}, sessionManager },
     });
@@ -1416,7 +2047,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: 1_000_000,
         bufferMaxEvents: 1000,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: 16_384,
         defaultCols: 80,
@@ -1464,7 +2094,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: 1_000_000,
         bufferMaxEvents: 1000,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: 16_384,
         defaultCols: 80,
@@ -1506,7 +2135,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: 1_000_000,
         bufferMaxEvents: 1000,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: 16_384,
         defaultCols: 80,
@@ -1522,6 +2150,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
         env: {},
         workingDirectory: suiteDir,
         sessionManager,
+        requiredSessionId: 'session-1',
         resolveLaunch: () => ({ file: '/opt/happier/bin/happier', args: ['attach', 'session-1'] }),
       },
     });
@@ -1551,7 +2180,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: 1_000_000,
         bufferMaxEvents: 1000,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: 16_384,
         defaultCols: 80,
@@ -1602,7 +2230,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: 1_000_000,
         bufferMaxEvents: 1000,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: 16_384,
         defaultCols: 80,
@@ -1662,7 +2289,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: 1_000_000,
         bufferMaxEvents: 1000,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: 16_384,
         defaultCols: 80,
@@ -1732,7 +2358,6 @@ describe('registerMachineTerminalRpcHandlers', () => {
       config: {
         bufferMaxBytes: TERMINAL_STREAM_MAX_FRAMES,
         bufferMaxEvents: TERMINAL_STREAM_MAX_FRAMES + 10,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: TERMINAL_STREAM_MAX_FRAMES + 10,
         defaultCols: 80,
@@ -1787,7 +2412,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const provider = new FakeInteractivePtyProvider();
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: { ComSpec: 'cmd.exe' }, platform: 'win32', stopProcessTree: async () => {},
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const registered = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({
       rpcHandlerManager: { registerHandler(method, handler) { registered.set(method, handler); } },
@@ -1807,7 +2432,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const provider = new FakeInteractivePtyProvider();
     const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: { SHELL: '/bin/bash' }, platform: 'linux', stopProcessTree: async () => {},
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const registered = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({
       rpcHandlerManager: { registerHandler(method, handler) { registered.set(method, handler); } },

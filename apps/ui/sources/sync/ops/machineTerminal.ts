@@ -92,7 +92,7 @@ function normalizeTerminalLaunchResponse(
 ): DaemonTerminalEnsureResponse {
     // 0.2 rejects this typed arm before execution. Keep the refusal scoped to
     // this operation: never retry it as shell text or disable ordinary PTYs.
-    if (input.launch?.kind === 'package_script' && !response.ok
+    if ((input.launch?.kind === 'package_script' || input.launch?.kind === 'service_shell') && !response.ok
         && response.errorCode === 'terminal_invalid_request' && response.error === 'terminal_invalid_request') {
         return { ...response, error: 'cli_update_required' };
     }
@@ -112,7 +112,8 @@ export async function machineTerminalList(
             accountId: opts?.accountId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_TERMINAL_LIST,
-            payload: DaemonTerminalListRequestV1Schema.parse({ ...(opts?.workspace ? { workspace: opts.workspace } : {}) }),
+            payload: DaemonTerminalListRequestV1Schema.parse({ ...(opts?.workspace ? { workspace: opts.workspace } : {}),
+                ...(opts?.machineShell !== undefined ? { machineShell: opts.machineShell } : {}) }),
             ...(opts?.signal ? { signal: opts.signal } : {}),
         });
     } catch (error) {

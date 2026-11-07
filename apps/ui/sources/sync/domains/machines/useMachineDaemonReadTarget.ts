@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { useServerCredentialAccountScopeStates, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeStates, type ServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -15,6 +15,8 @@ export type MachineDaemonReadTargetInput = Readonly<{
     serverId?: string | null;
     expectedAccountId?: string | null;
     daemonStateVersion?: number | null;
+    /** Readers driven by their own watch do not need daemon publication invalidations. */
+    observeDaemonStateVersion?: boolean;
     enabled?: boolean;
     online?: boolean | null;
 }>;
@@ -22,6 +24,7 @@ export type MachineDaemonReadTargetInput = Readonly<{
 type MachineDaemonReadIdentity = Readonly<{
     key: MachineDaemonReadKey;
     accountBinding: ServerCredentialAccountScopeBinding | null;
+    credentialResolution: ServerCredentialAccountScopeResolution['kind'];
     accountMatches: boolean;
     enabled: boolean;
 }>;
@@ -49,7 +52,8 @@ export function useMachineDaemonReadIdentities(inputs: readonly MachineDaemonRea
         const scope = state?.resolution.kind === 'bound' ? state.resolution.scope : null;
         const expectedAccountId = input.expectedAccountId ?? binding?.accountId ?? scope?.accountId ?? null;
         return { key: { machineId: input.machineId, serverId: input.serverId || null, expectedAccountId },
-            accountBinding: binding, accountMatches: !!scope && scope.accountId === expectedAccountId,
+            accountBinding: binding, credentialResolution: state?.resolution.kind ?? 'resolving',
+            accountMatches: !!scope && scope.accountId === expectedAccountId,
             enabled: viewed && input.enabled && !!binding
                 && binding.accountId === expectedAccountId && binding.isCurrent() };
     }), [states, targets, viewed]);
@@ -74,7 +78,9 @@ export function useMachineDaemonReadTarget(input: MachineDaemonReadTargetInput):
     const { key, accountBinding: binding } = identity;
     const serverId = key.serverId;
     const presence = useMachinePresenceSummary(serverId, input.machineId);
-    const selectVersion = React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => resolveServerScopedMachine(state, serverId, input.machineId)?.daemonStateVersion, [input.machineId, serverId]);
+    const selectVersion = React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => input.observeDaemonStateVersion === false
+        ? undefined : resolveServerScopedMachine(state, serverId, input.machineId)?.daemonStateVersion,
+    [input.machineId, input.observeDaemonStateVersion, serverId]);
     const reportedVersion = storage(selectVersion);
     const online = input.online !== false && input.online !== null && presence.reachability === 'reachable';
     const enabled = identity.enabled && online;

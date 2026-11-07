@@ -605,6 +605,8 @@ export const HandoffTargetReplacementPreflightV1Schema = lazyZodSchema(() => z.s
   machineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_MACHINE_ID_LENGTH)),
   operationId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
   targetPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_PATH_LENGTH)),
+  /** The selected link may lend its exact retained target custody for inspection. */
+  replaceRelationshipId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH))),
   /**
    * Whether this operation activates exact mirroring, which authorizes deleting
    * target-only files later even when the destination is missing or empty now.
@@ -1069,8 +1071,18 @@ export type WorkspaceSyncStatusWatchResultV1 = z.infer<typeof WorkspaceSyncStatu
  */
 export const WorkspaceSyncRelationshipsListRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workspaceRefId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH))),
+  requesterAvailability: z.optional(z.literal(true)),
 }));
 export type WorkspaceSyncRelationshipsListRpcRequestV1 = z.infer<typeof WorkspaceSyncRelationshipsListRpcRequestV1Schema>;
+
+/** The receiving Machine's native placement owner supplies requester directories. */
+export const WorkspaceSyncRequesterAvailabilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('available'),
+    homeDir: z.string().check(z.minLength(1)), workspaceRoot: z.nullable(z.string().check(z.minLength(1))) }),
+  z.strictObject({ kind: z.literal('unavailable'),
+    reason: z.enum(['requester_authority_unavailable', 'agent_isolation_unavailable']) }),
+]));
+export type WorkspaceSyncRequesterAvailabilityV1 = z.infer<typeof WorkspaceSyncRequesterAvailabilityV1Schema>;
 
 const WorkspaceSyncRelationshipWithStatusV1Schema = lazyZodSchema(() => z.strictObject({
   definition: WorkspaceSyncRelationshipV1Schema,
@@ -1106,6 +1118,7 @@ export const WorkspaceSyncRelationshipsListRpcResultV1Schema = lazyZodSchema(() 
     found: z.nullable(z.boolean()),
   }),
   discoveryAvailable: z.boolean(),
+  requesterAvailability: z.optional(WorkspaceSyncRequesterAvailabilityV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.membership.workspaceRefId === null && value.membership.found !== null) {
     context.addIssue({
@@ -1222,6 +1235,19 @@ export type WorkspaceSyncRelationshipCreateActionInputV1 = z.infer<
   typeof WorkspaceSyncRelationshipCreateActionInputV1Schema
 >;
 
+/** Explicit replacement keeps both endpoint folders and starts a new sync history. */
+export const WorkspaceSyncRelationshipReplaceActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...WorkspaceSyncRelationshipCreateActionInputV1Schema.shape,
+  replaceRelationshipId: exactBoundedString(MAX_RELATIONSHIP_ID_LENGTH),
+  destinationIntent: z.literal('use_existing'),
+}));
+export type WorkspaceSyncRelationshipReplaceActionInputV1 = z.infer<typeof WorkspaceSyncRelationshipReplaceActionInputV1Schema>;
+export const WorkspaceSyncRelationshipWriteActionInputV1Schema = lazyZodSchema(() => z.union([
+  WorkspaceSyncRelationshipCreateActionInputV1Schema,
+  WorkspaceSyncRelationshipReplaceActionInputV1Schema,
+]));
+export type WorkspaceSyncRelationshipWriteActionInputV1 = z.infer<typeof WorkspaceSyncRelationshipWriteActionInputV1Schema>;
+
 /** Exact authority subject for permanently stopping one persisted relationship. */
 export const WorkspaceSyncRelationshipTerminateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   controllerMachineId: exactBoundedString(MAX_MACHINE_ID_LENGTH),
@@ -1322,7 +1348,7 @@ export type WorkspaceSyncRelationshipCreateResultV1 = z.infer<
 export const WorkspaceSyncRelationshipCreateRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   operationId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
-  actionInput: WorkspaceSyncRelationshipCreateActionInputV1Schema,
+  actionInput: WorkspaceSyncRelationshipWriteActionInputV1Schema,
   targetReplacementApproval: z.optional(HandoffTargetReplacementApprovalV1Schema),
   targetReplacementApprovalReceiptId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH))),
 }).check(z.superRefine((value, context) => {

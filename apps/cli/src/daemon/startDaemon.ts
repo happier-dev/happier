@@ -1,22 +1,19 @@
-import { isDeepStrictEqual } from 'node:util';
-import { createDaemonAgentIsolationEffects } from './agentIsolation/createDaemonAgentIsolationEffects';
-import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
-import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-
-import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
 import { randomUUID } from 'node:crypto';
+import { writeSync } from 'node:fs';
 import { createDaemonMcpRequestAuthForTest } from './connectedServices/requestAuth/createDaemonMcpRequestAuthForTest';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-
+import { isDeepStrictEqual } from 'node:util';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { createManagedActivityInventory, createLiveWorkProducerGroup, type LiveWorkProducerV1 } from './lifecycle/managedActivity';
+import { projectDaemonRequesterWorkAttribution } from './lifecycle/requesterWorkAttribution';
 import { createExecutionRunLiveWorkProducer } from './executionRunRegistry';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from './startup/managedMachinePolicyRuntime';
 import { reconcileRecoveredSessionMachineControl } from './sessions/reconcileRecoveredSessionMachineControl';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import type { ApiMachineClient, ApiMachineClientLifecycleDependencies } from '@/api/apiMachine';
+import { ApiClient } from '@/api/api';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { installDaemonMachineAdmissionTransport } from './machineAdmissionTransport';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
@@ -25,6 +22,7 @@ import { MachineMetadata } from '@/api/types';
 import type { DaemonState } from '@/api/types';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
+import { DAEMON_STDERR_LOG_PATH_ENV } from '@/utils/logs/logRetention';
 import { configuration } from '@/configuration';
 import { formatProcessOwnerTag, PROCESS_OWNER_ENV_KEY } from '@/processes/ownerTag';
 import {
@@ -33,6 +31,7 @@ import {
 } from '@/session/services/spawnConnectedServicesDefaults';
 import { createDaemonKeepAwake } from './resources/daemonKeepAwake';
 import { createDaemonStorageVitalsBindings } from './resources/createDaemonStorageVitalsBindings';
+import { projectStorageProcessUse } from './resources/projectStorageProcessUse';
 import { createDaemonGuard } from './guard/createDaemonGuard';
 import { createGuardSessionRestoration } from './guard/sessionRestoration';
 import { createGuardSessionAccess } from './guard/sessionAccess';
@@ -41,9 +40,10 @@ import { createLeftBehindActuator, readLeftBehindRestoration } from './guard/act
 import { createIdleTerminalPolicy } from './guard/idleTerminalPolicy';
 import { createSessionMemoryCeiling, type SessionMemoryCeilingTarget } from './platform/linux/sessionMemoryCeiling';
 import { waitForChangeOrDeadline } from './lifecycle/waitForChangeOrDeadline';
-
+import { processRef } from './processes/view/processRef';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createReadGuardFacts } from './guard/readGuardFacts';
+import { readGuardSessionTitle } from './guard/readGuardSessionTitle';
 import { readCurrentSessionEligibility } from './guard/sessionEligibility';
 import { browserClose } from './guard/actuators/browserClose';
 import { serviceStop } from './guard/actuators/serviceStop';
@@ -52,12 +52,11 @@ import { isTerminalHostPhysicallyRetiredStopResult } from './sessions/stopSessio
 import { applySessionMemoryCeilingOverrideToMetadata, readSessionMemoryCeilingOverride } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 import { MachineGuardPolicyV1Schema } from '@happier-dev/protocol/machines/guard/guardPolicyV1';
-import { SessionSharedSummaryV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { createMachineVitalsAlerts } from './vitals/alerts/machineVitalsAlerts';
-import { dispatchMachineVitalsAlertNotificationAsync, readMachineVitalsWorkingSessionCount } from './vitals/alerts/dispatchMachineVitalsAlertNotification';
+import { readMachineVitalsWorkingSessionCount } from './vitals/alerts/dispatchMachineVitalsAlertNotification';
+import { dispatchActiveAccountMachineVitalsAlertNotificationAsync } from './vitals/alerts/activeAccountNotification';
 import { buildMachineGuardEpisodeNotificationEvent } from '@/notifications/activity/buildMachineGuardEpisodeNotification';
 import { createDaemonStorageRoutes, type DaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -67,7 +66,10 @@ import type { BrowserRecordingDaemonRuntime } from './browser/recording/runtime'
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/getEnvironmentInfo';
-import { pruneHappyCliRunnerSnapshots } from '@/utils/spawnHappyCLI';
+import {
+  buildHappyCliSubprocessLaunchSpec,
+  pruneHappyCliRunnerSnapshots,
+} from '@/utils/spawnHappyCLI';
 import { projectPath } from '@/projectPath';
 import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
 import {
@@ -77,6 +79,7 @@ import {
   readStoredCredentials,
   readStoredCredentialsForServerId,
   sameStoredCredentials,
+  type StoredCredentials,
   writeDaemonStateForLockOwner,
 } from '@/persistence';
 
@@ -119,7 +122,7 @@ import { createRequesterSessionRuntimeContextResolver, resolveRequesterSessionBo
 import { notifyActiveAccountConnectedServicesProjection } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { warmDaemonAccountCatalogs } from './startup/warmDaemonAccountCatalogs';
-import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { migrateTrackedSessionProcessesOutOfDaemonServiceCgroup } from './platform/linux/migrateTrackedSessionsOutOfDaemonServiceCgroup';
 import { readGuardCeilingCapability, shouldUseSystemdUserSessionResourceGovernor } from './platform/linux/systemdUserResourceGovernor';
 import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -133,9 +136,9 @@ import { startDaemonMachineRegistrationRuntime } from './startup/startDaemonMach
 import { settleDaemonOptionalCapability, type DaemonOptionalCapabilityResult } from './startup/optionalCapabilities';
 import { createDaemonCleanupAndShutdown } from './startup/createDaemonCleanupAndShutdown';
 import { releaseDaemonOwnershipAfterFatal } from './lifecycle/cleanupAndShutdown';
-import { type AutomationWorkerHandle } from './automation/automationWorker';
-import { type MemoryWorkerHandle } from './memory/memoryWorker';
-import { type VoiceInferenceWorkerHandle } from './voiceInference/voiceInferenceWorker';
+import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
+import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
+import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from './voiceInference/voiceInferenceWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import type { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
@@ -144,9 +147,7 @@ import type { DaemonServerWorkScheduler } from './serverWork';
 import type { ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { trimProcessAllocator } from '@happier-dev/iroh-native/node';
@@ -180,7 +181,7 @@ import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWork
 import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerAction';
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
-
+import { readProjectFiniteIngressRefusal } from '@/workspaces/projectSetup/projectFiniteAction';
 import { captureServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from './identity/store';
 import { prepareDaemonPluginRemoval } from './startup/prepareDaemonPluginRemoval';
@@ -193,8 +194,9 @@ import { listConnectedServiceRetainedMaterializedHomeSanitizers } from './connec
 import { readRetainedConnectedServiceMaterializationKeys } from './connectedServices/materialize/cleanup/readRetainedConnectedServiceMaterializationKeys';
 import { resolveConnectedServicesMaterializationBaseDir } from './connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
 import { createDaemonMachineRpcRouteAttachmentCache } from './machineRpcRouteAttachments';
-import { machineNativeEffectAdmission } from './local/services/launch/machineNativeEffectAdmission';
+import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { createMachineVitalsSampler, type MachineVitalsSampler } from './vitals/createMachineVitalsSampler';
+import { machineNativeEffectAdmission } from './local/services/launch/machineNativeEffectAdmission';
 import { createMachineVitalsReader } from './vitals/createMachineVitalsReader';
 import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
 import { createMachineResourceSummary, type MachineResourceSummary } from './resources/machineResourceSummary';
@@ -219,10 +221,9 @@ import type {
   ManagedServiceSessionBaseUrlResolver,
   ManagedServiceSessionClientAccessResolver,
 } from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
-import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import { createBoundMachineTargetResolver, createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createServerUrlServerFeaturesSnapshotStore, readServerFeaturesSnapshot } from '@/features/serverFeaturesSnapshotStore';
 import { startServerFeaturesSnapshotRefreshLoop } from './serverFeaturesSnapshotRefreshLoop';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveMachineConnectionHandover } from './lifecycle/requestDaemonSelfRestart';
 import { createDaemonPeerMediationObservabilityRuntime } from './machine/peerMediationObservabilityRuntime';
 import { resolvePeerMediationTrustRoots as resolvePeerMediationTrustRootsFromSnapshot } from './peer/mediation/resolvePeerMediationTrustRoots';
@@ -252,7 +253,10 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { DaemonPluginChangeOwner } from '@/plugins/daemon/changeService';
 import { createDaemonPluginRuntimeOwner, createDaemonPluginTransferRpcResolver } from '@/plugins/daemon/runtimeOwner';
+import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { createDaemonAgentIsolationEffects } from './agentIsolation/createDaemonAgentIsolationEffects';
 import { createDaemonPluginDevelopmentReviewApprovalPublisher } from '@/plugins/daemon/developmentReviewApproval';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { startBackgroundRegistryUpdateCheck } from '@/registries/updates/startBackgroundRegistryUpdateCheck';
 import { createCliRegistryUpdateCheck } from '@/registries/updates/createCliRegistryUpdateCheck';
@@ -278,11 +282,12 @@ import {
 } from './connectedServices/directMaterial/daemonTeamCredentialDirectMaterialReconciler';
 import { createHttpTeamCredentialDirectMaterialClient } from './connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerRelayApplicationBindingV1 } from '@happier-dev/protocol';
+import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { resolveTeamCredentialExternalRequestPolicy } from '@/providers/broker/externalRequestPolicy';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import {
   revalidateExternalProviderBrokerAuthorization,
@@ -298,16 +303,16 @@ import {
   createTeamCredentialBrokerSourceOwner,
   teamCredentialBrokerResourceAcceptsMachine,
 } from '@/providers/broker/teamCredentialBrokerSourceOwner';
-import { createTeamCredentialExternalModelCatalog, type TeamCredentialModelCatalogResolver } from '@/providers/broker/teamCredentialModelCatalog';
+import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import {
-  resolveTeamCredentialResourceCatalogApplications,
-  resolveTeamCredentialSourceModelCatalog,
+  resolveTeamCredentialResourceSourceCatalogs,
 } from '@/providers/broker/resourceTestCandidate';
 import {
-  classifyTeamCredentialRequestRouteV1,
-  evaluateTeamCredentialRequestPolicyV1,
-} from '@/providers/broker/requestPolicyV1';
-import { createProviderConnectionBrokerSourceOpen, isProviderConnectionDirectSourceCurrent, materializeProviderConnectionDirectCredential, resolveAdmittedProviderConnectionDirectSourceSnapshot } from '@/providers/broker/providerConnectionSource';
+  createProviderConnectionBrokerSourceOpen,
+  isProviderConnectionDirectSourceCurrent,
+  materializeProviderConnectionDirectCredential,
+  resolveAdmittedProviderConnectionDirectSourceSnapshot,
+} from '@/providers/broker/providerConnectionSource';
 import { createProviderConnectionTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { createProviderConnectionCpxBridge } from '@/providers/broker/providerConnectionCpxBridge';
 import { createAccountConnectionBrokerSourceOpen, retireAccountConnectionBrokerSource } from '@/providers/broker/accountConnectionSource';
@@ -396,6 +401,9 @@ export async function startDaemon(
   let publicProfileRefreshHandle: SingleFlightIntervalLoopHandle | null = null;
   void resolvesWhenShutdownRequested.then(() => homeTransportCancellation.abort());
 
+  if (process.env[DAEMON_STDERR_LOG_PATH_ENV]) {
+    writeSync(2, `Detached daemon PID: ${process.pid}\n`);
+  }
   logger.debug('[DAEMON RUN] Starting daemon process...');
   // Which bytes this daemon is about to run. `startedWithCliVersion` is identical across
   // every bundle built from the same package version, so it cannot distinguish a current
@@ -518,9 +526,10 @@ export async function startDaemon(
         // Local native-endpoint initialization is optional carrier
         // preparation. Its failure is handed to the Home transport owner as
         // native-runtime unavailability; that owner is the single owner of the
-        // trusted-HTTPS-or-fail-closed decision, and it still fails closed for
-        // an Iroh-only Home or a selected-Iroh identity, authentication or
-        // descriptor-integrity failure. No fallback decision is made here.
+        // declared-origin-or-stop decision. An Iroh-only Home waits for a reached
+        // Home to become ready, and stops startup on a carrier it cannot acquire
+        // or on an identity, authentication or descriptor-integrity failure.
+        // No fallback decision is made here.
         const createdIrohRuntime = await prepareDaemonMachineIrohRuntime({
           applicationCarrierEligibility,
           readRuntimeOptions: () => ({
@@ -647,6 +656,7 @@ export async function startDaemon(
       : null;
     let preflightMachineRegistration = bootstrapContext.preflightMachineRegistration;
     let machineId = bootstrapContext.machineId;
+    const requesterRuntimeServerId = configuration.activeServerId;
     const deviceLocalSecretStorage = bootstrapContext.deviceLocalSecretStorage;
 
     let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
@@ -705,6 +715,7 @@ export async function startDaemon(
     let localServiceSummary: Parameters<typeof createDaemonMachineBootstrapRuntime>[0]['localServiceSummary'];
     let isProjectServiceExecutionLive: (() => boolean) | undefined;
     let acquireLocalServicePreviewApplication: Parameters<typeof createDaemonMachineBootstrapRuntime>[0]['acquireLocalServicePreviewApplication'];
+    let resolveLocalServicePreviewApplication: Parameters<typeof createDaemonMachineBootstrapRuntime>[0]['resolveLocalServicePreviewApplication'];
     const persistedTakeoverAdmissionWaiter =
       createPersistedTakeoverAdmissionWaiter();
     let persistedTakeoverAdmissionOwner:
@@ -747,6 +758,7 @@ export async function startDaemon(
         const snapshot = machineResourcesPolicy?.read();
         return snapshot?.status === 'ready' ? snapshot.policy : null;
       },
+      subscribeMonitoring: listener => machineResourcesPolicy?.subscribeKey('monitoring', listener) ?? (() => {}),
       onTick: () => { machineResourceSummary?.refresh(); daemonGuard?.refreshOnTick(); projectWorkerAdmission?.notifyChanged(); },
     });
     await machineVitals.start();
@@ -807,7 +819,7 @@ export async function startDaemon(
     // source the local-services inventory + browser daemon gates already use — no second fetch path.
     let retireProviderBrokerClaimsForFeatureDisable: (() => Promise<void>) | null = null;
     const serverFeaturesSnapshotStore = createServerUrlServerFeaturesSnapshotStore({
-      serverUrl: resolveServerHttpBaseUrl,
+      serverUrl: readDaemonHomeServerHttpBaseUrl,
       token: credentials.token,
       onAuthenticatedReady: async (features) => {
         await applyDaemonHomeDescriptorRefresh({
@@ -1051,9 +1063,8 @@ export async function startDaemon(
     machineVitalsAlerts = createMachineVitalsAlerts({
       sampler: machineVitals, historyStore: machineVitalsHistory, policy: machineResourcesPolicy,
       notify: async (transition, sample, policy) => {
-        const snapshot = getActiveAccountSettingsSnapshot();
         const target = machineResourceTarget();
-        if (!snapshot || !target || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials))
+        if (!target)
           throw new Error('machine_vitals_notification_account_unavailable');
         const inventory = await managedActivity.read();
         const workingSessionCount = readMachineVitalsWorkingSessionCount(inventory);
@@ -1062,14 +1073,12 @@ export async function startDaemon(
           ? metadata.metadata.displayName.trim() : undefined;
         const hostName = metadata?.status === 'ready' && typeof metadata.metadata.host === 'string'
           ? metadata.metadata.host : undefined;
-        await dispatchMachineVitalsAlertNotificationAsync({
+        await dispatchActiveAccountMachineVitalsAlertNotificationAsync({
           transition, latest: sample, machineId: target.machineId, machineName: displayName || hostName,
           ...(workingSessionCount === undefined ? {} : { workingSessionCount }),
           guardEnabled: policy.guard.memoryGuard.enabled,
-          settings: snapshot.settings, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
-          notificationChannelCatalog: snapshot.notificationChannelCatalog ?? { status: 'loading' },
-          savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot),
-          isCurrent: () => !homeTransportCancellation.signal.aborted && getActiveAccountSettingsSnapshot() === snapshot,
+          credentials,
+          isCurrent: () => !homeTransportCancellation.signal.aborted,
           expoPushSender: api.push(),
           usageNoticeArtifactStore: { accountId: target.custodianAccountId, store: createCredentialedAccountArtifactStore(credentials) },
         });
@@ -1477,8 +1486,8 @@ export async function startDaemon(
             ?.getSessionSyncPendingInputServerContractResult()
             ?? null,
         secrets: createActiveAccountSettingsConnectedAccountSecrets({
-          secretSources: daemonSecretSources,
           expectedScopeKey: resolveAccountSettingsScopeKey(credentials),
+          secretSources: daemonSecretSources,
         }),
         onAccountSettled: async (settled) => {
           const coordinator = connectedServiceQuotasCoordinator;
@@ -1511,7 +1520,7 @@ export async function startDaemon(
       });
     const teamCredentialDirectMaterialClient = createHttpTeamCredentialDirectMaterialClient({
       token: credentials.token,
-      serverUrl: resolveServerHttpBaseUrl(),
+      get serverUrl() { return readDaemonHomeServerHttpBaseUrl(); },
       async readRecipientEncryptionMaterial(signal) {
         const mode = await api.getAccountEncryptionMode({ signal });
         if (mode === 'plain') return { mode: 'plain' };
@@ -1542,12 +1551,20 @@ export async function startDaemon(
           signal,
         }),
       qualifiedApi: {
+        async listAccountsForServices(services, signal) {
+          signal.throwIfAborted();
+          const result = await listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal,
+            requestPurpose: 'connected-accounts:daemon-coordinator' });
+          signal.throwIfAborted();
+          return result;
+        },
         async listAccounts(service, signal) {
           signal.throwIfAborted();
           const result = await listQualifiedConnectedAccountsV4({
             token: credentials.token,
             service,
             signal,
+            requestPurpose: 'connected-accounts:purpose-binding',
           });
           signal.throwIfAborted();
           return result;
@@ -1578,6 +1595,12 @@ export async function startDaemon(
     const connectedAccountRequestAuthRegistry =
       createConnectedAccountRequestAuthSubjectRegistry();
     let connectedAccountRequestAuthHttpPort: number | null = null;
+    const readConnectedAccountRequestAuthHttpPort = () => {
+      if (connectedAccountRequestAuthHttpPort === null) {
+        throw new Error('connected_account_request_auth_http_port_unavailable');
+      }
+      return connectedAccountRequestAuthHttpPort;
+    };
     let managedServiceEndpointReadHost:
       AgentExternalSessionsManagedEndpointReadHost | null = null;
     let managedServiceSessionBaseUrlResolver:
@@ -1594,20 +1617,11 @@ export async function startDaemon(
         purposeBindingOwner: {
           activatePurposeBindings:
             connectedAccountPurposeBindingRuntime.activatePurposeBindings,
-          readCredentialConfigurationRevision:
-            connectedAccountPurposeBindingRuntime.readCredentialConfigurationRevision,
         },
         listActionFormConnectedAccountOptions:
           connectedAccountPurposeBindingRuntime.listActionFormConnectedAccountOptions,
         requestAuthRegistry: connectedAccountRequestAuthRegistry,
-        resolveRequestAuthHttpPort() {
-          if (connectedAccountRequestAuthHttpPort === null) {
-            throw new Error(
-              'connected_account_request_auth_http_port_unavailable',
-            );
-          }
-          return connectedAccountRequestAuthHttpPort;
-        },
+        resolveRequestAuthHttpPort: readConnectedAccountRequestAuthHttpPort,
         createRedactionLease: () =>
           createProviderRedactionLease({ values: [] }),
       });
@@ -1657,17 +1671,21 @@ export async function startDaemon(
         ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? null
         : null;
     };
+    const resolveCurrentMachineTarget = createBoundMachineTargetResolver({
+      resolveCurrentMachineId: () => machineId,
+      resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
+    });
     const resolveCurrentMachineExecutionOriginContext =
       createCurrentMachineExecutionOriginContextResolver({
-        serverUrl: resolveServerHttpBaseUrl(),
+        get serverUrl() { return readManagedPolicyServerHttpBaseUrl(); },
         resolveCurrentMachineId: () => machineId,
         resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
       });
-    const managedPolicyServerHttpBaseUrl = resolveServerHttpBaseUrl();
+    const readManagedPolicyServerHttpBaseUrl = captureServerHttpBaseUrl();
     const pluginRemovalOrigin = await resolveCurrentMachineExecutionOriginContext();
     const managedPolicyHomeId = pluginRemovalOrigin?.serverIdentityId ?? null;
     const { installation: pluginRemovalInstallation, managedResourcePreflight } = await prepareDaemonPluginRemoval({
-      credentials, machineId, origin: pluginRemovalOrigin, readServerUrl: () => managedPolicyServerHttpBaseUrl,
+      credentials, machineId, origin: pluginRemovalOrigin, readServerUrl: readManagedPolicyServerHttpBaseUrl,
       signal: homeTransportCancellation.signal,
     });
     const readCurrentManagedPolicyController = () => {
@@ -1675,7 +1693,7 @@ export async function startDaemon(
       if (!managedPolicyHomeId || !installation || !externalActionAccountId) return null;
       return { homeId: managedPolicyHomeId, controller: { machineId, installationId: installation.installationId },
         custodianAccountId: externalActionAccountId, privateKey: installation.privateKey,
-        token: credentials.token, serverUrl: managedPolicyServerHttpBaseUrl };
+        token: credentials.token, serverUrl: readManagedPolicyServerHttpBaseUrl() };
     };
     const readCurrentManagedMachinePolicies = async (signal?: AbortSignal) => {
       const origin = await resolveCurrentMachineExecutionOriginContext(signal);
@@ -1694,21 +1712,19 @@ export async function startDaemon(
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
     confidentialActionInputs = api.createConfidentialActionInputsExecutor({ secretSources: daemonSecretSources,
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
-    const pluginRegistrySourceHome = resolveServerHttpBaseUrl();
+    const readPluginRegistrySourceHome = captureServerHttpBaseUrl();
     const pluginRegistrySourceHost = createCliRegistryHostV1({ credentials, secretSources: daemonSecretSources });
-    const requesterRuntimeServerId = configuration.activeServerId;
     const isolationWorkspaceScope = `${requesterRuntimeServerId}:${resolveAccountSettingsScopeKey(credentials)}`;
-const readIsolationRoots = () => {
+    const readIsolationRoots = () => {
       const workspaces = getActiveProjectAccountRowsSnapshot();
       if (configuration.activeServerId !== requesterRuntimeServerId) return null;
       return readMachineProjectWorkspaceRefs(workspaces, { scopeKey: isolationWorkspaceScope,
         serverId: requesterRuntimeServerId, homeServerIdentityId: resolveBoundHomeServerIdentityId(), machineId })
         ?.map(ref => ({ rootId: ref.id, path: ref.rootPath })) ?? null;
     };
-
     const isolationEffects = createDaemonAgentIsolationEffects({ getMachineClient: () => apiMachineForSessions,
       adminAccess: machineAdminAccessRoutes, readRoots: readIsolationRoots,
-      trackedSessions: pidToTrackedSession,
+      trackedSessions: pidToTrackedSession, sessionChanges: sessionActivity,
       protectedRoots: [configuration.happyHomeDir, '/opt/happier', '/var/lib/happier-agent'],
       privateRoots: [configuration.happyHomeDir],
       readMemberBindingScope: () => {
@@ -1719,7 +1735,7 @@ const readIsolationRoots = () => {
       },
     });
     machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
-const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
+    const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
       managedHappierBinaryPath: isolationEffects.installedCli,
       async readMember(input) {
         const machine = apiMachineForSessions;
@@ -1731,8 +1747,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         if (!machine) throw new Error('agent_isolation_unavailable');
         return machine.prepareAgentIsolationMember(input);
       },
-
-
       read() {
         const snapshot = apiMachineForSessions?.getAgentIsolationSnapshot()
           ?? { enabled: true, status: { kind: 'unavailable' as const, code: 'metadata_unavailable' as const } };
@@ -1740,7 +1754,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         return { ...snapshot, workspaceRoots, daemonObservation: machineAdminAccessRoutes.observer.read() };
       },
     };
-
     const deploymentAccountHomeServerId = configuration.activeServerId;
     const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       deploymentAccountExecution: {
@@ -1752,9 +1765,10 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         isCurrent: async () => !homeTransportCancellation.signal.aborted
           && configuration.activeServerId === deploymentAccountHomeServerId,
       },
-
-
-
+      agentIsolation,
+      approvalStore: createCliApprovalsArtifactStore({ credentials }),
+      readDaemonRights: () => apiMachineForSessions?.getMachineAdminAccessRights()
+        ?? { observation: machineAdminAccessRoutes.observer.read(), freshness: 'stale' },
       signal: homeTransportCancellation.signal,
       publishDevelopmentReview: createDaemonPluginDevelopmentReviewApprovalPublisher({
         credentials,
@@ -1762,19 +1776,30 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         resolveCurrentMachineExecutionOriginContext,
       }),
       readSpawnFailureLimits: () => machineVitals?.latest()?.limits,
+      ensureEnvironmentServices: async () => {
+        if (!apiMachineForSessions) throw new Error('Machine service recovery is unavailable');
+        await apiMachineForSessions.ensureEnvironmentServices();
+      },
       happyHomeDir: configuration.happyHomeDir,
-      readRegistrySources: () => runWithServerHttpBaseUrl(pluginRegistrySourceHome, () => pluginRegistrySourceHost.readSources()),
+      marketplaceRegistryHost: {
+        withSource: (sourceId, use) => runWithServerHttpBaseUrl(readPluginRegistrySourceHome(), () => pluginRegistrySourceHost.withSource(sourceId, use)),
+      },
       ...(managedResourcePreflight ? { managedResourcePreflight } : {}),
       daemonDatabaseLimits: DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY,
       resolveCurrentMachineId: () => machineId,
-      readDaemonRequesterWorkAttribution: () => {
-        const target = machineResourceTarget();
-        return target ? { serverId: target.serverId, accountId: target.custodianAccountId,
-          machineId: target.machineId, installationId: target.installationId } : null;
-      },
+      readDaemonRequesterWorkAttribution: () => projectDaemonRequesterWorkAttribution(
+        machineResourceTarget(), resolveBoundHomeServerIdentityId()),
       machineAdmissionTransport,
       executeClientAction: createClientActionMachineRpcExecutor(() => apiMachineForSessions),
       resolveComposerMediaStageTransferRpcHandler: createDaemonPluginTransferRpcResolver(() => apiMachineForSessions),
+      externalActionHomeBinding: {
+        serverId: configuration.activeServerId,
+        ...(managedPolicyHomeId ? { serverIdentityId: managedPolicyHomeId } : {}),
+        ...(pluginRemovalInstallation ? {
+          externalActionMachineRequestPrivateKey: pluginRemovalInstallation.privateKey,
+          externalActionMachineInstallationId: pluginRemovalInstallation.installationId,
+        } : {}),
+      },
       resolveCurrentMachineExecutionOriginContext,
       resolveSessionResourceAccess: async (input) => {
         const currentApiMachine = apiMachineForSessions;
@@ -1799,6 +1824,8 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       actionFormConnectedAccounts: Object.freeze({
         resolveBindingIntent:
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
+        resolveBindingIntentSelection:
+          connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
         activatePurposeBindings:
           connectedAccountPurposeBindingRuntime.activatePurposeBindings,
       }),
@@ -1881,6 +1908,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       reloadController: pluginReloadController,
       persistence: connectedAccountPersistence,
       configurationOwner: connectedAccountConfigurationOwner,
+      resolveExecutionMachine: resolveCurrentMachineTarget,
       resolvePeerOperationTransport: ({ service, operation }) =>
         resolveQualifiedConnectedAccountPeerOperationTransport({
           snapshot: serverFeaturesSnapshotStore.getSnapshot(),
@@ -1936,16 +1964,17 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
           ),
       },
     });
-    const daemonAccountServerActions = externalActionAccountId
-      ? createAccountServerActionDeps({
+    const createDaemonAccountServerActions = () => createAccountServerActionDeps({
         token: credentials.token,
         credentials,
         serverId: configuration.activeServerId,
-        serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+        serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl(),
         resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot(),
-      })
+      });
+    const homeDomainAction = externalActionAccountId
+      ? (...args: Parameters<NonNullable<ReturnType<typeof createAccountServerActionDeps>['homeDomainAction']>>) =>
+          createDaemonAccountServerActions().homeDomainAction!(...args)
       : undefined;
-    const homeDomainAction = daemonAccountServerActions?.homeDomainAction;
     if (externalActionAccountId && homeDomainAction) {
         const reconciler = createDaemonTeamCredentialDirectMaterialReconciler({
           token: credentials.token,
@@ -1955,7 +1984,8 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
           isAccountChangesObserverCurrent: () => apiMachine?.hasCurrentAccountChangesObserver() === true,
           establishedRuntimeOwner: establishedConnectedAccountRuntimeOwner,
           async listAccounts(service, signal) {
-            return await listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal });
+            return await listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal,
+              requestPurpose: 'connected-accounts:team-reconciliation' });
           },
           async readGroup(source, signal) {
             return await readQualifiedConnectedAccountGroupV4({
@@ -1986,7 +2016,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
                 registry,
                 lifetime: createProviderOperationLifetime({
                   signal,
-                  wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
                 }),
               });
               const resolved = await resolveAdmittedProviderConnectionDirectSourceSnapshot({
@@ -2031,7 +2060,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
                       registry: currentRegistry,
                       lifetime: createProviderOperationLifetime({
                         signal,
-                        wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
                       }),
                     });
                     return isProviderConnectionDirectSourceCurrent({
@@ -2135,7 +2163,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
             if (!producer) throw new Error('provider_source_projection_unavailable');
             return await producer.machineServices.projectModelsForAccount(request, context);
           },
-          openRemote: async (request, isCurrent) => {
+          openRemote: async (request) => {
             const runtime = machineIrohRuntime;
             if (!runtime) {
               reportAccountConnectionProviderBrokerOpenFailure({ reason: 'native_runtime_absent' });
@@ -2145,12 +2173,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
               ...request,
               homeId: managedPolicyHomeId, accountId: externalActionAccountId, initiatorMachineId: machineId,
               openBroker: async (request, signal) => await api.openAccountConnectionProviderBroker(request, { signal }),
-              admitConsumer: async (authority, signal) => {
-                if (!await isCurrent(signal)) return { ok: false, reasonCode: 'operation_not_current' };
-                const admitted = await api.admitAccountConnectionProviderBroker({ v: 2, authority }, { signal });
-                if (!admitted.ok) return admitted;
-                return await isCurrent(signal) ? admitted : { ok: false, reasonCode: 'operation_not_current' };
-              },
               openTunnel: createProviderBrokerMachineCarrierTunnelOpen({
                 homeId: managedPolicyHomeId, accountId: externalActionAccountId, localMachineId: machineId,
                 runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
@@ -2161,6 +2183,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       : undefined;
     const requesterMachineAdmissionBoundary = (attribution?: AdmittedRequesterSessionBootstrap['attribution']) => ({
       machineId, daemonToken: credentials.token, readInstallation: readInstallationIdentityIfExistsSync,
+      getObservedServerIdentityId: () => resolveBoundHomeServerIdentityId(),
       signal: homeTransportCancellation.signal,
       isHomeCurrent: () => configuration.activeServerId === requesterRuntimeServerId
         && (!attribution || attribution.serverId === requesterRuntimeServerId && attribution.machineId === machineId),
@@ -2172,10 +2195,10 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
     const resolveRequesterSessionRuntimeContext = createRequesterSessionRuntimeContextResolver({
       trackedSessions: pidToTrackedSession,
       getCreateRuntime: () => createRequesterRuntime,
-      recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onSessionReadRefused }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
+      recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onRecoveryRefused }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
         serverId: requesterRuntimeServerId, sessionId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
         signal,
-        onSessionReadRefused,
+        onRecoveryRefused,
         machineAdmissionBoundary: requesterMachineAdmissionBoundary(),
         ...(stamp ? { expectedAttribution: stamp } : {}),
         // Retained attribution is not proof that a legacy Session has a
@@ -2237,11 +2260,13 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       controlToken,
       daemonWorkSignal,
       stopControlServer,
+      activateRuntimeAuthRecoveryAfterStatePublication,
       connectedServiceAuthGroupPreTurnSwitchCoordinator,
       connectedServicePredictiveSwitchGuard,
       consumeCommittedAuthGroupGeneration,
       requestConnectedServiceRefreshRestartSignal,
       cancelConnectedServiceRuntimeAuthRecovery,
+      wakeRuntimeAuthRecoveryPresentation,
       retryTemporaryThrottleNow,
       readTemporaryThrottleRecovery,
       cancelTemporaryThrottleRecovery,
@@ -2259,11 +2284,11 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       externalActionIngressOwner,
       managedMachinePolicyAdapter,
       readManagedServiceCurrentLogPaths,
+      retryOrphanedManagedServices,
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
       processLeftBehindPass: sessionControlLeftBehindPass,
     } = await startDaemonSessionControlRuntime({
-
-
+      agentIsolation,
       observeSessionScopeExit: async tracked => {
         const result = await sessionCeiling?.observeRunnerExit(tracked);
         if (result?.status === 'unavailable') logger.warn('[DAEMON RUN] Session scope exit memory evidence unavailable', { sessionId: tracked.happySessionId });
@@ -2283,6 +2308,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       admissionDrain,
       requesterSessionCustodyServerId: requesterRuntimeServerId,
       readLiveWorkInventory: managedActivity.read,
+      projectManagedServiceActivity: serviceActivity,
       machineId,
       managedProviderOperationAuthority,
       prepareTeamCredentialNativeSource: async (request, signal) => {
@@ -2302,11 +2328,11 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         ...workspaceSyncRuntimeCustody.get()?.readProcessRoots() ?? []],
       readTerminalRequesterAttribution: terminalId => {
         const custody = apiMachineForSessions?.getFiniteTerminalSessions()?.getCustody(terminalId);
-        return custody ? { serverId: custody.serverId, machineId: custody.machineId,
+        return custody?.homeServerIdentityId ? { serverId: custody.homeServerIdentityId, machineId: custody.machineId,
           installationId: custody.installationId, accountId: custody.requesterAccountId } : undefined;
       },
       serverId: configuration.activeServerId,
-      serverBaseUrl: resolveServerHttpBaseUrl(),
+      get serverBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
       runtimeActionExecute: browserRuntimeActionExecute,
       ...(getWorkflowRuntime
         ? {
@@ -2396,7 +2422,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
           return await openAccountConnectionProviderBrokerAccess({
             ...request, homeId: managedPolicyHomeId, accountId: externalActionAccountId, initiatorMachineId: machineId,
             openBroker: async (openRequest, signal) => await api.openAccountConnectionProviderBroker(openRequest, { signal }),
-            admitConsumer: async (authority, signal) => await api.admitAccountConnectionProviderBroker({ v: 2, authority }, { signal }),
             openTunnel,
           });
         },
@@ -2452,6 +2477,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       onLocalServicesPreviewRoutesReady: (routes) => {
         machineRpcRouteAttachments.attachLocalServicesPreviewRoutes(routes);
         acquireLocalServicePreviewApplication = routes.acquireNativeApplication;
+        resolveLocalServicePreviewApplication = routes.resolveApplication;
       },
       onBrowserControlRoutesReady: machineRpcRouteAttachments.attachBrowserControlRoutes,
       onBrowserContextRoutesReady: machineRpcRouteAttachments.attachBrowserContextRoutes,
@@ -2508,6 +2534,11 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         if (!producer) throw new Error('provider_source_projection_unavailable');
         return await producer.machineServices.projectModelsForAccount(request, context);
       },
+      readProviderForAccount: async (request, context) => {
+        const producer = providerOperationsProducer;
+        if (!producer) throw new Error('provider_source_projection_unavailable');
+        return await producer.readForAccount(request, context);
+      },
       activateSessionPurposeBindings:
         connectedAccountPurposeBindingRuntime.activateSessionPurposeBindings,
       resolveCurrentSessionPurposeBindingSnapshot:
@@ -2546,7 +2577,10 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
     await processLeftBehindPass.firstPass();
     const requesterForProcessOwner: Parameters<typeof createProcessActionExecutor>[0]['requesterForOwner'] = (owner, roots) => {
       const target = machineResourceTarget();
-      return target ? resolveProcessOwnerRequester(owner, roots, { target, custodianAccountId: target.custodianAccountId }) : null;
+      const serverId = resolveBoundHomeServerIdentityId();
+      return target && serverId ? resolveProcessOwnerRequester(owner, roots, {
+        target: { ...target, serverId }, custodianAccountId: target.custodianAccountId,
+      }) : null;
     };
     const allProcessesVisible = () => {
       const snapshot = machineResourcesPolicy?.read();
@@ -2561,7 +2595,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       ...(localServiceInventoryRoutes ? { localServiceRoutes: localServiceInventoryRoutes } : {}),
       readRequesterIdentities: async () => {
         const target = machineResourceTarget();
-        const readAccess = daemonAccountServerActions?.machineAccessAction;
+        const readAccess = externalActionAccountId ? createDaemonAccountServerActions().machineAccessAction : undefined;
         if (!target || !readAccess || homeTransportCancellation.signal.aborted) return new Map();
         const raw = await readAccess({ actionId: 'machines.access.grants.list',
           input: { serverId: target.serverId, machineId: target.machineId },
@@ -2586,7 +2620,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       stopOwner: async (root, execution) => {
         if (root.owner.kind === 'session') {
           const result = await processActionLifecycle.stopExactSession({ sessionId: root.owner.sessionId,
-            pid: root.pid, start: root.start, signal: execution.signal, verifyCurrent: execution.verifyCurrent,
+            pid: root.pid, start: root.start, signal: execution.signal,
             ...(execution.actionContext ? { actionContext: execution.actionContext } : {}),
             ...(execution.rpcContext ? { rpcContext: execution.rpcContext } : {}),
             ...(execution.physicalStopEffect ? { physicalStopEffect: execution.physicalStopEffect } : {}) });
@@ -2596,7 +2630,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         return await processActionOwnerAdapters.stopOwner(root, execution);
       },
       closeTerminal: async (owner, execution) => {
-        if (execution.signal?.aborted || execution.verifyCurrent && !await execution.verifyCurrent()) return false;
+        if (execution.signal?.aborted) return false;
         const manager = apiMachineForSessions?.getFiniteTerminalSessions();
         if (!manager || !manager.list().some(terminal => terminal.terminalId === owner.terminalId)) return false;
         return manager.close({ terminalId: owner.terminalId });
@@ -2620,6 +2654,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       trackedSessions: () => pidToTrackedSession.values(),
       readInventory: () => managedActivity.read(),
       readSessionEligibility: async (tracked, inventory, signal) =>
+        // Eligibility consumes current Session record facts (resume id, Pending), so each tick reads them fresh.
         withGuardAccess(tracked, access => readCurrentSessionEligibility({ access, inventory }), signal),
     });
     const defaultGuardPolicy = MachineGuardPolicyV1Schema.parse({});
@@ -2724,8 +2759,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
                   const metadata = tryDecryptSessionOwnerMetadataView({ credentials: access.credentials,
                     accountEncryptionMode: access.accountEncryptionMode, rawSession: access.rawSession });
                   if (!metadata) return null;
-                  const summary = SessionSharedSummaryV1Schema.safeParse(metadata.summary);
-                  return { tracked, root, label: (summary.success ? summary.data.text : undefined) ?? tracked.happySessionId ?? 'Session',
+                  return { tracked, root, label: readGuardSessionTitle(metadata),
                     attribution: root.requesterWorkAttributionV1!, metadata };
                 }), signal);
                 signal.throwIfAborted();
@@ -2790,7 +2824,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
           terminalState: terminals.terminalState,
           subscribe: listener => {
             changed.add(listener);
-            const releases = [managedActivity.subscribe(() => { leftBehind.invalidateFailures(); listener(); }),
+            const releases = [managedActivity.subscribeFacts(() => { leftBehind.invalidateFailures(); listener(); }),
               ceiling.subscribe(listener), terminals.subscribe(listener)];
             return () => { changed.delete(listener); for (const release of releases) release(); };
           },
@@ -2827,16 +2861,12 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       readCustodianTarget: machineResourceTarget });
     machineRpcRouteAttachments.attachMachineGuardRoutes({ target: machineResourceTarget,
       guard: currentGuard.watch, activity: currentGuard.activityLog,
-      keepRunning: async (request, _requester, signal, verifyCurrent) => {
-        if (signal?.aborted || !verifyCurrent || !await verifyCurrent()) return { status: 'not_pending' };
+      keepRunning: async (request, _requester, signal) => {
         if (request.terminalKey) return idleTerminals?.keepRunning({ terminalKey: request.terminalKey }, _requester, signal) ?? { status: 'not_pending' };
-        if (!request.sessionId) return { status: 'not_pending' };
-        if (!_requester.isCustodian && !(await currentGuard.watch.readView(_requester, signal)).idle
-          .some(row => row.sessionRef === request.sessionId)) return { status: 'not_pending' };
-        return { status: await currentGuard.runtime.keepRunning(request.sessionId) };
+        return currentGuard.keepRunning(request, _requester, signal);
       },
-      setSessionCeiling: async (request, requester, signal, verifyCurrent) => {
-        if (signal?.aborted || !verifyCurrent || !await verifyCurrent()) throw new Error('machine_target_unavailable');
+      setSessionCeiling: async (request, requester, signal) => {
+        if (signal?.aborted) throw new Error('machine_target_unavailable');
         if (ceilingCapability.status === 'unavailable') return { status: 'unavailable', appliesAt: 'next_start', reason: ceilingCapability.reason };
         const tracked = [...pidToTrackedSession.values()].find(item => item.happySessionId === request.sessionId);
         const target = machineResourceTarget();
@@ -2854,7 +2884,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
               () => updateSessionMetadataForTarget({ credentials: context?.bootstrap.credentials ?? credentials,
                 idOrPrefix: request.sessionId, expectedSessionId: request.sessionId,
                 currentness: { signal, verifyCurrent: async () => !homeTransportCancellation.signal.aborted
-                  && await verifyCurrent() && (!context || await context.isCurrent()) },
+                  && (!context || await context.isCurrent()) },
                 updater: metadata => {
                   if (metadata.machineId !== target.machineId) throw new Error('session_machine_mismatch');
                   return applySessionMemoryCeilingOverrideToMetadata(metadata, request.bytes);
@@ -2865,7 +2895,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
             if (started && sessionCeiling) {
               await started.canonicalWebhookReconciliation;
               signal?.throwIfAborted();
-              if (!await verifyCurrent()) throw new Error('machine_target_unavailable');
               const applied = await sessionCeiling.apply(request, signal);
               currentGuard.runtime.invalidate();
               return applied;
@@ -2882,7 +2911,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
             || stamp.machineId !== target.machineId || stamp.installationId !== target.installationId))
           throw new Error('session_owner_unavailable');
         if (!await sendGuardSessionNotice(tracked, { kind: 'ceiling', bytes: request.bytes }, signal)) throw new Error('session_guard_notice_unavailable');
-        if (signal?.aborted || !await verifyCurrent() || !sessionCeiling) throw new Error('machine_target_unavailable');
+        if (signal?.aborted || !sessionCeiling) throw new Error('machine_target_unavailable');
         const result = await sessionCeiling.apply(request, signal);
         currentGuard.runtime.invalidate();
         return result;
@@ -2912,20 +2941,21 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         const capturedCredentials = credentials;
         const [{ createManagedSessionDirectories }, projectRows, { getSharedTerminalProcessRegistry }, { readStorageWorktrees },
           { readStorageComposerMediaStageFacts }, { readStorageSessionHandoffFacts }, { resolveCanonicalAbsolutePath },
-          { MachineStoragePolicyV1Schema }, { readResidentVoiceModelPackPaths }, { readSessionDraftPresence },
+          { readResidentVoiceModelPackPaths }, { readSessionDraftPresence },
           { createStorageWorktreeOperations }, { createLogRetentionOwner }, { createProjectWorkspaceRetirement }] = await Promise.all([
           import('@/session/creation/managedSessionDirectories'), import('@/workspaces/projectAccountRows'),
           import('./local/services/inventory/terminalRegistry'), import('./resources/readStorageWorktrees'),
           import('@/transfers/staging/composerMediaStageStore'), import('@/session/handoff/state/sessionHandoffSourceExportStore'),
           import('@/utils/path/expandHomeDirPath'),
-          import('@happier-dev/protocol/storage/storageV1'),
           import('./voiceInference/publicModelPacks/storagePaths'),
           import('@/session/drafts/readSessionDraftPresence'),
           import('@/storage/worktrees/storageWorktreeOperations'),
           import('@/utils/logs/logRetention'),
           import('@/workspaces/projectWorkspaceRetirement'),
         ]);
-        const defaultStoragePolicy = MachineStoragePolicyV1Schema.parse({});
+        // Storage reads policy only through this runtime (created before Storage, retired at shutdown).
+        const resourcesPolicy = machineResourcesPolicy;
+        if (!resourcesPolicy) throw Object.assign(new Error('Machine resources policy is stopped'), { code: 'policy_unavailable' });
         const readTrackedSessions = () => [...pidToTrackedSession.values()].flatMap(tracked => {
           const cwd = tracked.runnerAgentInvocationContext?.cwd ?? tracked.spawnOptions?.directory ?? tracked.happySessionMetadataFromLocalWebhook?.path;
           return tracked.happySessionId && cwd ? [{ sessionId: tracked.happySessionId, cwd, running: true }] : [];
@@ -2983,11 +3013,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
           homeDir: homedir(), activityLog: currentGuard.activityLog,
           attributionFor: accountId => ({ serverId: target.serverId, accountId,
             machineId: target.machineId, installationId: target.installationId }),
-          readPolicy: () => {
-            const snapshot = machineResourcesPolicy?.read();
-            return snapshot?.status === 'ready' ? snapshot.policy.storage : defaultStoragePolicy;
-          },
-          ...(machineResourcesPolicy ? { resourcesPolicy: machineResourcesPolicy } : {}),
+          resourcesPolicy,
           canRunStorageOwnerOperation: storageIdle,
           readLowPower: () => {
             const sample = machineVitals?.latest();
@@ -2995,7 +3021,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
               || sample?.thermal?.state === 'critical' || sample?.thermal?.throttled === true;
           },
           maintenance: {
-            subscribePolicy: listener => machineResourcesPolicy?.subscribe(listener) ?? (() => {}),
             subscribeVolumes: storageVitals.subscribeVolumes,
             isIdle: storageIdle, subscribeIdle: subscribeStorageIdle,
             isOnPower: storageVitals.isOnPower,
@@ -3032,10 +3057,6 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
               ? readActiveAcpCatalog() : undefined,
             acpAccountId: target.custodianAccountId,
             isAcpDefinitionInUse: definitionId => isAgentInstallTargetInUse({ agentId: 'custom-acp', definitionId }, pidToTrackedSession.values()),
-            readPolicy: () => {
-              const snapshot = machineResourcesPolicy?.read();
-              return snapshot?.status === 'ready' ? snapshot.policy.storage : defaultStoragePolicy;
-            },
             readWorktrees: async () => {
               const facts = readProjects();
               return readStorageWorktrees({ happyHomeDir: home,
@@ -3070,40 +3091,26 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
                 timeWebLatencyPhase('storage.facts.resident-models', () => readResidentVoiceModelPackPaths({ worker: voiceInferenceWorker, modelPacks: storageModelPacks,
                   packsRootDir: join(activeServerDir, 'voiceInference', 'packs') })),
               ]);
-              const paths = [projectPath(), process.execPath, ...readTrackedSessions().map(session => session.cwd),
-                ...getSharedTerminalProcessRegistry().listProcesses().map(terminal => terminal.workspacePath), ...residentModels.paths];
+              const paths = [projectPath(), process.execPath, ...readTrackedSessions().map(session => session.cwd), ...residentModels.paths];
               for (const tracked of pidToTrackedSession.values()) {
                 const launch = tracked.runnerAgentInvocationContext?.agentCliLaunch?.spec;
                 if (launch) paths.push(launch.resolvedPath, launch.command, ...launch.args.filter(arg => isAbsolute(arg)));
               }
-              if (owners.status !== 'ok') return { reliable: false, paths };
-              const sessions: { path: string; sessionId: string }[] = [];
-              for (const owner of owners.rows) {
-                if (owner.level === 'not_happier') continue;
-                const row = owners.snapshot.rows.find(row => row.pid === owner.pid);
-                const heldPaths = [owner.workspacePath, row?.cwd, row?.executablePath,
-                  ...(row?.argv ?? []).filter(arg => isAbsolute(arg))].filter((path): path is string => !!path);
-                paths.push(...heldPaths);
-                // Ownership already selected the canonical live root; storage only projects its session binding.
-                const ownerSessionId = owner.owner?.kind === 'session' && !owner.ownerEnded ? owner.owner.sessionId : undefined;
-                const root = owners.roots.find(root => root.live && root.owner.kind === 'session' && root.owner.sessionId === ownerSessionId);
-                if (root?.owner.kind === 'session') {
-                  for (const path of heldPaths) sessions.push({ path, sessionId: root.owner.sessionId });
-                }
-              }
+              const processUse = projectStorageProcessUse(owners);
+              paths.push(...processUse.paths);
               const unresolvedRetainedRoots = [...pidToTrackedSession.values()].some(tracked =>
                 tracked.runnerManagedDependencyRetentionV1?.sourceCustodies.some(source => source.kind === 'managed'));
-              return { reliable: residentModels.reliable && !owners.snapshot.partial?.length && !owners.rows.some(owner => owner.level === 'unknown')
-                && !unresolvedRetainedRoots, paths, sessions };
+              return { reliable: residentModels.reliable && processUse.reliable && !unresolvedRetainedRoots,
+                paths, cwdPaths: [...(processUse.cwdPaths ?? []),
+                  ...getSharedTerminalProcessRegistry().listProcesses().map(terminal => terminal.workspacePath)], sessions: processUse.sessions };
             },
             currentLogPaths: async () => [logger.logFilePath, ...await readManagedServiceCurrentLogPaths()],
           },
           readVolumes: storageVitals.readVolumes,
           readVolumesReported: storageVitals.readVolumesReported,
-          subscribeVolumeChanges: storageVitals.subscribeVolumeChanges,
           subscribeChanges: (listener: () => void) => {
             const cleanup = [storageVitals.subscribeVolumes(listener), subscribeStorageRecordings(listener), sessionLiveWorkProducer.subscribe(listener), executionRunActivity.subscribe(listener), transferActivity.subscribe(listener),
-              projectRows.subscribeActiveProjectAccountRowsSnapshot(listener), machineResourcesPolicy?.subscribe(listener)];
+              projectRows.subscribeActiveProjectAccountRowsSnapshot(listener)];
             return () => {
               for (const unsubscribe of cleanup) unsubscribe?.();
             };
@@ -3162,7 +3169,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
               ? { quotaRefreshRecordIds: notification.quotaRefreshRecordIds } : {}),
             ...(['startup', 'reconnect', 'cursor-gone'].includes(notification.source)
               ? { resetQuotaSchedule: true } : {}),
-          });
+          }, notification.source === 'changes' ? 'machine-account-changes' : 'machine-recovery');
         },
       });
     };
@@ -3187,12 +3194,13 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
         } finally { await lease.release(); }
     };
     const nativeAccountRefresh = await captureNativePublicProfileRefresh({
-        credentials, serverId: configuration.activeServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+        credentials, serverId: configuration.activeServerId, get serverHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
         signal: homeTransportCancellation.signal,
         resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot(),
         onError: error => logger.debug('[DAEMON RUN] Public-profile refresh deferred', serializeAxiosErrorForLog(error)),
       });
     const runtimeBootstrap = await startDaemonRuntimeBootstrap({
+      secretSources: daemonSecretSources,
       publicProfileRefresh: nativeAccountRefresh,
       artifactQueryHints: { signal: nativeAccountRefresh.signal, isCurrent: nativeAccountRefresh.isCurrent,
         resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot() },
@@ -3211,6 +3219,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       daemonLogPath: logger.logFilePath,
       controlToken,
       publishDaemonState: publishDaemonStateForCurrentOwner,
+      onDaemonStatePublished: activateRuntimeAuthRecoveryAfterStatePublication,
       happyHomeDir: configuration.happyHomeDir,
       activeServerDir: configuration.activeServerDir,
       filesystemAccessPolicy,
@@ -3254,7 +3263,7 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
       activatePurposeBindings:
         connectedAccountPurposeBindingRuntime.activatePurposeBindings,
       onQualifiedConnectedAccountCredentialUpdated: (account) => {
-        connectedAccountPurposeBindingRuntime.invalidate({ services: [account.service] });
+        connectedAccountPurposeBindingRuntime.invalidate({ services: [account.service] }, 'credential-updated');
       },
       resolveQualifiedConnectedAccountV4Support: () =>
         resolveQualifiedConnectedAccountAtomicV4Negotiation(
@@ -3391,14 +3400,12 @@ const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').Host
           fileState.machineControlReady = machineControlReady;
         },
         secretSources: daemonSecretSources,
-agentIsolation,
-
         api,
         controlPort,
         credentials,
         requesterServerId: requesterRuntimeServerId,
-        resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
         resolveCurrentMachineExecutionOriginContext,
+        resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
         resolveRequesterSessionRuntimeContext,
         resolveExecutionRunLiveBrokerAuthority,
         onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); },
@@ -3469,23 +3476,23 @@ agentIsolation,
                 // intersected by the broker's request-policy owner.
                 const resolveCatalog = async (input: Readonly<{
                   resource: TeamCredentialResourceSummaryV1;
-                  application: ProviderBrokerApplicationBindingV1;
+                  application: ProviderBrokerSourceApplicationBindingV1;
                   signal: AbortSignal;
                 }>) => {
                   const producer = providerOperationsProducer;
                   const source = input.resource.source;
                   if (!producer || !source) return null;
-                  return await resolveTeamCredentialSourceModelCatalog({
+                  const catalogs = await resolveTeamCredentialResourceSourceCatalogs({
                     machineId: registeredMachineId,
                     teamId: input.resource.teamId,
                     resourceId: input.resource.id,
-                    resourceRevision: input.resource.revision,
+                    expectedResourceRevision: input.resource.revision,
                     source,
                     application: input.application,
-                    projectModels: async (projectionRequest) =>
-                      await producer.machineServices.projectModels(projectionRequest),
+                    readSourceModelCatalogs: (request, signal) => producer.machineServices.readSourceModelCatalogs(request, signal),
                     signal: input.signal,
                   });
+                  return catalogs.length === 1 ? catalogs[0]! : null;
                 };
                 const brokerManagedProviderCustody = createManagedProviderExplicitStartCustody({
                   machineId: registeredMachineId,
@@ -3519,8 +3526,18 @@ agentIsolation,
                     readResource,
                     resolveBindingIntentSelection: connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
                     custody: brokerManagedProviderCustody,
+                    readModelProjection: async (request, signal) => providerOperationsProducer
+                      ? await providerOperationsProducer.machineServices.readSourceModelCatalogs(request, signal)
+                      : { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') },
                   }),
                   openProviderConnectionSource: createProviderConnectionBrokerSourceOpen({
+                    acquireRequestCostParser: async (identity) => {
+                      const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+                        happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
+                      });
+                      try { return await lease.registry.acquireProviderRequestCostParser?.(identity) ?? null; }
+                      finally { await lease.release(); }
+                    },
                     machineId: registeredMachineId,
                     readResource: async (resourceId, signal) => {
                       const resource = await readResource(resourceId, signal);
@@ -3546,7 +3563,6 @@ agentIsolation,
                         registry,
                         lifetime: createProviderOperationLifetime({
                           signal,
-                          wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
                         }),
                       });
                     },
@@ -3563,7 +3579,7 @@ agentIsolation,
                 const authorizeExternalAuthorization = async (input: Readonly<{
                   binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
                   expectedResourceRevision: number;
-                  application: ProviderBrokerApplicationBindingV1;
+                  application: ProviderBrokerSourceApplicationBindingV1;
                   signal?: AbortSignal;
                 }>) => await api.authorizeTeamCredentialProviderModelCatalog({
                   v: 1,
@@ -3609,7 +3625,7 @@ agentIsolation,
                   checkRunnerCredentialSelectionCurrentness: async ({ selection, modelId, signal }) => {
                     const resolveEligibility = providerOperationsProducer?.machineServices
                       .resolveTeamCredentialBrokerEligibility;
-                    if (!resolveEligibility) return 'update_required';
+                    if (!resolveEligibility) return { kind: 'update_required' };
                     return await resolveRunnerCredentialSelectionCurrentness({
                       registeredMachineId,
                       selection,
@@ -3636,7 +3652,7 @@ agentIsolation,
                       ? {
                           resourceRevision: resource.revision,
                           sourceRevision: catalog.sourceRevision,
-                          application: catalog.application,
+                          application: authority.application,
                           policy: resource.requestPolicy,
                           source: resource.source,
                           modelCatalog: {
@@ -3675,119 +3691,11 @@ agentIsolation,
                         });
                   },
                   resolveExternalRequestPolicy: async ({ binding, request }) => {
-                    const signal = request.signal ?? new AbortController().signal;
-                    const resource = await readResource(binding.resourceId, signal);
-                    const route = classifyTeamCredentialRequestRouteV1(request.pathAndQuery);
-                    const protocol = route?.kind === 'openai_responses'
-                      ? 'openai-responses'
-                      : route?.kind === 'openai_chat_completions'
-                        ? 'openai-chat'
-                        : route?.kind === 'anthropic_messages' ? 'anthropic' : null;
-                    if (
-                      !teamCredentialBrokerResourceAcceptsMachine(resource, registeredMachineId)
-                      || resource.teamId !== binding.teamId
-                    ) return null;
-                    const source = resource.source;
                     const producer = providerOperationsProducer;
                     if (!producer) return null;
-                    const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
-                      happyHomeDir: configuration.happyHomeDir,
-                      controller: pluginReloadController,
-                    });
-                    let agentTargetKeys: string[];
-                    try {
-                      agentTargetKeys = [...lease.registry.contributes.agentDefinitionsById.values()]
-                        .flatMap((agent) => agent.identity
-                          ? listAgentExecutionTargetsV1(agent.identity).map(buildBackendTargetKeyV2)
-                          : []);
-                    } finally {
-                      await lease.release();
-                    }
-                    const applications = await resolveTeamCredentialResourceCatalogApplications({
-                      machineId: registeredMachineId,
-                      teamId: resource.teamId,
-                      resourceId: resource.id,
-                      expectedResourceRevision: resource.revision,
-                      source,
-                      agentTargetKeys,
-                      projectModels: async (projectionRequest) =>
-                        await producer.machineServices.projectModels(projectionRequest),
-                      signal,
-                    }).catch(() => []);
-                    if (request.method === 'GET' && request.pathAndQuery === '/v1/models') {
-                      const resolvedCatalogs = await Promise.all(applications.map(async (candidate) =>
-                        await resolveCatalog({ resource, application: candidate, signal }).catch(() => null)));
-                      if (resolvedCatalogs.some((catalog) => catalog === null)) {
-                        return { kind: 'denied' as const, reasonCode: 'resource_unavailable' as const };
-                      }
-                      const catalogs = resolvedCatalogs.filter(
-                        (catalog): catalog is TeamCredentialModelCatalogResolver => catalog !== null,
-                      );
-                      const catalog = createTeamCredentialExternalModelCatalog(catalogs);
-                      return catalog
-                        ? {
-                            kind: 'model_catalog' as const,
-                            resourceRevision: resource.revision,
-                            policy: resource.requestPolicy,
-                            applications: catalog.applications,
-                            modelCatalog: {
-                              models: catalog.models,
-                              resolveCanonicalModelId: catalog.resolveCanonicalModelId,
-                            },
-                          }
-                        : null;
-                    }
-                    if (!protocol) return { kind: 'denied' as const, reasonCode: 'route_not_allowed' as const };
-                    const protocolApplications = applications.filter((candidate) => candidate.protocol === protocol);
-                    if (protocolApplications.length === 0) {
-                      return { kind: 'denied' as const, reasonCode: 'route_not_allowed' as const };
-                    }
-                    const policy = resource.requestPolicy ?? {
-                      allowedProtocolKinds: null,
-                      allowedModelIds: null,
-                      reasoningEffort: null,
-                    };
-                    const evaluatedCatalogs: TeamCredentialModelCatalogResolver[] = [];
-                    let firstFailure: Extract<
-                      ReturnType<typeof evaluateTeamCredentialRequestPolicyV1>,
-                      { ok: false }
-                    > | null = null;
-                    for (const application of protocolApplications) {
-                      const catalog = await resolveCatalog({ resource, application, signal }).catch(() => null);
-                      if (!catalog) {
-                        return { kind: 'denied' as const, reasonCode: 'resource_unavailable' as const };
-                      }
-                      const evaluated = evaluateTeamCredentialRequestPolicyV1({
-                        policy,
-                        request,
-                        resolveCanonicalModelId: catalog.resolveCanonicalModelId,
-                      });
-                      if (evaluated.ok) evaluatedCatalogs.push(catalog);
-                      else if (!firstFailure) firstFailure = evaluated;
-                    }
-                    if (evaluatedCatalogs.length === 0) {
-                      return {
-                        kind: 'denied' as const,
-                        reasonCode: firstFailure?.reasonCode ?? 'resource_unavailable' as const,
-                      };
-                    }
-                    if (evaluatedCatalogs.length !== 1) {
-                      return { kind: 'denied' as const, reasonCode: 'route_not_allowed' as const };
-                    }
-                    const catalog = evaluatedCatalogs[0]!;
-                    return {
-                          kind: 'application' as const,
-                          resourceRevision: resource.revision,
-                          policy: resource.requestPolicy,
-                          application: catalog.application,
-                          modelCatalog: {
-                            models: catalog.rows.map((row) => ({
-                              id: row.descriptor.id,
-                              ...(row.descriptor.name === undefined ? {} : { name: row.descriptor.name }),
-                            })),
-                            resolveCanonicalModelId: catalog.resolveCanonicalModelId,
-                          },
-                        };
+                    return resolveTeamCredentialExternalRequestPolicy({ machineId: registeredMachineId, binding, request,
+                      readResource, readSourceModelCatalogs: (catalogRequest, signal) =>
+                        producer.machineServices.readSourceModelCatalogs(catalogRequest, signal) });
                   },
                   admitExternalRequest: async (request) => await api.admitTeamCredentialExternalProviderRequest({
                     v: 1,
@@ -3877,7 +3785,6 @@ agentIsolation,
         }) => {
           return await workspaceSyncRuntimeCustody.acquire(registeredMachineId, async () => {
             const finiteServerId = configuration.activeServerId;
-            const finiteServerHttpBaseUrl = resolveServerHttpBaseUrl();
             const isCurrent = async () => {
               const refuse = (reason: string) => {
                 logger.debug('[ProjectFinite] Installed runtime refused', { reason });
@@ -3894,7 +3801,7 @@ agentIsolation,
               return true;
             };
             const policyClient = await createAccountServerMachineFinitePolicyClient({
-              machineId: registeredMachineId, credentials, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+              machineId: registeredMachineId, credentials, get serverHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
               isCredentialCurrent: async () => !admissionDrain.isFinalShutdown(),
             });
             const admission = createProjectWorkerAdmission({ machineId: registeredMachineId,
@@ -3919,6 +3826,7 @@ agentIsolation,
               : undefined;
             const runtime = await createProductionDaemonWorkspaceSyncRuntime({
               homeTarget,
+              agentIsolation,
               happyHomeDir: configuration.happyHomeDir,
               activeServerDir: configuration.activeServerDir,
               activeServerId: configuration.activeServerId,
@@ -3953,20 +3861,39 @@ agentIsolation,
               onReadinessPublished,
               onStatusPublished,
               ...(openMachineCarrierTunnel ? { openMachineCarrierTunnel } : {}),
+              ...(machineIrohRuntime ? {
+                createRequesterMachineCarrierTunnel: ({ credentials: requesterCredentials, accountId }: Readonly<{
+                  credentials: StoredCredentials; accountId: string;
+                }>) => {
+                  const requesterApi = ApiClient.create(requesterCredentials);
+                  return createWorkspaceMachineCarrierTunnelOpen({ accountId, localMachineId: registeredMachineId,
+                    runtime: machineIrohRuntime, resolveTrustRoots: resolvePeerMediationTrustRoots,
+                    readTargetMachine: async (machineId, signal) => (await requesterApi).getMachine(machineId, { signal }),
+                    mintGrant: async (request, signal) => (await requesterApi).mintPeerMediationRouteGrant(request, { signal }),
+                  });
+                },
+              } : {}),
+              privateCheckout: { prepareNativeOperation: async request => {
+                const machine = apiMachineForSessions;
+                if (!machine) throw Object.assign(new Error('Requester native execution is unavailable'), { code: 'agent_isolation_unavailable' });
+                return machine.prepareNativeOperation(request);
+              } },
+              requesterMachineAdmissionBoundary: requesterMachineAdmissionBoundary(),
               ...(directPeerServerLifecycle
                 ? { requestDirectTransferPayloadFile: directPeerServerLifecycle.requestPayloadFile }
                 : {}),
             });
             projectWorkerAction = createProjectWorkerAction({ machineId: registeredMachineId,
-              serverId: configuration.activeServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+              serverId: configuration.activeServerId, get serverHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
               credentials, ...(externalActionAccountId ? { accountId: externalActionAccountId } : {}),
               admission, workspaceSync: runtime.workspaceSync,
               isFiniteExecutionLive: () => apiMachineForSessions?.isProjectFiniteExecutionLive() === true,
               isServiceExecutionLive: () => isProjectServiceExecutionLive?.() === true });
             const createProjectFiniteRuntime = createInstalledProjectFiniteRuntime({
-              api, credentials, externalActionAccountId, finiteServerId, finiteServerHttpBaseUrl,
+              api, credentials, externalActionAccountId, finiteServerId,
+              get finiteServerHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
               registeredMachineId, admission, isCurrent, resolveCurrentMachineExecutionOriginContext,
-              nativeIo: createProjectNativeIo({ ownerRemainder }), successHomeDir: configuration.happyHomeDir,
+              nativeIo: createProjectNativeIo({ ownerRemainder, agentIsolation }), agentIsolation, successHomeDir: configuration.happyHomeDir,
               prepareBetween: (request, signal, context) => runtime.handoffAdapter.prepareBetween(request, signal, context),
               plugins: { secretSources: daemonSecretSources, async resolveProjectNativeAdapter(reference, role) {
                 if (!await isCurrent()) return { kind: 'refused', code: 'native_adapter_retired' };
@@ -4039,6 +3966,7 @@ agentIsolation,
         daemonServerWorkScheduler,
         publicProfileRefreshHandle,
         cancelConnectedServiceRuntimeAuthRecovery,
+        wakeRuntimeAuthRecoveryPresentation,
         retryTemporaryThrottleNow,
         readTemporaryThrottleRecovery,
         cancelTemporaryThrottleRecovery,
@@ -4072,7 +4000,9 @@ agentIsolation,
         },
         isPublicationQuiescing: admissionDrain.isPublicationQuiescing,
         readSpawnFailureLimits: () => machineVitals?.latest()?.limits,
+        agentIsolation,
         ownerRemainder,
+        readMachineEffectiveCores: () => machineVitals?.host()?.effectiveCores,
         getServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot(),
         resolvePeerMediationTrustRoots,
         refreshServerFeaturesSnapshot,
@@ -4081,6 +4011,7 @@ agentIsolation,
         onPublicVoiceModelPackRuntimeReady: bindStorageModels,
         ...(machineResourceSummary ? { machineResourceSummary } : {}),
         acquireLocalServicePreviewApplication,
+        resolveLocalServicePreviewApplication,
         resolveManagedPurposeBindingIntent:
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
         resolveManagedPurposeBindingIntentSelection:
@@ -4096,14 +4027,13 @@ agentIsolation,
         } } : {}),
         mcpServers: {
           readCredentials: async () => credentials,
+          requestAuth: { materializationBaseDir: connectedServicesMaterializationBaseDir,
+            registry: connectedAccountRequestAuthRegistry, getHttpPort: readConnectedAccountRequestAuthHttpPort },
           issueRequestAuth: createDaemonMcpRequestAuthForTest({ credentials, materializationBaseDir: connectedServicesMaterializationBaseDir,
             establishedOwner: establishedConnectedAccountRuntimeOwner,
             activatePurposeBindings: connectedAccountPurposeBindingRuntime.activatePurposeBindings,
             registry: connectedAccountRequestAuthRegistry,
-            getHttpPort: () => {
-              if (connectedAccountRequestAuthHttpPort === null) throw new Error('connected_account_request_auth_http_port_unavailable');
-              return connectedAccountRequestAuthHttpPort;
-            },
+            getHttpPort: readConnectedAccountRequestAuthHttpPort,
             isCurrent: () => !isDaemonQuiescing() && !homeTransportCancellation.signal.aborted,
           }),
         },
@@ -4144,7 +4074,8 @@ agentIsolation,
                       credentials: request.request.credentials, attribution: stamp,
                       // current() above proves this accepted Run's own Machine/Account binding.
                       machineAdmission: { actorAccountId: stamp.accountId, custodianAccountId: externalActionAccountId },
-                      boundary: { serverId: stamp.serverId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(), happyHomeDir: configuration.happyHomeDir },
+                      boundary: { serverId: stamp.serverId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
+                        happyHomeDir: configuration.happyHomeDir, getObservedServerIdentityId: resolveBoundHomeServerIdentityId },
                       verifyMachineAdmissionCurrent: current,
                       ...(request.request.signal ? { signal: request.request.signal } : {}),
                     });
@@ -4364,12 +4295,13 @@ agentIsolation,
               apiMachine: attemptedApiMachineForSessions,
               executorMachineId: machineId,
               isAvailable: () => readCurrentManagedPolicyController() !== null,
-              loadMachine: (id, signal) => runWithServerHttpBaseUrl(managedPolicyServerHttpBaseUrl,
+              loadMachine: (id, signal) => runWithServerHttpBaseUrl(readManagedPolicyServerHttpBaseUrl(),
                 () => api.getMachine(id, { signal })),
               readCensus: readCurrentManagedMachinePolicies,
               executePolicy: managedMachinePolicyAdapter.executePolicy,
               onUnavailable: error => logger.debug('[DAEMON RUN] Managed policy execution unavailable', error),
               reconcileNativeCredentials: managedMachinePolicyAdapter.reconcileNativeCredentials,
+              supportsNativeLifetimeRenewal: managedMachinePolicyAdapter.supportsNativeLifetimeRenewal,
             });
             managedMachinePolicyRuntime = attemptedManagedMachinePolicyRuntime;
           }
@@ -4447,6 +4379,7 @@ agentIsolation,
       getApiMachineForSessions: () => apiMachineForSessions,
       onChildExited,
       onTrackedSessionHealthy,
+      retryOrphanedManagedServices,
       controlPort,
       fileState,
       currentCliVersion: configuration.currentCliVersion,
@@ -4574,7 +4507,7 @@ agentIsolation,
       return;
     }
     // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
-    logger.debug('[DAEMON RUN][FATAL] Failed somewhere unexpectedly - exiting with code 1', serializeAxiosErrorForLog(error));
+    logger.error('[DAEMON RUN][FATAL] Failed somewhere unexpectedly - exiting with code 1', serializeAxiosErrorForLog(error));
     logger.flushSync();
     process.exit(1);
   }

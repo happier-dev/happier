@@ -1,38 +1,27 @@
+import { createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HandoffTargetReplacementPreflightV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
-    WorkspaceSyncRelationshipCreateResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+    WorkspaceSyncRelationshipCreateResultV1Schema, computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { createMachineFixture, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createWorkspaceSyncHarness, type WorkspaceSyncRpcRequest } from '@/dev/testkit/harness/workspaceSyncHarness';
+import { projectWorkspaceSyncRelationshipSummaries, projectWorkspaceSyncRelationships } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 
 const shownModal = vi.hoisted(() => vi.fn());
 const confirmModal = vi.hoisted(() => vi.fn(async () => false));
 const daemonRpc = vi.hoisted(() => vi.fn<(request: WorkspaceSyncRpcRequest) => unknown>());
-const projectsOpenOutcome = vi.hoisted(() => ({ current: null as unknown }));
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
     translate: (key, vars) => vars ? key + ':' + JSON.stringify(vars) : key,
 }));
-// Genuine boundary: the Home-side `projects.open` Action. Every other Action keeps the real executor.
-vi.mock('@/sync/ops/actions/defaultActionExecutor', async importOriginal => {
-    const real = await importOriginal<typeof import('@/sync/ops/actions/defaultActionExecutor')>();
-    return {
-        ...real,
-        createDefaultActionExecutor: (...args: Parameters<typeof real.createDefaultActionExecutor>) => {
-            const executor = real.createDefaultActionExecutor(...args);
-            return { ...executor, execute: (...call: Parameters<typeof executor.execute>) => (
-                call[0] === 'projects.open' && projectsOpenOutcome.current ? Promise.resolve(projectsOpenOutcome.current) : executor.execute(...call)
-            ) } as typeof executor;
-        },
-    };
-});
 vi.mock('@/modal', async () => {
     const boundary = (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
         confirmResult: true, spies: { confirm: confirmModal },
@@ -49,6 +38,7 @@ const { PathSelectionList } = await import('@/components/ui/pathPicker/PathSelec
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const owner = await import('./openWorkspaceSyncAddMachine');
+const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -98,14 +88,13 @@ function storedApproval() {
 beforeEach(async () => {
     await workspace.reset();
     shownModal.mockClear();
-    confirmModal.mockClear();
+    confirmModal.mockReset().mockResolvedValue(false);
     daemonRpc.mockReset();
     pendingCreate = deferred();
     pendingPreflight = deferred();
     requireApproval = false;
     holdPreflight = false;
     targetFolder = 'nonempty';
-    projectsOpenOutcome.current = null;
     const machines = [['machine-a', 'Source', '/home/source'], ['machine-b', 'Target', '/home/target']].map(([id, displayName, homeDir]) => {
         const machine = createMachineFixture({ id, activeAt: Date.now() });
         return { ...machine, metadata: { ...machine.metadata!, displayName, homeDir } };
@@ -124,7 +113,12 @@ beforeEach(async () => {
             const entries = targetFolder === 'nonempty' ? [{ name: '.git', path: `${input.path}/.git`, type: 'directory' }] : [];
             return { ok: true, path: input.path, entries, truncated: false };
         }
-        if (request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+        if (request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return {
+            ...createWorkspaceSyncRelationshipsListFixture([], request.machineId),
+            ...((request.payload as { requesterAvailability?: true }).requesterAvailability ? {
+                requesterAvailability: { kind: 'available', homeDir: request.machineId === 'machine-a' ? '/home/source' : '/home/target', workspaceRoot: null },
+            } : {}),
+        };
         throw new Error('Unexpected workspace sync RPC ' + request.method);
     });
 });
@@ -174,9 +168,121 @@ async function startAddMachineLink(options: Readonly<{
 }
 
 describe('Project Add machine modal', () => {
-    it('opens a missing-worker-copy refusal in the existing create flow, leaving the path for the user to choose', async () => {
+    it.each(['machine-a', 'machine-b'])('withdraws the previous requester root while %s changes isolation policy', async changedMachineId => {
+        const incumbent = daemonRpc.getMockImplementation()!;
+        let policyReply: ReturnType<typeof deferred<unknown>> | null = null;
+        daemonRpc.mockImplementation(request => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST
+            && (request.payload as { requesterAvailability?: true }).requesterAvailability && request.machineId === changedMachineId && policyReply
+            ? policyReply.promise : incumbent(request));
+        owner.openWorkspaceSyncAddMachine(source(), vi.fn());
+        const modal = await renderOpenedModal();
+        await chooseTarget(modal.screen, '~/copy');
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+        policyReply = deferred<unknown>();
+        await act(async () => {
+            const machines = Object.values(storage.getState().machines).map(machine => machine.id === changedMachineId
+                ? { ...machine, metadata: { ...machine.metadata!, agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' as const } } } : machine);
+            storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
+        });
+        expect(modal.submit().props.disabled).toBe(true);
+        if (changedMachineId === 'machine-b') expect(modal.screen.findByType(PathSelectionList).props.machineId).toBeNull();
+        await act(async () => policyReply!.resolve({ ...createWorkspaceSyncRelationshipsListFixture([], changedMachineId),
+            requesterAvailability: { kind: 'available', homeDir: '/new-policy/home', workspaceRoot: '/new-policy/workspace' } }));
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+        if (changedMachineId === 'machine-b') expect(modal.screen.findByType(PathSelectionList).props.machineHomeDir).toBe('/new-policy/home');
+    });
+
+    it.each(['machine-a', 'machine-b'])('keeps creation unavailable when %s has no requester authority', async unavailableMachineId => {
+        const incumbent = daemonRpc.getMockImplementation()!;
+        daemonRpc.mockImplementation(request => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST
+            && (request.payload as { requesterAvailability?: true }).requesterAvailability && request.machineId === unavailableMachineId
+            ? { ...createWorkspaceSyncRelationshipsListFixture([], request.machineId), requesterAvailability: { kind: 'unavailable', reason: 'requester_authority_unavailable' } }
+            : incumbent(request));
+        owner.openWorkspaceSyncAddMachine(source(), vi.fn());
+        const modal = await renderOpenedModal();
+        await chooseTarget(modal.screen);
+        await vi.waitFor(() => expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST)
+            .filter(request => (request.payload as { requesterAvailability?: true }).requesterAvailability)).toHaveLength(2));
+        expect(modal.submit().props.disabled).toBe(true);
+        expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toHaveLength(0);
+    });
+
+    it('uses requester roots for both endpoints and reads each presented target once despite resource publications', async () => {
+        const incumbent = daemonRpc.getMockImplementation()!;
+        daemonRpc.mockImplementation(request => {
+            if (request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST
+                && (request.payload as { requesterAvailability?: true }).requesterAvailability) return {
+                ...createWorkspaceSyncRelationshipsListFixture([], request.machineId),
+                requesterAvailability: { kind: 'available', homeDir: `/members/${request.machineId}`, workspaceRoot: `/members/${request.machineId}/workspace` },
+            };
+            return incumbent(request);
+        });
+        const availabilityCalls = () => callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST)
+            .filter(request => (request.payload as { requesterAvailability?: true }).requesterAvailability);
+        expect(availabilityCalls()).toHaveLength(0);
+        owner.openWorkspaceSyncAddMachine({ ...source(), rootPath: '/members/machine-a/project' }, vi.fn());
+        const modal = await renderOpenedModal();
+        await chooseTarget(modal.screen, '');
+        await vi.waitFor(() => expect(modal.screen.findByType(PathSelectionList).props.machineHomeDir).toBe('/members/machine-b'));
+        await act(async () => { invokeTestInstanceHandler(modal.screen.findByTestId('path-selection-list:open-tree-browser')!, 'onPress'); });
+        await vi.waitFor(() => expect(shownModal).toHaveBeenCalledTimes(2));
+        const browser = shownModal.mock.calls[1]![0];
+        expect(browser.props).toMatchObject({ machineId: 'machine-b', initialPath: '/members/machine-b/workspace' });
+        await act(async () => browser.props.onResolve(null));
+        await act(async () => invokeTestInstanceHandler(modal.screen.findByType(PathSelectionList), 'onCommit', '~/copy'));
+        expect(modal.screen.getTextContent()).toContain('workspaceSync.endpoint.source:{"label":"~/project"}');
+        expect(availabilityCalls().map(request => request.machineId).sort()).toEqual(['machine-a', 'machine-b']);
+        for (let index = 0; index < 3; index++) await act(async () => {
+            const machines = Object.values(storage.getState().machines).map(machine => ({ ...machine, activeAt: Date.now() + index }));
+            storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
+        });
+        expect(availabilityCalls()).toHaveLength(2);
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+        await act(async () => modal.submit().props.onPress());
+        await vi.waitFor(() => expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toHaveLength(1));
+        expect(WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)[0]!.payload).actionInput.targetPath)
+            .toBe('/members/machine-b/copy');
+        await act(async () => pendingCreate.resolve(committedLink()));
+    });
+
+    it('replaces a selected link only after confirmation, keeping its folders and content exclusions', async () => {
+        const base = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: ['private/**'], extraIncludePatterns: [] };
+        const contentPolicy = { ...base, policyDigest: computeWorkspaceSyncPolicyDigest(base) };
+        const refs = [{ ...source(), createdAtMs: 1 },
+            { id: 'target-ref', serverId: workspace.serverId, machineId: 'machine-b', rootPath: '/target', createdAtMs: 1 }];
+        const relationship = { v: 1 as const, relationshipId: 'old-link', controllerMachineId: 'machine-a',
+            alphaWorkspaceRefId: source().id, betaWorkspaceRefId: 'target-ref', mode: 'keep_synced' as const,
+            contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: refs, relationships: [relationship] });
+        const [summary] = projectWorkspaceSyncRelationshipSummaries({ relationships: projectWorkspaceSyncRelationships([relationship]),
+            workspaceRefs: refs, statuses: [], serverId: workspace.serverId });
+        expect(summary).toBeTruthy();
+        const row = await renderScreen(React.createElement(WorkspaceSyncRelationshipRow, { summary: summary! }));
+        const menu = row.findByType(DropdownMenu);
+        expect(menu.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'replace' })]));
+        await act(async () => invokeTestInstanceHandler(menu, 'onSelect', 'replace'));
+        await vi.waitFor(() => expect(shownModal).toHaveBeenCalledOnce());
+        const modal = await renderOpenedModal();
+        expect(modal.screen.findAllByType(PathSelectionList)).toHaveLength(0);
+        expect(modal.screen.findAllByType(MachineSelector)).toHaveLength(0);
+        const mode = modal.screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.title === 'sessionHandoff.targetApproval.modeLabel');
+        await act(async () => invokeTestInstanceHandler(mode!, 'onSelect', 'keep_both_in_sync'));
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+        await act(async () => { modal.submit().props.onPress(); });
+        await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
+        expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+        confirmModal.mockResolvedValue(true);
+        await act(async () => { modal.submit().props.onPress(); });
+        await vi.waitFor(() => expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toHaveLength(1));
+        const request = WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)[0]!.payload);
+        expect(request.actionInput).toMatchObject({ replaceRelationshipId: 'old-link', sourceWorkspaceRefId: source().id,
+            targetMachineId: 'machine-b', targetPath: '/target', mode: 'keep_both_in_sync', destinationIntent: 'use_existing', contentPolicy });
+        await act(async () => pendingCreate.resolve(committedLink()));
+    });
+    it.each(['/source', '/home/source/project', undefined])('opens a missing-worker-copy refusal from accepted checkout %s, leaving the target path for the user to choose', async rootPath => {
         requireApproval = true;
-        expect(owner.openWorkspaceSyncWorkerCopySetup({ ...source(), workspaceId: source().id }, {
+        expect(owner.openWorkspaceSyncWorkerCopySetup({ serverId: source().serverId, machineId: source().machineId,
+            workspaceId: source().id, ...(rootPath === undefined ? {} : { rootPath }) }, {
             kind: 'no_worker_can_accept', reason: 'worker_copy_missing', unavailable: 'ask',
             workerCopy: { serverId: workspace.serverId, sourceWorkspaceRefId: source().id,
                 sourceMachineId: 'machine-a', targetMachineId: 'machine-b' },
@@ -298,7 +404,8 @@ describe('Project Add machine modal', () => {
         expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'error', accessibilitySemantics: 'alert' });
     });
 
-    it('stays quiet when the person declines the Action approval: nothing ran, nothing failed', async () => {
+    it('keeps a declined destination approval pending without running the link or reporting failure', async () => {
+        requireApproval = true;
         owner.openWorkspaceSyncAddMachine(source(), vi.fn());
         const modal = await renderOpenedModal();
         await chooseTarget(modal.screen);
@@ -306,7 +413,8 @@ describe('Project Add machine modal', () => {
         await act(async () => { modal.submit().props.onPress(); });
         await vi.waitFor(() => expect(confirmModal).toHaveBeenCalledOnce());
         await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
-        expect(statusLine(modal.screen)).toBeUndefined();
+        expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'warning', accessibilitySemantics: 'status' });
+        expect(storedApproval().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetPath: '/target' });
         expect(modal.screen.getTextContent()).not.toContain('approval_canceled');
         expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
     });
@@ -330,7 +438,7 @@ describe('Project Add machine modal', () => {
         await act(async () => { pendingCreate.resolve(committedLink()); });
         await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('workspaceSync.error.needsAttention'));
         expect(modal.screen.getTextContent()).not.toContain('workspaceSync.state.watching');
-        expect(confirmModal).toHaveBeenCalledOnce();
+        expect(confirmModal).not.toHaveBeenCalled();
     });
 
     it('does not create or open approval after cancellation wins destination admission', async () => {
@@ -399,7 +507,17 @@ describe('Project Add machine modal', () => {
 
     describe('refusing to attach the source checkout', () => {
         const attachSource = async (outcome: unknown) => {
-            projectsOpenOutcome.current = outcome;
+            // The real UI Action host delegates Open admission to the named Home.
+            // Answer that HTTP boundary, including its correlated Action envelope.
+            const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+            await adoptHomeProfile({ descriptor: { serverUrl: 'https://workspace-sync.test',
+                homeServerIdentityId: 'srv_workspace_sync' }, source: 'manual' });
+            workspace.home.answer(workspace.serverId, 'POST /v1/actions/projects.open', { select: body => {
+                const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+                if (outcome instanceof Error) return { status: 503, body: { error: 'server_unavailable' } };
+                return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.open',
+                    requestId: request.requestId, execution: { ok: true, result: outcome } }) };
+            } });
             const { id: _linked, ...unlinked } = source();
             owner.openWorkspaceSyncAddMachine(unlinked, vi.fn());
             const modal = await renderOpenedModal();
@@ -410,15 +528,17 @@ describe('Project Add machine modal', () => {
         };
 
         it('names an unreachable source Machine instead of a generic save failure', async () => {
-            const modal = await attachSource({ ok: true, result: { kind: 'refused', code: 'machine_unreachable' } });
+            const modal = await attachSource({ kind: 'refused', code: 'machine_unreachable' });
             await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('workspaceSync.start.blocked.targetMachineOffline'));
+            expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1);
             expect(modal.screen.getTextContent()).not.toContain('common.saveError');
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
         });
 
         it('keeps the generic message for an Action failure without a Project Open refusal', async () => {
-            const modal = await attachSource({ ok: false, errorCode: 'server_unreachable', error: 'server_unreachable' });
+            const modal = await attachSource(new Error('server_unreachable'));
             await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('common.saveError'));
+            expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1);
         });
     });
 

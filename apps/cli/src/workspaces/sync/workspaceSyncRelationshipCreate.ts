@@ -27,6 +27,8 @@ export type WorkspaceSyncRelationshipCreateDependencies = Readonly<{
     rootPath: string;
   }> | null;
   relationshipOwner: Pick<WorkspaceSyncRelationshipOwner, 'prepareCreate'>;
+  /** Native checkout admission may already have reserved the exact target ref. */
+  targetWorkspaceRefId?: string;
 }>;
 
 function createError(code: string, message: string): Error & { code: string } {
@@ -64,9 +66,12 @@ export async function createWorkspaceSyncRelationshipForProject(
 
   const prepared = await dependencies.relationshipOwner.prepareCreate({
     operationId: request.operationId,
+    ...('replaceRelationshipId' in input ? { replaceRelationshipId: input.replaceRelationshipId } : {}),
     serverId: source.serverId.trim(),
     sourceMachineId: source.machineId.trim(),
     sourceRootPath: source.rootPath,
+    sourceWorkspaceRefId: input.sourceWorkspaceRefId,
+    ...(dependencies.targetWorkspaceRefId ? { targetWorkspaceRefId: dependencies.targetWorkspaceRefId } : {}),
     targetMachineId: input.targetMachineId,
     targetRootPath: input.targetPath,
     mode: input.mode,
