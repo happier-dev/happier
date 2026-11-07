@@ -4,16 +4,19 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
+import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
 import { renderScreen } from '@/dev/testkit';
+import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 import { t } from '@/text';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
     type ConnectedServiceAuthGroupPolicyV1,
-    type ConnectedServiceQuotaSnapshotV1,
+    type ConnectedServiceQuotaSnapshotV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import {
     type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import type { PoolMemberRow } from './PoolMemberRow';
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
@@ -186,6 +189,37 @@ async function renderPoolDetail(
     return { screen, group };
 }
 
+it.each(['claude-subscription', 'anthropic'].flatMap((localId) =>
+    [undefined, false, true].map((currentValue) => ({ localId, currentValue })),
+))('edits native usage-limit waiting for $localId ($currentValue) through the qualified pool mutation', async ({ localId, currentValue }) => {
+    const service = { pluginId: 'happier.agent.claude', localId };
+    const { screen, group } = await renderPoolDetail({
+        ref: { service, groupId: 'primary' },
+        policy: policy(currentValue === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: currentValue }),
+    }, { poolSettings: resolveAgentUiBehavior('claude').connectedServices?.poolSettings });
+    const toggle = screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle');
+    expect(toggle).not.toBeNull();
+    expect(toggle?.props.value).toBe(currentValue === true);
+    await act(async () => { toggle?.props.onValueChange(currentValue !== true); });
+    expect(patch).toHaveBeenCalledWith({ group, policy: { claudeCodeAutoContinueAtUsageLimit: currentValue !== true } });
+});
+
+it('keeps native usage-limit waiting disabled when fallback controls are unavailable', async () => {
+    const { screen } = await renderPoolDetail({
+        ref: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, groupId: 'primary' },
+    }, { poolSettings: resolveAgentUiBehavior('claude').connectedServices?.poolSettings, fallbackControlsEnabled: false });
+    const toggle = screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle');
+    expect(toggle?.props.disabled).toBe(true);
+    expect(toggle?.props.onValueChange).toBeUndefined();
+});
+
+it('does not lend native usage-limit waiting to another plugin with the same service name', async () => {
+    const { screen } = await renderPoolDetail({
+        ref: { service: { pluginId: 'acme.accounts', localId: 'claude-subscription' }, groupId: 'primary' },
+    }, { poolSettings: resolveAgentUiBehavior('claude').connectedServices?.poolSettings });
+    expect(screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle')).toBeNull();
+});
+
 it('keeps an empty pool focused on adding its first members rather than unusable policy controls', async () => {
     const { screen } = await renderPoolDetail({ members: [], activeAccountId: null });
     expect(screen.findByTestId('connected-services-pool-detail:no-members')).not.toBeNull();
@@ -199,18 +233,18 @@ it('keeps individual member limits instead of repeating the pool aggregate on a 
     expect(screen.findByTestId('connected-services-pool-detail:left:none') === null).toBe(true);
     expect(memberRows(screen)).toHaveLength(2);
 });
-it('keeps compact defaults in the identity line and retains sharing without desktop header controls', async () => {
+it('keeps compact defaults in Used by and retains sharing without desktop header controls', async () => {
     const setDefault = vi.fn();
-    const share = vi.fn();
-    const { screen } = await renderPoolDetail({}, { agentDefaults: { choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault }, onShareWithTeam: share });
+    const share = { kind: 'connected_pool' as const, serverId: 'server-a', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool-1' };
+    const { screen } = await renderPoolDetail({}, { agentDefaults: { choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault }, shareSource: share });
     act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
     expect(screen.findHostByTestId('connected-services-pool-detail:more')).toBeNull();
     await screen.pressByTestIdAsync('connected-services-pool-detail:default-for');
     await act(async () => reportPopoverContentLayout(screen, { width: 280, height: 180 }));
     await screen.pressByTestIdAsync('connected-services-pool-detail:default-for:agent:codex');
     expect(setDefault).toHaveBeenCalledWith('codex', false);
-    await screen.pressByTestIdAsync('connected-services-pool-detail:share');
-    expect(share).toHaveBeenCalledOnce();
+    // A phone keeps Share, as the same credential share action beside Delete.
+    expect(screen.findAllByType(CredentialShareButton).map((button) => button.props.source)).toEqual([share]);
 });
 
 const NOW = 1_800_000_000_000;
@@ -524,14 +558,28 @@ describe('QualifiedPoolDetailView', () => {
         ]));
     });
 
-    it('offers the current Pool to a Team from the pool menu', async () => {
-        const onShareWithTeam = vi.fn();
-        const { screen } = await renderPoolDetail({}, { onShareWithTeam });
-        await act(async () => { moreMenu(screen).props.onSelect('share'); });
-        expect(onShareWithTeam).toHaveBeenCalledTimes(1);
+    it('shares the current Pool from its header Share action, not the pool menu', async () => {
+        const source = { kind: 'connected_pool' as const, serverId: 'server-a', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool-1' };
+        const { screen } = await renderPoolDetail({}, { shareSource: source });
+        expect(screen.findAllByType(CredentialShareButton).map((button) => button.props.source)).toEqual([source]);
+        expect(moreMenu(screen).props.items.map((item: { id: string }) => item.id)).not.toContain('share');
 
         const withoutTeams = await renderPoolDetail();
         expect(moreMenu(withoutTeams.screen).props.items.map((item: { id: string }) => item.id)).not.toContain('share');
+    });
+
+    it('offers to drop a personal pool label, which otherwise hides the pool name, only while one is set', async () => {
+        const onResetLabel = vi.fn();
+        const plain = await renderPoolDetail({}, { onResetLabel });
+        expect(moreMenu(plain.screen).props.items.map((item: { id: string }) => item.id)).not.toContain('resetLabel');
+
+        const group = createGroup();
+        const labelled = await renderPoolDetail({}, { onResetLabel, labelsByKey: {
+            [connectedEntitySubjectKeyV1({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId })]: 'Night shift',
+        } });
+        expect(moreMenu(labelled.screen).props.items.map((item: { id: string }) => item.id)).toContain('resetLabel');
+        await act(async () => { moreMenu(labelled.screen).props.onSelect('resetLabel'); });
+        expect(onResetLabel).toHaveBeenCalledTimes(1);
     });
 
     it('offers explicit quota-reset spending only when the owning service and server support it', async () => {
@@ -618,7 +666,7 @@ describe('QualifiedPoolDetailView', () => {
         expect(memberRow(screen, 'work').title).toBe(fallback);
         expect(memberRow(screen, 'backup').title).toBe('provider-account-43');
         expect(membersDropdown(screen).props.items[0]).toMatchObject({ title: fallback });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe(t('connectedServicesPool.using', { name: fallback }));
+        expect(screen.getTextContent()).toContain(t('connectedServicesPool.using', { name: fallback }));
         expect(screen.getTextContent()).not.toContain('provider-account-42');
     });
 
@@ -647,9 +695,11 @@ describe('QualifiedPoolDetailView', () => {
             policy: policy({ strategy: 'priority', autoSwitch: true }),
             activeSince: { accountId: 'work', atMs: NOW - 30 * MIN },
         });
-        const now = itemProps(screen, 'connected-services-pool-detail:now');
-        expect(now.title).toMatch(/^connectedServicesPool\.usingSince\(name=Work workspace,time=/);
-        expect(now.subtitle).toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackDescription');
+        // A healthy pool is quiet: who is in use and what happens next head the page; no separate card.
+        expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
+        expect(itemProps(screen, 'connected-services-pool-detail:summary').description)
+            .toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackDescription');
+        expect(screen.getTextContent()).toMatch(/connectedServicesPool\.usingSince\(name=Work workspace,time=/);
 
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
         expect(setActiveAccount).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }) }));
@@ -657,7 +707,8 @@ describe('QualifiedPoolDetailView', () => {
 
     it('does not claim a since time the pool has not tied to the active member', async () => {
         const { screen } = await renderPoolDetail({ activeSince: null });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=Work workspace)');
+        expect(screen.getTextContent()).toContain('connectedServicesPool.using(name=Work workspace)');
+        expect(screen.getTextContent()).not.toContain('connectedServicesPool.usingSince');
     });
 
     it('keeps the active account when usage-limit switching is disabled, while still allowing Switch now', async () => {
@@ -668,7 +719,7 @@ describe('QualifiedPoolDetailView', () => {
                 switchOn: { ...policy().switchOn, usageLimit: false },
             }),
         });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle)
+        expect(itemProps(screen, 'connected-services-pool-detail:summary').description)
             .toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackOff(name=Work workspace)');
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
         expect(setActiveAccount).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }) }));
@@ -681,7 +732,7 @@ describe('QualifiedPoolDetailView', () => {
                 { ref: accountRef('backup'), priority: 200, enabled: false, state: {} },
             ],
         });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle).toBe('connectedServicesPool.onlyOneOn(name=Work workspace)');
+        expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBe('connectedServicesPool.onlyOneOn(name=Work workspace)');
         await pressRow(screen, 'connected-services-pool-detail:now:turn-on');
         expect(patchMember).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }), enabled: true }));
     });
@@ -715,8 +766,11 @@ describe('QualifiedPoolDetailView', () => {
         expect(setDefault).toHaveBeenCalledWith('opencode', true);
         await act(async () => { star?.props.onSelect('codex'); });
         expect(setDefault).toHaveBeenCalledWith('codex', false);
-        expect(screen.findByTestId('connected-services-pool-detail:used-by:Codex')).not.toBeNull();
+        // Used by owns the default: one Agents row names the agents and carries the default menu.
+        expect(itemProps(screen, 'connected-services-pool-detail:used-by').title).toBe('Codex');
         expect(screen.findByTestId('connected-services-pool-detail:used-by:OpenCode')).toBeNull();
+        const usedBy = screen.root.findAll((node) => node.props?.testID === 'connected-services-pool-detail:used-by' && node.props?.rightElement !== undefined)[0];
+        expect(usedBy?.findAll((node) => node.props?.testID === 'connected-services-pool-detail:default-for').length ?? 0).toBeGreaterThan(0);
     });
 
     it('offers each membership candidate with its name and identity line', async () => {
@@ -882,10 +936,6 @@ describe('QualifiedPoolDetailView', () => {
 
         await act(async () => { itemProps(screen, 'connected-services-pool-detail:stale-probe-after').onCommit('10'); });
         expect(patch.mock.calls.at(-1)?.[0]).toMatchObject({ policy: { probeIfSnapshotOlderThanMs: 600_000 } });
-        await act(async () => { itemProps(screen, 'connected-services-pool-detail:switches-per-turn').onCommit('2'); });
-        expect(patch.mock.calls.at(-1)?.[0]).toMatchObject({ policy: { maxSwitchesPerTurn: 2 } });
-        await act(async () => { itemProps(screen, 'connected-services-pool-detail:switches-per-hour').onCommit('6'); });
-        expect(patch.mock.calls.at(-1)?.[0]).toMatchObject({ policy: { maxSwitchesPerSessionHour: 6 } });
 
         await act(async () => {
             dropdownByTriggerTestId(screen, 'connected-services-pool-detail:recovery-mode').props.onSelect?.('off');
@@ -897,9 +947,9 @@ describe('QualifiedPoolDetailView', () => {
 
     it('keeps the advanced controls collapsed until the disclosure is opened', async () => {
         const { screen } = await renderPoolDetail();
-        expect(screen.findByTestId('connected-services-pool-detail:switches-per-turn')).toBeNull();
+        expect(screen.findByTestId('connected-services-pool-detail:stale-probe-after')).toBeNull();
         await pressRow(screen, 'connected-services-pool-detail:advanced:header');
-        expect(screen.findByTestId('connected-services-pool-detail:switches-per-turn')).not.toBeNull();
+        expect(screen.findByTestId('connected-services-pool-detail:stale-probe-after')).not.toBeNull();
     });
 
     it('disables the fallback controls when automatic fallback is unavailable', async () => {

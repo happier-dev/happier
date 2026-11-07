@@ -3,21 +3,26 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flattenTestStyle, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createDeferred } from '@/dev/testkit';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
 import { PopoverPortalTargetContextProvider } from '@/components/ui/popover/PopoverPortalTarget';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
-    ConnectedServiceAuthGroupPolicyV1Schema,
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    type PluginContributionIdentityV1,
+    ConnectedServiceAuthGroupPolicyV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+import {
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import {
+    type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
     type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import {
     QualifiedAccountDetailView,
@@ -36,6 +41,10 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected streaming Markdown in account detail'); },
 }));
+
+// The system clipboard is a platform boundary.
+const clipboardState = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_value: string) => true) }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboardState.setStringAsync, getStringAsync: async () => '' }));
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -94,11 +103,11 @@ function hasTitle(root: ReactTestInstance, title: string): boolean {
     return root.findAll((node) => node.props?.title === title).length > 0;
 }
 
-it('offers the supported usage refresh at the account header', async () => {
+it('leaves usage refresh to its Usage section on a wide page (lab s2svc:account)', async () => {
     const refresh = vi.fn();
     const screen = await renderDetail({ onRefresh: refresh });
-    await screen.pressByTestIdAsync('qualified-account-detail:refresh');
-    expect(refresh).toHaveBeenCalledTimes(1);
+    // The Usage section's own "As of · Refresh" is the one place it is offered; the header stays identity only.
+    expect(screen.findByTestId('qualified-account-detail:refresh')).toBeNull();
 });
 
 /** The row's own `title` prop (the label), read from the list row that carries it. */
@@ -133,6 +142,7 @@ describe('QualifiedAccountDetailView', () => {
         standardCleanup();
         platformState.os = 'web';
         restoreWebGlobals();
+        vi.unstubAllGlobals();
     });
 
     it('keeps compact Rename and Save reachable from a measurable account identity', async () => {
@@ -140,10 +150,12 @@ describe('QualifiedAccountDetailView', () => {
         const onRename = vi.fn();
         const portalRoot = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 0, 390, 844) };
         let screen: Awaited<ReturnType<typeof renderScreen>>;
-        // Native layout is the boundary. Only actually painted text gives a host an anchor box;
-        // the compact pencil wrapper is empty once its popover moves into the overlay host.
+        // Native layout is the boundary. Only painted content (text, or the pencil button the phone
+        // anchors rename to) gives a host an anchor box; a wrapper whose popover moved into the
+        // overlay host and holds nothing else stays empty.
         const paintsText = (node: ReactTestInstance | string): boolean => typeof node === 'string'
-            ? node.length > 0 : node.children.some(paintsText);
+            ? node.length > 0
+            : node.props?.testID === 'qualified-account-detail:action:edit-label' || node.children.some(paintsText);
         screen = await renderScreen(
             <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRoot }, layout: { width: 390, height: 844 } }}>
                 <OverlayPortalProvider>
@@ -248,9 +260,27 @@ describe('QualifiedAccountDetailView', () => {
 
         expect(metaTextOf(screen.root, 'qualified-account-detail:meta:email')).toBe('work@example.com');
         expect(metaTextOf(screen.root, 'qualified-account-detail:meta:plan')).toBe('Codex Pro');
-        expect(metaTextOf(screen.root, 'qualified-account-detail:meta:account-id')).toContain('user-4fQk8TzW1c');
+        // The provider's raw id is not a name and not a page row (lab s2svc:account has neither).
+        expect(metaTextOf(screen.root, 'qualified-account-detail:meta:account-id')).toBeUndefined();
+        expect(screen.findByTestId('qualified-account-detail:sign-in:account-id')).toBeNull();
         // Identity lives in the header; there is no separate "Account details" list.
         expect(screen.findByTestId('qualified-account-detail:row:email')).toBeNull();
+    });
+
+    it('keeps the provider account id reachable from the ⋯ menu, copying it to the clipboard', async () => {
+        vi.stubGlobal('navigator', { clipboard: { writeText: clipboardState.setStringAsync } });
+        clipboardState.setStringAsync.mockClear();
+        const screen = await renderDetail({ providerAccountId: 'user-4fQk8TzW1c', status: 'connected' });
+        const menu = screen.root.findAll((node) => Array.isArray(node.props?.items) && typeof node.props?.onSelect === 'function')[0];
+        expect(menu?.props.items.map((item: { id: string }) => item.id)).toContain('copy-account-id');
+        await act(async () => { await menu!.props.onSelect('copy-account-id'); });
+        expect(clipboardState.setStringAsync).toHaveBeenCalledWith('user-4fQk8TzW1c');
+    });
+
+    it('offers no account id copy when the provider reported none', async () => {
+        const screen = await renderDetail({ status: 'connected', onReconnect: vi.fn() });
+        const menu = screen.root.findAll((node) => Array.isArray(node.props?.items) && typeof node.props?.onSelect === 'function')[0];
+        expect(menu?.props.items.map((item: { id: string }) => item.id) ?? []).not.toContain('copy-account-id');
     });
 
     it('joins the machine line to the Sign-in group instead of drawing a sheet of its own', async () => {
@@ -272,19 +302,30 @@ describe('QualifiedAccountDetailView', () => {
         expect(groupOf(probe)).toBe(groupOf(signIn));
     });
 
-    it('offers Sign in again once: the signed-out banner owns it, and a running sign-in replaces it', async () => {
-        const onReconnect = vi.fn();
-        const signedOut = await renderDetail({ status: 'needs_reauth', onReconnect, authenticationModeTitle: 'Signed in with a browser' });
-        expect(signedOut.findByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).toBeTruthy();
-        expect(signedOut.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
-        standardCleanup();
+    it('promises no sign-in freshness it cannot show (no "keeps it fresh" line)', async () => {
+        const screen = await renderDetail({ status: 'connected', onReconnect: vi.fn(), authenticationModeTitle: 'Signed in with a code' });
+        const row = screen.root.findAll((node) => node.props?.testID === 'qualified-account-detail:sign-in' && typeof node.props?.title === 'string')[0];
+        expect(row).toBeTruthy();
+        expect(row!.props.subtitle || undefined).toBeUndefined();
+    });
 
-        // The attempt runs inside its Sign-in section; nothing else offers to start another one.
-        const running = await renderDetail({ status: 'needs_reauth', onReconnect, authenticationModeTitle: 'Signed in with a browser',
-            signInFlow: <></> });
-        expect(running.findByTestId('qualified-account-detail:signed-out-banner')).toBeTruthy();
-        expect(running.findByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).toBeNull();
-        expect(running.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+    it('says where and when an account signed in only when that evidence is held, never from last use alone', async () => {
+        const signInSubtitle = (screen: Awaited<ReturnType<typeof renderDetail>>) => screen.root.findAll((node) =>
+            node.props?.testID === 'qualified-account-detail:sign-in' && typeof node.props?.title === 'string')[0]!.props.subtitle as string | undefined;
+        const held = await renderDetail({
+            status: 'connected', authenticationModeTitle: 'Signed in with a code',
+            authenticationProvenance: { authenticatedAt: Date.UTC(2026, 9, 12, 9, 30), machine: { serverId: 'home-1', machineId: 'machine-1' } },
+            authenticationMachineName: 'nl2-devbox', lastRefreshSuccessAt: Date.UTC(2026, 9, 25, 7, 15), lastUsedAt: Date.UTC(2026, 9, 25, 8, 0),
+        });
+        expect(signInSubtitle(held)).toMatch(/^refreshed .+ · signed in .+ on nl2-devbox$/);
+        const unnamed = await renderDetail({
+            status: 'connected', authenticationModeTitle: 'Signed in with a code',
+            authenticationProvenance: { authenticatedAt: Date.UTC(2026, 9, 12, 9, 30), machine: { serverId: 'other-home', machineId: 'machine-9' } },
+        });
+        expect(signInSubtitle(unnamed)).toMatch(/^signed in [^·]+$/);
+        const imported = await renderDetail({ status: 'connected', authenticationModeTitle: 'Signed in with a code', lastUsedAt: Date.UTC(2026, 9, 25, 8, 0) });
+        expect(signInSubtitle(imported)).toMatch(/^last used /);
+        expect(signInSubtitle(imported)).not.toMatch(/signed in|refreshed/);
     });
 
     it('says a signed-out account once, in its banner, never also as a header pill (lab csvc D2)', async () => {
@@ -360,6 +401,8 @@ describe('QualifiedAccountDetailView', () => {
 
         expect(screen.findByTestId('qualified-account-detail:pool:other')).toBeNull();
         expect(screen.findByTestId('qualified-account-detail:pools-empty')).toBeNull();
+        // The header says which pool holds it ("… · in Fallback pool").
+        expect(metaTextOf(screen.root, 'qualified-account-detail:meta:pool')).toContain('Fallback pool');
 
         screen.pressByTestId('qualified-account-detail:pool:fallback');
 
@@ -410,6 +453,21 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:pool:fallback')).toBeTruthy();
     });
 
+    it('offers Use original name only while a personal label is set, clearing it through the same rename write', async () => {
+        const onRename = vi.fn(async () => true);
+        const unlabelled = await renderDetail({ rename: { currentLabel: '', onRename } });
+        await unlabelled.pressByTestIdAsync('qualified-account-detail:action:edit-label');
+        await act(async () => reportPopoverContentLayout(unlabelled, { width: 320, height: 180 }));
+        expect(unlabelled.findHostByTestId('qualified-account-detail:rename:reset')).toBeNull();
+
+        const screen = await renderDetail({ rename: { currentLabel: 'Work account', onRename } });
+        await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
+        await act(async () => reportPopoverContentLayout(screen, { width: 320, height: 180 }));
+        await screen.pressByTestIdAsync('qualified-account-detail:rename:reset');
+        expect(onRename).toHaveBeenCalledWith('');
+        expect(screen.findHostByTestId('qualified-account-detail:rename:input')).toBeNull();
+    });
+
     it('keeps the rename draft until the write is acknowledged and retains it after failure', async () => {
         const receipt = createDeferred<boolean>();
         const onRename = vi.fn(() => receipt.promise);
@@ -439,13 +497,15 @@ describe('QualifiedAccountDetailView', () => {
         expect(onReconnect).toHaveBeenCalledTimes(1);
     });
 
-    it('offers the connected account to a Team through the mounted source action', async () => {
-        const onShareWithTeam = vi.fn();
-        const screen = await renderDetail({ onShareWithTeam });
+    it('shares the connected account from the header Share action, not a page row or the ⋯ menu', async () => {
+        const source = { kind: 'connected_account' as const, serverId: 'server-a', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'acct-1' } };
+        const screen = await renderDetail({ shareSource: source });
 
-        screen.pressByTestId('qualified-account-detail:action:share-with-team');
-
-        expect(onShareWithTeam).toHaveBeenCalledTimes(1);
+        // One Share action in the header opens the one credential share sheet for this exact source.
+        expect(screen.findAllByType(CredentialShareButton).map((button) => button.props.source)).toEqual([source]);
+        expect(screen.findByTestId('qualified-account-detail:action:share-with-team')).toBeNull();
+        const without = await renderDetail({});
+        expect(without.findAllByType(CredentialShareButton)).toHaveLength(0);
     });
 
     it('offers no add-to-pool affordance: membership is edited from the pool detail', async () => {
@@ -457,13 +517,17 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:action:add-to-pool')).toBeNull();
     });
 
-    it('offers ★ "default for an agent" in the header, never a per-service default switch', async () => {
+    it('offers ★ "default for an agent" with Used by, never in the header or as a per-service default switch', async () => {
         const setDefault = vi.fn();
         const screen = await renderDetail({
             agentDefaults: { choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault },
         });
 
         expect(screen.findByTestId('qualified-account-detail:default-for')).toBeTruthy();
+        const header = screen.findByTestId('qualified-account-detail:header');
+        expect(header?.findAll((node) => node.props?.testID === 'qualified-account-detail:default-for')).toHaveLength(0);
+        const usedBy = screen.findByTestId('account-detail-used-by');
+        expect(usedBy?.findAll((node) => node.props?.testID === 'qualified-account-detail:default-for').length).toBeGreaterThan(0);
         expect(screen.findByTestId('qualified-account-detail:default-switch')).toBeNull();
     });
 
@@ -471,11 +535,13 @@ describe('QualifiedAccountDetailView', () => {
         const onReconnect = vi.fn();
         const screen = await renderDetail({
             status: 'needs_reauth',
+            statusReason: 'invalid_client',
             onReconnect,
             usageSection: <></>,
         });
 
         expect(screen.findByTestId('qualified-account-detail:signed-out-banner')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Signed out · app access was removed');
         screen.pressByTestId('qualified-account-detail:signed-out-banner:sign-in-again');
         expect(onReconnect).toHaveBeenCalledTimes(1);
 
@@ -483,7 +549,23 @@ describe('QualifiedAccountDetailView', () => {
         expect(healthy.findByTestId('qualified-account-detail:signed-out-banner')).toBeNull();
     });
 
-    it('never offers a removal that would fail: while a pool uses the account, the way out of the pool comes first', async () => {
+    it('offers Sign in again once: the signed-out banner owns it, and a running sign-in replaces it', async () => {
+        const onReconnect = vi.fn();
+        const signedOut = await renderDetail({ status: 'needs_reauth', onReconnect, authenticationModeTitle: 'Signed in with a browser' });
+        expect(signedOut.findByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).toBeTruthy();
+        expect(signedOut.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+        standardCleanup();
+
+        // The attempt runs inside its Sign-in section; nothing else offers to start another one.
+        const running = await renderDetail({ status: 'needs_reauth', onReconnect, authenticationModeTitle: 'Signed in with a browser',
+            signInFlow: <></> });
+        expect(running.findByTestId('qualified-account-detail:signed-out-banner')).toBeTruthy();
+        expect(running.findByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).toBeNull();
+        expect(running.findByTestId('qualified-account-detail:action:reconnect')).toBeNull();
+    });
+
+    // Owner ruling 2026-11-07: pool membership requires confirmation, never blocks removal.
+    it.each(['button', 'menu'] as const)('allows removing a pooled account through the %s and retains the separate leave-pool action', async (entry) => {
         const onDisconnect = vi.fn();
         const onOpenPool = vi.fn();
         const props = {
@@ -497,10 +579,18 @@ describe('QualifiedAccountDetailView', () => {
 
         const remove = pooled.findAll((node) => node.props?.testID === 'qualified-account-detail:action:disconnect'
             && typeof node.props?.onPress === 'function')[0];
-        expect(remove?.props.disabled).toBe(true);
+        expect(remove?.props.disabled).toBeFalsy();
         pooled.pressByTestId('qualified-account-detail:action:leave-pool:work-pool');
         expect(onOpenPool).toHaveBeenCalledWith('work-pool');
         expect(onDisconnect).not.toHaveBeenCalled();
+        if (entry === 'button') {
+            await pooled.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        } else {
+            const menu = pooled.root.findByType(DropdownMenu);
+            expect(menu.props.items.find((item: { id: string }) => item.id === 'disconnect')?.disabled).toBeFalsy();
+            await act(async () => { await menu.props.onSelect('disconnect'); });
+        }
+        expect(onDisconnect).toHaveBeenCalledOnce();
 
         const alone = await renderDetail({ groups: [], onOpenPool, onDisconnect });
         const enabled = alone.findAll((node) => node.props?.testID === 'qualified-account-detail:action:disconnect'

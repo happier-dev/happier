@@ -1,12 +1,16 @@
 import * as React from 'react';
+import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import type {
-    ConnectedServiceId,
-    PluginConnectedAccountAuthenticationModeV2,
-    QualifiedConnectedAccountProfileV4,
+    ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
+    PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type {
+    QualifiedConnectedAccountProfileV4} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type {
     QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { Item } from '@/components/ui/lists/Item';
@@ -44,7 +48,7 @@ import {
     resolveConnectedServiceRuntimeCooldownOverrideBody,
 } from '../connectedServiceSettingsErrors';
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
-import { teamsDirectoryShareCredentialPath } from '@/components/settings/teams/teamsRoutes';
+import { ConnectedAccountKeySection } from './ConnectedAccountKeySection';
 import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionApprovalNotice';
 
 export type ConnectedAccountServiceProfile = QualifiedConnectedAccountProfileV4;
@@ -171,7 +175,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
         : null;
     /** Drill into an account or a pool as a real stack entry. */
     const openFocus = React.useCallback((next: ConnectedAccountSettingsRouteFocus) => {
-        router.push(buildConnectedAccountSettingsRoute(service, next));
+        const route = buildConnectedAccountSettingsRoute(service, next);
+        if (route) router.push(route);
     }, [router, service]);
 
     /**
@@ -184,7 +189,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
             router.back();
             return;
         }
-        router.replace(buildConnectedAccountSettingsRoute(service));
+        const route = buildConnectedAccountSettingsRoute(service);
+        if (route) router.replace(route);
     }, [router, service]);
 
     const [creatingPool, setCreatingPool] = React.useState(false);
@@ -212,7 +218,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 if (!next) break;
                 current = next;
             }
-            router.replace(buildConnectedAccountSettingsRoute(service, { kind: 'group', groupId: current.ref.groupId }));
+            const route = buildConnectedAccountSettingsRoute(service, { kind: 'group', groupId: current.ref.groupId });
+            if (route) router.replace(route);
         } finally {
             setCreatingPool(false);
         }
@@ -292,7 +299,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     const canReconnect = (account: ConnectedAccountServiceProfile): boolean => Boolean(
         props.onBeginReconnect
         && account.revisionSemantics === 'revisioned'
-        && !(account.status === 'needs_reauth' && account.authenticationModeId === null)
+        && !(isConnectedAccountSignedOut(account.status) && account.authenticationModeId === null)
         && (
             !props.canReconnectAccount
             || props.canReconnectAccount(account)
@@ -372,12 +379,12 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                         serverId={shareServerId}
                         source={{ v: 1, kind: 'connected_pool', target: { kind: 'group', service: group.ref.service, groupId: group.ref.groupId } }}
                     />,
-                    onShareWithTeam: () => router.push(teamsDirectoryShareCredentialPath({
+                    shareSource: {
                         kind: 'connected_pool',
                         serverId: shareServerId,
                         service: group.ref.service,
                         groupId: group.ref.groupId,
-                    })),
+                    },
                 } : {})}
             />
             </>
@@ -420,6 +427,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 providerAccountId={account.providerIdentity?.accountId ?? null}
                 // RAW status: the view owns the recognized-status gate.
                 status={account.status}
+                statusReason={account.statusReason}
                 authenticationModeTitle={(() => {
                     const mode = props.modes.find((candidate) => candidate.id === account.authenticationModeId);
                     if (!mode) return null;
@@ -430,6 +438,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                             : t('connectedServicesSettings.detailSignedInWithBrowser');
                 })()}
                 lastUsedAt={account.lastUsedAt ?? null}
+                authenticationProvenance={account.authenticationProvenance}
+                lastRefreshSuccessAt={account.lastRefreshSuccessAt}
                 configurationDisabled={props.busy}
                 {...(accountIsRevisioned && authenticationMode?.configuration?.scope === 'account' && props.onConfigureAccount ? {
                     onConfigureAccount: () => props.onConfigureAccount?.(account.ref),
@@ -462,11 +472,19 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                         serverId={shareServerId}
                         source={{ v: 1, kind: 'connected_account', target: { kind: 'account', account: account.ref } }}
                     />,
-                    onShareWithTeam: () => router.push(teamsDirectoryShareCredentialPath({
+                    shareSource: {
                         kind: 'connected_account',
                         serverId: shareServerId,
                         account: account.ref,
-                    })),
+                    },
+                } : {})}
+                {...(shareServerId && account.savedSecretResourceIds?.length ? {
+                    keySection: <ConnectedAccountKeySection
+                        testID="qualified-account-detail:key"
+                        serverId={shareServerId}
+                        account={account.ref}
+                        savedSecretResourceIds={account.savedSecretResourceIds}
+                    />,
                 } : {})}
                 {...(canReconnect(account) ? {
                     onReconnect: () => props.onBeginReconnect?.(account.ref),

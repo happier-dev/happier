@@ -2,7 +2,8 @@ import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { View } from 'react-native';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
@@ -18,9 +19,10 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { t } from '@/text';
-import { type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
-import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
+import { isConnectedAccountSignedOut, parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountTargetPresentation,
@@ -32,7 +34,11 @@ import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { AgentDefaultMenuButton } from '../defaults/AgentDefaultMenuButton';
 import type { AgentDefaultChoice } from '../defaults/agentDefaultChoices';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
+import type { TeamCredentialSourceHint } from '@/components/settings/teams/teamsRoutes';
+import { AccountDetailUsedBySectionView, type AccountDetailUsedBySlots } from './AccountDetailSections';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { useCopyProviderAccountId } from './useCopyProviderAccountId';
 
 export type QualifiedAccountDetailViewProps = Readonly<{
     /** Qualified identity of the account this screen describes. */
@@ -52,6 +58,7 @@ export type QualifiedAccountDetailViewProps = Readonly<{
      * rather than guessing a state the caller did not report.
      */
     status?: unknown;
+    statusReason?: QualifiedConnectedAccountProfileV4['statusReason'];
     /**
      * Pools of this account's service. Membership is derived here from the
      * qualified account id so one rule owns it. Omit this prop to hide the pools
@@ -79,8 +86,10 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     onOpenPool?: (groupId: string) => void;
     /** Rename in place (lab D2): the name people gave the account, and the writer of a new one. */
     rename?: Readonly<{ currentLabel: string; onRename: (label: string) => void | boolean | Promise<void | boolean> }>;
-    /** Starts the canonical Team credential offer journey for this source. */
-    onShareWithTeam?: () => void;
+    /** Where this account is shared from: the header Share action opens the one credential share sheet. */
+    shareSource?: TeamCredentialSourceHint;
+    /** An API-key account's key (value, Replace, what else picks it), from its Saved Secret record. */
+    keySection?: React.ReactNode;
     sharedWithTeamsAdministration?: React.ReactNode;
     onReconnect?: () => void;
     onRefresh?: () => void;
@@ -101,7 +110,12 @@ export type QualifiedAccountDetailViewProps = Readonly<{
      * them so this view stays presentational.
      */
     usageSection?: React.ReactNode;
-    usedBySection?: React.ReactNode;
+    /**
+     * Used by (lab `s2svc:account`): one section for the agents that sign in with the account, the pools
+     * that hold it and the ★ default control. The wiring owner supplies the agent rows' reader; this view
+     * hands it the pool rows and the default control, so the section stays one card.
+     */
+    renderUsedBy?: (slots: AccountDetailUsedBySlots) => React.ReactNode;
     worksOnSection?: React.ReactNode;
     machineSetupSection?: React.ReactNode;
     /**
@@ -113,6 +127,12 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     signInFlow?: React.ReactNode;
     /** How the account signed in ("Signed in with a code") and when a session last used it. */
     authenticationModeTitle?: string | null;
+    /** Held authentication evidence; absence is unknown, including native imports. */
+    authenticationProvenance?: QualifiedConnectedAccountProfileV4['authenticationProvenance'];
+    /** The provenance Machine's name when this Home knows it; otherwise the row says when, not where. */
+    authenticationMachineName?: string | null;
+    /** Credential-health refresh time, not quota freshness or a new sign-in. */
+    lastRefreshSuccessAt?: QualifiedConnectedAccountProfileV4['lastRefreshSuccessAt'];
     lastUsedAt?: number | null;
     testID?: string;
 }>;
@@ -172,7 +192,6 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
         groups,
         onOpenPool,
         rename,
-        onShareWithTeam,
         onReconnect,
         onDisconnect,
     } = props;
@@ -183,17 +202,31 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
 
     const [disconnectPending, setDisconnectPending] = React.useState(false);
     const [renameOpen, setRenameOpen] = React.useState(false);
-    const [moreOpen, setMoreOpen] = React.useState(false);
+    const { copyProviderAccountId, onMenuOpenChange } = useCopyProviderAccountId();
     const [compact, setCompact] = React.useState(false);
     const renameAnchorRef = React.useRef<View>(null);
-    const identityAnchorRef = React.useRef<View>(null);
 
     const status = parseDisplayableCredentialHealthStatus(props.status);
+    const signedOut = isConnectedAccountSignedOut(status);
     // An account titled by its email (no name of its own, or a name that is that address) doesn't repeat it.
     const providerEmailText = providerEmail?.trim() ?? '';
     const email = presentation.primaryLabelKind === 'email' || presentation.primaryLabel.trim() === providerEmailText
         ? '' : providerEmailText;
     const providerAccount = providerAccountId?.trim() ?? '';
+    const provenance = props.authenticationProvenance;
+    const signInFacts = [
+        props.lastRefreshSuccessAt
+            ? t('connectedServicesSettings.detailRefreshedAt', { time: formatAsOfTime(props.lastRefreshSuccessAt) })
+            : null,
+        provenance
+            ? props.authenticationMachineName
+                ? t('connectedServicesSettings.detailSignedInOnMachine', { time: formatAsOfTime(provenance.authenticatedAt), machine: props.authenticationMachineName })
+                : t('connectedServicesSettings.detailSignedInAt', { time: formatAsOfTime(provenance.authenticatedAt) })
+            : null,
+    ].filter((fact): fact is string => fact !== null);
+    const lastUsedFact = props.lastUsedAt
+        ? t('connectedServicesSettings.detailLastUsed', { time: formatAsOfTime(props.lastUsedAt) })
+        : null;
 
     const memberships = React.useMemo(
         () => (groups ?? []).filter((group) => isMemberOf(group, account)),
@@ -218,24 +251,59 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
         }
     }, [disconnectPending, onDisconnect]);
 
+    // "email · ChatGPT Pro · in Codex pool" (lab `s2svc:account`): one line of facts, read left to right.
+    const factSeparator = <Text style={stylesheet.factSeparator} accessibilityElementsHidden importantForAccessibility="no">·</Text>;
     const hasSignInRow = Boolean(onReconnect || props.authenticationModeTitle || props.signInFlow);
+    const defaultControl = props.agentDefaults ? (
+        <AgentDefaultMenuButton
+            testID={`${testID}:default-for`}
+            choices={props.agentDefaults.choices}
+            onChange={props.agentDefaults.setDefault}
+            disabledReason={props.agentDefaults.disabledReason}
+        />
+    ) : null;
+    // The pools that hold the account sit with the agents it serves (lab `s2svc:account` Used by).
+    const poolRows = showPools ? (memberships.length > 0 ? memberships.map((group) => (
+        <Item
+            key={group.ref.groupId}
+            testID={`${testID}:pool:${group.ref.groupId}`}
+            title={poolLabel(group)}
+            subtitle={describeMembership(group, account)}
+            icon={<Icon name="stack" size={17} color={theme.colors.text.secondary} />}
+            onPress={onOpenPool ? () => onOpenPool(group.ref.groupId) : undefined}
+            showChevron={onOpenPool !== undefined}
+            mode={onOpenPool ? 'interactive' : 'info'}
+        />
+    )) : (
+        <EmptyState
+            testID={`${testID}:pools-empty`}
+            layout="line"
+            titleTestID={`${testID}:pools-empty:title`}
+            icon={<Icon name="stack-simple" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+            title={t('connectedServices.profile.pools.emptyTitle')}
+            subtitle={t('connectedServices.profile.pools.emptySubtitle')}
+        />
+    )) : null;
+    const usedBySlots: AccountDetailUsedBySlots = { action: defaultControl, children: poolRows };
+    const usedBy = props.renderUsedBy
+        ? props.renderUsedBy(usedBySlots)
+        : <AccountDetailUsedBySectionView rows={[]} {...usedBySlots} />;
 
     return (
         <ItemList testID={testID} pageColumn="wide" onLayout={(event) => {
-            const width = event.nativeEvent.layout.width;
-            if (width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+            const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+            if (width !== null) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
         }}>
-            <View ref={identityAnchorRef} collapsable={false}>
             <SettingsPageHeader
                 testID={`${testID}:header`}
                 title={presentation.primaryLabel}
                 alwaysShowTitle
                 compactPresentation="centered"
-                primaryAction={compact && rename ? { testID: `${testID}:action:edit-label`, title: t('connectedServicesPool.rename'), onPress: () => setRenameOpen(true) } : undefined}
                 leading={<ConnectedServiceMark legacyServiceId={props.legacyServiceId ?? null} size="page" />}
                 titleAccessory={rename ? (
                     <View ref={renameAnchorRef} collapsable={false}>
-                        {!compact ? <IconButton
+                        {/* Renaming is rare: the pencil beside the name, on a phone too, never the bar's primary. */}
+                        {<IconButton
                             testID={`${testID}:action:edit-label`}
                             iconName="pencil-simple"
                             size={26}
@@ -244,11 +312,11 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             accessibilityLabel={t('connectedServices.detail.actions.editLabel')}
                             tooltip={t('connectedServices.detail.actions.editLabel')}
                             onPress={() => setRenameOpen(true)}
-                        /> : null}
+                        />}
                         <ConnectedAccountRenamePopover
                             testID={`${testID}:rename`}
                             open={renameOpen}
-                            anchorRef={compact ? identityAnchorRef : renameAnchorRef}
+                            anchorRef={renameAnchorRef}
                             currentLabel={rename.currentLabel}
                             serviceLabel={serviceLabel}
                             onSave={async (label) => {
@@ -264,24 +332,22 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     <View style={[stylesheet.facts, compact ? { justifyContent: 'center' } : null]}>
                         {email ? (
                             <View style={stylesheet.fact}>
-                                {!compact ? <Icon name="envelope" size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> : null}
                                 <ConnectedAccountIdentityText testID={`${testID}:meta:email`} value={email} style={stylesheet.factText} numberOfLines={1} />
                             </View>
                         ) : null}
+                        {email ? factSeparator : null}
                         <Text testID={`${testID}:meta:plan`} style={stylesheet.factText} numberOfLines={1}>
                             {servicePlanLabel}
                         </Text>
-                        {providerAccount && !compact ? (
-                            <ConnectedAccountIdentityText
-                                testID={`${testID}:meta:account-id`}
-                                value={t('connectedServicesCollection.accountIdFact', { id: providerAccount })}
-                                style={[stylesheet.factText, stylesheet.mono]}
-                                numberOfLines={1}
-                            />
+                        {memberships.length > 0 ? factSeparator : null}
+                        {memberships.length > 0 ? (
+                            <Text testID={`${testID}:meta:pool`} style={stylesheet.factText} numberOfLines={1}>
+                                {t('connectedServicesSettings.detailInPool', { pool: poolLabel(memberships[0]!) })}
+                            </Text>
                         ) : null}
                         {/* A state that is neither healthy nor signed out (a refresh that failed) is a quiet fact;
                             signed out speaks once, in the banner below. */}
-                        {status && status !== 'connected' && status !== 'needs_reauth' ? (
+                        {status && status !== 'connected' && !signedOut ? (
                             <View style={stylesheet.fact}>
                                 <Icon name="warning" size={ICON_SIZE.xs} color={theme.colors.state.warning.foreground} />
                                 <Text testID={`${testID}:meta:status`} style={stylesheet.factText}>
@@ -292,38 +358,32 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     </View>
                 )}
                 actions={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
-                    {props.agentDefaults ? (
-                    <AgentDefaultMenuButton
-                        testID={`${testID}:default-for`}
-                        choices={props.agentDefaults.choices}
-                        onChange={props.agentDefaults.setDefault}
-                        disabledReason={props.agentDefaults.disabledReason}
-                    />
-                    ) : null}
-                    {props.onRefresh && status !== 'needs_reauth' ? compact
+                    {/* Wide, the Usage section's "As of · Refresh" owns refresh; a phone's Usage drops its button, so the bar carries it. */}
+                    {props.onRefresh && !signedOut && compact
                         ? <RoundButton testID={`${testID}:refresh`} display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
-                        : <IconButton testID={`${testID}:refresh`} iconName="arrow-clockwise" variant="plain" accessibilityLabel={t('common.refresh')} disabled={props.refreshing} onPress={props.onRefresh} />
                         : null}
-                    {!compact && (rename || onReconnect || onDisconnect || onShareWithTeam) ? <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen} items={[
-                        ...(rename ? [{ id: 'rename', title: t('connectedServicesPool.rename') }] : []),
-                        ...(onReconnect ? [{ id: 'reconnect', title: t('connectedServicesSettings.signInAgain') }] : []),
-                        ...(onShareWithTeam ? [{ id: 'share', title: t('teams.credentials.create.action') }] : []),
-                        ...(onDisconnect ? [{ id: 'disconnect', title: t('modals.disconnect'), destructive: true }] : []),
-                    ]} onSelect={(id) => {
-                        if (id === 'rename') setRenameOpen(true);
-                        if (id === 'reconnect') onReconnect?.();
-                        if (id === 'share') onShareWithTeam?.();
-                        if (id === 'disconnect') void handleDisconnect();
-                    }} trigger={({ toggle }) => <IconButton testID={`${testID}:more`} iconName="dots-three" variant="plain" accessibilityLabel={t('connectedServicesPool.moreActions')} onPress={toggle} />} rowKind="item" /> : null}
+                    {/* The ⋯ menu holds rare actions, on a phone too: the provider's raw id is copied from here, never a page row. */}
+                    {props.shareSource ? <CredentialShareButton testID={`${testID}:share`} name={presentation.primaryLabel} source={props.shareSource} /> : null}
+                    {rename || onReconnect || onDisconnect || providerAccount ? <PageHeaderMenu
+                        triggerTestID={`${testID}:more`}
+                        accessibilityLabel={t('connectedServicesPool.moreActions')}
+                        onOpenChange={onMenuOpenChange}
+                        actions={[
+                            ...(rename ? [{ id: 'rename', title: t('connectedServicesPool.rename'), onSelect: () => setRenameOpen(true) }] : []),
+                            ...(providerAccount ? [{ id: 'copy-account-id', title: t('connectedServicesSettings.detailCopyAccountId'), onSelect: () => copyProviderAccountId(providerAccount) }] : []),
+                            ...(onReconnect ? [{ id: 'reconnect', title: t('connectedServicesSettings.signInAgain'), onSelect: onReconnect }] : []),
+                            ...(onDisconnect ? [{ id: 'disconnect', title: t('connectedServicesSettings.detailRemoveAccount'), destructive: true, loading: disconnectPending, onSelect: handleDisconnect }] : []),
+                        ]}
+                    /> : null}
                 </View>}
             />
-            </View>
-            {status === 'needs_reauth' ? (
+            {signedOut ? (
                 // Signed out blocks this account, so the banner lives here (and only here), with the fix.
                 <AttentionBanner
                     compactActionPlacement="full-width"
                     testID={`${testID}:signed-out-banner`}
-                    title={t('connectedServicesSettings.detailSignedOutTitle', { service: serviceLabel })}
+                    title={resolveConnectedAccountCredentialStatusLabel(status, props.statusReason)}
+                    // A running sign-in (in the Sign-in section below) is the fix in progress, not one to start again.
                     action={onReconnect && !props.signInFlow ? {
                         label: t('connectedServicesSettings.signInAgain'),
                         display: 'default',
@@ -332,58 +392,43 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     } : null}
                 />
             ) : null}
+            {props.keySection ?? null}
             {props.usageSection ?? null}
-            {props.machineSetupSection ?? null}
-            {compact && providerAccount ? <ItemGroup title={t('connectedServices.profile.providerAccountId')}><Item title={t('connectedServices.profile.providerAccountId')} subtitle={<ConnectedAccountIdentityText value={providerAccount} style={[stylesheet.factText, stylesheet.mono]} />} showChevron={false} mode="info" /></ItemGroup> : null}
-            {props.usedBySection ?? null}
-            {showPools ? (
-                <ItemGroup title={t('connectedServices.profile.poolsGroupTitle')}>
-                    {memberships.length > 0 ? (
-                        memberships.map((group) => (
-                            <Item
-                                key={group.ref.groupId}
-                                testID={`${testID}:pool:${group.ref.groupId}`}
-                                title={presentQualifiedConnectedAccountTarget({
-                                    target: {
-                                        kind: 'group',
-                                        service: group.ref.service,
-                                        groupId: group.ref.groupId,
-                                    },
-                                    accounts: [],
-                                    groups: [group],
-                                    labelsByKey: props.labelsByKey ?? NO_LOCAL_PROFILE_LABELS,
-                                    serviceTitle: serviceLabel,
-                                }).primaryLabel}
-                                subtitle={describeMembership(group, account)}
-                                icon={<Icon name="stack" size={17} color={theme.colors.text.secondary} />}
-                                onPress={onOpenPool ? () => onOpenPool(group.ref.groupId) : undefined}
-                                showChevron={onOpenPool !== undefined}
-                                mode={onOpenPool ? 'interactive' : 'info'}
-                            />
-                        ))
-                    ) : (
-                        <EmptyState
-                            testID={`${testID}:pools-empty`}
-                            layout="line"
-                            titleTestID={`${testID}:pools-empty:title`}
-                            icon={<Icon name="stack-simple" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                            title={t('connectedServices.profile.pools.emptyTitle')}
-                            subtitle={t('connectedServices.profile.pools.emptySubtitle')}
-                        />
-                    )}
-                </ItemGroup>
-            ) : null}
+            {usedBy}
 
-            {onShareWithTeam ? (
-                <ItemGroup>
-                    <Item
-                        testID={`${testID}:action:share-with-team`}
-                        title={t('teams.credentials.create.action')}
-                        onPress={onShareWithTeam}
-                    />
+            {/* Lab `s2svc:account`: identity, Usage, Used by and pools, then Sign-in with where it works and the
+                machine its operations run on, configuration, sharing, and removal last. */}
+            {hasSignInRow || props.worksOnSection || props.machineScopeLine ? (
+                <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
+                    {hasSignInRow ? <Item
+                        testID={`${testID}:sign-in`}
+                        title={props.authenticationModeTitle ?? t('connectedServices.detail.actions.reconnect')}
+                        // Provenance and freshness are said only when they are held (a native import or an older
+                        // record knows neither); last use is the quiet fallback, never an invented sign-in.
+                        subtitle={[
+                            signedOut ? t('connectedServicesSettings.detailSignInNeeded') : null,
+                            ...(signInFacts.length > 0 ? signInFacts : [lastUsedFact]),
+                        ].filter(Boolean).join(' · ') || undefined}
+                        mode="info"
+                        showChevron={false}
+                        // Signed out, the banner above owns Sign in again; a running sign-in owns this section.
+                        rightElement={onReconnect && !signedOut && !props.signInFlow ? (
+                            <RoundButton
+                                testID={`${testID}:action:reconnect`}
+                                size="small"
+                                display="secondary"
+                                title={t('connectedServicesSettings.signInAgain')}
+                                onPress={onReconnect}
+                            />
+                        ) : undefined}
+                        rightElementOutsidePressable
+                    /> : null}
+                    {props.signInFlow ? <SectionContentRow>{props.signInFlow}</SectionContentRow> : null}
+                    {props.worksOnSection ?? null}
+                    {props.machineScopeLine ?? null}
                 </ItemGroup>
             ) : null}
-            {props.sharedWithTeamsAdministration}
+            {props.machineSetupSection ?? null}
 
             {props.onConfigureAccount ? (
                 <ItemGroup>
@@ -414,38 +459,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                 </ItemGroup>
             ) : null}
 
-            {hasSignInRow || props.worksOnSection || props.machineScopeLine ? (
-                <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
-                    {hasSignInRow ? <Item
-                        testID={`${testID}:sign-in`}
-                        title={props.authenticationModeTitle ?? t('connectedServices.detail.actions.reconnect')}
-                        subtitle={[
-                            status === 'needs_reauth'
-                                ? t('connectedServicesSettings.detailSignInNeeded')
-                                : t('connectedServicesSettings.detailSignInKeptFresh'),
-                            props.lastUsedAt
-                                ? t('connectedServicesSettings.detailLastUsed', { time: formatAsOfTime(props.lastUsedAt) })
-                                : null,
-                        ].filter(Boolean).join(' · ')}
-                        mode="info"
-                        showChevron={false}
-                        // Signed out, the banner above owns Sign in again; a running sign-in owns this section.
-                        rightElement={onReconnect && status !== 'needs_reauth' && !props.signInFlow ? (
-                            <RoundButton
-                                testID={`${testID}:action:reconnect`}
-                                size="small"
-                                display="secondary"
-                                title={t('connectedServicesSettings.signInAgain')}
-                                onPress={onReconnect}
-                            />
-                        ) : undefined}
-                        rightElementOutsidePressable
-                    /> : null}
-                    {props.signInFlow ? <SectionContentRow>{props.signInFlow}</SectionContentRow> : null}
-                    {props.worksOnSection ?? null}
-                    {props.machineScopeLine ?? null}
-                </ItemGroup>
-            ) : null}
+            {props.sharedWithTeamsAdministration}
 
             {onDisconnect ? (
                 // The irreversible action closes the page as a quiet button row, with its
@@ -468,16 +482,15 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             testID={`${testID}:action:disconnect`}
                             size="small"
                             display="destructive"
-                            title={t('modals.disconnect')}
+                            title={t('connectedServicesSettings.detailRemoveAccount')}
                             loading={disconnectPending}
-                            disabled={memberships.length > 0}
                             onPress={handleDisconnect}
                         />
                     </View>
                     <Text style={stylesheet.dangerNote}>
                         {memberships.length > 0
                             ? t('connectedServicesSettings.detailRemovePooledNote', { pool: poolLabel(memberships[0]!) })
-                            : t('connectedServices.profile.disconnectSubtitle')}
+                            : t('connectedServicesSettings.detailRemoveNote', { service: serviceLabel })}
                     </Text>
                 </ItemGroup>
             ) : null}
@@ -492,7 +505,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'center',
-        columnGap: theme.space.s12,
+        columnGap: theme.space.s6,
         rowGap: theme.space.s2,
     },
     fact: {
@@ -501,25 +514,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s4,
         minWidth: 0,
     },
+    factSeparator: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.tertiary,
+    },
     factText: {
         ...Typography.variant('body'),
         color: theme.colors.text.secondary,
     },
-    mono: {
-        // An id beside body facts: the meta role in the one mono face.
-        ...Typography.variant('meta'),
-        ...Typography.mono(),
-    },
     dangerRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        justifyContent: 'flex-end',
+        // Removal closes the page as the pool page's Delete does (lab `s2svc:account`/`s2svc:pool`): from the column's edge.
+        justifyContent: 'flex-start',
         gap: theme.space.s8,
     },
     dangerNote: {
         marginTop: theme.space.s8,
         ...Typography.variant('body'),
         color: theme.colors.text.secondary,
-        textAlign: 'right',
     },
 }));

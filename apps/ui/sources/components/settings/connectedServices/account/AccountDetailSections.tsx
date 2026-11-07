@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -9,12 +10,12 @@ import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connec
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -27,11 +28,13 @@ import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServi
 import { buildQuotaResetRows } from '@/sync/domains/connectedServices/buildQuotaResetRows';
 import { presentAccountSubscription } from '@/sync/domains/connectedServices/presentAccountSubscription';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
-import { useActiveServerAccountScope, useAllMachines } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useMachineDisplayById, useActiveMachineFacts } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineUtils';
+import { isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -46,6 +49,7 @@ import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
 import { useAccountUsageResetAction } from '../usage/useAccountUsageResetAction';
 import { useConnectedAccountPinnedMeters } from '../usage/useConnectedAccountPinnedMeters';
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
+import { UsageRefreshAction } from '../usage/UsageRefreshAction';
 
 /** What the detail's usage sections show (read once for the three of them). */
 export type AccountDetailUsageFacts = Readonly<{
@@ -79,20 +83,11 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
     const styles = stylesheet;
     const { facts } = props;
     const testID = props.testID ?? 'account-detail-usage';
+    // Signed out says one thing: the page's signed-out state and Sign in. A refresh failure from before it is stale.
+    const failure = props.signedOut ? null : facts.error;
     const action = !props.signedOut && (facts.refresh || facts.fetchedAt !== null) ? (
-        <View style={styles.headerActions}>
-            {facts.fetchedAt !== null ? <SurfaceAsOfLabel at={facts.fetchedAt} testID={`${testID}:as-of`} /> : null}
-            {!props.compact && facts.refresh ? <RoundButton
-                testID={`${testID}:refresh`}
-                size="small"
-                display="inverted"
-                title={t('common.refresh')}
-                leading={<Icon name="arrow-clockwise" size={14} />}
-                loading={facts.refreshing}
-                disabled={facts.refreshing}
-                onPress={facts.refresh}
-            /> : null}
-        </View>
+        <UsageRefreshAction testID={testID} fetchedAt={facts.fetchedAt}
+            refresh={props.compact ? null : facts.refresh} refreshing={facts.refreshing} />
     ) : undefined;
     return (
         <ItemGroup title={t('settings.usage')} action={action} headerStyle={{ alignItems: 'center' }}>
@@ -149,7 +144,7 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                 </SectionContentRow>
             ) : facts.refreshing ? null : facts.loading ? (
                 <SurfaceStateCard testID={`${testID}:loading`} size="line" kind="loading" title={t('common.loading')} />
-            ) : facts.error ? null : (
+            ) : failure ? null : (
                 <SurfaceStateCard
                     testID={`${testID}:none`}
                     size="line"
@@ -157,13 +152,13 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                     title={t('common.unavailable')}
                 />
             )}
-            {facts.error ? (
+            {failure ? (
                 <SurfaceStateCard
                     testID={`${testID}:error`}
                     size="line"
                     kind="error"
-                    title={facts.error}
-                    action={!props.signedOut && facts.refresh ? { label: t('common.retry'), onPress: facts.refresh } : undefined}
+                    title={failure}
+                    action={facts.refresh ? { label: t('common.retry'), onPress: facts.refresh } : undefined}
                 />
             ) : null}
         </ItemGroup>
@@ -250,8 +245,8 @@ export const AccountDetailFactsSectionsView = React.memo(function AccountDetailF
 }>) {
     const [compact, setCompact] = React.useState(false);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const width = event.nativeEvent.layout.width;
-        if (Number.isFinite(width) && width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+        const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        if (width !== null) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
     }, []);
     const subscription = <AccountDetailSubscriptionSectionView key="subscription" subscription={props.facts.subscription} serviceLabel={props.serviceLabel} planLabel={props.facts.planLabel} now={props.now} compact={compact} />;
     const usage = <AccountDetailUsageSectionView key="usage" facts={props.facts} signedOut={props.signedOut} now={props.now} pins={props.pins} compact={compact} />;
@@ -401,6 +396,12 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
     );
 });
 
+/** What the account page adds to its Used by section: the ★ default control and the pools that hold it. */
+export type AccountDetailUsedBySlots = Readonly<{
+    action?: React.ReactNode;
+    children?: React.ReactNode;
+}>;
+
 /** One agent that signs in with this account: directly (its default) or through a pool. */
 export type AccountDetailUsedByRow = Readonly<{
     key: string;
@@ -419,12 +420,19 @@ export type AccountDetailUsedByRow = Readonly<{
 export const AccountDetailUsedBySectionView = React.memo(function AccountDetailUsedBySectionView(props: Readonly<{
     rows: readonly AccountDetailUsedByRow[];
     testID?: string;
-}>) {
+} & AccountDetailUsedBySlots>) {
     const { theme } = useUnistyles();
-    if (props.rows.length === 0) return null;
+    const hasChildren = React.Children.toArray(props.children).length > 0;
+    if (props.rows.length === 0 && !hasChildren && !props.action) return null;
     const testID = props.testID ?? 'account-detail-used-by';
     return (
-        <ItemGroup title={t('connectedServicesSettings.detailUsedByTitle')}>
+        <ItemGroup
+            testID={testID}
+            title={t('connectedServicesSettings.detailUsedByTitle')}
+            action={props.action ?? undefined}
+            headerStyle={{ alignItems: 'center' }}
+            surface={props.rows.length === 0 && !hasChildren ? 'none' : undefined}
+        >
             {props.rows.map((row) => (
                 <Item
                     key={row.key}
@@ -440,6 +448,7 @@ export const AccountDetailUsedBySectionView = React.memo(function AccountDetailU
                     onPress={row.onPress}
                 />
             ))}
+            {props.children}
         </ItemGroup>
     );
 });
@@ -448,12 +457,12 @@ export const AccountDetailUsedBySectionView = React.memo(function AccountDetailU
 export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedBySection(props: Readonly<{
     account: QualifiedConnectedAccountRef;
     testID?: string;
-}>) {
+} & AccountDetailUsedBySlots>) {
     const router = useRouter();
     const serviceKey = buildQualifiedPluginContributionKey(props.account.service);
     const { indexModel } = useConnectedServicesIndex({ agents: 'cached', serviceKey });
     const sheet = indexModel.sheets.find((candidate) => candidate.serviceKey === serviceKey);
-    if (!sheet || sheet.usedBy.length === 0) return null;
+    if (!sheet || sheet.usedBy.length === 0) return <AccountDetailUsedBySectionView rows={[]} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
     const agentIdByTitle = new Map(sheet.usedBy.map((title, index) => [title, sheet.usedByAgentIds[index] ?? null]));
     const roles = sheet.rolesByAccountId[props.account.accountId];
     const direct = new Set(roles?.defaultFor ?? []);
@@ -494,11 +503,11 @@ export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedB
             isDefault: false,
         }] : []),
     ];
-    return <AccountDetailUsedBySectionView rows={rows} testID={props.testID} />;
+    return <AccountDetailUsedBySectionView rows={rows} testID={props.testID} action={props.action}>{props.children}</AccountDetailUsedBySectionView>;
 });
 
 /** One machine the account works on, with its presence. */
-export type AccountDetailMachine = Readonly<{ id: string; name: string; online: boolean; status?: 'online' | 'offline' | 'unknown' }>;
+export type AccountDetailMachine = Readonly<{ id: string; name: string; online: boolean; status?: 'online' | 'offline' | 'unknown'; nameLoading?: boolean }>;
 
 /**
  * Account detail · Works on (G10): the account is saved to the Account, so every machine can use it
@@ -511,13 +520,35 @@ export const AccountDetailWorksOnSectionView = React.memo(function AccountDetail
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const testID = props.testID ?? 'account-detail-works-on';
+    const [expanded, setExpanded] = React.useState(false);
     if (props.machines.length === 0) return null;
+    // One row that says where it works (lab `s2svc:account`); the full machine list opens under it, so a large
+    // fleet never turns the page into a wall of chips.
+    // A name still loading says nothing in a summary: name the known ones and count the rest.
+    const known = props.machines.filter((machine) => !machine.nameLoading);
+    const shown = (known.length > 0 ? known : props.machines).slice(0, WORKS_ON_SUMMARY_NAMES);
+    const named = shown.map((machine) => machine.name).join(', ');
+    const more = props.machines.length - shown.length;
+    const summary = more > 0
+        ? t('connectedServicesSettings.detailWorksOnSummaryMore', { names: named, count: more })
+        : t('connectedServicesSettings.detailWorksOnSummary', { names: named });
     return (
-        <ItemGroup
-            title={t('connectedServicesSettings.detailWorksOnTitle')}
-            description={t('connectedServicesSettings.detailWorksOnDescription')}
-            surface="none"
-        >
+        // A row of the Sign-in section (lab `s2svc:account`), so its owner supplies the group.
+        <ExpandableItem
+                testID={`${testID}:disclosure`}
+                expanded={expanded}
+                onExpandedChange={setExpanded}
+                showDivider={false}
+                header={(disclosure) => (
+                    <Item
+                        {...disclosure.headerProps}
+                        testID={`${testID}:row`}
+                        title={t('connectedServicesSettings.detailWorksOnTitle')}
+                        subtitle={summary}
+                    />
+                )}
+            >
+            <Text style={styles.worksOnNote}>{t('connectedServicesSettings.detailWorksOnDescription')}</Text>
             <View style={styles.machines} testID={testID}>
                 {props.machines.map((machine) => (
                     <View key={machine.id} style={[styles.machine, machine.online ? null : styles.machineOffline]}>
@@ -531,9 +562,12 @@ export const AccountDetailWorksOnSectionView = React.memo(function AccountDetail
                     </View>
                 ))}
             </View>
-        </ItemGroup>
+            </ExpandableItem>
     );
 });
+
+/** How many machine names the closed Works on row says before "and N more". */
+const WORKS_ON_SUMMARY_NAMES = 3;
 
 /**
  * The machines as Works on names them: the machine list's own names (same-named machines told apart
@@ -543,11 +577,18 @@ export function projectAccountDetailMachines(
     machines: readonly Machine[],
     nowMs: number = Date.now(),
     scope: ServerAccountScope | null = null,
+    displayMachines: readonly MachineDisplayRenderable[] = [],
 ): AccountDetailMachine[] {
-    const names = resolveMachineDisplayNames(machines);
-    const rows = machines.map((machine) => ({
+    const displayById = new Map(displayMachines.map((machine) => [machine.id, machine]));
+    // Held display metadata supplies names only; a locked body must never disclose an older name.
+    const namedMachines = machines.map((machine) => machine.availability?.kind === 'locked'
+        ? machine
+        : displayById.get(machine.id) ?? machine);
+    const names = resolveMachineDisplayNames(namedMachines);
+    const rows = machines.map((machine, index) => ({
         id: machine.id,
-        name: names.get(machine.id) ?? getMachineDisplayName(machine),
+        name: names.get(machine.id) ?? getMachineDisplayName(namedMachines[index]!),
+        nameLoading: isMachineDisplayHydrating(namedMachines[index]!),
         online: isMachineSelectableForFleet(scope, machine, nowMs),
         status: describeMachinePresenceLine(machine, nowMs, undefined, scope).status,
     }));
@@ -555,21 +596,20 @@ export function projectAccountDetailMachines(
 }
 
 export const AccountDetailWorksOnSection = React.memo(function AccountDetailWorksOnSection(props: Readonly<{ testID?: string }>) {
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
+    const displayMachines = useMachineDisplayById(React.useCallback((displays: Record<string, MachineDisplayRenderable>) => machines.flatMap((machine) => {
+        const display = displays[machine.id];
+        return display ? [display] : [];
+    }), [machines]));
     const scope = useActiveServerAccountScope();
     const reachabilityRevision = useMachineReachabilityRevision();
     const nowMs = useMachinePresenceNowMs(machines);
-    const rows = React.useMemo(() => projectAccountDetailMachines(machines, nowMs, scope), [machines, scope, reachabilityRevision, nowMs]);
+    const rows = React.useMemo(() => projectAccountDetailMachines(machines, nowMs, scope, displayMachines), [machines, displayMachines, scope, reachabilityRevision, nowMs]);
     return <AccountDetailWorksOnSectionView machines={rows} testID={props.testID} />;
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
     compactSubscription: {  ...Typography.variant('body'),  color: theme.colors.text.primary, flexShrink: 1 },
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s10,
-    },
     checked: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -582,10 +622,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     warning: {
         color: theme.colors.state.warning.foreground,
     },
+    worksOnNote: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+        paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+        paddingBottom: theme.space.s8,
+    },
     machines: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: theme.space.s6,
+        // Opened under its row, on the row's text inset.
+        paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+        paddingBottom: theme.space.s12,
     },
     machine: {
         flexDirection: 'row',

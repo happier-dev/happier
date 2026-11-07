@@ -25,6 +25,7 @@ export const en = {
         },
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Running on ${machine}`,
+            statusIdle: 'Idle · starts when a session needs it',
             descriptionNamed: ({ services }: { services: string }) => `Lets any agent use your ${services} subscriptions.`,
             railGroup: 'Gateways',
             unavailableTitle: 'Gateways can’t be shown right now',
@@ -67,6 +68,7 @@ export const en = {
             whatToKnowTitle: 'Your subscriptions, outside their own apps',
             whatToKnowDescription: 'The services behind these subscriptions don’t support this use. Requests can be refused and their terms can change. Happier only ever sends a request to the account or pool chosen above.',
             useExternalEndpoint: 'Use an external endpoint instead',
+            removeGateway: 'Remove gateway',
             poolSectionTitle: 'Use in other agents',
             poolSectionDescription: ({ agents, count }: { agents: string; count: number }) => `${agents} ${count === 1 ? 'signs' : 'sign'} in to this pool directly. Other agents reach the same accounts through a gateway.`,
             poolSectionDescriptionGeneric: 'Agents that sign in with this service use this pool directly. Other agents reach the same accounts through a gateway.',

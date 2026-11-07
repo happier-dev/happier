@@ -44,7 +44,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { useNavigation } from '@/components/appShell/workspace/destinationRoute';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -225,7 +225,8 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
     const yoursStorage = storageLabel(personalStorageMode);
     const storageDefault = `${yoursStorage}. ${personalStorageMode === 'e2ee'
         ? t('secretsSettings.storageE2eeDescription') : t('secretsSettings.storagePlainDescription')}`;
-    const openEntry = selectedRef ? ownerShared.find((entry) => entry.ref === selectedRef) ?? null : null;
+    // One page for every shared secret, yours or shared with you: its capabilities decide what it offers.
+    const openEntry = selectedRef ? props.sharedEntries.find((entry) => entry.ref === selectedRef) ?? null : null;
     const pageNotices = (
         <>
             {props.approvalId && props.onOpenApproval ? (
@@ -252,11 +253,11 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
         </>
     );
 
-    // A selected secret is its own page (lab `crDetail-secret`), beside the Credentials rail.
+    // A selected secret is its own page (lab `crDetail-secret`, `crDetail-recip`), beside the Credentials rail.
     if (openEntry) {
         return (
             <ItemList keyboardShouldPersistTaps="handled">
-                <OwnedSecretPage
+                <SharedSecretPage
                     key={openEntry.ref}
                     scope={props.scope ?? null}
                     entry={openEntry}
@@ -384,6 +385,7 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
                             key={entry.ref}
                             entry={entry}
                             status={sharedRowStatus(props.resolveSharedReference(entry.ref), entry)}
+                            onOpen={props.onOpenSecret}
                         />
                     ))}
                     {recipientCorrupt.map((_entry, idx) => (
@@ -642,21 +644,10 @@ export const SecretUsedBySection = React.memo(function SecretUsedBySection(props
     usedBy: readonly AccountSettingsSavedSecretReference[] | null;
     onOpen?: (route: string) => void;
 }>) {
-    const { theme } = useUnistyles();
-    const rows = React.useMemo(() => {
-        const unique = new Map<string, Readonly<{ key: string; title: string; subtitle: string; icon: IconName; route: string | null }>>();
-        for (const reference of props.usedBy ?? []) {
-            const kind = reference.referrer?.kind ?? reference.owner;
-            const { title, subtitle } = savedSecretUsedByCopy(reference);
-            const route = kind === 'provider' && reference.referrer ? providerConnectionDetailRoute(reference.referrer.id) : USED_BY_KINDS[kind].route;
-            const key = JSON.stringify([kind, reference.referrer?.id ?? reference.path]);
-            if (!unique.has(key)) unique.set(key, { key, title, subtitle, icon: USED_BY_KINDS[kind].icon, route });
-        }
-        return [...unique.values()];
-    }, [props.usedBy]);
+    const empty = useSecretUsedByRows(props.usedBy).length === 0;
     return (
         <ItemGroup title={t('secretsSettings.usedByTitle')}>
-            {rows.length === 0 ? (
+            {empty ? (
                 // The same two lines as a row, so the section keeps its height when the census arrives.
                 <Item
                     testID={props.testID}
@@ -665,7 +656,47 @@ export const SecretUsedBySection = React.memo(function SecretUsedBySection(props
                     mode="info"
                     showChevron={false}
                 />
-            ) : rows.map((row) => (
+            ) : <SecretUsedByRows testID={props.testID} usedBy={props.usedBy} onOpen={props.onOpen} />}
+        </ItemGroup>
+    );
+});
+
+/** The census as rows, one per referrer; `exclude` drops the referrer whose page hosts them. */
+function useSecretUsedByRows(
+    usedBy: readonly AccountSettingsSavedSecretReference[] | null,
+    exclude?: Readonly<{ kind: AccountSettingsSavedSecretReference['owner']; id: string }>,
+) {
+    const excludeKind = exclude?.kind;
+    const excludeId = exclude?.id;
+    return React.useMemo(() => {
+        const unique = new Map<string, Readonly<{ key: string; title: string; subtitle: string; icon: IconName; route: string | null }>>();
+        for (const reference of usedBy ?? []) {
+            const kind = reference.referrer?.kind ?? reference.owner;
+            if (kind === excludeKind && reference.referrer?.id === excludeId) continue;
+            const { title, subtitle } = savedSecretUsedByCopy(reference);
+            const route = kind === 'provider' && reference.referrer ? providerConnectionDetailRoute(reference.referrer.id) : USED_BY_KINDS[kind].route;
+            const key = JSON.stringify([kind, reference.referrer?.id ?? reference.path]);
+            if (!unique.has(key)) unique.set(key, { key, title, subtitle, icon: USED_BY_KINDS[kind].icon, route });
+        }
+        return [...unique.values()];
+    }, [excludeId, excludeKind, usedBy]);
+}
+
+/**
+ * The census rows without their section, for a page that holds the secret inside its own anatomy
+ * (a Connected Account's key). Same rows as the Secret page's Used by.
+ */
+export const SecretUsedByRows = React.memo(function SecretUsedByRows(props: Readonly<{
+    testID: string;
+    usedBy: readonly AccountSettingsSavedSecretReference[] | null;
+    exclude?: Readonly<{ kind: AccountSettingsSavedSecretReference['owner']; id: string }>;
+    onOpen?: (route: string) => void;
+}>) {
+    const { theme } = useUnistyles();
+    const rows = useSecretUsedByRows(props.usedBy, props.exclude);
+    return (
+        <>
+            {rows.map((row) => (
                 <Item
                     key={row.key}
                     testID={`${props.testID}:row`}
@@ -675,16 +706,18 @@ export const SecretUsedBySection = React.memo(function SecretUsedBySection(props
                     {...(row.route && props.onOpen ? { onPress: () => props.onOpen?.(row.route!) } : { mode: 'info' as const, showChevron: false })}
                 />
             ))}
-        </ItemGroup>
+        </>
     );
 });
 
 /**
- * One of your secrets as its own page (lab `crDetail-secret`): who it is, its value, who can use it,
- * who revealed it, and Delete last with what deleting does. Rare operations (rename, where it is kept,
- * moving it to a vault) sit in the header's ⋯.
+ * A shared secret as its own page (lab `crDetail-secret`; shared with you, `crDetail-recip`): who it is,
+ * its value, where it is used, who can use it, who revealed it, and Delete last with what deleting does.
+ * Every part is gated on the entry's capabilities, never on who owns it, so a secret shared with you
+ * reads as who shared it, a use-only value and where you use it. Rare operations (rename, where it is
+ * kept, moving it to a vault) sit in the header's ⋯.
  */
-const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
+const SharedSecretPage = React.memo(function SharedSecretPage(props: Readonly<{
     scope: ServerAccountScope | null;
     entry: SavedSecretCatalogEntryV1;
     status: SavedSecretCatalogEntryV1['materialStatus'];
@@ -707,7 +740,6 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
     const usedBy = useSavedSecretUsedBy(props.scope, entry.ref);
     const inUse = usedBy !== null && usedBy.length > 0;
     const [editing, setEditing] = React.useState<'rename' | 'rotate' | null>(null);
-    const [moreOpen, setMoreOpen] = React.useState(false);
     React.useEffect(() => { if (props.accessEditor) setEditing(null); }, [props.accessEditor]);
     const beginEdit = (mode: 'rename' | 'rotate') => { void runGuardedNavigation(() => { props.onBeginEdit?.(); setEditing(mode); }); };
     const name = entry.name ?? t('secrets.catalog.unavailableName');
@@ -731,17 +763,25 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
     const onReplace = !passkey && entry.capabilities.rotate && props.onRotate ? () => beginEdit('rotate') : undefined;
 
     // Who it is, on one line: its type and where it is kept; a secret in trouble says so once, here.
+    // Shared with you, who shared it replaces where it is kept (the owner decides that), and the value
+    // row says its trouble instead.
+    const recipient = entry.relationship === 'recipient';
+    const provenance = recipient ? sharedSecretProvenanceSegments(entry).join(' · ') : '';
     const meta: PageHeaderMetaFact[] = [
         ...(savedSecretEntryKindLabel(entry) ? [{ key: 'kind', text: savedSecretEntryKindLabel(entry)! }] : []),
-        ...(entryStorageLabel(entry) ? [{ key: 'storage', text: entryStorageLabel(entry)!,
-            ...(entry.encryptionMode === 'e2ee' && !linked ? { icon: 'lock' as const } : {}) }] : []),
-        ...(status !== 'ready' ? [{ key: 'status', testID: `${testID}:status`, text: sharedSecretStatusLabel(status), icon: 'warning' as const }] : []),
+        ...(recipient ? provenance ? [{ key: 'provenance', text: provenance }] : []
+            : entryStorageLabel(entry) ? [{ key: 'storage', text: entryStorageLabel(entry)!,
+                ...(entry.encryptionMode === 'e2ee' && !linked ? { icon: 'lock' as const } : {}) }] : []),
+        ...(status !== 'ready' && !recipient ? [{ key: 'status', testID: `${testID}:status`, text: sharedSecretStatusLabel(status), icon: 'warning' as const }] : []),
     ];
-    const moreItems: DropdownMenuItem[] = [
-        ...(canRename ? [{ id: 'rename', testID: `${testID}:menu-rename`, title: t('common.rename'), disabled: props.disabled }] : []),
+    const moreActions: PageHeaderMenuAction[] = [
+        ...(canRename ? [{ id: 'rename', testID: `${testID}:menu-rename`, title: t('common.rename'), disabled: props.disabled,
+            onSelect: () => beginEdit('rename') }] : []),
         ...(canConvert ? [{ id: 'convert', testID: `${testID}:convertMode`, disabled: props.disabled,
-            title: entry.encryptionMode === 'e2ee' ? t('secrets.catalog.actions.convertToPlain') : t('secrets.catalog.actions.convertToE2ee') }] : []),
-        ...(props.moveToVault ? [{ id: 'move', testID: `${testID}:moveToVault`, title: props.moveToVault.label, disabled: props.disabled }] : []),
+            title: entry.encryptionMode === 'e2ee' ? t('secrets.catalog.actions.convertToPlain') : t('secrets.catalog.actions.convertToE2ee'),
+            onSelect: () => convert?.(entry) }] : []),
+        ...(props.moveToVault ? [{ id: 'move', testID: `${testID}:moveToVault`, title: props.moveToVault.label, disabled: props.disabled,
+            onSelect: () => props.moveToVault?.onMove(entry) }] : []),
     ];
 
     return (
@@ -767,7 +807,7 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
                         onPress={() => beginEdit('rename')}
                     />
                 ) : undefined}
-                actions={canShare || moreItems.length > 0 ? (
+                actions={canShare || moreActions.length > 0 ? (
                     <View style={stylesheet.headerActions}>
                         {/* While the access editor is open below, it is the way to change who can use it. */}
                         {canShare && !props.accessEditor ? (
@@ -781,30 +821,8 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
                                 onPress={() => props.onManageAccess?.(entry)}
                             />
                         ) : null}
-                        {moreItems.length > 0 ? (
-                            <DropdownMenu
-                                open={moreOpen}
-                                onOpenChange={setMoreOpen}
-                                items={moreItems}
-                                onSelect={(id) => {
-                                    if (id === 'rename') beginEdit('rename');
-                                    if (id === 'convert') convert?.(entry);
-                                    if (id === 'move') props.moveToVault?.onMove(entry);
-                                }}
-                                rowKind="item"
-                                placement="bottom"
-                                popoverAnchorAlign="end"
-                                matchTriggerWidth={false}
-                                trigger={({ toggle }) => (
-                                    <IconButton
-                                        testID={`${testID}:more`}
-                                        iconName="dots-three"
-                                        variant="plain"
-                                        accessibilityLabel={t('common.moreActions')}
-                                        onPress={toggle}
-                                    />
-                                )}
-                            />
+                        {moreActions.length > 0 ? (
+                            <PageHeaderMenu actions={moreActions} triggerTestID={`${testID}:more`} />
                         ) : null}
                     </View>
                 ) : undefined}
@@ -897,12 +915,13 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
     );
 });
 
-/** A secret someone shared with this Account: who shared it and through what, never its value. */
+/** A secret someone shared with this Account: who shared it and through what, never its value; it opens its page. */
 function RecipientSecretRow(props: Readonly<{
     entry: SavedSecretCatalogEntryV1;
     status: SavedSecretCatalogEntryV1['materialStatus'];
+    onOpen?: (ref: string) => void;
 }>) {
-    const { entry, status } = props;
+    const { entry, status, onOpen } = props;
     const name = entry.name ?? t('secrets.catalog.unavailableName');
     const summary = sharedSecretProvenanceSegments(entry).join(' · ');
     return (
@@ -913,8 +932,8 @@ function RecipientSecretRow(props: Readonly<{
             subtitleLines={0}
             rightElement={secretStatusGlyph(entry.ref, sharedSecretRowStatus(status), sharedSecretStatusLabel(status))}
             accessibilityLabel={[name, t('secrets.catalog.relationship.recipient'), summary, ...statusWords(status)].join(', ')}
-            mode="info"
-            showChevron={false}
+            keepChevronWithRightElement
+            {...(onOpen ? { onPress: () => onOpen(entry.ref) } : { mode: 'info' as const, showChevron: false })}
         />
     );
 }

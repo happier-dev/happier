@@ -456,6 +456,20 @@ describe('ProviderConnectionDetailScreen', () => {
         });
     });
 
+    it('does not rerender Provider detail for an unrelated Profile publication', async () => {
+        installDetailCatalog();
+        let commits = 0;
+        const screen = await renderReadyProviderDetail(<React.Profiler id="provider-detail" onRender={() => { commits += 1; }}>
+            <ProviderConnectionDetailScreen connectionId="pc_a" />
+        </React.Profiler>);
+        await act(async () => {});
+        const before = commits;
+        const { storage } = await import('@/sync/domains/state/storage');
+        await act(async () => { storage.getState().applyProfile({ ...storage.getState().profile, firstName: 'Unrelated name' }); });
+        expect(commits - before).toBe(0);
+        await screen.unmount();
+    });
+
     it('uses Account shown and total catalog counts in the header and Models row without a machine', async () => {
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_count',
             source: { kind: 'custom', template: buildCustomProviderTemplate({
@@ -613,6 +627,14 @@ describe('ProviderConnectionDetailScreen', () => {
         // there: the ⋯ menu does not repeat it. What runs on one machine is the Runs on section's.
         await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')).not.toBeNull());
         expect(findMenuAction(screen, 'gatewayEnabled')).toBeUndefined();
+        // The ⋯ menu speaks about a gateway: no Provider duplicate/custom-copy items, and removal names the gateway.
+        // The menu settles once the gateway's declarations arrive; until then it is a Provider's menu.
+        await waitForHomeGovernance(() => expect(((findComposite(screen, 'provider-connection-menu', 'actions')?.props.actions ?? []) as Array<{ id: string }>)
+            .map(action => action.id)).not.toEqual(expect.arrayContaining(['duplicate'])));
+        const gatewayMenu = (findComposite(screen, 'provider-connection-menu', 'actions')?.props.actions ?? []) as Array<{ id: string; title: string }>;
+        expect(gatewayMenu.map(action => action.id)).not.toEqual(expect.arrayContaining(['duplicate']));
+        expect(gatewayMenu.map(action => action.id)).not.toEqual(expect.arrayContaining(['duplicateAsCustom']));
+        expect(gatewayMenu.find(action => action.id === 'delete')?.title).toBe('settingsProvidersCollection.gateway.removeGateway');
         // "Experimental" is said once, by the Details section's What to know row, not by a header pill.
         expect(screen.findByTestId('provider-connection-experimental')).toBeNull();
         expect(screen.findAll(node => typeof node.props.testID === 'string'
@@ -639,12 +661,19 @@ describe('ProviderConnectionDetailScreen', () => {
         await waitForHomeGovernance(() => {
             const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
             expect(meta?.find(row => row.key === 'gateway-status')?.text).toBe(status === 'running'
-                ? 'settingsProvidersCollection.gateway.statusRunningOn(machine=Linux box)' : undefined);
+                ? 'settingsProvidersCollection.gateway.statusRunningOn(machine=Linux box)'
+                : 'settingsProvidersCollection.gateway.statusIdle');
         });
-        // A gateway's identity line is its live custody (lab GW1 "Running on <machine>"), quiet when idle
-        // or unknown: no engine name, and its model count stays on the Models row.
+        // A gateway's identity line is its live custody (lab GW1 "Running on <machine>", GW1p "Idle"):
+        // no engine name, and its model count stays on the Models row.
         expect((findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string }>)
-            .map(row => row.key)).toEqual(status === 'running' ? ['gateway-status'] : []);
+            .map(row => row.key)).toEqual(['gateway-status']);
+        // Test is a header action on a gateway and runs on its saved placement (machine-b), not on the
+        // page's inspection machine (machine-a).
+        const probesBefore = providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_PROBE).length;
+        await pressAndFlush(findTestRow(screen));
+        const probes = providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_PROBE);
+        expect(probes.slice(probesBefore).map(request => request.machineId)).toEqual(['machine-b']);
         expect(screen.findAll(node => typeof node.props.onChangePlacement === 'function'
             && typeof node.props.onChangeHelperModels === 'function')[0]?.props.reachability).toBe('not_checked');
         if (status === 'running') {
@@ -683,7 +712,7 @@ describe('ProviderConnectionDetailScreen', () => {
             await screen.update(detail());
             await waitForHomeGovernance(() => {
                 const refreshedMeta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
-                expect(refreshedMeta.find(row => row.key === 'gateway-status')).toBeUndefined();
+                expect(refreshedMeta.find(row => row.key === 'gateway-status')?.text).toBe('settingsProvidersCollection.gateway.statusIdle');
             });
         }
     });
@@ -907,16 +936,17 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
 
-        // A rare action on the connection as a whole: the header menu, as on a connected account,
-        // not a row in the Connection sheet.
+        const { CredentialShareButton } = await import('@/components/sharing/credentials/CredentialShareSheet');
+        // Share is the header action for the connection as a whole, as on a connected account or a pool:
+        // not a row in the Connection sheet and no longer a ⋯ item.
         expect(screen.findAllByType(Item)
             .find((item) => item.props.testID === 'provider-connection-share-with-team')).toBeUndefined();
-        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'shareWithTeam')).toBeDefined());
-        await act(async () => { await findMenuAction(screen, 'shareWithTeam')?.props.onPress?.(); });
-
-        expect(router.push).toHaveBeenCalledWith(
-            `/settings/teams?credentialSourceKind=provider_connection&credentialSourceServerId=${account.serverId}&credentialSourceConnectionId=pc_a&credentialSourceSlotId=apiKey&credentialSourceMachineId=machine-a&credentialSourceConnectionSecurityFingerprint=connection-security%3Av1%3Acurrent`,
-        );
+        await waitForHomeGovernance(() => expect(screen.findAllByType(CredentialShareButton)).toHaveLength(1));
+        expect(findMenuAction(screen, 'shareWithTeam')).toBeUndefined();
+        expect(screen.findAllByType(CredentialShareButton)[0]?.props.source).toEqual({
+            kind: 'provider_connection', serverId: account.serverId, machineId: 'machine-a', connectionId: 'pc_a',
+            credentialSlotId: 'apiKey', connectionSecurityFingerprint: 'connection-security:v1:current',
+        });
     });
 
     it('opens a website-only projected Provider destination without mutating connection state', async () => {

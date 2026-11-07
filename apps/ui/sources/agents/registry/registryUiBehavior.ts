@@ -7,7 +7,7 @@ import { AccountProfile } from '@happier-dev/protocol/account/profile';
 import { type ExternalSessionsAgentId, ExternalSessionLinkEnsureRequest, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { PendingDeliveryDetailV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
-import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import type { AgentUiConnectedServicePoolSettingV1, AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 import { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
@@ -30,6 +30,7 @@ import { readAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUnivers
 import type { GoalActionCapabilities } from '@/components/sessions/workState/goalActionVisibility';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
+import type { BooleanOptionActionChipDefinition } from './agentUiBehavior/booleanOptionChipPlacement';
 import type { PendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
 import {
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS,
@@ -198,7 +199,14 @@ export type AgentSessionSubagentLaunchSurface = Readonly<{
     launchInput?: PluginUiJsonValueV1;
 }>;
 
+export type AgentUiPoolSetting = Readonly<AgentUiConnectedServicePoolSettingV1 & {
+    pluginId: string;
+    title?: string;
+    subtitle?: string;
+}>;
+
 export type AgentUiBehavior = Readonly<{
+    connectedServices?: Readonly<{ poolSettings: readonly AgentUiPoolSetting[] }>;
     /**
      * The bundled Agent that owns this behavior. It is deliberately absent
      * for the neutral unknown fallback so callers cannot mistake an unknown
@@ -292,6 +300,8 @@ export type AgentUiBehavior = Readonly<{
         /** Account dependencies are declared beside the descriptor interpreter that reads them. */
         configuredRuntimeSettingKeys?: readonly string[];
         transcriptStorageSettingKeys?: readonly string[];
+        /** Parsed native declarations for descriptive consumers; no chip factories or option-state reads. */
+        agentInputExtraActionChipDefinitions?: readonly BooleanOptionActionChipDefinition[];
         /** Agent-authored portable runtime choice, bound to its declared setting. */
         runtimeDescriptorV1?: Readonly<{
             backendMode: Readonly<{
@@ -316,7 +326,7 @@ export type AgentUiBehavior = Readonly<{
         }) => ReadonlyArray<AgentInputExtraActionChip> | undefined;
         supportsTranscriptStorageMode?: (ctx: {
             agentId: AgentLookupId;
-            settings: Settings;
+            settings: Readonly<Record<string, unknown>>;
             storageMode: AgentTranscriptStorageMode;
         }) => boolean;
         getPreflightIssues?: (ctx: NewSessionPreflightContext) => readonly NewSessionPreflightIssue[];
@@ -498,6 +508,7 @@ function mergeMessageBehavior(
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     const message = mergeMessageBehavior(a.message, b.message);
     return {
+        ...(a.connectedServices || b.connectedServices ? { connectedServices: b.connectedServices ?? a.connectedServices } : {}),
         ...(b.agentId ? { agentId: b.agentId } : a.agentId ? { agentId: a.agentId } : {}),
         ...(a.pendingDelivery || b.pendingDelivery
             ? { pendingDelivery: { ...(a.pendingDelivery ?? {}), ...(b.pendingDelivery ?? {}) } }
@@ -572,6 +583,7 @@ function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'permis
             },
         },
         newSession: {
+            transcriptStorageSettingKeys: [],
             supportsTranscriptStorageMode: ({ storageMode }) => core.sessionStorage[storageMode] === true,
         },
     };

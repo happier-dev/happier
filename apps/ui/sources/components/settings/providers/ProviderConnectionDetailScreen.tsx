@@ -82,7 +82,7 @@ import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/ho
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { teamsDirectoryShareCredentialPath } from '@/components/settings/teams/teamsRoutes';
+import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
 import { SharedWithTeamsForSource } from '@/components/settings/teams/credentials/SharedWithTeamsSourceAdministration';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
@@ -201,7 +201,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const navigation = useNavigation();
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const profile = useProfile();
+    const profile = useProfile(profile => ({
+        connectedAccountsV4: profile.connectedAccountsV4,
+        connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
+    }));
     const { present } = useConnectedAccountIdentityPrivacy();
     const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
@@ -406,11 +409,15 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         };
     }, [focused, invalidateProbe, probeScope, serverId]);
 
-    const runProbe = React.useCallback(async () => {
+    // A gateway is tested where its saved placement runs it (its hub machine), not on the page's inspection
+    // machine; every other connection is tested on the selected machine.
+    const runProbe = React.useCallback(async (placement?: Readonly<{ machineId: string; refresh: () => Promise<unknown> }>) => {
         // Re-resolve immediately before the probe: the rendered target may have
         // moved to another machine or server profile since this row rendered.
         const target = resolveCurrentTarget();
         if (!focused || !machineId || !target || target.machineId !== machineId) return;
+        const probeMachineId = placement?.machineId ?? target.machineId;
+        const refreshPlacement = placement && placement.machineId !== machineId ? placement.refresh : null;
         const generation = ++probeGenerationRef.current;
         pendingProbe.current?.abort();
         const controller = new AbortController();
@@ -420,7 +427,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         setProbeError(null);
         try {
             const result = await probeProviderConnection({
-                machineId: target.machineId,
+                machineId: probeMachineId,
                 serverId: target.serverId,
                 connectionId: props.connectionId,
             }, { signal: controller.signal });
@@ -431,20 +438,20 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 const refreshed = await query.refresh();
                 if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
                 const checked = refreshed?.connections.find(row => row.connectionId === props.connectionId);
-                // Endpoint failures were committed by the probe owner. Keep
-                // only Action refusals that supplied no endpoint observation.
+                // Keep structured diagnostics alongside the committed endpoint
+                // observation; the detail presenter retires them after recovery.
                 setProbeError(checked?.runtime.endpoints.some(endpoint => endpoint.errorCode === result.error.code)
-                    ? null : result.error);
+                    && !result.error.failureCause?.phase.startsWith('providers.probe.') ? null : result.error);
                 return;
             }
             setProbeState(result.status === 'success' ? 'idle' : 'notSupported');
-            await query.refresh();
+            await Promise.all([query.refresh(), refreshPlacement?.()]);
         } catch (caught) {
             if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
             setProbeState('idle');
             setProbeError(providerErrorFromRpcFailure(caught, {
                 connectionId: props.connectionId,
-                machineId,
+                machineId: probeMachineId,
             }));
         } finally {
             if (pendingProbe.current === controller) pendingProbe.current = null;
@@ -974,9 +981,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         );
     }
 
-    const presentation = presentProviderConnectionDetail(connection);
+    const presentation = presentProviderConnectionDetail(connection, probeError);
     const teamCredentialSourceOffer = connection.teamCredentialSourceOffer;
-    const probeErrorPresentation = presentProviderError(probeError);
+    const probeErrorPresentation = presentProviderError(presentation.probeError);
     const accountGrantValid = connection.grants.accountState === 'valid';
     const managedTargetMachineName = managedDeployment
         ? machineRows.find((row) => row.target.machineId === managedDeployment.targetMachineId)?.displayName ?? null
@@ -989,52 +996,38 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // Once a key is saved, where to get one is a rare link: it moves from the sheet to the menu.
     const keyUrl = connection.sourceStatus === 'available' ? connection.credential?.keyUrl : undefined;
     const keySaved = connection.credential?.accountBound === true;
+    // A gateway's menu holds gateway operations only: no Provider links, copies or custom edit.
+    const providerMenu = gateway === null;
     const menuActions: PageHeaderMenuAction[] = [
-        ...(websiteUrl ? [{
+        ...(providerMenu && websiteUrl ? [{
             id: 'website',
             testID: 'provider-connection-menu-website',
             title: t('settingsProviders.links.providerWebsite'),
             onSelect: () => openWebsite(websiteUrl),
         }] : []),
-        ...(keyUrl && keySaved ? [{
+        ...(providerMenu && keyUrl && keySaved ? [{
             id: 'getApiKey',
             testID: 'provider-connection-menu-get-api-key',
             title: t('settingsProviders.links.getApiKey'),
             onSelect: () => openWebsite(keyUrl),
         }] : []),
-        ...(customEditable ? [{
+        ...(providerMenu && customEditable ? [{
             id: 'edit',
             testID: 'provider-connection-menu-edit',
             title: t('settingsProvidersCollection.editConnection'),
             onSelect: () => { void runGuardedNavigation(() => router.push(providerConnectionEditRoute(props.connectionId) as never)); },
         }] : []),
-        // Sharing the key with a Team is rare and about the whole connection: the menu, as on a
-        // connected account, never a row in the Connection sheet.
-        ...(teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId && machineId && teamCredentialSourceOffer ? [{
-            id: 'shareWithTeam',
-            testID: 'provider-connection-menu-share-with-team',
-            title: t('teams.credentials.create.action'),
-            onSelect: () => router.push(teamsDirectoryShareCredentialPath({
-                kind: 'provider_connection',
-                serverId,
-                machineId,
-                connectionId: teamCredentialSourceOffer.connectionId,
-                credentialSlotId: teamCredentialSourceOffer.credentialSlotId,
-                connectionSecurityFingerprint: teamCredentialSourceOffer.connectionSecurityFingerprint,
-            }) as never),
-        }] : []),
-        {
+        ...(providerMenu ? [{
             id: 'duplicate',
             testID: 'provider-connection-menu-duplicate',
             title: t('settingsProviders.detail.duplicateTitle'),
             onSelect: () => { void runGuardedNavigation(() => setDuplicateMode('sameSource')); },
-        },
-        {
+        }, {
             id: 'duplicateAsCustom',
             testID: 'provider-connection-menu-duplicate-custom',
             title: t('settingsProvidersCollection.duplicateAsCustom'),
             onSelect: () => { void runGuardedNavigation(() => setDuplicateMode('asCustom')); },
-        },
+        }] : []),
         ...(gateway ? [{
             id: 'useExternal',
             testID: 'provider-connection-menu-use-external',
@@ -1045,7 +1038,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         {
             id: 'delete',
             testID: 'provider-connection-menu-delete',
-            title: t('settingsProviders.detail.deleteTitle'),
+            title: providerMenu ? t('settingsProviders.detail.deleteTitle') : t('settingsProvidersCollection.gateway.removeGateway'),
             disabled: deletePending,
             onSelect: () => remove(),
         },
@@ -1064,12 +1057,24 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         : null;
     const probeDetail = connection.probeCapability === 'none'
         ? t('settingsProviders.detail.testOnFirstSession')
-        : probeError
+        : presentation.probeError
             ? t(probeErrorPresentation.descriptionKey)
             : probeState === 'notSupported'
                 ? t('settingsProviders.detail.testNotSupported')
                 : lastCheck?.text ?? null;
-    const probeFailed = Boolean(probeError) || (probeState === 'idle' && lastCheck?.failed === true);
+    const probeFailed = Boolean(presentation.probeError) || (probeState === 'idle' && lastCheck?.failed === true);
+    // A gateway's last check is read on its hub machine; another machine's observation is not its result.
+    const credentialShareSource = teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId && machineId && teamCredentialSourceOffer ? {
+        kind: 'provider_connection' as const,
+        serverId,
+        machineId,
+        connectionId: teamCredentialSourceOffer.connectionId,
+        credentialSlotId: teamCredentialSourceOffer.credentialSlotId,
+        connectionSecurityFingerprint: teamCredentialSourceOffer.connectionSecurityFingerprint,
+    } : null;
+    const gatewayProbeDetail = gateway && connection.probeCapability !== 'none' && probeState !== 'probing'
+        && (presentation.probeError || probeState === 'notSupported' || gatewayHubMachineId === machineId)
+        ? probeDetail : null;
     const apiKeyActionsDisabled = !selectedTargetServerMatchesActiveAccount;
     const selectedMachineName = machineId
         ? machineRows.find((row) => row.target.machineId === machineId)?.displayName ?? null
@@ -1276,15 +1281,26 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         key: 'gateway-status',
                         testID: 'provider-gateway-status',
                         text: t('settingsProvidersCollection.gateway.statusUnavailable', { machine: gatewayUnavailableMachineName }),
-                    }] : gateway ? (
-                        // Its live custody when a machine reports it; idle, unknown or off (the switch says
-                        // it) says nothing.
-                        connectionEnabled && gatewayRunningMachineName ? [{
+                    }] : gateway ? [
+                        // Its live custody as its machine reports it: running there, or idle until a session
+                        // needs it. Unchecked or off (the switch says it) says nothing; unknown never reads as idle.
+                        ...(connectionEnabled && gatewayRunningMachineName ? [{
                             key: 'gateway-status',
                             testID: 'provider-gateway-status',
                             text: t('settingsProvidersCollection.gateway.statusRunningOn', { machine: gatewayRunningMachineName }),
-                        }] : []
-                    ) : statusQuiet ? [] : [{
+                        }] : connectionEnabled && gatewayRuntime?.status === 'idle' ? [{
+                            key: 'gateway-status',
+                            testID: 'provider-gateway-status',
+                            text: t('settingsProvidersCollection.gateway.statusIdle'),
+                        }] : []),
+                        // The header Test's outcome, as one fact beside the status.
+                        ...(gatewayProbeDetail ? [{
+                            key: 'gateway-probe',
+                            testID: 'provider-connection-probe-result',
+                            text: gatewayProbeDetail,
+                            ...(probeFailed ? { icon: 'warning' as const } : {}),
+                        }] : []),
+                    ] : statusQuiet ? [] : [{
                         key: 'status',
                         testID: 'provider-connection-status',
                         text: t(PROVIDER_CONNECTION_STATUS_KEY[presentation.status]),
@@ -1292,6 +1308,23 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 ]}
                 actions={(
                     <ProviderHeaderActions>
+                        {/* A gateway has no per-machine section, so its Test sits in the header and runs where the
+                            gateway runs (lab crProv/gw). */}
+                        {gateway && connection.probeCapability !== 'none' ? (
+                            <RoundButton
+                                testID="provider-connection-test"
+                                size="small"
+                                display="secondary"
+                                title={t('settingsProvidersCollection.test')}
+                                accessibilityLabel={t('settingsProviders.detail.testConnection')}
+                                loading={probeState === 'probing'}
+                                disabled={gatewayUnavailableMachineName !== null || !selectedTargetServerMatchesActiveAccount}
+                                onPress={() => void runProbe({ machineId: gatewayHubMachineId ?? machineId!, refresh: gatewayHubQuery.refresh })}
+                            />
+                        ) : null}
+                        {/* Share is a header action, as on an account or a pool (lab crDetail). */}
+                        {credentialShareSource ? <CredentialShareButton testID="provider-connection-share" name={presentation.title}
+                            source={credentialShareSource} /> : null}
                         {/* On/off is the header switch on every connection, a gateway included (lab s2svc:gateway). */}
                         <PageHeaderStateSwitch
                             testID="provider-connection-enabled"

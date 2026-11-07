@@ -2,7 +2,7 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { t } from '@/text';
 import type { ConnectedServiceCredentialHealthStatusV1, ConnectedServiceCredentialRefreshFailureKindV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { isConnectedServiceCredentialHealthStatusUsable } from '@happier-dev/protocol/connect/connected-service-schemas';
+export { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 
 /**
  * The one credential-health → user-facing label mapping for connected accounts.
@@ -35,11 +35,6 @@ export function resolveConnectedAccountCredentialStatusLabel(
             return presentConnectedAccountSignedOut().state;
     }
     return t('connectedServicesSettings.signedOutWithReason', { reason });
-}
-
-/** Whether a connected account's credential has stopped working until someone signs in again. */
-export function isConnectedAccountSignedOut(status: ConnectedServiceCredentialHealthStatusV1 | null | undefined): boolean {
-    return status != null && !isConnectedServiceCredentialHealthStatusUsable(status);
 }
 
 /**

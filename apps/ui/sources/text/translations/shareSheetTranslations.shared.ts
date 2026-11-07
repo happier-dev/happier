@@ -28,6 +28,7 @@ export type ShareSheetTranslations = Readonly<{
     membersOnlyLink: string;
     allLoaded: string;
     noConnectedPeople: string;
+    noMatchingPeople: (params: Readonly<{ query: string }>) => string;
     copyLink: string;
     linkCopied: string;
     copyLinkFailed: string;
@@ -37,6 +38,36 @@ export type ShareSheetTranslations = Readonly<{
         levels: Readonly<{ canUse: string }>;
         help: Readonly<{ use: string }>;
         oneLevel: string;
+    }>;
+    credentials: Readonly<{
+        title: string;
+        levels: Readonly<{ canUse: string }>;
+        help: Readonly<{ use: string }>;
+        description: string;
+    }>;
+    tasks: Readonly<{
+        shareTitle: (params: Readonly<{ name: string }>) => string;
+        title: string;
+        levels: Readonly<{ canView: string; canEdit: string }>;
+        help: Readonly<{ view: string; edit: string }>;
+        notes: Readonly<{ linkedAccess: string; encrypted: string }>;
+        disclosure: Readonly<{
+            title: string;
+            notes: string;
+            links: string;
+            linkedSessions: string;
+            blockedBy: string;
+            tasks: (params: Readonly<{ count: number }>) => string;
+        }>;
+        readiness: Readonly<{
+            homeManaged: string;
+            setupRequired: string;
+            repairRequired: string;
+            keysPending: string;
+            membersKeysPending: (params: Readonly<{ count: number }>) => string;
+            sendKeys: string;
+        }>;
+        errors: Readonly<{ unavailable: string; updateRequired: string; ownerOnly: string; notFound: string; noAccess: string; subjectUnavailable: string; failed: string }>;
     }>;
     documents: Readonly<{
         title: string;
@@ -95,15 +126,54 @@ export const shareSheetTranslationsEnglish = { en: {
         membersOnlyLink: 'Copy link is for people who already have access.',
         allLoaded: 'All results loaded',
         noConnectedPeople: 'Only people you’re connected with appear here.',
+        noMatchingPeople: ({ query }) => `No friend or teammate matches “${query}”. Connect first to share.`,
         copyLink: 'Copy link',
         linkCopied: 'Link copied',
         copyLinkFailed: 'Couldn’t copy the link.',
         sendCopy: 'Send a copy instead',
         cantAdd: 'Can’t be added',
+        tasks: {
+            shareTitle: ({ name }) => `Share ${name}`,
+            title: "Task sharing",
+            levels: { canView: "Can view", canEdit: "Can edit" },
+            help: { view: "read the task, its notes and links", edit: "change it for everyone it’s shared with" },
+            notes: { linkedAccess: "Linked Sessions and tasks keep their own access.", encrypted: "Your tasks are end-to-end encrypted, so people who use Home-managed storage can’t open them." },
+            disclosure: {
+                title: "What they’ll see",
+                notes: "Notes",
+                links: "Links",
+                linkedSessions: "Linked Sessions",
+                blockedBy: "Blocked by",
+                tasks: ({ count }) => count === 1 ? "1 task" : `${count} tasks`,
+            },
+            readiness: {
+                homeManaged: "Can’t open it: uses Home-managed storage",
+                setupRequired: "Can’t open it until they finish encryption setup",
+                repairRequired: "Can’t open it until their encryption keys are repaired",
+                keysPending: "Waiting for keys",
+                membersKeysPending: ({ count }) => count === 1 ? "1 member waiting for keys" : `${count} members waiting for keys`,
+                sendKeys: "Send keys now",
+            },
+            errors: {
+                unavailable: "Sharing isn’t available for this task.",
+                updateRequired: "This Home needs a Happier update before tasks can be shared.",
+                ownerOnly: "Only the owner can change who has access.",
+                notFound: "This task is no longer available.",
+                noAccess: "You no longer have access to this task.",
+                subjectUnavailable: "This person, group, or Team can’t receive access.",
+                failed: "Couldn’t update sharing. Try again.",
+            },
+        },
         secrets: {
-            levels: { canUse: 'Can use' },
-            help: { use: 'select it for runs; its value is never shown' },
-            oneLevel: 'A Saved Secret is only used by runs, and its value never leaves, so it has one level.',
+            levels: { canUse: "Give them the value" },
+            help: { use: "They can see and copy this value, and use it without your Machine. You can stop future access, but a copy already obtained cannot be taken back. Rotate or revoke the credential with its provider to invalidate that copy." },
+            oneLevel: "Sharing gives recipients the value. Only you can manage it.",
+        },
+        credentials: {
+            title: 'Who can use it',
+            levels: { canUse: 'Can use it' },
+            help: { use: 'their agents run through your machine; they never see it' },
+            description: 'Choose a Team. Next you pick which machine its use runs through and who in the Team gets it.',
         },
         documents: {
             title: 'Sharing',
