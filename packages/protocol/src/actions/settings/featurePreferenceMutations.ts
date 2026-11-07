@@ -1,5 +1,5 @@
 import type { FeatureId } from '../../features/catalog.js';
-import { getFeatureDependencies } from '../../features/catalog.js';
+import { getCanonicalFeatureId, getFeatureDependencies } from '../../features/catalog.js';
 
 export type UiFeatureToggleServerVisibilityScope = 'main_selection' | 'runtime';
 
@@ -11,6 +11,8 @@ type FeaturePreferenceDefinition = Readonly<{
         serverVisibilityScope?: UiFeatureToggleServerVisibilityScope;
         titleKey: string;
         subtitleKey: string;
+        /** Retain a released preference key when the public feature spelling changes. */
+        preferenceKey?: string;
     }>;
     analytics?: Readonly<{
         trackPreference?: boolean;
@@ -44,24 +46,24 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     automations: {
+        settingsToggle: undefined,
+    },
+    workflows: {
         settingsToggle: {
             showInSettings: true,
-            // Graduated with the one Workflows destination: the switch governs triggers, and the
-            // Experiments switch no longer turns them off (FIN 04 §3.1).
+            // The released key remains the one preference read/written by 0.2 and current clients.
+            preferenceKey: 'automations',
             isExperimental: false,
             defaultEnabled: true,
             titleKey: 'settingsFeatures.expAutomations',
             subtitleKey: 'settingsFeatures.expAutomationsSubtitle',
         },
     },
-    workflows: {
-        settingsToggle: undefined,
-    },
     'execution.runs': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expExecutionRuns',
             subtitleKey: 'settingsFeatures.expExecutionRunsSubtitle',
         },
@@ -161,14 +163,7 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'sessions.folders': {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: false,
-            defaultEnabled: true,
-            serverVisibilityScope: 'main_selection',
-            titleKey: 'settingsFeatures.expSessionsFolders',
-            subtitleKey: 'settingsFeatures.expSessionsFoldersSubtitle',
-        },
+        settingsToggle: undefined,
     },
     'sessions.handoff': {
         settingsToggle: undefined,
@@ -186,22 +181,46 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'sessions.following': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.following',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'sessions.autonomousExchange': {
         settingsToggle: undefined,
     },
     'sessions.conversations': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.discussions',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'sessions.board': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.board',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'sessions.usageLimitRecovery': {
         settingsToggle: undefined,
     },
     teams: {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.teams',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'teams.credentialResources': {
         settingsToggle: undefined,
@@ -279,7 +298,13 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     browser: {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.browser',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'browser.viewTargets': {
         settingsToggle: undefined,
@@ -327,20 +352,19 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     devices: {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.devices',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'devices.simulatorPreview': {
         settingsToggle: undefined,
     },
     'social.friends': {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            // Historically not auto-enabled by the experiments master switch; keep it opt-in.
-            defaultEnabled: false,
-            titleKey: 'settingsFeatures.expFriends',
-            subtitleKey: 'settingsFeatures.expFriendsSubtitle',
-        },
+        settingsToggle: undefined,
     },
     'inbox.global': {
         settingsToggle: undefined,
@@ -364,7 +388,13 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'providers.localDiscovery': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.localDiscovery',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'providers.localModelManagement': {
         settingsToggle: undefined,
@@ -458,13 +488,7 @@ export const UI_FEATURE_REGISTRY = {
         settingsToggle: undefined,
     },
     'attachments.uploads': {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
-            titleKey: 'settingsFeatures.expAttachmentsUploads',
-            subtitleKey: 'settingsFeatures.expAttachmentsUploadsSubtitle',
-        },
+        settingsToggle: undefined,
     },
     'scm.writeOperations': {
         settingsToggle: {
@@ -512,7 +536,13 @@ export const UI_FEATURE_REGISTRY = {
         },
     },
     search: {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.search',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
     },
     'terminal.embeddedPty': {
         settingsToggle: {
@@ -615,7 +645,7 @@ export type UiFeatureDefinition = Omit<FeaturePreferenceDefinition, 'settingsTog
 }>;
 
 export function getUiFeatureDefinition(featureId: FeatureId): UiFeatureDefinition {
-    return UI_FEATURE_REGISTRY[featureId];
+    return UI_FEATURE_REGISTRY[getCanonicalFeatureId(featureId)];
 }
 
 type FeatureToggleSettings = Readonly<{
@@ -660,7 +690,7 @@ export function resolveUiFeatureToggleEnabled<TSettings extends FeatureToggleSet
     const map = settings.featureToggles && typeof settings.featureToggles === 'object'
         ? settings.featureToggles
         : null;
-    const explicit = map?.[featureId];
+    const explicit = map?.[toggle.preferenceKey ?? getCanonicalFeatureId(featureId)];
     if (typeof explicit === 'boolean') return explicit;
 
     return toggle.defaultEnabled === true;
@@ -673,14 +703,16 @@ export function buildUiFeatureToggleDefaults(params: { experimentalOnly: boolean
         const toggle = def.settingsToggle;
         if (!toggle?.showInSettings) continue;
         if (params.experimentalOnly && !toggle.isExperimental) continue;
-        defaults[featureId] = toggle.defaultEnabled === true;
+        defaults['preferenceKey' in toggle ? toggle.preferenceKey : featureId] = toggle.defaultEnabled === true;
     }
     return defaults;
 }
 
 /** UI and declared Actions share the same cascading disable intent. */
 export function buildUiFeatureToggleChange(settings: FeatureToggleSettings, featureId: FeatureId, enabled: boolean) {
-    const featureToggles: Record<string, boolean> = { ...settings.featureToggles, [featureId]: enabled };
+    featureId = getCanonicalFeatureId(featureId);
+    const preferenceKey = getUiFeatureDefinition(featureId).settingsToggle?.preferenceKey ?? featureId;
+    const featureToggles: Record<string, boolean> = { ...settings.featureToggles, [preferenceKey]: enabled };
     if (!enabled) {
         const definitions = listUiFeatureToggleDefinitions();
         const queue: FeatureId[] = [featureId];
