@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet as RNStyleSheet, View } from 'react-native';
+import { StyleSheet as RNStyleSheet, View, Image } from 'react-native';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import MaskedView from '@react-native-masked-view/masked-view';
@@ -11,9 +11,10 @@ import { resolveGlassCapability } from '@/components/ui/glass/resolveGlassCapabi
 import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { useLiquidGlassAvailable } from '@/components/ui/glass/liquidGlass';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
-import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 
-import { scrimMaskBand, scrimRamp } from './progressiveScrimFalloff';
+import { FLOATING_BACKDROP_STRENGTHS, type FloatingBackdropStrength, type FloatingBackdropPicture } from './createBackdropLayerStyle';
+
+import { SCRIM_RAMP_UNDERLAP, scrimBandRamp, scrimBlurLayers, scrimRamp, type ScrimRamp } from './progressiveScrimFalloff';
 
 /**
  * A short band of frost that sits directly on top of a bottom-anchored surface and clears within a
@@ -66,23 +67,7 @@ export const OVERLAY_SCRIM_RAMP_HEIGHT = 88;
  * modal. Without this the session list showed through a band at the very bottom of the screen.
  * Generous rather than exact: it is behind everything and hit-tests to nothing.
  */
-const SOLID_BOTTOM_EXTENSION = 400;
-
-/**
- * How far the ramp reaches BELOW the seated edge, hidden behind the surface itself.
- *
- * Without it the falloff has to start its climb exactly at the surface's edge, so the strongest
- * frost and the sharp content meet on one line. Starting lower means the band is already at full
- * strength by the time it emerges, and the only visible part of the curve is the dissolve.
- */
-const RAMP_UNDERLAP = 28;
-
-/**
- * Strongest first: each layer is revealed nearer the seated edge than the last. Expressed as
- * fractions of the user's glass-blur intensity setting so this surface scales with every other
- * glass surface in the app instead of pinning its own absolute radii.
- */
-const BLUR_LAYER_INTENSITY_SCALES = [0.85, 0.22, 0.06] as const;
+export const OVERLAY_SCRIM_BOTTOM_EXTENSION = 400;
 
 const GRADIENT_START = { x: 0.5, y: 1 } as const;
 const GRADIENT_END = { x: 0.5, y: 0 } as const;
@@ -111,52 +96,62 @@ export type OverlayScrimProps = Readonly<{
      */
     rampHeight?: number;
     testID?: string;
+    strength?: FloatingBackdropStrength;
+    picture?: FloatingBackdropPicture | null;
+    reach?: Readonly<{ right: number; bottom: number }>;
 }>;
 
 /**
- * The ground starts at the floating group's requested opacity and clears toward
- * the top. The ramp and bottom extension must not add an opaque legibility coat.
+ * The ground under the band, one recipe in every tier: the page colour, opaque under the card and the
+ * rows seated on the band (blur alone leaves dense list text readable behind a status line), then
+ * dissolving with the shared falloff. Where the device frosts, the frost shows through that dissolve.
  *
  * `surface.base`, not `background.canvas`: canvas is the colour BETWEEN the list's rows, and the
  * rows themselves sit on `surface.base`. Against a stack of rows a flat canvas strip reads as a
  * darker band rather than as the same ground. `surface.base` is also what the navigator paints
  * for every other screen, so it is the app's ground in the sense that matters here.
  */
-function useDimGradientColors(): string[] {
+function useBandGround(): Readonly<{ colors: string[]; ramp: ScrimRamp }> {
     const { theme } = useUnistyles();
-    const ground = useGlassSurfaceColor(theme.colors.surface.base, 'floating', false);
-
+    const ground = theme.colors.surface.base;
     return React.useMemo(() => {
-        const ramp = scrimRamp();
+        const ramp = scrimBandRamp();
         const base = parseThemeColor(ground);
-        if (base === null) return [ground, 'transparent'];
-        return ramp.alphas.map((strength) => base.alpha(base.alpha() * strength).rgb().string());
+        if (base === null) return { colors: [ground, 'transparent'], ramp: scrimRamp(2) };
+        return { colors: ramp.alphas.map((alpha) => base.alpha(base.alpha() * alpha).rgb().string()), ramp };
     }, [ground]);
 }
 
-const ScrimBlurStack = React.memo(function ScrimBlurStack(props: Readonly<{ baseIntensity: number }>) {
+/**
+ * Fills the whole band. Each layer's falloff covers the ramp and then holds to the band's foot, as the web
+ * band's mask does: whatever is seated on the band's solid tier (the Docked composer's status row, Search's
+ * capsules) stands on frost, never on the sharp page behind a bare dim.
+ */
+const ScrimBlurStack = React.memo(function ScrimBlurStack(props: Readonly<{ baseIntensity: number; rampHeight: number }>) {
     const { theme } = useUnistyles();
     const BlurView = getBlurViewComponent();
     if (!BlurView) return null;
 
     return (
         <>
-            {BLUR_LAYER_INTENSITY_SCALES.map((scale, index) => {
-                const band = scrimMaskBand(index, BLUR_LAYER_INTENSITY_SCALES.length);
+            {scrimBlurLayers().map(({ scale, band }) => {
                 const intensity = Math.max(1, Math.min(100, Math.round(props.baseIntensity * scale)));
                 return (
                     <MaskedView
                         key={scale}
                         style={RNStyleSheet.absoluteFillObject}
                         maskElement={(
-                            <LinearGradient
-                                style={RNStyleSheet.absoluteFillObject}
-                                start={GRADIENT_START}
-                                end={GRADIENT_END}
-                                // The mask reads alpha only; black is simply "keep this pixel".
-                                colors={toGradientColors(band.alphas.map((alpha) => `rgba(0,0,0,${alpha})`))}
-                                locations={[...band.locations]}
-                            />
+                            <View style={RNStyleSheet.absoluteFillObject}>
+                                <LinearGradient
+                                    style={{ height: props.rampHeight }}
+                                    start={GRADIENT_START}
+                                    end={GRADIENT_END}
+                                    // The mask reads alpha only; black is simply "keep this pixel".
+                                    colors={toGradientColors(band.alphas.map((alpha) => `rgba(0,0,0,${alpha})`))}
+                                    locations={[...band.locations]}
+                                />
+                                <View style={{ flex: 1, backgroundColor: 'black' }} />
+                            </View>
                         )}
                     >
                         <BlurView
@@ -173,7 +168,6 @@ const ScrimBlurStack = React.memo(function ScrimBlurStack(props: Readonly<{ base
 
 export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrimProps) {
     const rampHeight = props.rampHeight ?? OVERLAY_SCRIM_RAMP_HEIGHT;
-    const dimColors = useDimGradientColors();
     const ramp = React.useMemo(() => scrimRamp(), []);
     const liquidGlassAvailable = useLiquidGlassAvailable();
     const reduceTransparency = useReduceTransparency();
@@ -190,6 +184,10 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
         reduceTransparency,
     });
     const showsBlur = isNativeBlurAvailable() && glassBlurEnabled && capability !== 'solid';
+    const dim = useBandGround();
+    const preset = props.strength ? FLOATING_BACKDROP_STRENGTHS[props.strength] : null;
+    const bandBlurIntensity = blurIntensity * (preset ? preset.blurPx / FLOATING_BACKDROP_STRENGTHS.soft.blurPx : 1);
+    const picture = glassBlurEnabled && !reduceTransparency && props.picture?.kind === 'picture' ? props.picture : null;
     const animatedStyle = useAnimatedStyle(() => ({ opacity: props.progress.value }), [props.progress]);
 
     return (
@@ -204,14 +202,30 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
             style={[
                 {
                     position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    top: -(rampHeight - RAMP_UNDERLAP),
-                    bottom: -SOLID_BOTTOM_EXTENSION,
+                    left: -(props.reach?.right ?? 0),
+                    right: -(props.reach?.right ?? 0),
+                    top: -(rampHeight - SCRIM_RAMP_UNDERLAP),
+                    bottom: -(props.reach?.bottom ?? OVERLAY_SCRIM_BOTTOM_EXTENSION),
                 },
                 animatedStyle,
             ]}
         >
+            {showsBlur ? <ScrimBlurStack baseIntensity={bandBlurIntensity} rampHeight={rampHeight} /> : null}
+            {/* The picture sits with the frost, under the ground: like the frost it tints only the dissolve,
+                never the held page colour under the seated rows. */}
+            {picture && preset ? (
+                <MaskedView style={RNStyleSheet.absoluteFillObject} maskElement={
+                    <View style={{ flex: 1 }}>
+                        <LinearGradient style={{ height: rampHeight }} start={GRADIENT_START} end={GRADIENT_END}
+                            colors={toGradientColors(ramp.alphas.map(alpha => `rgba(0,0,0,${alpha})`))}
+                            locations={[...ramp.locations]} />
+                        <View style={{ flex: 1, backgroundColor: 'black' }} />
+                    </View>
+                }>
+                    <Image source={{ uri: picture.uri }} resizeMode="cover" blurRadius={preset.picture.blurPx}
+                        style={[RNStyleSheet.absoluteFillObject, { opacity: preset.picture.opacity, transform: [{ scale: preset.picture.scale }] }]} />
+                </MaskedView>
+            ) : null}
             {/* Full strength behind the surface itself. Invisible under an opaque card, and what
                 seats anything translucent sitting beside it. */}
             <View
@@ -221,17 +235,16 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
                     right: 0,
                     top: rampHeight,
                     bottom: 0,
-                    backgroundColor: dimColors[0],
+                    backgroundColor: dim.colors[0],
                 }}
             />
             <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: rampHeight }}>
-                {showsBlur ? <ScrimBlurStack baseIntensity={blurIntensity} /> : null}
                 <LinearGradient
                     style={RNStyleSheet.absoluteFillObject}
                     start={GRADIENT_START}
                     end={GRADIENT_END}
-                    colors={toGradientColors(dimColors)}
-                    locations={[...ramp.locations]}
+                    colors={toGradientColors(dim.colors)}
+                    locations={[...dim.ramp.locations]}
                     // Android dithers gradients by default and it is what keeps a soft ramp from
                     // banding there; harmless elsewhere.
                     dither

@@ -218,6 +218,8 @@ export type ComposerPresentationTarget = Readonly<{
     createAttachmentInstanceId?: () => string;
     /** Focuses the exact visual input; `false` means this target is not editable. */
     focusComposer?: () => boolean | void;
+    /** Blurs the exact mounted input, including while its document is locked. */
+    blurComposer?: () => boolean | void;
     /** Opens this mounted input's picker without reading or changing its draft. */
     openPromptPicker?: () => boolean;
     /** Opens the incumbent file picker; selection and staging remain with its attachment owner. */
@@ -321,6 +323,9 @@ export function useStableComposerPresentationTarget(
                 } : {}),
                 ...(target.focusComposer ? {
                     focusComposer: () => readCurrent().focusComposer!(),
+                } : {}),
+                ...(target.blurComposer ? {
+                    blurComposer: () => readCurrent().blurComposer!(),
                 } : {}),
                 ...(target.openPromptPicker ? {
                     openPromptPicker: () => readCurrent().openPromptPicker?.() ?? false,
@@ -1880,6 +1885,12 @@ export function readComposerPresentationTarget(ref: ComposerRefV1): ComposerPres
 export function requestRegisteredComposerFocus(ref: ComposerRefV1 | symbol): boolean {
     return tryFocusVisualSessionComposer(typeof ref === 'symbol'
         ? resolveTargetRegistration(targets.get(ref)) : readRegisteredTarget(ref));
+}
+
+/** Dismisses the keyboard through the exact incumbent input's own native command. */
+export function requestRegisteredComposerBlur(ref: ComposerRefV1): boolean {
+    const target = readRegisteredTarget(ref);
+    return target?.blurComposer ? target.blurComposer() !== false : false;
 }
 
 /**

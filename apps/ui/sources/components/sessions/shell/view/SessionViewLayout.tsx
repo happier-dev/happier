@@ -5,19 +5,13 @@ import { Platform, Pressable, View, type LayoutChangeEvent, useWindowDimensions 
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
-import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
-import { isRunningOnMac } from '@/utils/platform/platform';
 import { Icon } from '@/components/ui/icons/Icon';
 import { usePaneMainBodyPresentation } from '@/components/ui/panels/paneMainComposerAnchor';
-import {
-    resolveSessionViewContentBottomSpacing,
-    SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
-    SESSION_VIEW_DEFAULT_CONTENT_BOTTOM_GAP_PX,
-} from './resolveSessionViewContentBottomSpacing';
+import { useSessionViewContentBottomSpacing } from './useSessionViewContentBottomSpacing';
 
 export type SessionViewLayoutProps = Readonly<{
     content: React.ReactNode;
@@ -56,19 +50,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
             currentWidth === nextWidth ? currentWidth : nextWidth
         ));
     }, []);
-    const contentPaddingBottom = resolveSessionViewContentBottomSpacing({
-        chatBottomSpacing: props.chatBottomSpacing ?? 'default',
-        // AgentContentView's keyboard scaffold owns the native safe-area inset
-        // for the composer and transcript. Keeping the native inset out of this
-        // outer layout avoids lifting the composer twice in classic/no-cockpit sessions.
-        safeAreaBottomPx: Platform.OS === 'web' ? safeArea.bottom : 0,
-        availableWidthPx: measuredContentWidth ?? windowWidth,
-        contentMaxWidthPx: layout.maxWidth,
-        defaultContentBottomGapPx: (isRunningOnMac() || Platform.OS === 'web')
-            ? SESSION_VIEW_DEFAULT_CONTENT_BOTTOM_GAP_PX
-            : 0,
-        inputOuterBottomPaddingPx: SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
-    });
+    const contentPaddingBottom = useSessionViewContentBottomSpacing(measuredContentWidth ?? windowWidth, props.chatBottomSpacing ?? 'default');
 
     return (
         <>

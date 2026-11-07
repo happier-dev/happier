@@ -23,6 +23,12 @@ export const AGENT_INPUT_PANEL_PADDING_TOP = 2;
  * The field's book and microphone accessories: sideways they touch each other, above them a new session's
  * Look chip sits 9 px away. The accessories take 5 px of that gap upward (the chip takes the other 4).
  */
+/**
+ * The composer's quiet icon button: the field's book and microphone, and the icon actions in the status row
+ * above the card (a Docked card's Start another, Delete draft, collapse and close), draw this one square, so the
+ * row and the card read as one set. Its glyph is the `IconButton` step that fits it (`ICON_SIZE.sm`).
+ */
+export const AGENT_INPUT_QUIET_ICON_SIZE_PX = 24;
 export const AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX = { leading: 0, trailing: 0, top: 5 } as const;
 /**
  * Under the expand toggle the accessories' drawn top is 9 px below the toggle's bottom, so the toggle's hit

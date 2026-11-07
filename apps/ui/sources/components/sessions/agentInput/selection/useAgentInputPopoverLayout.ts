@@ -37,6 +37,13 @@ export const AgentInputDocumentPanelContext = React.createContext(false);
 /** The composer's own column (the card, not the full-width row around it): the width a chip picker stays within. */
 export const AgentInputPopoverColumnContext = React.createContext<React.RefObject<any> | undefined>(undefined);
 
+/**
+ * How wide a chip picker may run. `column` (default): within the composer's own column. `window`: where the
+ * composer floats as a narrow card in a corner of the window (Docked New), so its pickers extend past the card
+ * and only the window bounds them. The presentation that places the composer decides it once.
+ */
+export const AgentInputPopoverWidthContext = React.createContext<'column' | 'window'>('column');
+
 export type AgentInputPopoverLayout = Readonly<{
     maxHeightCap?: number;
     keyboardBottomInset: number;
@@ -69,6 +76,7 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     const clearanceRef = React.useContext(AgentInputPopoverClearanceContext);
     const columnRef = React.useContext(AgentInputPopoverColumnContext);
     const documentPanel = React.useContext(AgentInputDocumentPanelContext);
+    const pickerWidth = React.useContext(AgentInputPopoverWidthContext);
     const retainedNativeKeyboardHeightRef = React.useRef(0);
     const { height: windowHeight, width: windowWidth } = useWindowDimensions();
     const normalizedKeyboardHeight = Number.isFinite(keyboardHeight)
@@ -171,6 +179,6 @@ export function useAgentInputPopoverLayout(input: Readonly<{
         gap: DEFAULT_POPOVER_GAP,
         edgePadding,
         portal,
-        ...(caretAnchored ? { clearanceRef } : { horizontalBoundaryRef: columnRef }),
+        ...(caretAnchored ? { clearanceRef } : pickerWidth === 'window' ? {} : { horizontalBoundaryRef: columnRef }),
     };
 }

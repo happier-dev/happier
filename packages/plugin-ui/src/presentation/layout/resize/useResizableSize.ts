@@ -3,7 +3,8 @@ import { PanResponder, Platform } from 'react-native';
 import { resolvePointerClientPoint } from './resolvePointerClientPoint.js';
 
 export type DockedPaneResizeAxis = 'x' | 'y';
-export type DockedPaneResizeEdge = 'start' | 'end';
+/** `both`: a centred surface; either edge moves and the opposite one mirrors it, so the size changes by twice the travel. */
+export type DockedPaneResizeEdge = 'start' | 'end' | 'both';
 
 export type DockedPaneResizeCommitMeta = Readonly<{
     attemptedSizePx: number;
@@ -29,6 +30,19 @@ export type ResizableSizeInput = Readonly<{
     readClientPoint?: typeof resolvePointerClientPoint;
 }>;
 
+type ResizableEdgeHandle = Readonly<{
+    /** Opaque platform responder props, consumed by HappierResizeHandle. */
+    panHandlers: Readonly<Record<string, unknown>>;
+    webHandleProps: Readonly<{
+        onKeyDown: (event: unknown) => void;
+        onPressIn: (event: unknown) => void;
+        onPointerDown: (event: unknown) => void;
+        onMouseDown: (event: unknown) => void;
+        onTouchStart: (event: unknown) => void;
+        onDoubleClick: () => void;
+    }>;
+}>;
+
 export type ResizableSizeResult = Readonly<{
     effectiveSizePx: number;
     /** A drag is in progress (the handle draws its seam in full ink). */
@@ -49,6 +63,8 @@ export type ResizableSizeResult = Readonly<{
         accessibilityActions: ReadonlyArray<Readonly<{ name: 'increment' | 'decrement' }>>;
         onAccessibilityAction: (event: unknown) => void;
     }>;
+    /** The end edge's handle of a `both` surface; `panHandlers`/`webHandleProps` above are its start edge. */
+    endHandle?: ResizableEdgeHandle;
 }>;
 
 function resolveAxisDelta(gesture: Readonly<{ dx?: number; dy?: number }>, axis: DockedPaneResizeAxis): number {
@@ -116,7 +132,10 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
     const resizeEdge = input.resizeEdge;
     const inputRef = React.useRef(input);
     inputRef.current = input;
-    const edgeSign = resizeEdge === 'start' ? -1 : 1;
+    // Pointer travel to size: a `both` surface's start edge is its primary handle, and the edges mirror each other.
+    const travel = resizeEdge === 'both' ? 2 : 1;
+    const edgeSign = (resizeEdge === 'end' ? 1 : -1) * travel;
+    const endSign = travel;
 
     const canResize = maxSizePx - minSizePx > 1;
 
@@ -206,7 +225,7 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
         }
     }, [commitAccessibilityAdjustment]);
 
-    const panResponder = React.useMemo(() => {
+    const createPanResponder = React.useCallback((sign: number) => {
         return PanResponder.create({
             onStartShouldSetPanResponder: () => true,
             onMoveShouldSetPanResponder: () => true,
@@ -221,7 +240,7 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
             onPanResponderMove: (_event, gesture) => {
                 const start = dragStartSizeRef.current ?? effectiveSizeRef.current;
                 const delta = resolveAxisDelta(gesture, axis);
-                const attempted = start + (edgeSign * delta);
+                const attempted = start + (sign * delta);
                 publishDrag(resolveClampedSizeState(attempted, minSizePxRef.current, maxSizePxRef.current, inputRef.current.collapse));
             },
             onPanResponderRelease: () => {
@@ -237,9 +256,12 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
                 onDragSizePxRef.current?.(null, null);
             },
         });
-    }, [axis, clampLatest, createCommitMeta, edgeSign, publishDrag, resetDragTracking]);
+    }, [axis, clampLatest, createCommitMeta, publishDrag, resetDragTracking]);
+    const panResponder = React.useMemo(() => createPanResponder(edgeSign), [createPanResponder, edgeSign]);
+    const endPanResponder = React.useMemo(() => resizeEdge === 'both' ? createPanResponder(endSign) : null,
+        [createPanResponder, endSign, resizeEdge]);
 
-    const handleWebPointerDown = React.useCallback((event: unknown) => {
+    const beginWebDrag = React.useCallback((event: unknown, sign: number) => {
         if (Platform.OS !== 'web') return;
         if (dragStartSizeRef.current !== null) return;
         webDragCleanupRef.current?.();
@@ -277,7 +299,7 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
             }
 
             const delta = nextClient - startCoord;
-            const attempted = startSize + (edgeSign * delta);
+            const attempted = startSize + (sign * delta);
             publishDrag(resolveClampedSizeState(attempted, minSizePxRef.current, maxSizePxRef.current, inputRef.current.collapse));
             stopEvent(moveEvent);
         };
@@ -331,7 +353,9 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
                 // Best-effort pointer capture; ignore failures.
             }
         }
-    }, [axis, clampLatest, createCommitMeta, edgeSign, publishDrag, resetDragTracking]);
+    }, [axis, clampLatest, createCommitMeta, publishDrag, resetDragTracking]);
+    const handleWebPointerDown = React.useCallback((event: unknown) => beginWebDrag(event, edgeSign), [beginWebDrag, edgeSign]);
+    const handleEndWebPointerDown = React.useCallback((event: unknown) => beginWebDrag(event, endSign), [beginWebDrag, endSign]);
 
     React.useEffect(() => {
         return () => {
@@ -354,7 +378,7 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
         };
     }, [updateCollapseArmed]);
 
-    const handleKeyDown = React.useCallback((event: unknown) => {
+    const handleArrowKey = React.useCallback((event: unknown, sign: number) => {
         if (Platform.OS !== 'web') return;
         const value = readRecord(event);
         const key = String(value.key ?? '');
@@ -373,12 +397,15 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
                 ? (key === 'ArrowRight' ? 1 : -1)
                 : (key === 'ArrowDown' ? 1 : -1);
         const next = resolveClampedSizeState(
-            effectiveSizeRef.current + (arrowSign * edgeSign * step),
+            effectiveSizeRef.current + (arrowSign * sign * step),
             minSizePxRef.current,
             maxSizePxRef.current
         );
         onCommitSizePxRef.current(next.clampedSizePx, next);
-    }, [axis, edgeSign]);
+    }, [axis]);
+    const handleKeyDown = React.useCallback((event: unknown) => handleArrowKey(event, edgeSign), [edgeSign, handleArrowKey]);
+    const handleEndKeyDown = React.useCallback((event: unknown) => handleArrowKey(event, endSign), [endSign, handleArrowKey]);
+    const requestReset = React.useCallback(() => inputRef.current.onResetRequest?.(), []);
 
     return {
         effectiveSizePx,
@@ -391,7 +418,7 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
             onPointerDown: handleWebPointerDown,
             onMouseDown: handleWebPointerDown,
             onTouchStart: handleWebPointerDown,
-            onDoubleClick: () => inputRef.current.onResetRequest?.(),
+            onDoubleClick: requestReset,
         },
         accessibilityHandleProps: {
             accessibilityValue: {
@@ -405,6 +432,19 @@ export function useResizableSize(input: ResizableSizeInput): ResizableSizeResult
             ],
             onAccessibilityAction: handleAccessibilityAction,
         },
+        ...(endPanResponder ? {
+            endHandle: {
+                panHandlers: { ...endPanResponder.panHandlers },
+                webHandleProps: {
+                    onKeyDown: handleEndKeyDown,
+                    onPressIn: handleEndWebPointerDown,
+                    onPointerDown: handleEndWebPointerDown,
+                    onMouseDown: handleEndWebPointerDown,
+                    onTouchStart: handleEndWebPointerDown,
+                    onDoubleClick: requestReset,
+                },
+            },
+        } : {}),
     };
 }
 

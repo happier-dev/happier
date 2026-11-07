@@ -1,4 +1,6 @@
 import Color from 'color';
+import type { ReactTestInstance } from 'react-test-renderer';
+import { flattenTestStyle } from './harness/popoverHarness';
 
 /**
  * The browser is the boundary that applies a CSS `backdrop-filter` and composites the coat over it.
@@ -123,4 +125,18 @@ export function resolveBrowserMaterialPaint(input: string, variables: Readonly<R
         return color.alpha(color.alpha() * Number(match[2]) / 100).hexa();
     }
     return Color(value).hexa();
+}
+
+/** Custom properties inherit through the real rendered host ancestry. */
+export function readBrowserMaterialVariables(node: ReactTestInstance): Readonly<Record<string, string>> {
+  const ancestry: ReactTestInstance[] = [];
+  for (let current: ReactTestInstance | null = node; current; current = current.parent) ancestry.unshift(current);
+  const variables: Record<string, string> = {};
+  for (const current of ancestry) {
+    const style = flattenTestStyle(current.props.style);
+    for (const [key, value] of Object.entries(style ?? {})) {
+      if (key.startsWith('--') && typeof value === 'string') variables[key] = value;
+    }
+  }
+  return variables;
 }

@@ -115,6 +115,24 @@ describe('shared resize gesture', () => {
     expect(drag.frames.size).toBe(0);
   });
 
+  it('grows a centred surface from either edge by both edges\' travel', async () => {
+    const start = await mount({ resizeEdge: 'both' });
+    await start.move(300);
+    await start.release();
+    expect(start.commits).toHaveBeenLastCalledWith(360, expect.objectContaining({ attemptedSizePx: 360 }));
+    const end = await mount({ resizeEdge: 'both' });
+    await end.release();
+    end.commits.mockClear();
+    await act(async () => { (end.read().endHandle!.webHandleProps.onPointerDown as (event: unknown) => void)({ clientX: 320 }); });
+    await end.move(340);
+    await end.release();
+    expect(end.commits).toHaveBeenLastCalledWith(360, expect.objectContaining({ attemptedSizePx: 360 }));
+    await act(async () => { (end.read().endHandle!.webHandleProps.onPointerDown as (event: unknown) => void)({ clientX: 320 }); });
+    await end.move(290);
+    await end.release();
+    expect(end.commits).toHaveBeenLastCalledWith(260, expect.objectContaining({ attemptedSizePx: 260 }));
+  });
+
   it('requests an owner reset on double-click', async () => {
     const reset = vi.fn();
     const drag = await mount({ onResetRequest: reset });

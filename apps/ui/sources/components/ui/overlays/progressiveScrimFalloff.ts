@@ -27,6 +27,23 @@ const FALLOFF_EXPONENT = 2.2;
  */
 const DEFAULT_STOP_COUNT = 12;
 
+/**
+ * How far a band's ramp starts BEHIND the surface it seats.
+ *
+ * Without it the falloff has to start its climb exactly at the surface's edge, so the strongest
+ * frost and the sharp content meet on one line. Starting behind the surface means the band is
+ * already at full strength by the time it emerges, and the only visible part of the curve is the
+ * dissolve.
+ */
+export const SCRIM_RAMP_UNDERLAP = 28;
+
+/**
+ * The blur stack, strongest first: each layer is revealed nearer the seated edge than the last.
+ * Fractions of whatever blur the surface takes (the glass intensity on native, the backdrop strength
+ * on web), so a band scales with its setting instead of pinning its own radii.
+ */
+export const SCRIM_BLUR_LAYER_SCALES = [0.85, 0.22, 0.06] as const;
+
 export function scrimFalloff(t: number): number {
     const clamped = Math.min(1, Math.max(0, t));
     return Math.pow(1 - clamped, FALLOFF_EXPONENT);
@@ -60,6 +77,29 @@ export function scrimRamp(stopCount: number = DEFAULT_STOP_COUNT): ScrimRamp {
 }
 
 /**
+ * How much of a phone band's ramp is held at full strength: up to where the rows seated on the band end
+ * (the Docked status line and header, Search's capsules). Blur alone leaves dense list text readable
+ * behind those rows, so the page colour hides it there in every tier; frost shows only in the dissolve.
+ */
+export const SCRIM_SOLID_HOLD = 0.72;
+
+/**
+ * A ramp held at full strength over its first `hold`, then the same falloff over the rest: the band
+ * hides what is behind the rows seated on it, and the short dissolve above them keeps it a band
+ * rather than a sheet.
+ */
+export function scrimHeldRamp(hold: number, stopCount: number = DEFAULT_STOP_COUNT): ScrimRamp {
+    const held = Math.min(1, Math.max(0, hold));
+    const dissolve = scrimRamp(stopCount);
+    const locations = [0, ...dissolve.locations.map((t) => held + t * (1 - held))];
+    const alphas = [1, ...dissolve.alphas];
+    return {
+        locations: locations as unknown as ScrimRamp['locations'],
+        alphas: alphas as unknown as ScrimRamp['alphas'],
+    };
+}
+
+/**
  * The mask for one layer of a stacked progressive blur.
  *
  * Each layer holds a constant blur radius and is revealed only over the band where that radius is
@@ -86,4 +126,17 @@ export function scrimMaskBand(layerIndex: number, layerCount: number): ScrimRamp
         locations: [0, Math.max(0, bandEnd - overlap), bandEnd, 1] as const,
         alphas: [1, 1, 0, 0] as const,
     };
+}
+
+/** The one blur stack: each layer's share of the surface's blur and the band it is revealed over. */
+export function scrimBlurLayers(): ReadonlyArray<Readonly<{ scale: number; band: ScrimRamp }>> {
+    return SCRIM_BLUR_LAYER_SCALES.map((scale, index) => ({
+        scale,
+        band: scrimMaskBand(index, SCRIM_BLUR_LAYER_SCALES.length),
+    }));
+}
+
+/** The phone band's ramp, on native and web alike: held under the seated rows, then dissolving. */
+export function scrimBandRamp(stopCount: number = DEFAULT_STOP_COUNT): ScrimRamp {
+    return scrimHeldRamp(SCRIM_SOLID_HOLD, stopCount);
 }
