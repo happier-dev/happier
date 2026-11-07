@@ -11,6 +11,9 @@ import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
 import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
 import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
+import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
+import { loadUsageEventCandidatesForQueries } from './loadUsageEventCandidatesForQueries';
 
 const usageQuerySliceMs = 20;
 
@@ -64,8 +67,12 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     if (isReaderClosed?.()) throw new Error('Usage reader closed');
     let rows: UsageAnalyticsSnapshot['rows'];
     let evidenceRows: ScopedUsageEvidenceRow[] | undefined;
+    let rawEvidenceRows: UsageAnalyticsSnapshot['rawEvidenceRows'];
     const preparedPopulations = new Map<string, UsageAnalyticsSnapshot>();
-    if ('evidence' in events) {
+    if ('evidence' in events && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
+        rawEvidenceRows = events.evidence;
+        rows = await loadUsageEventCandidatesForQueries(tx, accountId, queries);
+    } else if ('evidence' in events) {
         evidenceRows = [];
         let sliceStartedAt = performance.now();
         for (const row of events.evidence) {
@@ -116,7 +123,7 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
         const messageCountsBySession = hasUsageMessageCountDemand(query)
             ? counts.get(JSON.stringify(query.dateRange ?? {})) : undefined;
         snapshots.set(getUsageAnalyticsQueryRequestKey(query), {
-            ...(prepared ?? { evidenceRows, legacyReports }),
+            ...(prepared ?? { evidenceRows, rawEvidenceRows, legacyReports }),
             rows: prepared?.rows ?? rows,
             preparedQueryKey: prepared ? getUsageAnalyticsQueryRequestKey(query) : undefined,
             priceCatalog, messageCountsBySession });
@@ -127,6 +134,29 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
 /** Admit each captured body before range fan-out, preserving the raw capture for its caller. */
 async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captureUsageAnalyticsBatchInTx>>,
     queries: readonly UsageAnalyticsQueryRequest[], timing?: UsageQueryTiming) {
+    let sliceStartedAt = performance.now();
+    const histories = new Map<NonNullable<UsageAnalyticsSnapshot['rawEvidenceRows']>, {
+        evidenceRows: ScopedUsageEvidenceRow[]; normalizedEvidenceById: Map<string, ScopedUsageEvidenceRow>;
+    }>();
+    for (const captured of snapshot.snapshots.values()) {
+        if (!captured.rawEvidenceRows) continue;
+        let admitted = histories.get(captured.rawEvidenceRows);
+        if (!admitted) {
+            admitted = { evidenceRows: [], normalizedEvidenceById: new Map() };
+            for (const row of captured.rawEvidenceRows) {
+                const evidence = toScopedUsageEvidenceRow(row);
+                admitted.evidenceRows.push(evidence);
+                admitted.normalizedEvidenceById.set(evidence.id, evidence);
+                if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
+                    if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
+                    await setImmediate();
+                    sliceStartedAt = performance.now();
+                }
+            }
+            histories.set(captured.rawEvidenceRows, admitted);
+        }
+        Object.assign(captured, admitted, { rawEvidenceRows: undefined });
+    }
     const inputs = new Map<UsageAnalyticsSnapshot['rows'], string[]>();
     for (const query of queries) {
         const key = getUsageAnalyticsQueryRequestKey(query);
@@ -136,7 +166,6 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
         keys.push(key);
         inputs.set(captured.rows, keys);
     }
-    let sliceStartedAt = performance.now();
     for (const [rows, keys] of inputs) {
         const admitted: UsageAnalyticsSnapshot['rows'] = [];
         const evidenceById = snapshot.snapshots.get(keys[0]!)?.normalizedEvidenceById;

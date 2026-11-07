@@ -837,7 +837,9 @@ The direct Account-server routes behind Settings and daemon verification are:
   It lists roots only; an API Token is not accepted as the route
   credential.
 - `POST /v1/auth/api-tokens/revoke` — requires `present_user` and revokes the
-  exact Account-owned token id.
+  exact Account-owned token id. In 0.3 development, Agents and MCP may request
+  `account.apiTokens.revoke` through the ordinary approval card. Token creation
+  stays unavailable to Agents and MCP so the new bearer never enters their flow.
 - `POST /v1/auth/api-tokens/revoke-all` — requires `present_user` and revokes
   every API Token for the authenticated Account.
 - `POST /v1/auth/api-tokens/update` — `account.apiTokens.update`, present-user;
@@ -3204,9 +3206,13 @@ the approved usage disclosure contract, without exposing transcript content.
 
 The 0.3 development query owner captures raw `UsageEvent` and retained
 `UsageReport` facts in the canonical read snapshot shared by the direct service,
-v1, v2 and batch routes. One event read captures the complete pre-end history;
-metadata decoding, normalization, subject selection and body projection run after
-the snapshot commits. Historical identity and coverage evidence preserve legacy
+v1, v2 and batch routes. Bounded PostgreSQL queries capture thin pre-end history
+and a conservative set of complete candidate histories in two event statements;
+unbounded queries capture full history in one. PostgreSQL metadata admission,
+normalization, subject selection and body projection run after the snapshot commits.
+Candidate selection uses Session and opaque native hints only to overselect storage
+rows; the accounting replay owner alone decides canonical subject membership.
+Historical identity and coverage evidence preserve legacy
 suppression and global replay order. Only accounting subjects that can contribute
 to the requested windows and Session or dimension filters enter body projection,
 including unattributed snapshot residuals. Each selected subject keeps its pre-range

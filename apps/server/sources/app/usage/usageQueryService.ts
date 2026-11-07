@@ -101,6 +101,8 @@ export async function queryUsageAnalytics(
 
 export interface UsageAnalyticsSnapshot {
     rows: UsageQueryEvent[];
+    /** PostgreSQL capture leaves historical metadata opaque until commit. */
+    rawEvidenceRows?: readonly import('./query/scopedUsageEventRow').ScopedUsageEvidenceDbRow[];
     evidenceRows?: readonly ScopedUsageEvidenceRow[];
     normalizedEvidenceById?: ReadonlyMap<string, ScopedUsageEvidenceRow>;
     replayContext?: ScopedUsageReplayContext;

@@ -198,7 +198,7 @@ describe('Usage snapshot transaction lifetime', () => {
             };
             if (entry === 'service') {
                 expectSnapshot(await queryUsageAnalytics('account', query), 10, 'original-model');
-                expect(readsInCapture).toBe(1);
+                expect(readsInCapture).toBe(2);
                 expect(settled).toBe(true);
                 expectSnapshot(await queryUsageAnalytics('account', query), 20, 'settled-model');
                 return;
@@ -211,7 +211,7 @@ describe('Usage snapshot transaction lifetime', () => {
                                 ? { queries: [query], includeContributions: true } : query });
                     expect(response.statusCode, response.body).toBe(200);
                     expect(settled).toBe(true);
-                    expect(readsInCapture).toBe(1);
+                    expect(readsInCapture).toBe(2);
                     const body = response.json();
                     if (entry.startsWith('/v1')) expect(body.usage[0].tokens.total).toBe(tokens);
                     else expectSnapshot(UsageAnalyticsQueryResponseSchema.parse(entry.endsWith('query-batch')
@@ -220,7 +220,7 @@ describe('Usage snapshot transaction lifetime', () => {
             });
         });
 
-    it('shares one raw snapshot read per page batch, deduplicates slices and delivers raw accounting on request', async () => {
+    it('shares one evidence and one candidate read per bounded page batch, deduplicates slices and delivers raw accounting on request', async () => {
         const current = { dateRange: { startMs: 0, endMs: 200 }, breakdowns: ['agent'], costMode: 'auto' };
         const other = { ...current, breakdowns: ['model'], costMode: 'api_equivalent' };
         await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
@@ -229,10 +229,11 @@ describe('Usage snapshot transaction lifetime', () => {
             expect(response.statusCode, response.body).toBe(200);
             const batch = response.json();
             expect(batch.results).toHaveLength(2);
-            expect(usageEventReads).toEqual([true]);
-            const [snapshotQuery] = usageEventRawRead.mock.calls.map(([query]) => query.strings.join('?'));
-            expect(snapshotQuery).toContain('"totalTokens"');
-            expect(snapshotQuery).toContain('"metadata"');
+            expect(usageEventReads).toEqual([true, true]);
+            const [evidenceQuery, candidateQuery] = usageEventRawRead.mock.calls.map(([query]) => query.strings.join('?'));
+            expect(evidenceQuery).not.toContain('"totalTokens"');
+            expect(evidenceQuery).toContain('"metadata"');
+            expect(candidateQuery).toContain('"totalTokens"');
             expect(boundary.db.usageReport.findMany).toHaveBeenCalledTimes(1);
             for (const result of batch.results) {
                 expect(result.value.totals.tokens.total).toBe(7);

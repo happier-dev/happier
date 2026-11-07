@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import type { Prisma } from '@prisma/client';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -16,7 +17,8 @@ import { captureUsageAnalyticsInTx, projectUsageAnalytics } from './usageQuerySe
 import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 
-type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number };
+type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number;
+    metadataReads?: number };
 
 /** Observe the real transaction's database results, leaving the query and projector intact. */
 function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
@@ -45,6 +47,13 @@ function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
                     }
                     if (count.metadataRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'metadata')) {
                         count.metadataRows += rows.length;
+                    }
+                    if (count.metadataReads !== undefined) for (const row of rows) {
+                        const metadata = Reflect.get(row, 'metadata');
+                        Object.defineProperty(row, 'metadata', { enumerable: true, get() {
+                            count.metadataReads! += 1;
+                            return metadata;
+                        } });
                     }
                 }
                 return rows;
@@ -144,6 +153,35 @@ describe('Usage analytics PostgreSQL event transport', () => {
             .totals.tokens.total).toBe(0);
     });
 
+    it('keeps opaque native competitors, fallback baselines and malformed historical metadata coherent', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const subject = { kind: 'native', machineId: ' machine ',
+            agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            sourceRootKey: ' root ', nativeSessionKey: ' native ' };
+        const event = (id: string, at: number, metadata: Prisma.InputJsonValue, tokens: number, cumulative = false) => ({
+            id, accountId: account.id, observedAt: new Date(at), createdAt: new Date(at),
+            agentId: 'claude', machineId: 'machine', source: 'native', metadata,
+            scope: cumulative ? 'session_cumulative' : 'turn_delta', isCumulative: cumulative,
+            inputTokens: tokens, totalTokens: tokens,
+        });
+        await db.usageEvent.createMany({ data: [
+            event('candidate-native-baseline', 100, JSON.stringify({ accountingSubject: subject }), 100, true),
+            event('candidate-native-current', 200, { accountingSubject: subject }, 110, true),
+            event('candidate-fallback-baseline', 100, { usageAccounting: { nativeSessionId: ' fallback ' } }, 40, true),
+            event('candidate-fallback-current', 200, JSON.stringify({ usageAccounting: { nativeSessionId: 'fallback' } }), 45, true),
+            event('candidate-malformed', 100, '{invalid json', 999),
+            event('candidate-unrelated', 100, { accountingSubject: { ...subject, nativeSessionKey: 'native' } }, 999),
+        ] });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 175, endMs: 250 },
+            includeSeries: true, includeActivity: true, breakdowns: ['source'] });
+        const captured = await inTx(tx => captureUsageAnalyticsInTx(tx, account.id, request),
+            { readOnly: true, isolationLevel: 'Serializable' });
+        const control = { ...captured, rows: await inTx(tx => loadUsageEventsForQuery(tx, account.id, request)),
+            rawEvidenceRows: undefined, evidenceRows: undefined, replayContext: undefined, normalizedEvidenceById: undefined };
+        expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics(control, request));
+        expect(projectUsageAnalytics(captured, request).totals.tokens.total).toBe(15);
+    });
+
     it('reads full bodies only for demanded histories while retaining thin historical coverage', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.$executeRaw`INSERT INTO "UsageEvent" ("id", "accountId", "observedAt", "agentId", "source", "scope",
@@ -153,9 +191,10 @@ describe('Usage analytics PostgreSQL event transport', () => {
         const request = UsageAnalyticsQueryRequestSchema.parse({
             dateRange: { startMs: 26397_000, endMs: 33659_000 },
         });
-        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0 };
+        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0, metadataReads: 0 };
         const captured = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, count),
             account.id, request), { readOnly: true, isolationLevel: 'Serializable' });
+        expect(count.metadataReads, 'historical metadata admission and replay must wait until the snapshot commits').toBe(0);
         // Option A ruling: complete demanded histories, rather than all historical bodies.
         expect(count.bodyRows).toBe(7_262);
         expect(captured.rows).toHaveLength(7_262);
@@ -167,6 +206,6 @@ describe('Usage analytics PostgreSQL event transport', () => {
             rows: baselineRows, legacyReports: captured.legacyReports, priceCatalog: captured.priceCatalog,
             messageCountsBySession: undefined,
         }, request));
-        expect(count).toEqual({ reads: 2, ormRows: 0, rowCounts: [33_658, 7_262], metadataRows: 40_920, bodyRows: 7_262 });
+        expect(count).toMatchObject({ reads: 2, ormRows: 0, rowCounts: [33_658, 7_262], metadataRows: 40_920, bodyRows: 7_262 });
     });
 });

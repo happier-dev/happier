@@ -77,16 +77,15 @@ export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnap
     if (snapshot.replayContext && snapshot.preparedQueryKey === preparedQueryKey) return snapshot;
     const end = request.dateRange?.endMs;
     const sessions = request.filters?.sessionIds;
-    const historicalRows = snapshot.evidenceRows ?? snapshot.rows;
+    const historicalRows = snapshot.rawEvidenceRows ?? snapshot.evidenceRows ?? snapshot.rows;
     const rows = end === undefined ? historicalRows : historicalRows.filter(row => row.observedAt.getTime() < end);
     const legacyReports = snapshot.legacyReports.filter(report => (end === undefined || report.updatedAt.getTime() < end)
         && (!sessions?.length || (report.sessionId !== null && sessions.includes(report.sessionId))));
     const normalized: ScopedUsageEvidenceRow[] = [];
     const normalizedEvidenceById = new Map<string, ScopedUsageEvidenceRow>();
     for (const row of rows) {
-        const evidence: ScopedUsageEvidenceRow = 'totalTokens' in row
-            ? row.accountingEvidence ? { ...row, accountingEvidence: row.accountingEvidence } : toScopedUsageEvidenceRow(row)
-            : row;
+        const evidence = row.accountingEvidence ? { ...row, accountingEvidence: row.accountingEvidence }
+            : toScopedUsageEvidenceRow(row);
         normalized.push(evidence);
         normalizedEvidenceById.set(evidence.id, evidence);
         if (shouldYield()) yield;
@@ -94,7 +93,7 @@ export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnap
     const evidenceRows = normalizeUsageAnalyticsEvidenceRows(normalized, legacyReports);
     const replayContext = prepareScopedUsageReplayContext(evidenceRows, request.dateRange, request.filters);
     return { ...snapshot, rows: snapshot.rows.filter(row => replayContext.selectedEventIds.has(row.id)),
-        legacyReports, evidenceRows, normalizedEvidenceById, replayContext, preparedQueryKey };
+        legacyReports, evidenceRows, rawEvidenceRows: undefined, normalizedEvidenceById, replayContext, preparedQueryKey };
 }
 
 /** Normalize, reconcile and select the committed population, independently of output demand. */
