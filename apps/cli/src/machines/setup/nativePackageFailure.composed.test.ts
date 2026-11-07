@@ -19,7 +19,6 @@ import { unwrapActionResultForRpc } from '@/rpc/handlers/registerActionSpecRpcHa
 // Only sudo's process streams and native commands are substituted. The package
 // owner, both interpreters, strict IPC, task and Action completion remain real.
 describe('Software Apply native package failure retention', () => {
-  // An uncertain install retains this daemon's native admission; keep it last.
   it.each(['check', 'availability', 'daemon', 'fresh', 'install'] as const)('preserves the native %s outcome through privileged Software Apply', async phase => {
     const machineId = `guest-${phase}`;
     let rootChecking = false;
@@ -30,7 +29,7 @@ describe('Software Apply native package failure retention', () => {
       if (executable === 'dpkg') return ok('amd64\n');
       if (executable === 'apt-get' && args[0] === '--version') return ok('apt 3.2\n');
       if (executable === 'dpkg-query') return installed ? ok('wanted\tinstall ok installed\t1\tamd64\n') : { code: 1, stdout: '', stderr: '' };
-      if (executable === 'lslocks' && !rootChecking && (phase === 'availability' || phase === 'fresh')) return ok('{"locks":[{"path":"/run..."}]}');
+      if (executable === 'lslocks' && !rootChecking && (phase === 'availability' || phase === 'fresh')) return { code: 1, stdout: '', stderr: 'Permission denied' };
       if (executable === 'lslocks') return ok(rootChecking && phase === 'check'
         ? '{"locks":[{"path":"/var/lib/dpkg/lock-frontend"}]}' : '{"locks":[]}');
       if (executable === 'apt-cache' && args[0] === 'policy') return ok(rootChecking && (phase === 'availability' || phase === 'fresh' && !refreshed)
@@ -95,6 +94,8 @@ describe('Software Apply native package failure retention', () => {
         ...(phase === 'install' ? { nativeCommand: { command: 'apt-get', phase: 'install', exitCode: 100, category: 'package_manager_busy' } } : {}) };
       if (phase === 'daemon') expect(result).toMatchObject({ ok: false,
         errorCode: 'native_check_unsupported', error: 'native_check_unsupported', details: { kind: 'machineSetup', failure } });
+      if (phase === 'install') expect(result).toMatchObject({ ok: false, errorCode: 'native_effect_failed',
+        details: { kind: 'machineSetup', failure: { stepId: 'software', nativeCommand: { exitCode: 100 } } } });
       expect(result).toMatchObject({ ok: false, details: { kind: 'machineSetup', failure } });
       expect(ActionOperationFailureV1Schema.safeParse(result.ok ? undefined : {
         errorCode: result.errorCode, error: result.error, details: result.details,
@@ -128,6 +129,7 @@ describe('Software Apply native package failure retention', () => {
       await coordinator.run({ runId: `apt-${phase}`, definition: buildMachineSetupWorkflow(reviewed), inputs: {},
         executionTarget: { kind: 'session' }, authorization: { principal: { kind: 'host' } } });
       expect(store.list().find(row => row.blockKind === 'action')).toMatchObject({ result: { kind: 'machineSetup', failure } });
+      if (phase === 'install') expect(store.list().find(row => row.blockKind === 'action')).toMatchObject({ lifecycle: 'failed' });
       expect(JSON.stringify(result)).not.toContain('private-owner');
       expect(JSON.stringify(result)).not.toContain('process 42');
     } finally { terminals.dispose(); }

@@ -1,6 +1,6 @@
+import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
-import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { InteractiveSystemTaskContext } from '@happier-dev/cli-common/systemTasks/interactiveTaskKinds';
 import { MachineAdminAccessFieldV1, MachineAdminAccessV1Schema,
@@ -14,17 +14,10 @@ import { readMachineSetupStepExecutionUserV1,
 import { buildManagedSudoersSteps } from './managedSudoers';
 import { MachineEffectInternalRecordSchema, type MachineEffectInternalRequest } from '../setup/effectInternalProtocol';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
-import { getFirstPartyComponentCatalogEntry, resolveFirstPartyInstallLayout, resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
-import { join } from 'node:path';
 import { logger } from '@/ui/logger';
 import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
-
-/** The managed install layout is shared by policy transitions and recipe work. */
-export function resolveInstalledMachineEffectCli(): string {
-    const channel = resolveManagedCliReleaseChannelSync().ringId;
-    const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel });
-    return join(layout.currentPath, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
-}
+import type { MachineEffectCliInvocation } from './machineEffectCli';
+export { resolveInstalledMachineEffectCli } from './machineEffectCli';
 
 export type MachineElevationProcess = Readonly<{
     stdin: Writable; stdout: Readable; stderr: Readable;
@@ -34,25 +27,6 @@ export type MachineElevationProcess = Readonly<{
 export type MachineElevationSpawn = (input: Readonly<{
     executable: string; args: readonly string[]; installedCli?: string;
 }>) => MachineElevationProcess;
-export type RunElevatedEffectInput = Readonly<{
-    machineId: string; operationId: string; signal?: AbortSignal;
-    effect: MachineElevatedEffectV1;
-    /** Notification before the single irreversible frame may reach the child. */
-    onRebootDispatch?: () => void | Promise<void>;
-    /** Successful root settlement, including an already-satisfied no-op. Host-only. */
-    onSetupApplied?: (result: MachineSetupApplyResultV1) => void;
-}>;
-export type MachineElevationDependencies = Readonly<{
-    installationId: string; installedCli: string;
-    readPolicy: () => Promise<MachineAdminAccessV1>;
-    observe: () => Promise<MachineAdminAccessObservationV1>;
-    verifyCurrent: (boundary?: 'reboot_dispatch') => Promise<boolean>;
-    prompt?: InteractiveSystemTaskContext['prompt'];
-    emit?: InteractiveSystemTaskContext['emit'];
-    spawn?: MachineElevationSpawn;
-    /** Exact P21/P42 admitted invocation; keys and material remain inside the elevated child. */
-    connectorSecretGrant?: MachineConnectorSecretGrantHostRequest;
-}>;
 
 class ManagedMachineCliUnavailableError extends Error {
     constructor(readonly executablePath: string) {
@@ -75,6 +49,26 @@ const spawnElevation: MachineElevationSpawn = input => {
     return { stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, settled,
         async terminate() { child.kill('SIGTERM'); await settled; } };
 };
+
+export type RunElevatedEffectInput = Readonly<{
+    machineId: string; operationId: string; signal?: AbortSignal;
+    effect: MachineElevatedEffectV1;
+    /** Notification before the single irreversible frame may reach the child. */
+    onRebootDispatch?: () => void | Promise<void>;
+    /** Successful root settlement, including an already-satisfied no-op. Host-only. */
+    onSetupApplied?: (result: MachineSetupApplyResultV1) => void;
+}>;
+export type MachineElevationDependencies = MachineEffectCliInvocation & Readonly<{
+    installationId: string;
+    readPolicy: () => Promise<MachineAdminAccessV1>;
+    observe: () => Promise<MachineAdminAccessObservationV1>;
+    verifyCurrent: (boundary?: 'reboot_dispatch') => Promise<boolean>;
+    prompt?: InteractiveSystemTaskContext['prompt'];
+    emit?: InteractiveSystemTaskContext['emit'];
+    spawn?: MachineElevationSpawn;
+    /** Exact P21/P42 admitted invocation; keys and material remain inside the elevated child. */
+    connectorSecretGrant?: MachineConnectorSecretGrantHostRequest;
+}>;
 
 function hasPromptlessElevation(policy: MachineAdminAccessV1, observation: MachineAdminAccessObservationV1): boolean {
     return policy.mode === 'preauthorized' && observation.reasonCode !== 'platformUnsupported'
@@ -315,7 +309,11 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     const initialRefusal = transitionAuthentication ? undefined : await currentRefusal();
     if (initialRefusal) return refused(initialRefusal);
     const policy = transitionAuthentication ?? await dependencies.readPolicy();
-    if (policy.mode === 'none') return refused('mode_none');
+    if (policy.mode === 'none') return request.kind === 'check'
+        // Read-only CHECK never prompts. Ordinary effects still support Ask.
+        ? { outcome: 'not_applied', reasonCode: 'mode_none',
+            recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } }
+        : refused('mode_none');
     const observation = transitionObservation ?? await dependencies.observe();
     if (observation.reasonCode === 'platformUnsupported') return refused('platform_unsupported');
     if (policy.mode === 'preauthorized' && !hasPromptlessElevation(policy, observation)) return refused('not_preauthorized');
@@ -342,7 +340,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     try {
         child = (dependencies.spawn ?? spawnElevation)({ executable: 'sudo', installedCli: dependencies.installedCli, args: [
             ...(ask ? ['-k', '-S', '-p', '[happier-sudo-password:%p]\n'] : ['-n']), '-u', 'root', '--',
-            dependencies.installedCli, 'machine', 'effect-internal', `--operation-id=${input.operationId}`,
+            dependencies.installedCli, ...(dependencies.installedCliArgs ?? []), 'machine', 'effect-internal', `--operation-id=${input.operationId}`,
             `--installation-id=${dependencies.installationId}`,
         ] });
     } catch (error) {
@@ -603,6 +601,10 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         if (reboot && result.status === 'unsupported' && result.reason === 'platform_unsupported') return refused('platform_unsupported');
         if (result.status === 'checked') return request.kind === 'check' && settled.code === 0 && 'plan' in result
             ? { outcome: 'checked', plan: result.plan } : { outcome: 'outcome_unknown' };
+        if (result.comparison && (result.comparison.fields.length || result.comparison.targetChanged))
+            logger.warnLocalFile('[machine-elevation] native CHECK/APPLY comparison', {
+                operationId: input.operationId, status: result.status, ...result.comparison,
+            });
         const failureContext = 'stepId' in result && result.stepId
             ? { stepId: result.stepId, phase: effectStarted ? 'apply' as const : 'check' as const } : undefined;
         if (!nativeFailure && result.failure) {
@@ -626,10 +628,10 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         if (result.status === 'cancelled' && (result.completedStepIds.length === 0 || result.restoration)) {
             return { outcome: 'not_applied', reasonCode: 'cancelled', ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
-        // A missing prerequisite before any completed step is a known refusal.
-        // A failed native command may have partly run despite zero completed steps.
-        if (result.status === 'failed' && result.reason === 'required_fact_unavailable' && result.completedStepIds.length === 0) {
-            return nativeRefused(rememberNativeFailure('native_effect_failed', result.reason, requiredFact, undefined, failureContext));
+        // A terminal failure settles the operation even when earlier steps applied.
+        if (result.status === 'failed') {
+            return { ...nativeRefused(rememberNativeFailure('native_effect_failed', result.reason, requiredFact, undefined, failureContext)),
+                ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
         if (result.status === 'outcome_unknown' || effectStarted || result.completedStepIds.length > 0) {
             rememberNativeFailure('native_effect_failed', result.reason, requiredFact, undefined, failureContext);
