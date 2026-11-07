@@ -72,7 +72,7 @@ export type VoiceMomentsTranslation = Readonly<{
 
 
 export const voiceMomentsTranslationsEnglish = { en: {
-        setupTitle: 'Set up voice',
+        setupTitle: 'Set up Voice',
         setupTileSubtitle: 'Talk to your sessions out loud. Four short steps.',
         setupTileProgress: ({ done, total, next }) => `${done} of ${total} done · ${next}`,
         setupNextService: 'choose who listens next',
