@@ -19,6 +19,6 @@ describe('formatAsOfTime', () => {
         expect(formatAsOfTime(afternoon, now)).toBe('15:30');
 
         commitPreferredLanguage('en');
-        expect(formatAsOfTime(afternoon, now)).toBe('03:30 PM');
+        expect(formatAsOfTime(afternoon, now)).toBe('3:30 PM');
     });
 });

@@ -9,9 +9,10 @@ describe('resolveHappierFreshnessText: one text policy for host and plugin fresh
 
   it('tells the time in the viewer\'s own locale clock, the way every other time on the page does', () => {
     const afternoon = new Date(2026, 8, 29, 15, 30).getTime();
-    expect(formatHappierAsOfTime(afternoon, now, 'en-US')).toBe('03:30 PM');
+    // An hour reads as people say it: "3:30 PM", never "03:30 PM".
+    expect(formatHappierAsOfTime(afternoon, now, 'en-US')).toBe('3:30 PM');
     expect(formatHappierAsOfTime(afternoon, now, 'de')).toBe('15:30');
-    expect(formatHappierAsOfTime(afternoon, new Date(2026, 8, 30).getTime(), 'en-US')).toBe('Sep 29, 03:30 PM');
+    expect(formatHappierAsOfTime(afternoon, new Date(2026, 8, 30).getTime(), 'en-US')).toBe('Sep 29, 3:30 PM');
   });
 
   it('says when the retained content was read, then why it may be behind', () => {

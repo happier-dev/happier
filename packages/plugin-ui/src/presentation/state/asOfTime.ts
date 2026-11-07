@@ -10,7 +10,8 @@ export function formatHappierAsOfTime(at: number, now: number = Date.now(), loca
   const locales = locale === undefined ? [] : [locale];
   const read = new Date(at);
   const today = new Date(now);
-  const time = read.toLocaleTimeString(locales, { hour: '2-digit', minute: '2-digit' });
+  // `numeric` hour: "3:42 PM" as people say it, never a padded "03:42 PM".
+  const time = read.toLocaleTimeString(locales, { hour: 'numeric', minute: '2-digit' });
   const sameDay = read.getFullYear() === today.getFullYear()
     && read.getMonth() === today.getMonth()
     && read.getDate() === today.getDate();
