@@ -6,6 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon } from '@/components/ui/icons/Icon';
 import { TaskStatusPill } from './TaskSessionStatusPill';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 export const TODO_HEIGHT = 56;
@@ -40,12 +41,12 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
             alignItems: 'center',
             paddingHorizontal: theme.space.s12
         }}>
-            <Pressable
+            <HappierPressable
+                hitReach={0}
                 onPress={(e) => {
-                    e.stopPropagation();
+                    e?.stopPropagation?.();
                     props.onToggle?.();
                 }}
-                hitSlop={8}
                 style={{
                     width: 24,
                     height: 24,
@@ -61,7 +62,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
                 {props.done && (
                     <Icon name="check" size={16} color={theme.colors.button.primary.tint} />
                 )}
-            </Pressable>
+            </HappierPressable>
             <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                 <Text
                     style={{
