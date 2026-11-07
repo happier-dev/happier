@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { logger } from '@/ui/logger';
 import type { AgentSessionGoalControlContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { authorizePluginExecLaunchForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { authorizePluginExecLaunchForHost, authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
+import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { AgentRuntimeDaemonServiceResponseV1Schema } from './agentRuntimeDaemonServiceProtocol';
 import { createCodexNativeAppServerClient } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
 import { createCodexNativeSessionControls } from '../../../../../../../packages/plugins/codex/src/agent/runtime/controls';
 
@@ -24,12 +29,6 @@ import {
     RunnerDaemonPluginServiceOperationV1Schema,
     type RunnerDaemonPluginServiceOperationV1,
 } from './agentRuntimeDaemonPluginServicesProtocol';
-import {
-    EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
-} from '@/session/external/hostOperationOwner';
-import {
-    EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
-} from '@/session/external/followListenerSettlement';
 import {
     prepareRunnerDaemonPluginServices,
 } from './runnerDaemonPluginServices';
@@ -64,7 +63,6 @@ it('returns typed unavailability for native observation and saved health without
         { sourceInstanceId: 'health-source', checkIds: [] },
     ))).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
 });
-
 
 it('refuses unsupported runner HTTP streaming without dispatching to the daemon', async () => {
     const dispatch = vi.fn(async (operation: RunnerDaemonPluginServiceOperationV1) => {
@@ -241,6 +239,52 @@ function managedProviderBootstrap(
 }
 
 describe('runner daemon PluginServices proxy', () => {
+    it.skipIf(!process.getuid)('decodes the private Agent launch frame separately from binary provider stdin', async () => {
+        const controller = new AbortController();
+        const providerInput = new Uint8Array([0, 255, 128, 10]);
+        const transport = await prepareSessionMcpLocalTransport({ agentUid: process.getuid!() });
+        const server = createServer();
+        try {
+            await transport.listen(server);
+            const framed = createUnixAgentIdentityLaunch({ managedHappierBinaryPath: '/managed/happier',
+                executable: process.execPath, args: ['--version'], cwd: process.cwd(), runtimeHome: '/agent/runtime',
+                environment: {}, selectedEnvironmentKeys: [], sessionMcpContext: transport.localContext,
+                selectedMaterials: [{ relativePath: 'selected.bin', contentBase64: Buffer.alloc(50_000, 7).toString('base64') }],
+            });
+            const services = await prepareRunnerDaemonPluginServices({ invocationId: 'private-launch-frame',
+                signal: controller.signal, local: createUnavailablePluginServices(),
+                // The protected daemon RPC is the boundary. Its frame comes from the real identity adapter.
+                dispatch: async operation => {
+                    RunnerDaemonPluginServiceOperationV1Schema.parse(operation);
+                    if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+                    if (operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1') {
+                        const value = {
+                            authorizationId: 'frame-authorization', launch: { ...framed,
+                                stdinPreamble: framed.stdinPreamble.toString('base64'), stdin: Buffer.from(providerInput).toString('base64') },
+                        };
+                        AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true, result: { kind: 'plugin_services.result_v1',
+                            requestId: operation.requestId, value: encodeRunnerDaemonPluginServiceWireValueV1(value) } });
+                        return value;
+                    }
+                    if (operation.kind === 'plugin_exec.launch.release_v1' || operation.kind === 'plugin_services.close_v1') return null;
+                    throw new Error(`Unexpected ${operation.kind}`);
+                },
+            });
+            const launch = await authorizeResolvedAgentNativeExecLaunchForHost(services.exec,
+                { command: process.execPath, args: ['--version'], cwd: process.cwd(), env: {}, stdin: providerInput });
+            try {
+                expect(launch.stdinPreamble instanceof Uint8Array).toBe(true);
+                expect(Buffer.compare(Buffer.from(launch.stdinPreamble ?? []), framed.stdinPreamble)).toBe(0);
+                expect(launch.stdin).toEqual(providerInput);
+            } finally { await launch.release(); }
+        } finally {
+            controller.abort();
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+            await transport.retire();
+        }
+    });
+
     it('keeps scoped Codex Goal controls in the runtime launch environment across profile bindings', async () => {
         await withTempDir('runner-codex-goal-scope-', async root => {
             const defaultHome = join(root, 'host-default');
@@ -293,7 +337,7 @@ describe('runner daemon PluginServices proxy', () => {
                         const { stdin, ...request } = operation.request;
                         const launch = await authorizePluginExecLaunchForHost(daemonExec, {
                             ...request, ...(stdin === undefined ? {} : { stdin: new Uint8Array(Buffer.from(stdin, 'base64')) }),
-                        });
+                        }, { agentIsolation: null });
                         return { authorizationId: operation.requestId,
                             launch: { command: launch.command, args: launch.args, env: launch.env, cwd: launch.cwd } };
                     }
@@ -507,10 +551,6 @@ describe('runner daemon PluginServices proxy', () => {
         const closeRequested = new Promise<void>((resolve) => {
             resolveCloseRequested = resolve;
         });
-        let resolveTerminalAcknowledged!: () => void;
-        const terminalAcknowledged = new Promise<void>((resolve) => {
-            resolveTerminalAcknowledged = resolve;
-        });
         const dispatch = vi.fn(async (
             operation: RunnerDaemonPluginServiceOperationV1,
         ): Promise<unknown> => {
@@ -578,24 +618,7 @@ describe('runner daemon PluginServices proxy', () => {
                         'acknowledgement',
                     )).toBeUndefined();
                     await closeRequested;
-                    return {
-                        kind:
-                            'plugin_sessions.external.follow_transcript.event_v1',
-                        invocationId: 'invocation-external-follow',
-                        subscriptionId: operation.subscriptionId,
-                        event:
-                            encodeRunnerDaemonPluginServiceWireValueV1({
-                                kind: 'terminated',
-                                reason: 'disposed',
-                                cursor: 'cursor-1',
-                            }),
-                    };
                 }
-                expect(Reflect.get(
-                    operation,
-                    'acknowledgement',
-                )).toBe('settled');
-                resolveTerminalAcknowledged();
                 throw new PluginError({
                     code: 'plugin_service_subscription_closed',
                     message: 'Subscription closed after acknowledgement',
@@ -607,7 +630,6 @@ describe('runner daemon PluginServices proxy', () => {
             ) {
                 closeCount += 1;
                 resolveCloseRequested();
-                await terminalAcknowledged;
                 return null;
             }
             throw new Error(`Unexpected ${operation.kind}`);
@@ -656,15 +678,10 @@ describe('runner daemon PluginServices proxy', () => {
         await expect(firstDisposal).resolves.toBeUndefined();
         await expect(secondDisposal).resolves.toBeUndefined();
         expect(closeCount).toBe(1);
-        expect(listener).toHaveBeenCalledTimes(2);
-        expect(listener).toHaveBeenLastCalledWith({
-            kind: 'terminated',
-            reason: 'disposed',
-            cursor: 'cursor-1',
-        });
+        expect(listener).toHaveBeenCalledOnce();
     });
 
-    it('rejects an author follow listener that settles after its five-second deadline instead of wedging acquisition', async () => {
+    it('acknowledges a slow author listener only after its work settles under the containing follow', async () => {
         const unavailable = createUnavailablePluginServices();
         const acknowledgements: Array<string | undefined> = [];
         let closeCount = 0;
@@ -762,7 +779,7 @@ describe('runner daemon PluginServices proxy', () => {
         const listener = vi.fn(async () => await new Promise<void>((resolve) => {
             setTimeout(
                 resolve,
-                EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS + 1,
+                6_001,
             );
         }));
 
@@ -780,25 +797,18 @@ describe('runner daemon PluginServices proxy', () => {
             let settled = false;
             void observed.finally(() => { settled = true; });
 
-            await vi.advanceTimersByTimeAsync(
-                EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS - 1,
-            );
+            await vi.advanceTimersByTimeAsync(6_000);
             expect(settled).toBe(false);
             expect(acknowledgements).toEqual([undefined]);
 
             await vi.advanceTimersByTimeAsync(1);
-            await expect(followed).rejects.toMatchObject({
-                code: 'plugin_external_follow_listener_failed',
-            });
-            // The deadline is the delivery answer, so the pump acknowledges
-            // `rejected` instead of silently never acknowledging at all.
-            expect(acknowledgements[1]).toBe('rejected');
-            expect(closeCount).toBe(1);
+            const result = await followed;
+            expect(result.status).toBe('following');
+            expect(acknowledgements[1]).toBe('settled');
+            expect(closeCount).toBe(0);
             expect(listener).toHaveBeenCalledOnce();
 
-            // A listener that settles after its author deadline cannot advance
-            // delivery or reopen the follow.
-            await vi.advanceTimersByTimeAsync(1);
+            if (result.status === 'following') await result.subscription.dispose();
             expect(closeCount).toBe(1);
             expect(listener).toHaveBeenCalledOnce();
         } finally {
@@ -919,12 +929,7 @@ describe('runner daemon PluginServices proxy', () => {
             expect(listener).toHaveBeenCalledOnce();
 
             caller.abort();
-            // Cancellation is what settles this follow. The clock deliberately
-            // never reaches the listener ceiling, so a version that only bounds
-            // the callback by its deadline leaves this unsettled.
-            await vi.advanceTimersByTimeAsync(
-                EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS - 1,
-            );
+            await vi.advanceTimersByTimeAsync(0);
             expect(settled).toBe(true);
             expect(await observed).toEqual({
                 value: {
@@ -1040,7 +1045,7 @@ describe('runner daemon PluginServices proxy', () => {
         expect(closeCount).toBe(1);
     });
 
-    it('bounds every follow close and detaches the invocation abort listener on each unavailable attempt', async () => {
+    it('uses the containing transport lifetime and detaches invocation abort on each unavailable follow', async () => {
         const unavailable = createUnavailablePluginServices();
         const invocation = new AbortController();
         const added = vi.spyOn(invocation.signal, 'addEventListener');
@@ -1153,17 +1158,10 @@ describe('runner daemon PluginServices proxy', () => {
         // on the invocation-scoped signal.
         expect(added).toHaveBeenCalledTimes(3);
         expect(removed).toHaveBeenCalledTimes(3);
-        // `timeoutMs: null` waits for the platform default — minutes — not the
-        // disposal boundary this subscription promises. The literal ceiling is
-        // deliberate: comparing only against the exported constant would pass
-        // for any value that constant ever takes.
+        // The existing transport owns its deadline; close adds no phase cutoff.
         expect(closeTimeouts).toHaveLength(3);
         for (const timeoutMs of closeTimeouts) {
-            expect(typeof timeoutMs).toBe('number');
-            expect(timeoutMs).toBeGreaterThan(0);
-            expect(timeoutMs).toBeLessThanOrEqual(10_000);
-            expect(timeoutMs)
-                .toBe(EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS);
+            expect(timeoutMs).toBeNull();
         }
     });
 
@@ -1448,6 +1446,67 @@ describe('runner daemon PluginServices proxy', () => {
         });
         expect(acquisitionAcknowledged).toBe(true);
         expect(closeCount).toBe(1);
+    });
+
+    it.each([
+        { boundary: 'next', cancelled: true, failure: new DOMException('private-follow-exception', 'AbortError'),
+            phase: 'ended_before_opened', errorClass: 'AbortError', errorCode: null },
+        { boundary: 'next', cancelled: false, failure: new TypeError('private-follow-exception'),
+            phase: 'dispatch_failed', errorClass: 'TypeError', errorCode: null },
+        { boundary: 'next', cancelled: false, failure: Object.assign(new Error('private-follow-exception'), { code: 'ECONNRESET' }),
+            phase: 'dispatch_failed', errorClass: 'Error', errorCode: 'ECONNRESET' },
+        { boundary: 'open', cancelled: false, failure: new TypeError('private-follow-exception'),
+            phase: 'dispatch_failed', errorClass: 'TypeError', errorCode: null },
+    ])('retains typed External Sessions acquisition cause ($boundary, $phase, $errorClass, $errorCode)', async ({
+        boundary, cancelled, failure, phase, errorClass, errorCode,
+    }) => {
+        const controller = new AbortController();
+        const unavailable = createUnavailablePluginServices();
+        // File logging and daemon RPC are the only substituted boundaries.
+        const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+        let failedRequestId: string | undefined;
+        let closeCount = 0;
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-external-cause',
+            signal: controller.signal,
+            local: unavailable,
+            dispatch: async (operation) => {
+                if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+                if (operation.kind === 'plugin_sessions.external.follow_transcript.open_v1') {
+                    if (boundary === 'open') {
+                        failedRequestId = operation.requestId;
+                        throw failure;
+                    }
+                    return { status: 'opening' };
+                }
+                if (operation.kind === 'plugin_services.subscription.next_v1') {
+                    failedRequestId = operation.requestId;
+                    // A cancelled RPC ends the subscription before any opened event.
+                    if (cancelled) controller.abort();
+                    throw failure;
+                }
+                if (operation.kind === 'plugin_services.subscription.close_v1') {
+                    closeCount += 1;
+                    return null;
+                }
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+        });
+        const rejection: unknown = await services.sessions.external.followTranscript({
+            agentId: 'fixture.agent', sourceId: 'source-1', remoteSessionId: 'remote-1',
+        }, {}, () => {}).catch((error: unknown) => error);
+        expect(isPluginError(rejection)).toBe(true);
+        expect(rejection).toMatchObject({
+            code: 'plugin_external_follow_acquisition_failed',
+            data: { details: { requestId: failedRequestId, cause: { phase, errorClass, errorCode } } },
+        });
+        expect(JSON.stringify(rejection)).not.toContain('private-follow-exception');
+        expect(log).toHaveBeenCalledExactlyOnceWith('[runner.externalSessions.follow] acquisition_failed', expect.objectContaining({
+            requestId: failedRequestId, cause: { phase, errorClass, errorCode, httpStatus: null },
+        }));
+        expect(JSON.stringify(log.mock.calls)).not.toContain('private-follow-exception');
+        log.mockRestore();
+        expect(closeCount).toBe(boundary === 'open' ? 0 : 1);
     });
 
     it('preserves a separately bundled PluginError when External Sessions follow fails before acquisition', async () => {
@@ -3147,12 +3206,12 @@ describe('runner daemon PluginServices proxy', () => {
         }, () => undefined)).toThrow(expect.objectContaining({
             code: 'plugin_service_subscription_unavailable',
         }));
-        expect(() => services.resources.watch(
+        await expect(services.resources.watch(
             'prompt',
             () => undefined,
-        )).toThrow(expect.objectContaining({
+        )).rejects.toMatchObject({
             code: 'plugin_service_subscription_unavailable',
-        }));
+        });
         expect(() => services.notifications.watchPreferences(
             'build',
             () => undefined,
@@ -3726,6 +3785,50 @@ describe('runner daemon PluginServices proxy', () => {
             === 'plugin_connected_accounts.watch.next_v1'
         )).toHaveLength(2);
         subscription.dispose();
+    });
+
+    it.each(['ready', 'failed', 'cancelled'] as const)('settles the Resource watch promise only after actual subscription admission (%s)', async state => {
+        const unavailable = createUnavailablePluginServices();
+        const controller = new AbortController();
+        let settleOpen!: () => void;
+        let rejectOpen!: (error: unknown) => void;
+        let opened = false;
+        let closes = 0;
+        const failure = new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'Observer cannot attach' });
+        const services = await prepareRunnerDaemonPluginServices({ invocationId: 'resource-admission', signal: controller.signal,
+            dispatch: async (operation, options) => {
+                if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+                if (operation.kind === 'plugin_resources.watch.open_v1') {
+                    opened = true;
+                    return await new Promise<null>((resolve, reject) => { settleOpen = () => resolve(null); rejectOpen = reject; });
+                }
+                if (operation.kind === 'plugin_services.subscription.close_v1') { closes++; return null; }
+                if (operation.kind === 'plugin_services.subscription.next_v1') return await new Promise<never>((_resolve, reject) => {
+                    options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+                });
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+            local: unavailable,
+        });
+        let settled = false;
+        const watched = services.resources.watch('prompt', vi.fn());
+        void watched.then(() => { settled = true; }, () => { settled = true; });
+        await vi.waitFor(() => expect(opened).toBe(true));
+        expect(settled).toBe(false);
+        if (state === 'failed') {
+            rejectOpen(failure);
+            await expect(watched).rejects.toBe(failure);
+        } else if (state === 'cancelled') {
+            controller.abort(failure);
+            await expect(watched).rejects.toBe(failure);
+            settleOpen();
+        } else {
+            settleOpen();
+            const watch = await watched;
+            watch.dispose();
+        }
+        await vi.waitFor(() => expect(closes).toBeGreaterThan(0));
+        controller.abort();
     });
 
     it('reopens a level-triggered resource watch after exact successor handle loss', async () => {

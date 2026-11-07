@@ -1,13 +1,15 @@
 import { statSync, utimesSync } from 'node:fs';
-import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 
-import { buildServiceCommandEnv, isBenignServiceAbsenceFailure } from '@happier-dev/cli-common/service';
+import { applyServicePlan, buildServiceCommandEnv, isBenignServiceAbsenceFailure } from '@happier-dev/cli-common/service';
 
 import type { DaemonServiceInstallPlan, DaemonServiceUninstallPlan, DaemonServicePlannedCommand } from './plan';
 import { commandExistsInPath } from './commandExistsInPath';
+import { readLaunchctlFailureReason } from './launchctlFailure';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
+import { DaemonServiceError, type DaemonServiceFailureFacts } from './failure';
 
 export type DaemonServiceCommandFailureMode = 'best-effort' | 'strict';
 
@@ -15,9 +17,18 @@ function formatDaemonServiceCommand(command: DaemonServicePlannedCommand): strin
   return `${command.cmd} ${command.args.join(' ')}`.trim();
 }
 
-function unavailableServiceCommand(command: DaemonServicePlannedCommand): Error & Readonly<{ code: 'service_manager_unavailable' }> {
-  return Object.assign(new Error(`Background service command is not available: ${formatDaemonServiceCommand(command)}`), {
-    code: 'service_manager_unavailable' as const,
+function commandServiceStep(command: DaemonServicePlannedCommand): DaemonServiceFailureFacts['serviceStep'] {
+  if (command.cmd !== 'launchctl') return 'command';
+  const action = command.args[0];
+  if (action === 'bootout') return 'cleanup_bootout';
+  return action === 'bootstrap' || action === 'kickstart' ? action : 'command';
+}
+
+function unavailableServiceCommand(command: DaemonServicePlannedCommand, preflight = false): DaemonServiceError {
+  return new DaemonServiceError(`Background service command is not available: ${formatDaemonServiceCommand(command)}`, {
+    error: 'service_manager_unavailable',
+    serviceStep: preflight ? 'preflight' : commandServiceStep(command),
+    serviceStepStatus: 'unavailable',
   });
 }
 
@@ -25,26 +36,31 @@ export function assertDaemonServiceCommandsAvailable(commands: readonly DaemonSe
   for (const command of commands) {
     if (command.ignoreFailure) continue;
     if (!commandExistsInPath({ cmd: command.cmd, envPath: process.env.PATH, platform: process.platform, pathext: process.env.PATHEXT })) {
-      throw unavailableServiceCommand(command);
+      throw unavailableServiceCommand(command, true);
     }
   }
 }
 
 /** Prove Linux's selected systemd manager is reachable before writing its unit. */
-export function assertDaemonServiceManagerAvailable(commands: readonly DaemonServicePlannedCommand[]): void {
+export function assertDaemonServiceManagerAvailable(commands: readonly DaemonServicePlannedCommand[], deadlineMs?: number): void {
   const reload = commands.find((command) => command.cmd === 'systemctl' && command.args.includes('daemon-reload'));
   if (!reload) return;
   const reloadIndex = reload.args.indexOf('daemon-reload');
   const probe = { cmd: reload.cmd, args: [...reload.args.slice(0, reloadIndex), 'show-environment'] };
-  const result = runCommand(probe);
-  if (!result.ok) throw unavailableServiceCommand(probe);
+  if (deadlineMs !== undefined && Date.now() >= deadlineMs) throw serviceStartupTimeout(probe);
+  const result = runCommand(probe, deadlineMs);
+  if (deadlineMs !== undefined && Date.now() >= deadlineMs) throw serviceStartupTimeout(probe, result);
+  if (!result.ok) throw unavailableServiceCommand(probe, true);
 }
 
 type CommandResult = Readonly<{ ok: boolean; out: string | null; status: number | null }>;
 
-function runCommand(command: DaemonServicePlannedCommand): CommandResult {
+function runCommand(command: DaemonServicePlannedCommand, deadlineMs?: number): CommandResult {
   try {
-    const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000);
+    const timeoutMs = deadlineMs === undefined
+      ? readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000)
+      : deadlineMs - Date.now();
+    if (timeoutMs <= 0) return { ok: false, out: null, status: null };
     const res = spawnBackgroundSync(command.cmd, [...command.args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
@@ -90,8 +106,6 @@ function isBenignLaunchctlFailure(
     return false;
   }
 
-  const action = String(command.args[0] ?? '').trim().toLowerCase();
-  const output = String(result.out ?? '').trim().toLowerCase();
   if (isBenignServiceAbsenceFailure({
     cmd: command.cmd,
     args: command.args,
@@ -100,10 +114,6 @@ function isBenignLaunchctlFailure(
     stderr: '',
   })) {
     return true;
-  }
-
-  if (action === 'kickstart') {
-    return output.includes('could not find service');
   }
 
   return false;
@@ -138,31 +148,36 @@ function isBenignSystemctlFailure(
   });
 }
 
-/**
- * Retry the given launchctl command a few times with increasing delays.
- * Used for `bootstrap` and `kickstart` which can transiently fail while
- * launchd is still draining a preceding `bootout` — the teardown is async
- * and the next command may hit "Could not find service" / silently no-op if
- * it runs too close on the heels. Short retry loop gives launchd a moment
- * to finish the prior operation.
- */
-function runLaunchctlWithRetry(command: DaemonServicePlannedCommand): CommandResult {
+function serviceStartupTimeout(command: DaemonServicePlannedCommand, result?: CommandResult) {
+  const reason = readLaunchctlFailureReason(result?.out ?? '');
+  return new DaemonServiceError(`Background service startup deadline elapsed${reason ? ` (reason: ${reason})` : ''}${result?.out ? `\n${result.out}` : ''}`, {
+    error: 'service_start_timeout',
+    serviceStep: commandServiceStep(command),
+    serviceStepStatus: 'deadline_elapsed',
+    reason,
+  });
+}
+
+/** launchctl has no readiness push API; reuse the existing retry cadence and
+ * the caller's remaining startup budget without repeating destructive bootout. */
+function runLaunchctlWithRetry(command: DaemonServicePlannedCommand, deadlineMs?: number): CommandResult {
   const delaysMs = [150, 300, 600];
-  let result = runCommand(command);
-  if (result.ok) return result;
-  for (const ms of delaysMs) {
+  let retry = 0;
+  while (true) {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) throw serviceStartupTimeout(command);
+    const result = runCommand(command, deadlineMs);
+    if (result.ok || isBenignLaunchctlFailure(command, result)) return { ...result, ok: true };
+    if (!readLaunchctlFailureReason(result.out ?? '')) return result;
+    if (deadlineMs === undefined && retry >= delaysMs.length) return result;
+    const remainingMs = deadlineMs === undefined ? Infinity : deadlineMs - Date.now();
+    if (remainingMs <= 0) throw serviceStartupTimeout(command, result);
+    const ms = Math.min(delaysMs[Math.min(retry++, delaysMs.length - 1)]!, remainingMs);
     const { status } = spawnBackgroundSync('sleep', [(ms / 1000).toFixed(3)]);
     if (status !== 0) {
-      // Fallback to a busy wait in the rare environment without `sleep`.
-      const deadline = Date.now() + ms;
-      while (Date.now() < deadline) {
-        // spin
-      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
     }
-    result = runCommand(command);
-    if (result.ok) return result;
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) throw serviceStartupTimeout(command, result);
   }
-  return result;
 }
 
 function shouldRetryLaunchctlCommand(command: DaemonServicePlannedCommand): boolean {
@@ -173,7 +188,7 @@ function shouldRetryLaunchctlCommand(command: DaemonServicePlannedCommand): bool
 
 export function runDaemonServiceCommands(
   commands: readonly DaemonServicePlannedCommand[],
-  options: Readonly<{ failureMode?: DaemonServiceCommandFailureMode }> = {},
+  options: Readonly<{ failureMode?: DaemonServiceCommandFailureMode; deadlineMs?: number }> = {},
 ): void {
   const failureMode = options.failureMode ?? 'best-effort';
   const failures: Error[] = [];
@@ -188,13 +203,24 @@ export function runDaemonServiceCommands(
     }
 
     refreshLaunchctlBootstrapPath(command);
-    const result = shouldRetryLaunchctlCommand(command) ? runLaunchctlWithRetry(command) : runCommand(command);
-    if (command.ignoreFailure || isBenignLaunchctlFailure(command, result) || isBenignSystemctlFailure(command, result)) {
+    let result: CommandResult;
+    try {
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) throw serviceStartupTimeout(command);
+      result = shouldRetryLaunchctlCommand(command) ? runLaunchctlWithRetry(command, options.deadlineMs) : runCommand(command, options.deadlineMs);
+    } catch (error) {
+      if (failureMode === 'strict' && !command.ignoreFailure) failures.push(error instanceof Error ? error : new Error(String(error)));
+      continue;
+    }
+    if (command.ignoreFailure || isBenignSystemctlFailure(command, result)
+      || !shouldRetryLaunchctlCommand(command) && isBenignLaunchctlFailure(command, result)) {
       continue;
     }
     if (!result.ok && failureMode === 'strict') {
       const output = result.out ? `\n${result.out}` : '';
-      failures.push(new Error(`Background service command failed: ${formatDaemonServiceCommand(command)}${output}`));
+      failures.push(new DaemonServiceError(`Background service command failed: ${formatDaemonServiceCommand(command)}${output}`, {
+        error: 'service_command_failed', serviceStep: commandServiceStep(command), serviceStepStatus: 'failed',
+        reason: command.cmd === 'launchctl' ? readLaunchctlFailureReason(result.out ?? '') : undefined,
+      }));
     }
   }
   if (failures.length === 1) throw failures[0];
@@ -205,12 +231,13 @@ export function runDaemonServiceCommands(
 
 export async function applyDaemonServiceInstallPlan(
   plan: DaemonServiceInstallPlan,
-  options: Readonly<{ runCommands?: boolean; commandFailureMode?: DaemonServiceCommandFailureMode }> = {},
+  options: Readonly<{ runCommands?: boolean; commandFailureMode?: DaemonServiceCommandFailureMode; deadlineMs?: number }> = {},
 ): Promise<void> {
   if (options.runCommands !== false) {
     assertDaemonServiceCommandsAvailable(plan.commands);
-    assertDaemonServiceManagerAvailable(plan.commands);
+    assertDaemonServiceManagerAvailable(plan.commands, options.deadlineMs);
   }
+  await applyServicePlan({ writes: [], copies: plan.copies, commands: [] }, { runCommands: false });
   for (const file of plan.files) {
     await mkdir(dirname(file.path), { recursive: true });
     await writeFile(file.path, file.content, 'utf-8');
@@ -220,24 +247,26 @@ export async function applyDaemonServiceInstallPlan(
   if (options.runCommands === false) return;
   runDaemonServiceCommands(plan.commands, {
     failureMode: options.commandFailureMode,
+    deadlineMs: options.deadlineMs,
   });
 }
 
 export async function applyDaemonServiceUninstallPlan(
   plan: DaemonServiceUninstallPlan,
-  options: Readonly<{ runCommands?: boolean; commandFailureMode?: DaemonServiceCommandFailureMode }> = {},
+  options: Readonly<{ runCommands?: boolean; commandFailureMode?: DaemonServiceCommandFailureMode; deadlineMs?: number }> = {},
 ): Promise<void> {
-  if (options.runCommands !== false) {
-    runDaemonServiceCommands(plan.commands, {
-      failureMode: options.commandFailureMode,
-    });
-  }
-
-  for (const path of plan.filesToRemove) {
-    try {
-      await unlink(path);
-    } catch {
-      // ignore
-    }
-  }
+  const commands = options.runCommands === false ? [] : plan.commands;
+  const removals = plan.removals ?? plan.filesToRemove.map((path) => ({ path, beforeCommandIndex: commands.length }));
+  await applyServicePlan({
+    writes: [], commands,
+    removals: options.runCommands === false
+      ? removals.map((removal) => ({ ...removal, beforeCommandIndex: 0 }))
+      : removals,
+  }, {
+    commandTimeoutMs: options.deadlineMs === undefined
+      ? readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000)
+      : undefined,
+    deadlineMs: options.deadlineMs,
+    deadlineError: (command) => serviceStartupTimeout(command),
+  });
 }

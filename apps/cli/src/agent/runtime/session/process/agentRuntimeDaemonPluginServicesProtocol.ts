@@ -1,5 +1,3 @@
-import { SessionMcpLocalContextSchema } from '@/mcp/runtime/sessionMcpLocalContext';
-import { HOST_AGENT_ISOLATION_LAUNCH_KINDS } from '@/daemon/agentIsolation/agentIsolationLaunchKind';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
@@ -31,7 +29,8 @@ import {
 } from './agentRuntimeDaemonServiceTurnWitness';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-
+import { HOST_AGENT_ISOLATION_LAUNCH_KINDS } from '@/daemon/agentIsolation/agentIsolationLaunchKind';
+import { SessionMcpLocalContextSchema } from '@/mcp/runtime/sessionMcpLocalContext';
 import { AgentLaunchMaterializationSchema, AgentLaunchNativeIdentitySchema, AgentLaunchNativeSocketDirectorySchema } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { AgentIsolationMemberNativeIdentitySchema } from './agentRuntimeRunnerProtocol';
 
@@ -334,7 +333,9 @@ const RunnerDaemonPluginServiceWireValueV1Schema: z.ZodMiniType<
     z.strictObject({ t: z.literal('null') }),
     z.strictObject({ t: z.literal('boolean'), value: z.boolean() }),
     z.strictObject({ t: z.literal('number'), value: z.number() }),
-    z.strictObject({ t: z.literal('string'), value: BoundedTextSchema }),
+    // This generic carrier also holds base64 native launch frames and binary stdin.
+    // Their owning grammars define valid data; a text-field cap breaks valid responses.
+    z.strictObject({ t: z.literal('string'), value: z.string() }),
     z.strictObject({ t: z.literal('bytes'), base64: Base64Schema }),
     z.strictObject({
         t: z.literal('array'),

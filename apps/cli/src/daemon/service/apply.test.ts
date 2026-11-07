@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +21,30 @@ describe('runDaemonServiceCommands', () => {
     delete process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS;
   });
 
+  it('keeps Linux manager preflight within the install deadline and preserves files when it expires', async () => {
+    const { applyDaemonServiceInstallPlan } = await import('./apply');
+    const dir = mkdtempSync(join(tmpdir(), 'happier-service-deadline-'));
+    const path = join(dir, 'fresh.service');
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    spawnSyncMock.mockImplementation((_command: string, _args: readonly string[], options?: { timeout?: number }) => {
+      expect(options?.timeout).toBe(100);
+      now = 1_100;
+      return { status: null, error: Object.assign(new Error('Timed out'), { code: 'ETIMEDOUT' }) };
+    });
+    const plan = { platform: 'linux' as const, files: [{ path, content: 'definition', mode: 0o644 }],
+      commands: [{ cmd: 'systemctl', args: ['--user', 'daemon-reload'] }] };
+    try {
+      await expect(applyDaemonServiceInstallPlan(plan, { deadlineMs: 1_100, commandFailureMode: 'strict' }))
+        .rejects.toMatchObject({ code: 'service_start_timeout', serviceStepStatus: 'deadline_elapsed' });
+      expect(existsSync(path)).toBe(false);
+      spawnSyncMock.mockClear();
+      await expect(applyDaemonServiceInstallPlan(plan, { deadlineMs: 1_100, commandFailureMode: 'strict' }))
+        .rejects.toMatchObject({ code: 'service_start_timeout' });
+      expect(spawnSyncMock).not.toHaveBeenCalled();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('restores state after an unavailable command and reports a restoration failure too', async () => {
     const { runDaemonServiceCommands } = await import('./apply');
     const { commandExistsInPath } = await import('./commandExistsInPath');
@@ -39,6 +63,8 @@ describe('runDaemonServiceCommands', () => {
       expect.fail('Expected both command failures');
     } catch (error) {
       expect(error).toBeInstanceOf(AggregateError);
+      const { readDaemonServiceFailureFacts } = await import('./failure');
+      expect(readDaemonServiceFailureFacts(error)).toEqual({ error: 'service_manager_unavailable', serviceStep: 'command', serviceStepStatus: 'unavailable' });
       expect(String(error)).toMatch(/not available: missing/);
       expect(String(error)).toMatch(/restoration denied/);
     }
@@ -117,7 +143,7 @@ describe('runDaemonServiceCommands', () => {
     ], { failureMode: 'strict' })).not.toThrow();
   });
 
-  it('ignores launchctl kickstart service-materialization races in strict mode', async () => {
+  it('reports persistent launchctl kickstart absence in strict mode', async () => {
     const { runDaemonServiceCommands } = await import('./apply');
 
     spawnSyncMock.mockReturnValue({
@@ -131,7 +157,7 @@ describe('runDaemonServiceCommands', () => {
         cmd: 'launchctl',
         args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.default'],
       },
-    ], { failureMode: 'strict' })).not.toThrow();
+    ], { failureMode: 'strict' })).toThrow(/Could not find service/);
   });
 
   it('still throws for non-benign launchctl failures in strict mode', async () => {
@@ -217,6 +243,30 @@ describe('runDaemonServiceCommands', () => {
     );
   });
 
+  it.each(['restart', 'uninstall'] as const)('allows systemd %s beyond the standalone cutoff within its containing deadline', async (action) => {
+    const { runDaemonServiceCommands, applyDaemonServiceUninstallPlan } = await import('./apply');
+    vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    let restarted = false;
+    // The OS boundary models the kept Hetzner guest's 48-second stop phase.
+    spawnSyncMock.mockImplementation((_command: string, _args: readonly string[], options?: { timeout?: number }) => {
+      restarted = (options?.timeout ?? 0) >= 48_000;
+      return restarted
+        ? { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }
+        : { status: null, error: Object.assign(new Error('Timed out'), { code: 'ETIMEDOUT' }) };
+    });
+
+    const commands = [{ cmd: 'systemctl', args: ['--user', action === 'restart' ? 'restart' : 'stop', 'happier-daemon.default.service'] }];
+    const execute = async () => {
+      if (action === 'uninstall') {
+        await applyDaemonServiceUninstallPlan({ platform: 'linux', commands, filesToRemove: [] }, { deadlineMs: 121_000 });
+      } else {
+        runDaemonServiceCommands(commands, { failureMode: 'strict', deadlineMs: 121_000 });
+      }
+    };
+    await expect(execute()).resolves.toBeUndefined();
+    expect(restarted).toBe(true);
+  });
+
   it('refreshes the plist mtime before launchctl bootstrap in strict mode', async () => {
     const { runDaemonServiceCommands } = await import('./apply');
 
@@ -262,5 +312,97 @@ describe('runDaemonServiceCommands', () => {
         args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
       },
     ], { failureMode: 'strict' })).toThrow(/Background service command failed: launchctl bootstrap/);
+  });
+
+  it('recovers GUI readiness and bootstrap within the containing service deadline, without repeating bootout', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let attempts = 0;
+    const actions: string[] = [];
+    spawnSyncMock.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'sleep') {
+        now += Number(args[0]) * 1000;
+        return { status: 0 };
+      }
+      actions.push(args[0]);
+      if (args[0] === 'bootstrap' && ++attempts < 6) {
+        return { status: 1, stderr: Buffer.from(attempts < 3
+          ? 'Bootstrap failed: 125: Domain does not support specified action'
+          : 'Bootstrap failed: 5: Input/output error') };
+      }
+      if (args[0] === 'print') return { status: 113, stderr: Buffer.from('Could not find service') };
+      return { status: 0 };
+    });
+    expect(() => runDaemonServiceCommands([
+      { cmd: 'launchctl', args: ['bootout', 'gui/501/com.happier.cli.daemon.default'], ignoreFailure: true },
+      { cmd: 'launchctl', args: ['enable', 'gui/501/com.happier.cli.daemon.default'], ignoreFailure: true },
+      { cmd: 'launchctl', args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'] },
+      { cmd: 'launchctl', args: ['kickstart', '-k', 'gui/501/com.happier.cli.daemon.default'] },
+    ], { failureMode: 'strict', deadlineMs: 5000 })).not.toThrow();
+    expect(attempts).toBe(6);
+    expect(actions.filter(action => action === 'bootout')).toHaveLength(1);
+    expect(actions.at(-1)).toBe('kickstart');
+    expect(now).toBeLessThan(5000);
+  });
+
+  it.each([
+    ['bootstrap', 'Bootstrap failed: 5: Input/output error', 'launchctl_io_error'],
+    ['bootstrap', 'Bootstrap failed: 125: Domain does not support specified action', 'launchctl_domain_unsupported'],
+    ['kickstart', 'Could not find service "com.happier.cli.daemon.default" in domain for user gui: 501', 'launchctl_service_missing'],
+  ])('settles persistent %s failure at the containing deadline with a closed reason', async (action, stderr, reason) => {
+    const { runDaemonServiceCommands } = await import('./apply');
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const timeouts: number[] = [];
+    const remainingBudgets: number[] = [];
+    spawnSyncMock.mockImplementation((command: string, args: readonly string[] = [], options?: { timeout?: number }) => {
+      if (command === 'sleep') { now += Number(args[0]) * 1000; return { status: 0 }; }
+      timeouts.push(options?.timeout ?? 0);
+      remainingBudgets.push(1800 - now);
+      return { status: 1, stderr: Buffer.from(stderr) };
+    });
+    try {
+      runDaemonServiceCommands([{ cmd: 'launchctl', args: action === 'bootstrap'
+        ? [action, 'gui/501', '/tmp/com.happier.cli.daemon.default.plist']
+        : [action, '-k', 'gui/501/com.happier.cli.daemon.default'] }], { failureMode: 'strict', deadlineMs: 1800 });
+      expect.fail('Expected deadline failure');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'service_start_timeout', serviceStep: action, serviceStepStatus: 'deadline_elapsed', reason });
+    }
+    expect(now).toBe(1800);
+    expect(timeouts.length).toBeGreaterThan(1);
+    expect(timeouts.every((timeout, index) => timeout > 0 && timeout <= remainingBudgets[index]!)).toBe(true);
+  });
+
+  it('does not retry a permanent launchctl error or grant an expired deadline another command', async () => {
+    const { runDaemonServiceCommands } = await import('./apply');
+    let now = 100;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const commandsRun: string[] = [];
+    spawnSyncMock.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'sleep') { now += Number(args[0]) * 1000; return { status: 0 }; }
+      commandsRun.push(command);
+      return { status: 1, stderr: Buffer.from('Bootstrap failed: 13: Permission denied') };
+    });
+    const commands = [{ cmd: 'launchctl', args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'] }];
+    expect(() => runDaemonServiceCommands(commands, { failureMode: 'strict', deadlineMs: 2000 })).toThrow(/Permission denied/);
+    expect(commandsRun).toEqual(['launchctl']);
+    spawnSyncMock.mockClear();
+    expect(() => runDaemonServiceCommands(commands, { failureMode: 'strict', deadlineMs: 100 })).toThrow();
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['launchctl', ['bootout', 'gui/501/private-label'], 'cleanup_bootout'],
+    ['launchctl', ['bootstrap', 'gui/501', '/private/service.plist'], 'bootstrap'],
+    ['launchctl', ['kickstart', '-k', 'gui/501/private-label'], 'kickstart'],
+    ['systemctl', ['--user', 'start', 'private.service'], 'command'],
+  ] as const)('classifies strict %s failures without copying command content into facts', async (cmd, args, serviceStep) => {
+    const { runDaemonServiceCommands } = await import('./apply');
+    spawnSyncMock.mockReturnValue({ status: 1, stderr: Buffer.from('private-output-secret') });
+    expect(() => runDaemonServiceCommands([{ cmd, args }], { failureMode: 'strict' })).toThrowError(expect.objectContaining({
+      code: 'service_command_failed', serviceStep, serviceStepStatus: 'failed',
+    }));
   });
 });

@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
+import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { RunnerDaemonPluginServiceOperationV1Schema, decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -18,12 +19,15 @@ describe('runner native launch authority', () => {
         await withTempDir('runner native qualifier ', async root => {
             await writeFile(join(root, 'mise.toml'), '[env]\nKEEP = "native"\n');
             const unavailable = createUnavailablePluginServices();
+            let isolationEnabled = false;
+            const agentIsolation = { read: () => ({ enabled: isolationEnabled,
+                status: { kind: 'unavailable' as const, code: 'launch_probe_failed' as const }, workspaceRoots: [root] }) };
             const resolvedRelease = vi.fn();
             const nativeRun = vi.fn(async () => ({ exitCode: 0, stdout: 'KEEP=native\0NATIVE=ready\0' }));
             const prepareAgentNativeLaunch = vi.fn<HostAgentNativeLaunchPreparation>(async (_signal, cwd, environment) => {
                 expect(cwd).toBe(root);
                 expect(environment).toMatchObject({ KEEP: 'request', REMOVE: 'old' });
-                return { projectLaunch: { status: 'ready', reviewedEffectDigest: 'effect-current', environment: {
+                return { projectLaunch: { status: 'ready', reviewedEffectDigest: 'effect-current', toolchain: {
                     selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, platform: 'linux',
                     io: { resolveTool: async () => ({ executablePath: '/native/mise', version: '2026.10.4' }), run: nativeRun },
                 } } };
@@ -35,7 +39,7 @@ describe('runner native launch authority', () => {
             const services = { ...unavailable, exec, availability: (id: Parameters<typeof unavailable.availability>[0]) =>
                 id === 'exec' ? { status: 'available' as const } : unavailable.availability(id) };
             const host = createRunnerDaemonPluginServicesHost({ createInvocation: async () => ({
-                services, prepareAgentNativeLaunch, resourceDescriptors: {},
+                services, prepareAgentNativeLaunch, agentIsolation, resourceDescriptors: {},
                 subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
                 dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: async () => null,
                 currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external,
@@ -53,6 +57,7 @@ describe('runner native launch authority', () => {
                     const result = await host.dispatch({ sessionId: 'session-1',
                         runner: { pid: 123, processStartTimeMs: 1, processCommandHash: '4'.repeat(64), snapshotIdentity: 'snapshot-1' },
                         retainedAgent: binding, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal });
+                    AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true, result });
                     return decodeRunnerDaemonPluginServiceWireValueV1(result.value);
                 },
                 local: { availability: unavailable.availability, logger: unavailable.logger, sessions: unavailable.sessions,
@@ -71,18 +76,24 @@ describe('runner native launch authority', () => {
                 const native = await runnerServices.exec.run(request, { nativeLaunch });
                 expect(JSON.parse(new TextDecoder().decode(native.stdout))).toEqual({ keep: 'native', native: 'ready' });
                 const release = vi.fn();
+                // Binary launch input is valid above the generic response's former base64 string ceiling.
+                const providerInput = new Uint8Array(50_000).fill(7);
                 const final = await authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec, {
                     command: process.execPath, args: ['--opaque', 'spaces "quotes" \\'], cwd: root,
-                    env: { KEEP: 'request', REMOVE: 'old' }, stdin: new Uint8Array([0, 255]),
+                    env: { KEEP: 'request', REMOVE: 'old' }, stdin: providerInput,
                     timeoutMs: 999, maxStdoutBytes: 1000, maxStderrBytes: 2000, release,
                 }, undefined, nativeLaunch);
                 expect(final).toMatchObject({ command: process.execPath, args: ['--opaque', 'spaces "quotes" \\'], cwd: root,
-                    env: { KEEP: 'native', NATIVE: 'ready' }, stdin: new Uint8Array([0, 255]), timeoutMs: 999,
+                    env: { KEEP: 'native', NATIVE: 'ready' }, stdin: providerInput, timeoutMs: 999,
                     maxStdoutBytes: 1000, maxStderrBytes: 2000 });
                 expect(final.env).not.toHaveProperty('REMOVE');
                 await final.release(); await final.release();
                 expect(release).toHaveBeenCalledOnce();
                 expect(nativeRun).toHaveBeenCalledTimes(2);
+                isolationEnabled = true;
+                await expect(authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec, {
+                    command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root, env: { KEEP: 'request', REMOVE: 'old' },
+                }, undefined, nativeLaunch)).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
             } finally { controller.abort(); await host.dispose(); }
         });
     });
