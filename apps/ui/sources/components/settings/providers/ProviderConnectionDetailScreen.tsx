@@ -945,7 +945,13 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const accountGrantStaleShownAtControl = accountGrantStale && displayFailure !== null
         && displayFailure.error !== mutation.error && presentProviderError(displayFailure.error).scope === 'account'
         && (connection?.scope === 'account' || connection?.grants.accountState !== 'absent');
-    const displayError = accountGrantStaleShownAtControl ? null : displayFailure?.error ?? null;
+    // An off gateway is said once, by its header line and switch (its one enable control), not by a
+    // second "not enabled here" card with its own Enable.
+    const gatewayOff = Boolean(gateway) && connection != null
+        && !connection.grants.accountEnabled && connection.grants.enabledMachineIds.length === 0;
+    const displayError = accountGrantStaleShownAtControl
+        || (gatewayOff && displayFailure?.error.code === 'provider_not_enabled_on_machine')
+        ? null : displayFailure?.error ?? null;
     const failureItems = displayError ? (
         <ProviderErrorItems
             error={displayError}
@@ -1072,7 +1078,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         credentialSlotId: teamCredentialSourceOffer.credentialSlotId,
         connectionSecurityFingerprint: teamCredentialSourceOffer.connectionSecurityFingerprint,
     } : null;
-    const gatewayProbeDetail = gateway && connection.probeCapability !== 'none' && probeState !== 'probing'
+    const gatewayProbeDetail = gateway && connectionEnabled && connection.probeCapability !== 'none' && probeState !== 'probing'
         && (presentation.probeError || probeState === 'notSupported' || gatewayHubMachineId === machineId)
         ? probeDetail : null;
     const apiKeyActionsDisabled = !selectedTargetServerMatchesActiveAccount;
@@ -1200,7 +1206,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             : machineSectionVisible && readableMachineRows.some((row) => `machine:${row.target.machineId}` === mutationFailureKey))
         ? mutationFailureKey
         : null;
-    const availabilitySection = availabilityVisible ? (
+    const availabilitySection = availabilityVisible && !gateway ? (
         <ItemGroup
             title={t('settingsProvidersCollection.availabilityTitle')}
             description={t('settingsProvidersCollection.availabilityDescription')}
@@ -1292,6 +1298,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             key: 'gateway-status',
                             testID: 'provider-gateway-status',
                             text: t('settingsProvidersCollection.gateway.statusIdle'),
+                        }] : !connectionEnabled ? [{
+                            key: 'gateway-status',
+                            testID: 'provider-gateway-status',
+                            text: t('settingsProvidersCollection.gateway.statusOff'),
                         }] : []),
                         // The header Test's outcome, as one fact beside the status.
                         ...(gatewayProbeDetail ? [{
@@ -1318,7 +1328,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 title={t('settingsProvidersCollection.test')}
                                 accessibilityLabel={t('settingsProviders.detail.testConnection')}
                                 loading={probeState === 'probing'}
-                                disabled={gatewayUnavailableMachineName !== null || !selectedTargetServerMatchesActiveAccount}
+                                disabled={!connectionEnabled || gatewayUnavailableMachineName !== null || !selectedTargetServerMatchesActiveAccount}
                                 onPress={() => void runProbe({ machineId: gatewayHubMachineId ?? machineId!, refresh: gatewayHubQuery.refresh })}
                             />
                         ) : null}

@@ -4,6 +4,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
+import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
 import { renderScreen } from '@/dev/testkit';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
@@ -233,18 +234,25 @@ it('keeps individual member limits instead of repeating the pool aggregate on a 
     expect(screen.findByTestId('connected-services-pool-detail:left:none') === null).toBe(true);
     expect(memberRows(screen)).toHaveLength(2);
 });
-it('keeps compact defaults in Used by and retains sharing without desktop header controls', async () => {
+it('keeps compact defaults in Used by and keeps Share and ⋯ in the header on a phone', async () => {
     const setDefault = vi.fn();
     const share = { kind: 'connected_pool' as const, serverId: 'server-a', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool-1' };
     const { screen } = await renderPoolDetail({}, { agentDefaults: { choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault }, shareSource: share });
     act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
-    expect(screen.findHostByTestId('connected-services-pool-detail:more')).toBeNull();
+    // The header hands its actions to the phone navigation overflow (PageHeader owns that fold); the
+    // pool does not withhold them, so Share and ⋯ stay header actions at phone width.
+    const headerActions = screen.findAllByType(SettingsPageHeader)[0]?.props.actions as React.ReactNode;
+    const sharesIn = (node: React.ReactNode): unknown[] => React.Children.toArray(node).flatMap((child) => {
+        if (!React.isValidElement<{ children?: React.ReactNode; source?: unknown }>(child)) return [];
+        return child.type === CredentialShareButton ? [child.props.source] : sharesIn(child.props.children);
+    });
+    expect(sharesIn(headerActions)).toEqual([share]);
     await screen.pressByTestIdAsync('connected-services-pool-detail:default-for');
     await act(async () => reportPopoverContentLayout(screen, { width: 280, height: 180 }));
     await screen.pressByTestIdAsync('connected-services-pool-detail:default-for:agent:codex');
     expect(setDefault).toHaveBeenCalledWith('codex', false);
-    // A phone keeps Share, as the same credential share action beside Delete.
-    expect(screen.findAllByType(CredentialShareButton).map((button) => button.props.source)).toEqual([share]);
+    // One Share only: no second one at the bottom beside Delete.
+    expect(screen.findAllByType(CredentialShareButton)).toHaveLength(1);
 });
 
 const NOW = 1_800_000_000_000;
@@ -747,6 +755,59 @@ describe('QualifiedPoolDetailView', () => {
         const now = itemProps(screen, 'connected-services-pool-detail:now');
         expect(now.title).toBe('connectedServicesPool.allWaitingTitle');
         expect(now.subtitle).toMatch(/^connectedServicesPool\.allWaitingFirst\(name=backup@example\.com,/);
+        expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
+    });
+
+    it('shows a shared stale check once at pool level on wide and compact pages', async () => {
+        const { screen } = await renderPoolDetail({}, {
+            memberQuotaByAccountId: quota({
+                work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+                backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+            }),
+        });
+        for (const width of [1440, 390]) {
+            act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width, height: 800, x: 0, y: 0 } } }));
+            expect(memberRows(screen).every((row) => row.note === null)).toBe(true);
+            expect(screen.findByTestId('connected-services-pool-detail:members:stale')).not.toBeNull();
+            expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
+            expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
+        }
+    });
+
+    it('keeps availability unknown as the active reading ages during a refresh, then accepts fresh room', async () => {
+        const memberQuotaByAccountId = quota({
+            work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { staleAfterMs: 2 * MIN }),
+            backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
+        });
+        const { screen, group } = await renderPoolDetail({}, { memberQuotaByAccountId });
+        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
+        expect(screen.getTextContent()).toContain('connectedServicesPool.roomCount(count=1,total=2)');
+        await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 2 * MIN}
+            memberQuotaByAccountId={{ ...memberQuotaByAccountId, work: { ...memberQuotaByAccountId.work!, loading: true } }} />);
+        expect(screen.getTextContent()).toContain('connectedServicesPool.notReported(count=1)');
+        expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
+        expect(memberRow(screen, 'work').usage).toMatchObject({ kind: 'meters', meters: [expect.objectContaining({ remainingPct: 86 })] });
+        expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
+        await screen.update(<QualifiedPoolDetailView {...currentProps} group={group} now={NOW + 2 * MIN}
+            memberQuotaByAccountId={quota({ ...Object.fromEntries(Object.entries(memberQuotaByAccountId).map(([id, entry]) => [id, entry.snapshot])),
+                work: snapshot('work', [{ id: '5h', label: 'Session', left: 85, resetsInMs: 90 * MIN }], { fetchedAt: NOW + 2 * MIN }),
+            })} />);
+        expect(screen.getTextContent()).toContain('connectedServicesPool.roomCount(count=1,total=2)');
+        expect(memberRow(screen, 'work').usage).toMatchObject({ kind: 'meters', meters: [expect.objectContaining({ remainingPct: 85 })] });
+    });
+
+    it('keeps a stale positive member reading on a phone without claiming every member is waiting', async () => {
+        const { screen } = await renderPoolDetail({}, {
+            memberQuotaByAccountId: quota({
+                work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+                backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
+            }),
+        });
+        act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
+        expect(memberRow(screen, 'work').usage).toMatchObject({ kind: 'meters', meters: [expect.objectContaining({ remainingPct: 86 })] });
+        expect(memberRow(screen, 'work').note?.icon).toBe('clock');
+        expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('connectedServicesPool.allWaitingTitle');
     });
 
     it('★ makes the pool an agent\'s default and Used by names the agents that use it', async () => {

@@ -717,6 +717,46 @@ describe('ProviderConnectionDetailScreen', () => {
         }
     });
 
+    it('says an off gateway once: the header switch is its one enable control and Test waits for it', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
+            source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+            role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
+            deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'sessionMachine' },
+            revision: 3, createdAt: 1, updatedAt: 1 });
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
+        await account.restore({ accountId: 'account-gateway-off', catalog, machines,
+            waivedActions: ['providers.connections.update'] });
+        await account.home.selectHomes([account.serverId]);
+        await account.selectMachine(account.serverId, 'machine-a');
+        state.connection = createProviderConnectionViewFixture({ connectionId: saved.id,
+            contributionKey: saved.source.kind === 'contribution' ? saved.source.contributionKey : null,
+            revision: saved.revision, displayName: saved.displayName, displayNameMode: saved.displayNameMode, role: saved.role,
+            deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
+            gatewayPlacement: saved.gatewayPlacement,
+            grants: { accountEnabled: false, enabledMachineIds: [], accountState: 'absent',
+                machineState: 'absent', effectiveState: 'absent' },
+            managedLocalOption: { targetMachineId: 'machine-a', connectedAccountPurposes: [{ purpose: 'upstream',
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, required: false }] },
+            authorizationError: createProviderErrorV1('provider_not_enabled_on_machine', { connectionId: saved.id, machineId: 'machine-a' }),
+            runtime: { health: 'available', modelCount: 3, checkedAt: 1, endpoints: [],
+                gateway: { status: 'idle', reachability: 'not_checked' } },
+        });
+        installDetailCatalog({ saved });
+        const screen = await renderReadyProviderDetail(<DetailNavigationBoundary>
+            <ProviderConnectionDetailScreen connectionId={saved.id} />
+        </DetailNavigationBoundary>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')?.props.value).toBe(false));
+        // Off is said once, in the header, beside its one switch; idle needs the gateway on.
+        const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
+        expect(meta.map(row => [row.key, row.text])).toEqual([['gateway-status', 'settingsProvidersCollection.gateway.statusOff']]);
+        // No second "not enabled" card with its own Enable, and no Use on all machines switch.
+        expect(screen.findAll(node => typeof node.props.enableOnMachine === 'function')).toHaveLength(0);
+        expect(screen.findByTestId('provider-connection-account-access')).toBeNull();
+        // Test is unavailable until the gateway is on.
+        expect(screen.findByTestId('provider-connection-test')?.props.disabled).toBe(true);
+    });
+
     it.each(['none', 'offline'] as const)('edits gateway placement and helper pins through the Account writer with %s machine availability', async availability => {
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },

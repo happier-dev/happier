@@ -9594,6 +9594,7 @@ const ca: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `S’executa a ${machine}`,
             statusIdle: 'Inactiu · s’inicia quan una sessió el necessita',
+            statusOff: 'Desactivat · activa’l per fer-lo servir o provar-lo',
             descriptionNamed: ({ services }: { services: string }) => `Permet que qualsevol agent faci servir les teves subscripcions de ${services}.`,
             railGroup: 'Passarel·les',
             unavailableTitle: 'Ara no es poden mostrar les passarel·les',
@@ -16460,20 +16461,6 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         reviewDidNotConverge: ({ count }: { count: number }) => `La revisió no ha convergit després de ${count} ${count === 1 ? 'ronda' : 'rondes'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: 'en acabar un torn', sessionStarts: 'en iniciar la sessió', needsYou: 'quan la sessió et necessita', sessionArchived: 'en arxivar', schedule: 'segons un horari' },
-    },
-    map: {
-        yes: 'Sí',
-        or: 'o',
-        notTaken: 'No s\'ha seguit',
-        allLanesFinish: ({ count }: { count: number }) => `Acaben els ${count} carrils`,
-    },
-    transcriptCard: {
-        startedWorkflow: 'Ha iniciat un flux de treball',
-        writtenForTask: 'Escrit per a aquesta tasca · no és a la teva biblioteca',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `ronda ${round} de ${max} com a màxim`,
-        findings: 'Troballes',
-        stopReviewing: 'Deixa de revisar',
-        changesSince: ({ sha }: { sha: string }) => `canvis des de ${sha}`,
     },
     map: {
         yes: 'Sí',

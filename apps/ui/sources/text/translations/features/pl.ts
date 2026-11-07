@@ -9610,6 +9610,7 @@ const pl: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Działa na ${machine}`,
             statusIdle: 'Bezczynny · uruchamia się, gdy sesja go potrzebuje',
+            statusOff: 'Wyłączony · włącz go, aby go używać lub przetestować',
             descriptionNamed: ({ services }: { services: string }) => `Pozwala dowolnemu agentowi korzystać z Twoich subskrypcji ${services}.`,
             railGroup: 'Bramki',
             unavailableTitle: 'Nie można teraz wyświetlić bramek',
@@ -16458,20 +16459,6 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         reviewDidNotConverge: ({ count }: { count: number }) => `Przegląd nie osiągnął zbieżności po ${count} ${count === 1 ? 'rundzie' : 'rundach'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: 'po zakończeniu tury', sessionStarts: 'przy starcie sesji', needsYou: 'gdy sesja cię potrzebuje', sessionArchived: 'przy archiwizacji', schedule: 'według harmonogramu' },
-    },
-    map: {
-        yes: 'Tak',
-        or: 'lub',
-        notTaken: 'Nie wybrano',
-        allLanesFinish: ({ count }: { count: number }) => `Wszystkie ${count} tory kończą`,
-    },
-    transcriptCard: {
-        startedWorkflow: 'Uruchomiono przepływ pracy',
-        writtenForTask: 'Napisany do tego zadania · nie ma go w bibliotece',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `runda ${round} z maksymalnie ${max}`,
-        findings: 'Ustalenia',
-        stopReviewing: 'Zakończ przegląd',
-        changesSince: ({ sha }: { sha: string }) => `zmiany od ${sha}`,
     },
     map: {
         yes: 'Tak',

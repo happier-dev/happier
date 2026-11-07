@@ -9594,6 +9594,7 @@ const pt: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Em execução em ${machine}`,
             statusIdle: 'Inativo · inicia quando uma sessão precisa dele',
+            statusOff: 'Desligado · liga-o para o usar ou testar',
             descriptionNamed: ({ services }: { services: string }) => `Permite que qualquer agente use suas assinaturas de ${services}.`,
             railGroup: 'Gateways',
             unavailableTitle: 'Não é possível mostrar os gateways agora',
@@ -16438,20 +16439,6 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         reviewDidNotConverge: ({ count }: { count: number }) => `A revisão não convergiu após ${count} ${count === 1 ? 'rodada' : 'rodadas'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: 'ao fim de um turno', sessionStarts: 'ao iniciar a sessão', needsYou: 'quando a sessão precisa de você', sessionArchived: 'ao arquivar', schedule: 'em um horário' },
-    },
-    map: {
-        yes: 'Sim',
-        or: 'ou',
-        notTaken: 'Não seguido',
-        allLanesFinish: ({ count }: { count: number }) => `As ${count} faixas terminam`,
-    },
-    transcriptCard: {
-        startedWorkflow: 'Iniciou um fluxo de trabalho',
-        writtenForTask: 'Escrito para esta tarefa · não está na sua biblioteca',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `rodada ${round} de até ${max}`,
-        findings: 'Achados',
-        stopReviewing: 'Parar a revisão',
-        changesSince: ({ sha }: { sha: string }) => `alterações desde ${sha}`,
     },
     map: {
         yes: 'Sim',

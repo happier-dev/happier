@@ -26,6 +26,7 @@ export const en = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Running on ${machine}`,
             statusIdle: 'Idle · starts when a session needs it',
+            statusOff: 'Off · turn it on to use or test it',
             descriptionNamed: ({ services }: { services: string }) => `Lets any agent use your ${services} subscriptions.`,
             railGroup: 'Gateways',
             unavailableTitle: 'Gateways can’t be shown right now',

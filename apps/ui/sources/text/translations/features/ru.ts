@@ -9621,6 +9621,7 @@ const ru: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `Работает на ${machine}`,
             statusIdle: 'Простаивает · запускается, когда он нужен сессии',
+            statusOff: 'Выключен · включите, чтобы использовать или проверить',
             descriptionNamed: ({ services }: { services: string }) => `Позволяет любому агенту использовать ваши подписки ${services}.`,
             railGroup: 'Шлюзы',
             unavailableTitle: 'Сейчас не удаётся показать шлюзы',
@@ -16470,20 +16471,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         reviewDidNotConverge: ({ count }: { count: number }) => `Проверка не сошлась после раундов: ${count}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: 'в конце хода', sessionStarts: 'при запуске сессии', needsYou: 'когда сессии нужны вы', sessionArchived: 'при архивации', schedule: 'по расписанию' },
-    },
-    map: {
-        yes: 'Да',
-        or: 'или',
-        notTaken: 'Не выбрано',
-        allLanesFinish: ({ count }: { count: number }) => `Все ${count} дорожки завершены`,
-    },
-    transcriptCard: {
-        startedWorkflow: 'Запущен процесс',
-        writtenForTask: 'Написан для этой задачи · нет в вашей библиотеке',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `раунд ${round} из не более ${max}`,
-        findings: 'Замечания',
-        stopReviewing: 'Остановить проверку',
-        changesSince: ({ sha }: { sha: string }) => `изменения с ${sha}`,
     },
     map: {
         yes: 'Да',

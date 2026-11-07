@@ -34,7 +34,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import { buildSummaryMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import type { ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import type { UseQualifiedConnectedAccountGroupsResult } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
@@ -399,7 +398,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const nextAccountId = React.useMemo(() => resolvePoolManualSwitchSuggestion({
         activeAccountId: group.activeAccountId,
         members: group.members.map((member) => ({ accountId: member.ref.accountId, enabled: member.enabled, priority: member.priority })),
-        roomByAccountId: usage.roomByAccountId,
+        memberByAccountId: usage.memberByAccountId,
     }), [group.activeAccountId, group.members, usage]);
 
     const binding: EntityFlatReorderBinding = {
@@ -577,7 +576,10 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     // "As of" is when the pool was last read; a member whose own reading is old says so on its row,
     // and the section says it is behind only when every reading it averages is old.
     const lastRead = enabledSnapshots.length > 0 ? Math.max(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
-    const allStale = enabledSnapshots.length > 0 && enabledSnapshots.every((snapshot) => isStale(snapshot, now));
+    const sharedRead = lastRead !== null && enabledSnapshots.every((snapshot) => snapshot.fetchedAt === lastRead);
+    const allStale = enabledSnapshots.length > 0 && enabledMembers
+        .filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null)
+        .every((member) => usage.memberByAccountId[member.ref.accountId]?.isStale);
     const roomLine = usage.room.total > 0
         ? [
             t('connectedServicesPool.roomCount', { count: usage.room.withRoom, total: usage.room.total }),
@@ -661,7 +663,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 // A healthy pool is quiet (lab s2svc:pool): what happens when the active account runs out is
                 // the page's purpose line, who is in use is its identity line, and the one hand switch is
                 // the header's action. Only a pool that needs you speaks with its own card below.
-                description={memberCount > 0 && !waiting ? nowDetail : undefined}
+                description={memberCount > 0 && !waiting ? nowDetail : t('connectedServicesPool.fallbackDescription')}
                 details={<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: compact ? 'center' : 'flex-start', gap: theme.space.s6 }}>
                     <ConnectedServiceMark legacyServiceId={props.legacyServiceId} size="inline" />
                     <Text style={styles.headerMeta}>{[
@@ -671,9 +673,10 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                         memberCount > 0 && !waiting ? nowTitle : null,
                     ].filter(Boolean).join(' · ')}</Text>
                 </View>}
-                actions={!compact ? (
+                // PageHeader folds these into the navigation overflow on a phone; the pool never withholds them.
+                actions={(
                     <View style={styles.headerActions}>
-                        {nowAction && !waiting ? (
+                        {nowAction && !waiting && !compact ? (
                             <RoundButton
                                 testID={nowAction.testID}
                                 display="secondary"
@@ -708,7 +711,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             )}
                         />
                     </View>
-                ) : undefined}
+                )}
             />
             {props.settled}
             {nameDraft !== null ? (
@@ -759,18 +762,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 <ItemGroup
                     title={t('connectedServicesPool.leftTitle')}
                     description={t('connectedServicesPool.leftDescription')}
-                    action={lastRead !== null && !allStale ? <SurfaceAsOfLabel at={lastRead} testID={`${TEST_ID}:left:as-of`} /> : undefined}
                 >
-                    {allStale && lastRead !== null ? (
-                        <SectionContentRow>
-                            <SurfaceFreshnessLine
-                                testID={`${TEST_ID}:left:stale`}
-                                asOf={lastRead}
-                                reason={t('connectedServicesPool.usageNotAnswering', { service: props.serviceLabel })}
-                                tone="warning"
-                            />
-                        </SectionContentRow>
-                    ) : null}
                     {usage.windows.length > 0 ? (
                         <SectionContentRow testID={`${TEST_ID}:left`}>
                             <View onLayout={onLeftLayout}>
@@ -804,8 +796,21 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             <ItemGroup
                 title={memberCount > 0 ? t('connectedServicesPool.membersTitle') : undefined}
                 description={memberCount > 0 ? t(compact ? 'connectedServicesPool.membersCompactDescription' : 'connectedServicesPool.membersDescription') : undefined}
-                action={memberCount > 0 ? manageMembers : undefined}
+                action={memberCount > 0 ? <View style={styles.headerActions}>
+                    {lastRead !== null && !allStale ? <SurfaceAsOfLabel at={lastRead} testID={`${TEST_ID}:members:as-of`} /> : null}
+                    {manageMembers}
+                </View> : undefined}
             >
+                {allStale && lastRead !== null ? (
+                    <SectionContentRow>
+                        <SurfaceFreshnessLine
+                            testID={`${TEST_ID}:members:stale`}
+                            asOf={lastRead}
+                            reason={t('connectedServicesPool.usageNotAnswering', { service: props.serviceLabel })}
+                            tone="warning"
+                        />
+                    </SectionContentRow>
+                ) : null}
             {memberCount === 0 ? (
                 <>
                     {manageMembers}
@@ -827,20 +832,21 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const identity = identityOf(accountId);
                             const quota = memberQuota[accountId];
                             const snapshot = countedSnapshotByAccountId[accountId] ?? null;
+                            const memberState = usage.memberByAccountId[accountId];
                             const isActive = accountId === group.activeAccountId;
                             const plan = snapshot?.planLabel ?? null;
                             const autoOff = member.state.autoDisabledReason === 'model_not_entitled';
                             const note: PoolMemberNote | null = autoOff
                                 ? { icon: 'info', text: t('connectedServicesPool.autoOffModel') }
-                                : member.enabled && snapshot && isStale(snapshot, now)
+                                : member.enabled && snapshot && memberState?.isStale && !sharedRead
                                     ? { icon: 'clock', text: t('connectedServicesPool.checkedAt', { time: formatAsOfTime(snapshot.fetchedAt, now) }) }
                                     : null;
                             const memberUsage: PoolMemberUsage = !member.enabled
                                 ? { kind: 'off' }
-                                : isConnectedAccountSignedOut(usage.availabilityByAccountId[accountId]?.credentialStatus)
+                                : isConnectedAccountSignedOut(memberState?.credentialStatus)
                                     ? { kind: 'signedOut' }
                                 : snapshot
-                                    ? { kind: 'meters', meters: buildSummaryMeters(snapshot.meters, [], 'primary').slice(0, 2) }
+                                    ? { kind: 'meters', meters: memberState?.meters.slice(0, 2) ?? [] }
                                     : quota?.loading ? { kind: 'loading' } : { kind: 'none' };
                             const actionId = (suffix: string) => `connected-services-pool:${group.ref.groupId}:member:${accountId}:action:${suffix}`;
                             const actions = (moveBy: (direction: -1 | 1) => void): ItemAction[] => [
@@ -1150,7 +1156,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             {/* The irreversible action closes the page, its consequence said once. */}
             <ItemGroup surface="none">
                 <View style={styles.exit}>
-                    {compact && props.shareSource ? <CredentialShareButton testID={`${TEST_ID}:share`} name={label} source={props.shareSource} /> : null}
                     <RoundButton
                         testID={`${TEST_ID}:delete`}
                         size="small"

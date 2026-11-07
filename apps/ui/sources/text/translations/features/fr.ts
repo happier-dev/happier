@@ -9590,6 +9590,7 @@ const fr: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `S’exécute sur ${machine}`,
             statusIdle: 'Inactif · démarre quand une session en a besoin',
+            statusOff: 'Désactivé · activez-le pour l’utiliser ou le tester',
             descriptionNamed: ({ services }: { services: string }) => `Permet à n’importe quel agent d’utiliser tes abonnements ${services}.`,
             railGroup: 'Passerelles',
             unavailableTitle: 'Impossible d’afficher les passerelles pour le moment',
@@ -16485,20 +16486,6 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         reviewDidNotConverge: ({ count }: { count: number }) => `La relecture n’a pas convergé après ${count} ${count === 1 ? 'tour' : 'tours'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: 'à la fin d’un tour', sessionStarts: 'au démarrage de la session', needsYou: 'quand la session a besoin de vous', sessionArchived: 'à l’archivage', schedule: 'selon un horaire' },
-    },
-    map: {
-        yes: 'Oui',
-        or: 'ou',
-        notTaken: 'Non emprunté',
-        allLanesFinish: ({ count }: { count: number }) => `Les ${count} voies terminent`,
-    },
-    transcriptCard: {
-        startedWorkflow: 'A lancé un workflow',
-        writtenForTask: 'Écrit pour cette tâche · pas dans ta bibliothèque',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `tour ${round} sur ${max} au plus`,
-        findings: 'Constats',
-        stopReviewing: 'Arrêter la revue',
-        changesSince: ({ sha }: { sha: string }) => `modifications depuis ${sha}`,
     },
     map: {
         yes: 'Oui',

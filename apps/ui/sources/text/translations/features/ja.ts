@@ -9587,6 +9587,7 @@ const ja: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `${machine} で実行中`,
             statusIdle: '待機中 · セッションが必要とすると起動します',
+            statusOff: 'オフ · 使う・テストするにはオンにしてください',
             descriptionNamed: ({ services }: { services: string }) => `どのエージェントからでも ${services} のサブスクリプションを使えるようにします。`,
             railGroup: 'ゲートウェイ',
             unavailableTitle: '現在ゲートウェイを表示できません',
@@ -16422,20 +16423,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         reviewDidNotConverge: ({ count }: { count: number }) => `${count} ラウンド後もレビューが収束しませんでした`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: 'ターン終了時', sessionStarts: 'セッション開始時', needsYou: 'セッションがあなたを必要とするとき', sessionArchived: 'アーカイブ時', schedule: 'スケジュールで' },
-    },
-    map: {
-        yes: 'はい',
-        or: 'または',
-        notTaken: '通らなかった',
-        allLanesFinish: ({ count }: { count: number }) => `${count} 本のレーンがすべて完了`,
-    },
-    transcriptCard: {
-        startedWorkflow: 'ワークフローを開始しました',
-        writtenForTask: 'このタスク用に作成 · ライブラリにはありません',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `ラウンド ${round} / 最大 ${max}`,
-        findings: '指摘',
-        stopReviewing: 'レビューを停止',
-        changesSince: ({ sha }: { sha: string }) => `${sha} 以降の変更`,
     },
     map: {
         yes: 'はい',

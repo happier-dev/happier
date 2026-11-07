@@ -9582,6 +9582,7 @@ const zhHans: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `在 ${machine} 上运行`,
             statusIdle: '空闲 · 会话需要时启动',
+            statusOff: '已关闭 · 打开后才能使用或测试',
             descriptionNamed: ({ services }: { services: string }) => `让任何智能体都能使用你的 ${services} 订阅。`,
             railGroup: '网关',
             unavailableTitle: '暂时无法显示网关',
@@ -16417,20 +16418,6 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         reviewDidNotConverge: ({ count }: { count: number }) => `审查在 ${count} 轮后仍未收敛`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: '回合结束时', sessionStarts: '会话开始时', needsYou: '会话需要你时', sessionArchived: '归档时', schedule: '按计划' },
-    },
-    map: {
-        yes: '是',
-        or: '或',
-        notTaken: '未执行',
-        allLanesFinish: ({ count }: { count: number }) => `${count} 条通道全部完成`,
-    },
-    transcriptCard: {
-        startedWorkflow: '启动了一个工作流',
-        writtenForTask: '为此任务编写 · 不在你的库中',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `第 ${round} 轮，最多 ${max} 轮`,
-        findings: '发现',
-        stopReviewing: '停止审查',
-        changesSince: ({ sha }: { sha: string }) => `自 ${sha} 以来的更改`,
     },
     map: {
         yes: '是',

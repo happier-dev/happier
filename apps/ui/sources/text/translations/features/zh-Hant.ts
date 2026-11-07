@@ -9582,6 +9582,7 @@ const zhHant: ProviderCollectionCopy = {
         gateway: {
             statusRunningOn: ({ machine }: { machine: string }) => `在 ${machine} 上執行`,
             statusIdle: '閒置 · 工作階段需要時啟動',
+            statusOff: '已關閉 · 開啟後才能使用或測試',
             descriptionNamed: ({ services }: { services: string }) => `讓任何代理都能使用你的 ${services} 訂閱。`,
             railGroup: '閘道',
             unavailableTitle: '暫時無法顯示閘道',
@@ -16417,20 +16418,6 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         reviewDidNotConverge: ({ count }: { count: number }) => `審查在 ${count} 輪後仍未收斂`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
         trigger: { turnEnds: '回合結束時', sessionStarts: '工作階段開始時', needsYou: '工作階段需要你時', sessionArchived: '封存時', schedule: '依排程' },
-    },
-    map: {
-        yes: '是',
-        or: '或',
-        notTaken: '未執行',
-        allLanesFinish: ({ count }: { count: number }) => `${count} 條通道全部完成`,
-    },
-    transcriptCard: {
-        startedWorkflow: '啟動了一個工作流程',
-        writtenForTask: '為此任務撰寫 · 不在你的資料庫中',
-        reviewRound: ({ round, max }: { round: number; max: number }) => `第 ${round} 輪，最多 ${max} 輪`,
-        findings: '發現',
-        stopReviewing: '停止審查',
-        changesSince: ({ sha }: { sha: string }) => `自 ${sha} 以來的變更`,
     },
     map: {
         yes: '是',

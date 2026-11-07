@@ -537,7 +537,8 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                     unnamedTitle: t('teams.credentials.detail.brokerUnnamedMachine'),
                 })}
             />
-            <ItemGroup
+            {/* A section with nothing to choose, load or clear is not shown. */}
+            {poolChoicesVisible || draftPoolPlacement !== null ? <ItemGroup
                 title={t('machinePools.myTitle')}
                 description={poolChoicesVisible ? t('machinePools.connectionSemantics') : undefined}
                 accessibilityRole="radiogroup"
@@ -637,7 +638,7 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                         showChevron={false}
                     />
                 ) : null}
-            </ItemGroup>
+            </ItemGroup> : null}
         </>
     );
 });
