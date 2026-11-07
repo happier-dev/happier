@@ -14206,7 +14206,7 @@ const voicePresenceTranslations = { pl: {
         settings: 'Ustawienia Głosu',
         ended: 'Głos zakończony',
         muted: 'Wyciszono',
-        setUp: 'Skonfiguruj Głos',
+        setUp: 'Skonfiguruj głos',
         setUpHint: 'Otwiera ustawienia Głosu, aby wybrać sposób mówienia',
         startAgain: 'Zacznij ponownie',
         newConversation: 'Nowa rozmowa',

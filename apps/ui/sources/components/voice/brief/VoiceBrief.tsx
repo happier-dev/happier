@@ -12,7 +12,6 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { VoiceNeedsYouPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
-import { VoiceStatusLine } from '@/components/voice/presence/VoiceStatusLine';
 import { Typography } from '@/constants/Typography';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { InboxModelBoundary } from '@/hooks/inbox/useInboxModel';
@@ -99,50 +98,43 @@ function VoiceBriefContent(props: Readonly<{ onClose: () => void }>) {
     }, [router]);
 
     const setupAction = voice.primaryAction === 'setup' || voice.primaryAction === 'recover';
+    // The call's own status lives in the presence (pill, island, Orb); the head carries only what the
+    // brief adds: why it is silent, its one next action, Stop and close — one row, never a lone ×.
+    const notSpoken = waitingUnavailable || delivery === 'refused';
 
     return (
         <View testID="voice-brief" style={styles.root}>
             <VoiceBriefList brief={brief} onOpen={open} head={(
-                <>
-                    <View style={styles.head}>
-                        {voice.live ? <VoiceStatusLine voice={voice} size="island" /> : <View style={styles.grow} />}
-                        <View style={styles.grow} />
-                        {canStopReply && stopReply ? (
-                            <RoundButton testID="voice-brief.stop" size="small" display="secondary" title={t('voiceMoments.briefStop')} onPress={stopReply} disabled={!actionReady} />
-                        ) : null}
-                        <IconButton
-                            testID="voice-brief.close"
-                            iconName="x"
-                            variant="plain"
-                            size={24}
-                            iconSize={13}
-                            accessibilityLabel={t('common.close')}
-                            tooltip={t('common.close')}
-                            onPress={closeBrief}
+                <View testID={waitingUnavailable ? 'voice-brief.unavailable' : undefined} style={styles.head}>
+                    {notSpoken ? <Text style={styles.headNote}>{t('voiceMoments.briefNotSpoken')}</Text> : <View style={styles.grow} />}
+                    {waitingUnavailable && (voice.recoveryAvailable || setupAction) ? (
+                        <RoundButton
+                            testID="voice-brief.recover"
+                            size="small"
+                            title={(voice.recoveryAvailable ? voice.recoveryLabel : voice.primaryActionLabel) ?? t('common.retry')}
+                            // The hint is for assistive technology: what the button opens, not body copy.
+                            accessibilityHint={voice.primaryActionHint ?? undefined}
+                            onPress={retry}
                             disabled={!actionReady}
                         />
-                    </View>
-                    {delivery === 'refused' && !waitingUnavailable ? <Text style={styles.note}>{t('voiceMoments.briefNotSpoken')}</Text> : null}
-                    {waitingUnavailable ? (
-                        <View testID="voice-brief.unavailable" style={styles.unavailable}>
-                            <Text style={styles.noteText}>{t('voiceMoments.briefNotSpoken')}</Text>
-                            {voice.recoveryAvailable || setupAction ? (
-                                <RoundButton
-                                    testID="voice-brief.recover"
-                                    size="small"
-                                    display="secondary"
-                                    title={(voice.recoveryAvailable ? voice.recoveryLabel : voice.primaryActionLabel) ?? t('common.retry')}
-                                    // The hint is for assistive technology: what the button opens, not body copy.
-                                    accessibilityHint={voice.primaryActionHint ?? undefined}
-                                    onPress={retry}
-                                    disabled={!actionReady}
-                                />
-                            ) : voice.primaryAction === 'start' ? (
-                                <RoundButton testID="voice-brief.retry" size="small" display="secondary" title={t('common.retry')} onPress={retry} disabled={!actionReady} />
-                            ) : null}
-                        </View>
+                    ) : waitingUnavailable && voice.primaryAction === 'start' ? (
+                        <RoundButton testID="voice-brief.retry" size="small" title={t('common.retry')} onPress={retry} disabled={!actionReady} />
                     ) : null}
-                </>
+                    {canStopReply && stopReply ? (
+                        <RoundButton testID="voice-brief.stop" size="small" display="secondary" title={t('voiceMoments.briefStop')} onPress={stopReply} disabled={!actionReady} />
+                    ) : null}
+                    <IconButton
+                        testID="voice-brief.close"
+                        iconName="x"
+                        variant="plain"
+                        size={24}
+                        iconSize={13}
+                        accessibilityLabel={t('common.close')}
+                        tooltip={t('common.close')}
+                        onPress={closeBrief}
+                        disabled={!actionReady}
+                    />
+                </View>
             )} />
         </View>
     );
@@ -242,12 +234,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         gap: theme.space.s8,
     },
-    // The recovery button keeps its own width under the notes; it never stretches across the column.
-    unavailable: {
-        gap: theme.space.s8,
-        alignItems: 'flex-start',
-        paddingHorizontal: theme.space.s4,
-    },
     head: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -257,9 +243,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     grow: {
         flexGrow: 1,
     },
-    noteText: {
+    // Why the brief is silent, on the head's own line; its action keeps its width beside it.
+    headNote: {
         ...Typography.variant('body'),
         color: theme.colors.text.secondary,
+        flex: 1,
+        minWidth: 0,
     },
     note: {
         ...Typography.variant('body'),

@@ -14233,7 +14233,7 @@ const voicePresenceTranslations = { fr: {
         settings: 'Réglages de Voix',
         ended: 'Voix terminée',
         muted: 'Micro coupé',
-        setUp: 'Configurer Voix',
+        setUp: 'Configurer la voix',
         setUpHint: 'Ouvre les réglages de Voix pour choisir comment elle parle',
         startAgain: 'Recommencer',
         newConversation: 'Nouvelle conversation',

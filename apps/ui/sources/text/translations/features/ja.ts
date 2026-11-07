@@ -14170,7 +14170,7 @@ const voicePresenceTranslations = { ja: {
         settings: '音声の設定',
         ended: '音声を終了しました',
         muted: 'ミュート中',
-        setUp: '音声を設定',
+        setUp: '音声をセットアップ',
         setUpHint: '音声の設定を開いて話し方を選びます',
         startAgain: 'もう一度始める',
         newConversation: '新しい会話',

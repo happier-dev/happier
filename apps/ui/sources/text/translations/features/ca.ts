@@ -14208,7 +14208,7 @@ const voicePresenceTranslations = { ca: {
         settings: 'Configuració de la Veu',
         ended: 'La Veu ha acabat',
         muted: 'Silenciat',
-        setUp: 'Configura la Veu',
+        setUp: 'Configura la veu',
         setUpHint: 'Obre la configuració de la Veu per triar com parla',
         startAgain: 'Torna a començar',
         newConversation: 'Conversa nova',

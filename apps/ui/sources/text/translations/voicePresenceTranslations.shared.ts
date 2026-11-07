@@ -68,7 +68,7 @@ export const voicePresenceTranslationsEnglish = { en: {
         settings: 'Voice settings',
         ended: 'Voice ended',
         muted: 'Muted',
-        setUp: 'Set up Voice',
+        setUp: 'Set up voice',
         setUpHint: 'Opens Voice settings to choose how Voice talks',
         startAgain: 'Start again',
         newConversation: 'New conversation',

@@ -14218,7 +14218,7 @@ const voicePresenceTranslations = { ru: {
         settings: 'Настройки Голоса',
         ended: 'Голос завершён',
         muted: 'Звук выключен',
-        setUp: 'Настроить Голос',
+        setUp: 'Настроить голос',
         setUpHint: 'Открывает настройки Голоса, чтобы выбрать, как он говорит',
         startAgain: 'Начать снова',
         newConversation: 'Новый разговор',

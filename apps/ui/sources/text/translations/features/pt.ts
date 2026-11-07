@@ -14186,7 +14186,7 @@ const voicePresenceTranslations = { pt: {
         settings: 'Ajustes de Voz',
         ended: 'Voz encerrada',
         muted: 'Silenciado',
-        setUp: 'Configurar Voz',
+        setUp: 'Configurar voz',
         setUpHint: 'Abre as configurações de Voz para escolher como ela fala',
         startAgain: 'Começar de novo',
         newConversation: 'Nova conversa',
