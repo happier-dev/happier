@@ -1,3 +1,5 @@
+import { QA_BROWSER_CUSTODY_LOST, QA_BROWSER_CDP_UNAVAILABLE, readQaBrowserCdpTargets } from './qa_browser_cdp.mjs';
+
 // This code only drives the supported restore form. Authentication, Account
 // mode discovery and persistence remain owned by SecretKeyLoginForm.
 export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAliasUrl } = {}) {
@@ -168,17 +170,12 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     restoreUrl.hash = '';
     restoreUrl.searchParams.set('returnTo', '/');
     restoreUrl.searchParams.set('server', urls.canonicalServerUrl);
-    // A pooled browser is addressed below its gateway path; keep that path.
-    const response = await fetchImpl(new URL(`${cdp.pathname.replace(/\/$/, '')}/json/list`, cdp));
-    if (!response.ok) throw failure('browser_unavailable');
-    const pages = await response.json();
+    const pages = await readQaBrowserCdpTargets(cdp, { fetchImpl });
     const page = pages.find(page => page.type === 'page' && page.url !== 'about:blank'
       && new URL(page.url).origin === restoreUrl.origin)
       ?? pages.find(page => page.type === 'page' && page.url === 'about:blank');
     if (!page?.webSocketDebuggerUrl) throw failure('session_unavailable');
     const endpoint = new URL(page.webSocketDebuggerUrl);
-    endpoint.host = cdp.host; // The pool's controller forward owns this address.
-    endpoint.protocol = cdp.protocol === 'https:' ? 'wss:' : 'ws:';
     let loaded;
     let navigation;
     const loadedFrames = new Map();
@@ -326,9 +323,10 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
   } catch (error) {
     // Browser/Playwright/CDP errors may contain the filled value. Only our closed
     // reason vocabulary can cross this boundary; never return exception text.
-    const reasons = ['invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
+    const reasons = [QA_BROWSER_CUSTODY_LOST, QA_BROWSER_CDP_UNAVAILABLE, 'invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
       'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required', 'home_origin_mismatch', 'home_migration_declined', 'home_reachability_failed', 'blocking_dialog'];
-    const result = { ok: false, reason: reasons.includes(error?.reason) ? error.reason : 'browser_unavailable' };
+    const reason = error?.code ?? error?.reason;
+    const result = { ok: false, reason: reasons.includes(reason) ? reason : 'browser_unavailable' };
     if (result.reason === 'home_reachability_failed' || result.reason === 'blocking_dialog' || result.reason === 'home_migration_declined') result.title = error.title;
     if (result.reason === 'home_origin_mismatch' || result.reason === 'home_migration_declined') {
       result.expectedOrigin = error.expectedOrigin;
