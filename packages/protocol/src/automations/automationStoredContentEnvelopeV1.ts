@@ -31,10 +31,13 @@ export function addAutomationStoredEnvelopeUtf8LimitIssue(
   }
 }
 
-export const AutomationStoredContentEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
+/** Shared envelope shape; each persistence owner supplies its own resource boundary. */
+export const StoredContentEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.strictObject({ t: z.literal('plain'), v: PluginJsonValueV2Schema }),
   ENCRYPTED_STORED_CONTENT_SCHEMA,
-]).check(z.superRefine((value, context) => {
+]));
+
+export const AutomationStoredContentEnvelopeV1Schema = lazyZodSchema(() => StoredContentEnvelopeV1Schema.check(z.superRefine((value, context) => {
   addAutomationStoredEnvelopeUtf8LimitIssue(
     value,
     context,

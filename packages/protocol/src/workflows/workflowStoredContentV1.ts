@@ -5,11 +5,7 @@ import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } fr
 import { parseSerializedJsonValue } from '../crypto/serializedJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
-import {
-  AutomationStoredContentEnvelopeV1Schema,
-  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
-  type AutomationStoredContentEnvelopeV1,
-} from '../automations/automationStoredContentEnvelopeV1.js';
+import { StoredContentEnvelopeV1Schema } from '../automations/automationStoredContentEnvelopeV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { WorkflowAcceptedSnapshotListingV1Schema, WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedSnapshotListingV1 } from './workflowDefinitionV1.js';
 import {
@@ -80,7 +76,9 @@ const WorkflowFinalResultStoredPayloadV1Schema = lazyZodSchema(() => z.strictObj
   content: WorkflowFinalResultV1Schema,
 }));
 
-export const WorkflowStoredContentEnvelopeV1Schema = AutomationStoredContentEnvelopeV1Schema;
+// Accepted Runs freeze complete Action contracts and can exceed Automation's
+// per-field budget. Their complete requests use the HTTP transport's body limit.
+export const WorkflowStoredContentEnvelopeV1Schema = StoredContentEnvelopeV1Schema;
 export type WorkflowStoredContentEnvelopeV1 = z.infer<typeof WorkflowStoredContentEnvelopeV1Schema>;
 
 export type WorkflowStoredContentOpenFailureV1 =
@@ -338,8 +336,7 @@ export function serializeWorkflowStoredContentEnvelopeV1(envelope: unknown): str
 }
 
 export function parseWorkflowStoredContentEnvelopeV1(serialized: unknown): WorkflowStoredContentEnvelopeV1 | null {
-  if (typeof serialized !== 'string'
-    || new TextEncoder().encode(serialized).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES) return null;
+  if (typeof serialized !== 'string') return null;
   try {
     const parsed = createStoredReadSchema(WorkflowStoredContentEnvelopeV1Schema).safeParse(JSON.parse(serialized));
     return parsed.success ? parsed.data : null;

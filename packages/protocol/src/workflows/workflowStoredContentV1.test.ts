@@ -1,10 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
+import { encodeBase64 } from '../crypto/base64.js';
+import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '../automations/automationStoredContentEnvelopeV1.js';
 import { createDeepWorkflowDefinition } from './workflowDefinition.testkit.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
+import {
+  WorkflowCheckpointEnvelopeV1Schema,
+  WorkflowFinalResultV1Schema,
+  WorkflowProgressEnvelopeV1Schema,
+} from './workflowProgressV1.js';
 import { deriveWorkflowPlanRunIdV1 } from './workflowInvocationIdentityV1.js';
 import { parseWorkflowDocumentV1, parseWorkflowDocumentJsonV1, serializeWorkflowDocumentJsonV1 } from './workflowDocumentV1.js';
 import {
@@ -59,6 +69,49 @@ const finalResultBinding = {
 };
 
 describe('Workflow stored Account content', () => {
+  it.each(['plain', 'e2ee'] as const)('round-trips accepted Runs above the Automation envelope ceiling (%s)', (mode) => {
+    const definition = { ...createDeepWorkflowDefinition(0),
+      inputs: [{ name: 'payload', valueType: 'string' as const, required: true }] };
+    const payload = 'é'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES / 2);
+    const acceptedSnapshot = { startedBy: 'user' as const, authoredDefinition: definition, definition,
+      workDepth: 0, metadata: null, materializedLeaves: [], frozenChildren: {}, inputs: { payload }, machineId: 'machine-1',
+      executionTarget: { kind: 'session' as const },
+      workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+      source: { kind: 'inline' as const }, origin: { kind: 'direct' as const },
+      authorization: { admittedPermissionCeiling: 'default' as const, principal: { kind: 'host' as const } } };
+    const envelope = sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ binding: acceptedBinding, acceptedSnapshot,
+      ...(mode === 'plain' ? { mode } : { mode, runDataKey, randomBytes }) });
+    const serialized = serializeWorkflowStoredContentEnvelopeV1(envelope);
+    expect(new TextEncoder().encode(serialized).byteLength).toBeGreaterThan(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES);
+    const stored = parseWorkflowStoredContentEnvelopeV1(serialized);
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode, binding: acceptedBinding, envelope: stored, runDataKey });
+    expect(opened).toMatchObject({ kind: 'available', content: { inputs: { payload } } });
+  });
+  it('refuses unknown approved-operation restrictions instead of opening exact unbound consent', () => {
+    const definition = createDeepWorkflowDefinition(0);
+    const approvedOperation = { parent: { actionId: 'workflow.trigger.add', input: {} },
+      approvedBy: { accountId: 'owner' }, steps: [{ actionId: 'deployments.deploy',
+        input: { serverId: 'home', environmentId: 'staging', targetLinkId: 'link' } }] };
+    const acceptedSnapshot = { startedBy: 'user' as const, authoredDefinition: definition, definition,
+      workDepth: 0, metadata: null, materializedLeaves: [], frozenChildren: {}, inputs: {}, machineId: 'machine-1',
+      executionTarget: { kind: 'session' as const },
+      workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+      source: { kind: 'inline' as const }, origin: { kind: 'direct' as const },
+      authorization: { admittedPermissionCeiling: 'default' as const, principal: { kind: 'host' as const } },
+      approvedOperation };
+    const envelope = sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: acceptedBinding, acceptedSnapshot });
+    expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: acceptedBinding, envelope }))
+      .toMatchObject({ kind: 'available', content: { approvedOperation } });
+    for (const restricted of [
+      { ...approvedOperation, effectRestriction: { requiresFreshApproval: true } },
+      { ...approvedOperation, steps: [{ ...approvedOperation.steps[0], effectRestriction: { requiresFreshApproval: true } }] },
+    ]) {
+      expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: acceptedBinding,
+        envelope: { t: 'plain', v: { v: 2, binding: acceptedBinding,
+          content: { ...acceptedSnapshot, approvedOperation: restricted } } } }))
+        .toEqual({ kind: 'contentInvalid' });
+    }
+  });
   it('retains declared result field order through workflow JSON interchange', () => {
     const document = { kind: 'happier.workflow', version: 1, definition: { version: 1, inputs: [], defaults: createDeepWorkflowDefinition(0).defaults,
       blocks: [{ kind: 'step', id: 'gather', document: { text: 'Gather changes', references: [], attachments: [] }, input: [],
@@ -227,11 +280,12 @@ describe('Workflow stored Account content', () => {
       expect(sameStrictJsonValue(opened.content.definition, definition)).toBe(true);
     }
   });
-  it('round-trips every canonical purpose in plain and E2EE modes', () => {
+  it.each(['plain', 'e2ee'] as const)('admits every canonical purpose once per stored open (%s)', (mode) => {
     const definition = { version: 1 as const, inputs: [], defaults: {}, blocks: [{ kind: 'step' as const,
       id: 'step-1', document: { text: 'Do it', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } }] };
     const fixtures = [
       {
+        schema: WorkflowAcceptedSnapshotV1Schema,
         seal: (mode: 'plain' | 'e2ee') => sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
           binding: acceptedBinding,
           acceptedSnapshot: {
@@ -253,6 +307,7 @@ describe('Workflow stored Account content', () => {
         }),
       },
       {
+        schema: WorkflowProgressEnvelopeV1Schema,
         seal: (mode: 'plain' | 'e2ee') => sealWorkflowProgressStoredEnvelopeV1({
           binding: progressBinding,
           progress: {
@@ -269,6 +324,7 @@ describe('Workflow stored Account content', () => {
         }),
       },
       {
+        schema: WorkflowCheckpointEnvelopeV1Schema,
         seal: (mode: 'plain' | 'e2ee') => sealWorkflowCheckpointStoredEnvelopeV1({
           binding: checkpointBinding,
           checkpoint: {
@@ -284,6 +340,7 @@ describe('Workflow stored Account content', () => {
         }),
       },
       {
+        schema: WorkflowFinalResultV1Schema,
         seal: (mode: 'plain' | 'e2ee') => sealWorkflowFinalResultStoredEnvelopeV1({
           binding: finalResultBinding,
           finalResult: {
@@ -300,9 +357,59 @@ describe('Workflow stored Account content', () => {
     ];
 
     for (const fixture of fixtures) {
-      expect(fixture.open('plain', fixture.seal('plain')).kind).toBe('available');
-      expect(fixture.open('e2ee', fixture.seal('e2ee')).kind).toBe('available');
+      const envelope = parseWorkflowStoredContentEnvelopeV1(serializeWorkflowStoredContentEnvelopeV1(fixture.seal(mode)));
+      // Observe the real parser without replacing any internal admission logic.
+      const admissions = vi.spyOn(createStoredReadSchema(fixture.schema)._zod, 'run');
+      try {
+        expect(fixture.open(mode, envelope).kind).toBe('available');
+        expect(admissions).toHaveBeenCalledTimes(1);
+      } finally {
+        admissions.mockRestore();
+      }
     }
+  });
+
+  it.each(['plain', 'e2ee'] as const)('refuses a public opener mis-wired to another admitted purpose (%s)', (mode) => {
+    const envelope = sealWorkflowCheckpointStoredEnvelopeV1({
+      binding: checkpointBinding,
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: 'row-1', nextSequence: '1',
+        frontier: { nextBlockOrdinal: 1, paused: false } },
+      ...(mode === 'plain' ? { mode } : { mode, runDataKey, randomBytes }),
+    });
+    // JavaScript/foreign callers can mis-bind despite the TypeScript signature.
+    for (const open of [openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1,
+      openWorkflowFinalResultStoredEnvelopeV1]) {
+      expect(Reflect.apply(open, undefined, [{ mode, binding: checkpointBinding, envelope, runDataKey }]))
+        .toEqual({ kind: 'contentInvalid' });
+    }
+    const finalEnvelope = sealWorkflowFinalResultStoredEnvelopeV1({
+      binding: finalResultBinding,
+      finalResult: { kind: 'happier.workflow-final-result.v1', result: { kind: 'text', value: 'done' },
+        producerInvocation: { recordId: 'row-1' } },
+      ...(mode === 'plain' ? { mode } : { mode, runDataKey, randomBytes }),
+    });
+    expect(Reflect.apply(openWorkflowCheckpointStoredEnvelopeV1, undefined,
+      [{ mode, binding: finalResultBinding, envelope: finalEnvelope, runDataKey }]))
+      .toEqual({ kind: 'contentInvalid' });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('refuses malformed content inside an untrusted stored payload (%s)', (mode) => {
+    const valid = sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding,
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: 'row-1', nextSequence: '1',
+        frontier: { nextBlockOrdinal: 1, paused: false } } });
+    if (valid.t !== 'plain' || typeof valid.v !== 'object' || valid.v === null || Array.isArray(valid.v)) {
+      throw new Error('Expected plain payload');
+    }
+    const content = { kind: 'happier.workflow-checkpoint.v1', rootRecordId: null, nextSequence: '1',
+      frontier: { nextBlockOrdinal: 1, paused: false } };
+    const payload = { ...valid.v, content };
+    // Corrupt storage must bypass the canonical writer, which rejects this content.
+    const nonce = randomBytes(tweetnacl.secretbox.nonceLength);
+    const ciphertext = tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify(payload)), nonce, runDataKey);
+    const envelope = mode === 'plain' ? { t: 'plain', v: payload }
+      : { t: 'encrypted', c: `wfr1:${encodeBase64(new Uint8Array([...nonce, ...ciphertext]))}` };
+    expect(openWorkflowCheckpointStoredEnvelopeV1({ mode, binding: checkpointBinding, envelope, runDataKey }))
+      .toEqual({ kind: 'contentInvalid' });
   });
 
   it('fails a private accepted metadata open closed with the wrong E2EE material', () => {
