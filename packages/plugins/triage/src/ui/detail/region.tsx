@@ -10,6 +10,7 @@ import {
   EmptyState,
   ErrorState,
   Form,
+  HappierBreadcrumb,
   Heading,
   Icon,
   IconButton,
@@ -37,7 +38,7 @@ import type {
 } from '@happier-dev/triage-protocol/v1';
 import { readTriageComparisonSource } from './readComparison.js';
 import type { PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
-import type { TriageActionV1 } from '../../settings/actions.js';
+import { applyTriageActionLaunchModeV1, type TriageActionV1 } from '../../settings/actions.js';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
@@ -151,6 +152,8 @@ export type TriageDetailRegionProps = Readonly<{
   completePostMutation(): Promise<void>;
   /** Bumped once per press of the page's refresh; the open entry's Activity re-reads its source on each bump. */
   refreshGeneration?: number;
+  onFixPullRequestsRetryChange?: (retry: (() => void) | null) => void;
+  onRetryFixPullRequests?: () => void;
   lanes: readonly TriageListLaneV1[];
   /**
    * The device projection's rows: where the linked fix PR's observation is
@@ -191,6 +194,8 @@ export type TriageDetailRegionProps = Readonly<{
   originComposer: ComposerRefV1 | null;
   /** The already-projected row and the sole mounted mark handlers. */
   pin: TriageDetailPinActionV1;
+  /** Opens the list page's one actions editor on an action; a detail outside that page offers no "Edit action…". */
+  onEditAction?: (actionId: string) => void;
   /** Clears the selection; the stacked composition returns to the list. */
   onClose?: (() => void) | undefined;
 }>;
@@ -317,6 +322,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   editTask?: TriageEditTaskPlacementV1['edit'];
   /** Publishes the row's agent Start/Send for the story's agent chapter (one start controller, two places). */
   onAgentEntry?: (entry: TriageAgentEntryV1 | null) => void;
+  /** Opens the page's actions editor on one action (the start chevron's "Edit action…"). */
+  onEditAction?: (actionId: string) => void;
   /** Place the controls without moving the selected entry's pending action owner. */
   children(controls: React.ReactElement): React.ReactElement;
 }>): React.ReactElement {
@@ -393,13 +400,17 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       );
       // Said beside the control that was pressed, never swallowed.
       if (executable.status !== 'resolved') return { kind: executable.status };
+      // The person's launch for this press (the split's Start now / Add instructions…) over the record's own delivery.
+      const action = request.launchMode === undefined ? executable.action
+        : applyTriageActionLaunchModeV1(executable.action, request.launchMode);
+      if (action === null) return { kind: 'missing' as const };
       let comparisonSource;
-      if (executable.action.target.kind === 'reviewStart') {
+      if (action.target.kind === 'reviewStart') {
         try { comparisonSource = await readComparison(); } catch { /* Findings-only review remains available. */ }
         if (!mounted.current) return null;
       }
       const startRequest = {
-        action: executable.action,
+        action,
         entryRef: request.entryRef,
         display: props.display,
         // The entry attachment's two halves. Identity is the connection this
@@ -477,6 +488,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
             ...(props.taskSessionId === undefined ? {} : { linkSession: props.taskSessionId }) },
         })}
         onAction={onAction}
+        {...(props.onEditAction === undefined ? {} : { onEditAction: props.onEditAction })}
         trailing={props.attention}
         {...(props.repository === undefined ? {} : { repository: props.repository })}
         {...(props.leading === undefined || props.leading === null ? {} : { leading: props.leading })}
@@ -587,6 +599,7 @@ export function renderTriageDetailHeaderV1(input: Readonly<{
   const subtitle = readTriageDetailContextLineV1(input.header, input.text, input);
   return {
     title: input.header.title,
+    ...(input.header.breadcrumb === null ? {} : { breadcrumb: input.header.breadcrumb }),
     leading: <TriageDetailKindMark header={input.header} />,
     ...(subtitle === null ? {} : {
       subtitle,
@@ -606,16 +619,32 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
     : header.presence === 'absent'
       ? text('plugins.triage.surface.detail.entryAbsent', PRESENCE_COPY.absent ?? '')
       : text('plugins.triage.surface.detail.entryUnresolved', PRESENCE_COPY.unresolved ?? '');
+  const controls = props.headerHosted ? null : (
+    <Row gap="xsmall" align="center">
+      {identity.actions}
+      {props.onClose === undefined ? null : <IconButton icon={<Icon name="close" tone="secondary" />} accessibilityLabel={text('plugins.triage.surface.close', 'Close')} onPress={props.onClose} />}
+    </Row>
+  );
   return (
     <>
+      {props.headerHosted || identity.breadcrumb === undefined ? null : (
+        // The entry's place leads the header, its actions on the same row (lab merged-detail-pr), as in the host band.
+        <Row gap="small" align="center">
+          <Stack grow>
+            <HappierBreadcrumb
+              items={identity.breadcrumb.map((label, index) => ({ key: String(index), label }))}
+              separator={<Icon name="forward" size="small" tone="secondary" />}
+              renderLabel={(item) => <Text variant="micro" tone="secondary" value={item.label} numberOfLines={1} />}
+            />
+          </Stack>
+          {controls}
+        </Row>
+      )}
       {props.headerHosted ? null : (
         <Row gap="small" align="center">
           {identity.leading}
           <Stack grow><Heading level={2} value={identity.title} /></Stack>
-          <Row gap="xsmall" align="center">
-            {identity.actions}
-            {props.onClose === undefined ? null : <IconButton icon={<Icon name="close" tone="secondary" />} accessibilityLabel={text('plugins.triage.surface.close', 'Close')} onPress={props.onClose} />}
-          </Row>
+          {identity.breadcrumb === undefined ? controls : null}
         </Row>
       )}
       {props.headerHosted || identity.subtitle === undefined ? null : (
@@ -795,7 +824,14 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     workflowSubject,
     display: fixDisplay,
     instance: detail?.kind === 'ready' ? detail.input.instance : undefined,
+    refreshGeneration: props.refreshGeneration,
   });
+  const fixRetry = fixPullRequest.state?.kind === 'unreachable' ? fixPullRequest.state.retry : null;
+  const reportFixRetry = props.onFixPullRequestsRetryChange;
+  React.useLayoutEffect(() => {
+    reportFixRetry?.(fixRetry);
+    return () => reportFixRetry?.(null);
+  }, [fixRetry, reportFixRetry]);
   const fixTabs = fixPullRequest.detailTabs;
   const fixFacts = fixPullRequest.facts;
   const entryFacts = snapshot?.facts;
@@ -1016,12 +1052,15 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           <ErrorState
             titleKey="plugins.triage.surface.detail.accountError.title"
             title="These details could not be read"
-            descriptionKey="plugins.triage.surface.detail.accountError.description"
-            description={header.lastReadAtMs === null
-              ? "This entry's details are unavailable right now. Try again when the connection is available."
-              : `${text('plugins.triage.surface.detail.lastRead', 'Last read {age}.', {
+            description={[
+              header.lastReadAtMs === null ? null : text('plugins.triage.surface.detail.lastRead', 'Last read {age}.', {
                 age: formatTriageTimestampV1(context.locale, header.lastReadAtMs, 'relative', Date.now()),
-              })} ${text('plugins.triage.surface.detail.accountError.description', "This entry's details are unavailable right now. Try again when the connection is available.")}`}
+              }),
+              // A retry is offered only when one can succeed; without one, the words don't invite it either.
+              detail.failure?.retryable === false
+                ? text('plugins.triage.surface.detail.accountError.permanent', "The source refused this entry's details. Details below say why.")
+                : text('plugins.triage.surface.detail.accountError.description', "This entry's details are unavailable right now. Try again when the connection is available."),
+            ].filter((part): part is string => part !== null).join(' ')}
             action={detail.failure?.retryable === false ? undefined : (
               <Button
                 titleKey="plugins.triage.surface.actions.retry"
@@ -1082,6 +1121,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                   {task.relations.subTasks?.list('section') ?? null}
                   {fixPullRequest.state !== null ? (
                     <TriageFixPullRequests state={fixPullRequest.state} pickable={fixPullRequest.pickable}
+                      {...(props.onRetryFixPullRequests === undefined ? {} : { onRetry: props.onRetryFixPullRequests })}
                       {...(fixChecksSummary === undefined ? {} : { checksSummary: fixChecksSummary })}
                       {...(header.workflowSubject === 'issue' ? { chapter: 2 } : {})}
                       {...(fixPullRequest.navigation === null ? {} : { onOpenPrimary: () => { void fixPullRequest.navigation?.open(); } })} />
@@ -1254,6 +1294,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           withoutRepository={isTask && repository === undefined}
           editTask={isTask && composition.kind === 'whole' ? null : task.edit}
           onAgentEntry={setAgentEntry}
+          {...(props.onEditAction === undefined ? {} : { onEditAction: props.onEditAction })}
         >{(actionRegion) => renderDetail(actionRegion, task, detailBody)}</TriageEntryScopedActionRegion>
       );
     }}</TriageEditTaskScope>

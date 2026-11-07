@@ -1,29 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
-import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import type {
-  TriageEntryPresentationStateV1,
   TriageEntryRefV1,
   TriageFixPullRequestV1,
-  TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { readTriageFixPullRequests, setTriageFixPullRequest } from '../../actions/fixPullRequests.js';
 import {
   TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1,
   TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
   TriageReadFixPullRequestsResultV1Schema,
   TriageSetFixPullRequestResultV1Schema,
   type TriageReadFixPullRequestsResultV1,
+  type TriageReadFixPullRequestsInputV1,
   type TriageSetFixPullRequestInputV1,
   type TriageSetFixPullRequestResultV1,
 } from '@happier-dev/triage-protocol/v1';
-import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
-import type { TriageFixPullRequestProjectionV1 } from '../../corpus/marks/fixPullRequests.js';
-import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
+import { projectTriageFixPullRequestsRead } from '../../projection/fixPullRequests.js';
 
 /**
  * The selected issue or error group's fix pull requests (`design/FIX-LINK.md`).
@@ -34,19 +29,17 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
  * none — so the answer refreshes on selection, after this mount's own writes,
  * and on `retry`.
  *
- * Both transports return the owner-resolved answer. A direct mounted read
- * supplies its admitted descriptors and device projection to that private owner;
- * a daemon read resolves those facts through its admitted source reads.
+ * The Account Action returns the owner-resolved answer and resolves current
+ * source admission for both composed Session links and native associations.
  */
 
 type Display = Readonly<{ title: string; scopeLabel: string }>;
 
 export type TriageFixPullRequestsInputV1 = Readonly<{
   entryRef: TriageEntryRefV1;
+  sourceContext?: TriageReadFixPullRequestsInputV1['sourceContext'];
   /** The issue's own display pair: a first fix-PR choice creates its mark row. */
   display: Display;
-  workflowSubjectOf(entryRef: TriageEntryRefV1): TriageSourceWorkflowSubjectV1 | null;
-  presentationOf(entryRef: TriageEntryRefV1): TriageEntryPresentationStateV1 | null;
 }>;
 
 export type TriageFixPullRequestsStateV1 =
@@ -74,32 +67,15 @@ export type TriageFixPullRequestsTransportV1 = Readonly<{
   write(input: TriageSetFixPullRequestInputV1, options?: PluginCancellationOptions): Promise<TriageSetFixPullRequestResultV1 | null>;
 }>;
 
-export function createDirectTriageFixPullRequestsTransport(
-  collections: Pick<CorpusCollectionsV1, 'userMarks' | 'sessionLinks'>,
-  projection: TriageFixPullRequestProjectionV1,
-  nowMs: () => number,
-  host: Pick<PluginUiHostApi, 'admitAction'>,
+export function createActionTriageFixPullRequestsTransport(
+  host: FixHostV1,
+  sourceContext?: TriageReadFixPullRequestsInputV1['sourceContext'],
 ): TriageFixPullRequestsTransportV1 {
-  const deps = (options?: PluginCancellationOptions) => ({
-    collections,
-    nowMs,
-    ...(options?.signal ? { signal: options.signal } : {}),
-  });
-  return Object.freeze({
-    read: async (entryRef, options) => await readTriageFixPullRequests({ v: 1, entryRef }, { ...deps(options), projection }),
-    write: async (input, options) => {
-      if (!await host.admitAction(TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1, input as unknown as JsonValue, options)) return null;
-      return await setTriageFixPullRequest(input, { ...deps(options), workflowSubjectOf: projection.workflowSubjectOf });
-    },
-  });
-}
-
-export function createActionTriageFixPullRequestsTransport(host: FixHostV1): TriageFixPullRequestsTransportV1 {
   return Object.freeze({
     async read(entryRef, options) {
       return TriageReadFixPullRequestsResultV1Schema.parse(await host.executeAction(
         TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1,
-        { v: 1, entryRef } as unknown as JsonValue,
+        { v: 1, entryRef, ...(sourceContext === undefined ? {} : { sourceContext }) } as unknown as JsonValue,
         options,
       ));
     },
@@ -116,24 +92,24 @@ export function createActionTriageFixPullRequestsTransport(host: FixHostV1): Tri
 type Settled =
   | Readonly<{ kind: 'reading' }>
   | Readonly<{ kind: 'unreachable' }>
-  | Readonly<{ kind: 'read'; entryRef: TriageEntryRefV1; resolved: TriageReadFixPullRequestsResultV1 }>;
+  | Readonly<{ kind: 'read'; entryRef: TriageEntryRefV1; owner: ReturnType<typeof usePluginUiEphemeralSharedScope>; resolved: TriageReadFixPullRequestsResultV1 }>;
 
 export function useTriageFixPullRequests(
   input: TriageFixPullRequestsInputV1 | null,
+  refreshGeneration = 0,
 ): TriageFixPullRequestsStateV1 | null {
   const hostApi = usePluginHostApi();
-  const text = usePluginTranslation();
-  const durable = useTriageDurableAccount();
-  const readiness = usePluginHostReadiness(durable.collections === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
-  const workflowSubjectOf = input?.workflowSubjectOf;
-  const presentationOf = input?.presentationOf;
+  const owner = usePluginUiEphemeralSharedScope();
+  const readiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
+  const sourceContext = input?.sourceContext;
   const transport = useMemo<TriageFixPullRequestsTransportV1>(
-    () => durable.collections === null || workflowSubjectOf === undefined || presentationOf === undefined
-      ? createActionTriageFixPullRequestsTransport(hostApi)
-      : createDirectTriageFixPullRequestsTransport(durable.collections, { workflowSubjectOf, presentationOf },
-          () => Date.now(), hostApi),
-    [durable.collections, hostApi, presentationOf, workflowSubjectOf],
+    () => createActionTriageFixPullRequestsTransport(hostApi, sourceContext),
+    [hostApi, owner, sourceContext],
   );
+  // Refreshed detail inputs carry new objects for the same admitted connection.
+  // Spend its latest context on the next requested read, without starting a
+  // second read when that detail refresh settles.
+  const readCurrent = useEffectEvent((entryRef: TriageEntryRefV1, signal: AbortSignal) => transport.read(entryRef, { signal }));
   const [settled, setSettled] = useState<Settled>({ kind: 'reading' });
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<'conflict' | 'failed' | null>(null);
@@ -148,6 +124,7 @@ export function useTriageFixPullRequests(
     input.entryRef.kindId,
     input.entryRef.collisionScope,
     input.entryRef.entryId,
+    sourceContext?.instance.instance.sourceInstanceId,
   ]);
   const entryRefRef = useRef<TriageEntryRefV1 | undefined>(undefined);
   entryRefRef.current = input?.entryRef;
@@ -161,21 +138,30 @@ export function useTriageFixPullRequests(
     const current = generation.current;
     const controller = new AbortController();
     setSettled((previous) => (
-      previous.kind === 'read' && sameTriageEntryRefV1(previous.entryRef, entryRef) ? previous : { kind: 'reading' }
+      previous.kind === 'read' && previous.owner === owner && sameTriageEntryRefV1(previous.entryRef, entryRef)
+        ? previous
+        : !readiness.pending && readiness.ready === false ? { kind: 'unreachable' } : { kind: 'reading' }
     ));
     if (readiness.pending || readiness.ready === false) return () => controller.abort();
     void (async () => {
       let next: Settled;
       try {
-        next = { kind: 'read', entryRef, resolved: await transport.read(entryRef, { signal: controller.signal }) };
+        next = { kind: 'read', entryRef, owner, resolved: await readCurrent(entryRef, controller.signal) };
       } catch {
         next = { kind: 'unreachable' };
       }
       if (controller.signal.aborted || current !== generation.current) return;
-      setSettled(next);
+      if (next.kind !== 'read') { setSettled(next); return; }
+      const read = next;
+      setSettled((previous) => {
+        const baseline = previous.kind === 'read' && previous.owner === owner
+          && sameTriageEntryRefV1(previous.entryRef, entryRef) ? previous : undefined;
+        const resolved = projectTriageFixPullRequestsRead(read.resolved, baseline?.resolved);
+        return baseline !== undefined && resolved === baseline.resolved ? baseline : { ...read, resolved };
+      });
     })();
     return () => controller.abort();
-  }, [entryKey, readGeneration, transport, readiness.pending, readiness.ready, readiness.revision]);
+  }, [entryKey, hostApi, owner, readGeneration, refreshGeneration, readiness.pending, readiness.ready, readiness.revision]);
 
   const write = useCallback((intent: TriageSetFixPullRequestInputV1): void => {
     setBusy(true);
@@ -199,10 +185,9 @@ export function useTriageFixPullRequests(
   }, [readiness.pending, readiness.ready]);
 
   return useMemo(() => {
-    if (entryRef === undefined || display === undefined
-      || workflowSubjectOf === undefined || presentationOf === undefined) return null;
+    if (entryRef === undefined || display === undefined) return null;
     if (settled.kind === 'unreachable') return readiness.pending ? { kind: 'reading' } : { kind: 'unreachable', retry };
-    if (settled.kind !== 'read' || !sameTriageEntryRefV1(settled.entryRef, entryRef)) return { kind: 'reading' };
+    if (settled.kind !== 'read' || settled.owner !== owner || !sameTriageEntryRefV1(settled.entryRef, entryRef)) return { kind: 'reading' };
     const resolved = settled.resolved;
     return {
       kind: 'ready',
@@ -221,5 +206,5 @@ export function useTriageFixPullRequests(
       }),
       unlink: (fixPullRequest) => write({ v: 1, linked: false, entryRef, displayAtMark: display, fixPullRequest }),
     };
-  }, [busy, display, entryRef, presentationOf, refusal, retry, settled, workflowSubjectOf, write, readiness.pending]);
+  }, [busy, display, entryRef, owner, refusal, retry, settled, write, readiness.pending]);
 }

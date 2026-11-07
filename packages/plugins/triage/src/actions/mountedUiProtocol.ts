@@ -7,7 +7,8 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import { TriageEntryRefV1Schema } from '@happier-dev/triage-protocol/v1';
 import { TriageSourcePanelSelectionV1Schema, TriageSourcePanelRevealV1Schema, TriageSourcePanelInsertV1Schema } from '@happier-dev/triage-sources/runtime';
-import { TriageSurfaceFilterSelectionV1Schema, TriageListSettledQueryV1Schema, TriageSmartPolicyV1Schema } from './listEntriesProtocol.js';
+import { TriageSurfaceFilterSelectionV1Schema, TriageListSettledQueryV1Schema, TriageSmartPolicyV1Schema, TriageListOrderV1Schema } from './listEntriesProtocol.js';
+import { TriageSavedViewPresentationV1Schema } from './savedViewsProtocol.js';
 
 export const TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 = 'ui/mounted-v1';
 const identifier = defineProtocolString({ minLength: 1 });
@@ -24,13 +25,18 @@ export const TriageMountedUiOperationV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('setPickerQuery'), query: defineProtocolString() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectDetailTab'), tab: identifier }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectLinkedSession'), sessionId: identifier }, closed),
-  defineProtocolObject({ kind: defineProtocolLiteral('switchView'), view: defineProtocolUnion([defineProtocolLiteral('list'), defineProtocolLiteral('board')]) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('switchView'), view: TriageSavedViewPresentationV1Schema }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('setGroupExpanded'), group: defineProtocolLiteral('completed'),
+    expanded: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setLens'), query: TriageListSettledQueryV1Schema, filters: TriageSurfaceFilterSelectionV1Schema,
-    order: defineProtocolUnion([defineProtocolLiteral('newest'), defineProtocolLiteral('oldest'), defineProtocolLiteral('smart')]),
+    order: TriageListOrderV1Schema,
     smartPolicy: TriageSmartPolicyV1Schema.optional() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectSavedView'), viewId: identifier.nullable() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setSelection'), entryRefs: defineProtocolArray(TriageEntryRefV1Schema) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('retryRun') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('retryAccountData') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('retrySessionActivity') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('retryFixPullRequests') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('cancelRun') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('refresh') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('loadMore'), section: defineProtocolUnion([defineProtocolLiteral('entries'), defineProtocolLiteral('pins'), defineProtocolLiteral('linkedSessions')]) }, closed),

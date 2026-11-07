@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
+import { URL as NodeURL } from 'node:url';
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import * as React from 'react';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, type PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
@@ -12,13 +15,16 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+    TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
     TriageConfiguredSourceInstanceV1Schema,
+    TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1,
+    TriageReadFixPullRequestsInputV1Schema,
     type TriageConfiguredSourceInstanceV1,
     type TriageScanInputV1,
     type TriageScanResultV1,
     type TriageSourceScanObservationV1,
 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     listTriageEntries,
@@ -30,12 +36,20 @@ import {
     TriageListEntriesInputV1Schema,
 } from '../actions/listEntriesProtocol.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../actions/tasksProtocol.js';
+import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1 } from '../actions/sessionLinksProtocol.js';
+import { createTestkitSourceSessionRelations, readTestkitSourceSessionLinks } from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { readTriageActionsForSurface } from '../actions/actionsCatalog.js';
 import {
     TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
     TriageReadActionsInputV1Schema,
 } from '../actions/actionsCatalogProtocol.js';
-import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
+import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
+import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
+import { readTriageFixPullRequests } from '../actions/fixPullRequests.js';
+import { createTriageReobserveEntryActionHandler } from '../actions/reobserveEntry.js';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryInputV1Schema } from '../actions/reobserveEntryProtocol.js';
+import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
 import { administerTriageSavedView, readTriageSavedViewsForSurface } from '../actions/savedViews.js';
 import {
@@ -49,33 +63,42 @@ import {
     TriageListPinnedEntriesInputV1Schema,
 } from '../actions/userMarksProtocol.js';
 import { renderSurface as renderPickerSurface } from '../composer/entryPicker.js';
+import { buildTriageEntryDetailLaunchInput, parseTriageEntryDetailLaunchInput } from '../composer/entryDetailLaunchInput.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitCorpusCollections, selectTestkitConfiguredSources } from '../corpus/testkit/corpusCollections.test-support.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
-import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
+import { mutateTriageSavedViews, TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import {
     testkitLocator,
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { readTriageListWindowSnapshot, refreshTriageListWindow, subscribeToTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
+import { renderSurface as renderTasksSurface } from './tasksSurface.js';
 import { TriageListShell } from './shell/root.js';
-import { TRIAGE_UI_TRANSLATIONS } from './translations.js';
-import { filterFacetOption } from './shell/toolbarMenus.test-support.js';
+import { closeFilters, filterFacetOption, pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
 import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import { invokeTriageMountedUiAction } from './mountedActions.js';
-import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
+import { activate, createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { TriageResourceSurface } from './resourceSurface.js';
+import { createTriageResolveResourceActionHandler } from '../actions/resolveResource.js';
+import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionInputV1Schema } from '../actions/resolveResourceProtocol.js';
+import { internalTaskStateV1 } from '../internalTasks/source.js';
+import { readTaskOriginError } from '../corpus/marks/setPinned.js';
+import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorInputV1Schema } from '../actions/taskOriginProtocol.js';
 import {
     buildTriageRouteSubPathV1,
     parseTriageRouteSubPathV1,
     TRIAGE_ROUTE_DEFAULT_LENS_V1,
 } from './navigation/location.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new NodeURL('../../', import.meta.url));
 
 /** The New task draft's first line (lab `tasks-create`). */
 const DRAFT_PURPOSE = 'Where does it belong? It\u2019s created there and stays there.';
@@ -167,14 +190,23 @@ function presentObservation(input: Readonly<{
     };
 }
 
-function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
+function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; completedTask?: boolean; sourceBUnavailable?: boolean;
+    unlinkedTaskOnFirstPage?: boolean;
+    /** Source A answers one complete page that asks nothing of the reader. */
+    quietFirstPage?: boolean }> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1, LABEL_A)));
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2, LABEL_B)));
 
     const scans = new Map<object, ScanFn>();
     const scanCalls = { count: 0 };
-    const state = { sourceAFails: false, sourceBFails: false, savedViewsUnavailable: false };
+    const state = { sourceAFails: false, sourceBFails: false, sessionLinksUnavailable: false, savedViewsUnavailable: false, pinsUnavailable: false,
+        fixPullRequestsUnavailable: false, resourceUnavailable: false, entryReadUnavailable: false,
+        sessionRead: 'ready' as 'ready' | 'missing' | 'failed' | 'pending', sessionReads: 0,
+        sessionReadOverrides: new Map<string, 'ready' | 'missing' | 'failed'>(),
+        scanGate: null as Promise<void> | null,
+        /** The host refusing one connection's list invocation (an offline Machine, a broken transport). */
+        listInvocationFailure: null as ((sourceInstanceId: string) => PluginError | null) | null };
 
     function admittedSource(
         source: Readonly<{ pluginId: string; localId: string }>,
@@ -200,18 +232,28 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
                 v: 1,
                 purpose: 'triage-source',
                 displayName: 'Example forge',
-                kinds: options.tasks ? [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', task: true }]
-                    : [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
+                kinds: (options.tasks ? [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', task: true }]
+                    : [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }]).map(kind => ({
+                        ...kind, ...(options.details ? { detailTabs: [{ kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' }] } : {}),
+                    })),
             },
-            operations: { listInstances: {}, scan: handle, get: {} },
+            operations: { listInstances: {}, scan: handle, get: {}, resolveResource: {} },
             surfaces: { detail: {} },
         } as unknown as TriageAdmittedSourceV1;
     }
 
     const scanA: ScanFn = async (input) => {
         scanCalls.count += 1;
+        await state.scanGate;
         if (state.sourceAFails) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } };
+        }
+        if (input.page.kind === 'initial' && options.quietFirstPage) {
+            return {
+                kind: 'complete',
+                observations: [presentObservation({ entryId: '1', title: 'Replace the duplicated normalizer', sourceUpdatedAtMs: 3_000 })],
+                evidence: { kind: 'walkFinished' },
+            };
         }
         if (input.page.kind === 'initial') {
             return {
@@ -221,7 +263,9 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
                     title: 'Replace the duplicated normalizer',
                     sourceUpdatedAtMs: 3_000,
                     involvement: ['reviewRequested'],
-                })],
+                }), ...(options.unlinkedTaskOnFirstPage ? [presentObservation({
+                    entryId: 'unlinked', title: 'Unlinked maintenance task', sourceUpdatedAtMs: 2_000,
+                })] : [])],
                 evidence: { kind: 'partial', reason: 'more-pages' },
                 continuation: { v: 1, token: 'page-2' },
             };
@@ -235,6 +279,7 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
 
     const scanB: ScanFn = async () => {
         scanCalls.count += 1;
+        await state.scanGate;
         if (state.sourceBFails) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } };
         }
@@ -245,13 +290,18 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
         };
     };
 
-    const admitted = [admittedSource(SOURCE_A, scanA), admittedSource(SOURCE_B, scanB)];
+    const admitted = [admittedSource(SOURCE_A, scanA), ...(options.sourceBUnavailable ? [] : [admittedSource(SOURCE_B, scanB)])];
     const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
         const scan = scans.get(operation as unknown as object);
         if (scan === undefined) throw new Error('No admitted scan handle for this operation.');
         const result = await scan(input);
         return !options.tasks || result.kind === 'failed' ? result : { ...result,
-            observations: result.observations.map(row => ({ ...row, localRef: { ...row.localRef, kindId: 'issue' } })),
+            observations: result.observations.map(row => ({ ...row, localRef: { ...row.localRef, kindId: 'issue' },
+                ...(options.completedTask && row.kind === 'present' && row.localRef.entryId === '3' ? {
+                    snapshot: testkitSnapshot({ title: 'Completed maintenance',
+                        state: internalTaskStateV1('completed'), completedAtMs: Date.now() }),
+                } : {}),
+            })),
         };
     };
 
@@ -259,6 +309,7 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
     const unroutedActions: string[] = [];
     const publishedContexts: (PluginUiContextEnrichmentV1 | null)[] = [];
     const settledLocations: string[] = [];
+    const surfaceOpens: PluginUiTestkitOpenSurfaceInput[] = [];
     const accountKv = createTestkitAccountKv();
 
     /**
@@ -268,9 +319,68 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
      */
     async function executeAction(request: Readonly<{ action: unknown; input: unknown }>) {
         actionCalls.push(String(request.action));
+        // The host's backend/project catalogs are outside this plugin's process.
+        // This fixture has no execution backend or project; its detail reads remain real.
+        if (request.action === 'agents.backends.list' || request.action === 'projects.list') {
+            throw new PluginError({ code: 'unavailable', retryable: false });
+        }
+        if (request.action === TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1) {
+            const input = TriageReadTaskOriginErrorInputV1Schema.parse(request.input);
+            return { v: 1, originError: await readTaskOriginError({ entryRef: input.entryRef, collections }) };
+        }
+        if (String(request.action) === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1) {
+            return await createTriageResolveResourceActionHandler()(TriageResolveResourceActionInputV1Schema.parse(request.input), {
+                signal: new AbortController().signal, services: {
+                    storage: { account: { collection: () => collections.sourceInstances } },
+                    targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: admitted }), dispose() {} }) },
+                    actions: { executeAdmittedTargetedOperation: async () => state.resourceUnavailable ? { kind: 'unavailable' } : {
+                        kind: 'resolved', localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '1' }, locator: testkitLocator(),
+                    } },
+                },
+            } as unknown as TriageDataActionContext);
+        }
+        if (options.details && String(request.action) === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
+            if (state.entryReadUnavailable) throw new PluginError({ code: 'server_unavailable', retryable: true });
+            const input = TriageReobserveEntryInputV1Schema.parse(request.input);
+            // Genuine host transports: Account storage, registry and the fixture source's exact get.
+            const context = { surface: 'ui', signal: new AbortController().signal, services: {
+                storage: { account: { collection: () => collections.sourceInstances } },
+                targetedContributions: { observeForSelf: () => ({
+                    readCurrent: async () => ({ contributions: admitted }), dispose() {},
+                }) },
+                actions: { executeAdmittedTargetedOperation: async () => ({
+                    ...presentObservation({ entryId: input.entryRef.entryId, title: 'Replace the duplicated normalizer', sourceUpdatedAtMs: 3_000 }),
+                    localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
+                }) },
+            } } as unknown as TriageDataActionContext;
+            return await createTriageReobserveEntryActionHandler()(input, context);
+        }
+        if (options.details && String(request.action) === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
+            return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input), {
+                sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }),
+                readSessionSummary: async () => null,
+            });
+        }
+        if (options.details && String(request.action) === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1) {
+            if (state.fixPullRequestsUnavailable) throw new PluginError({ code: 'server_unavailable', retryable: true });
+            return await readTriageFixPullRequests(TriageReadFixPullRequestsInputV1Schema.parse(request.input), {
+                collections, nowMs: () => Date.now(),
+                sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }),
+                projection: {
+                    workflowSubjectOf: ref => admitted.find(source => source.contributor.pluginId === ref.source.pluginId
+                        && source.contributor.contributionId === ref.source.localId)?.descriptor.kinds.find(kind => kind.id === ref.kindId)?.workflowSubject ?? null,
+                    presentationOf: async () => null,
+                },
+            });
+        }
+        if (String(request.action) === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1) {
+            if (state.sessionLinksUnavailable) throw new Error('Account Session links unavailable');
+            return readTestkitSourceSessionLinks(request.input, { collections, contributions: admitted });
+        }
         // The shell also reads the reader's durable pins. It is a different
         // Collection and a different Action, and it reaches no source at all.
         if (String(request.action) === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
+            if (state.pinsUnavailable) throw new PluginError({ code: 'server_unavailable', retryable: true });
             return await listTriagePinnedEntries(
                 TriageListPinnedEntriesInputV1Schema.parse(request.input),
                 { collections, nowMs: () => Date.now() },
@@ -303,7 +413,14 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
             throw new Error(`unrouted Action: ${String(request.action)}`);
         }
         const parsed = TriageListEntriesInputV1Schema.parse(request.input);
-        return await listTriageEntries(parsed, {
+        const refused = parsed.sources.kind === 'selected' && parsed.sources.sourceInstances.length === 1
+            ? state.listInvocationFailure?.(parsed.sources.sourceInstances.map(source => source.sourceInstanceId)[0]!) ?? null : null;
+        if (refused !== null) throw refused;
+        // This harness admits only its two external sources. TASK-NOSRC also
+        // enumerates the built-in source for allConfigured; selecting the
+        // harness inventory avoids inventing an unavailable personal source.
+        return await listTriageEntries({ ...parsed, sources: parsed.sources.kind === 'allConfigured'
+            ? await selectTestkitConfiguredSources([INSTANCE_A, INSTANCE_B], collections.sourceInstances) : parsed.sources }, {
             sourceInstances: collections.sourceInstances,
             readAdmittedSources: async () => admitted,
             executeScan,
@@ -313,11 +430,13 @@ function createHarness(options: Readonly<{ tasks?: boolean }> = {}) {
     }
 
     return {
+        collections,
         actionCalls,
         executeAction,
         ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         publishedContexts,
         settledLocations,
+        surfaceOpens,
         accountKv,
         admitted,
         scanCalls,
@@ -336,7 +455,10 @@ function sourceContextFixture(harness: ReturnType<typeof createHarness>) {
         points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol: {
             id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
         }, contributions: harness.admitted.map(source => ({ contributor: source.contributor,
-            protocol: source.protocol, descriptor: source.descriptor, operations: [], surfaces: [] })) }] }],
+            protocol: source.protocol, descriptor: source.descriptor, operations: [], surfaces: source.descriptor.kinds.some(kind => kind.detailTabs !== undefined) ? [{
+                point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol: source.protocol },
+                contributor: source.contributor, role: TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1, presentation: 'content' as const,
+            }] : [] })) }] }],
     } });
 }
 
@@ -345,7 +467,7 @@ async function mountSurface(
     harness: ReturnType<typeof createHarness>,
     instanceId: string,
     context: Parameters<typeof createSurfaceContextFixture>[0] = {},
-    options: Readonly<{ subPath?: string }> = {},
+    options: Readonly<{ subPath?: string; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean }> = {},
 ): Promise<PluginUiTestkit> {
     // Mounting starts the window's first cycle, so the whole mount is driven
     // inside `act` — otherwise the render the cycle causes lands after the
@@ -356,13 +478,29 @@ async function mountSurface(
             identity: { instanceId, mountNonce: 'fixture-mount-185' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
+            ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
             surface,
             surfaceContext: createSurfaceContextFixture(context),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
+                sessions: true,
                 overlays: true,
             }),
             handlers: {
+                ...(options.recordSurfaceOpens ? { openSurface: (request: PluginUiTestkitOpenSurfaceInput) => {
+                    harness.surfaceOpens.push(request);
+                } } : {}),
+                readSession: ({ sessionId }) => {
+                    harness.state.sessionReads += 1;
+                    const outcome = harness.state.sessionReadOverrides.get(sessionId) ?? harness.state.sessionRead;
+                    if (outcome === 'failed') throw new PluginError({ code: 'server_unavailable', retryable: true });
+                    if (outcome === 'pending') return new Promise<never>(() => {});
+                    return outcome === 'missing' ? null : {
+                        sessionId, lifecycle: 'active', runtime: 'idle', operational: 'ready', pendingPermissions: [],
+                        workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' },
+                    };
+                },
+                watchSession: () => {},
                 publishCurrentUiContext: ({ enrichment }) => {
                     harness.publishedContexts.push(enrichment);
                 },
@@ -390,7 +528,7 @@ async function mountSurface(
     return fixture;
 }
 
-/** Settle the cycle the mount already started; `flush` joins it rather than adding one. */
+/** Wait for the mount's existing cycle; only an explicit manual demand starts another read. */
 async function settleWindow(
     trigger: 'view' | 'manual',
     fixture: PluginUiTestkit,
@@ -398,7 +536,22 @@ async function settleWindow(
     const scope = scopeByHost.get(fixture.context.hostApi);
     if (scope === undefined) throw new Error('mounted surface lost its host-owned scope');
     await act(async () => {
-        await refreshTriageListWindow(trigger, fixture.context.hostApi, scope);
+        if (trigger === 'manual') {
+            await refreshTriageListWindow(trigger, fixture.context.hostApi, scope);
+            return;
+        }
+        const idle = () => readTriageListWindowSnapshot(fixture.context.hostApi, scope).pending === 'idle';
+        if (idle()) return;
+        await new Promise<void>(resolve => {
+            let unsubscribe = () => {};
+            const settle = () => {
+                if (!idle()) return;
+                unsubscribe();
+                resolve();
+            };
+            unsubscribe = subscribeToTriageListWindow(fixture.context.hostApi, settle, scope);
+            settle();
+        });
     });
 }
 
@@ -406,6 +559,12 @@ async function visibleTexts(fixture: PluginUiTestkit, contents: readonly string[
     for (const content of contents) {
         await expect(fixture.getByText(content)).resolves.toEqual({ content });
     }
+}
+
+/** A source-local read leaves its next provider page for explicit user demand. */
+async function loadRemainingPage(fixture: PluginUiTestkit): Promise<void> {
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Load more' })); });
+    await settleWindow('view', fixture);
 }
 
 function createRetirableShellSurface(): Readonly<{
@@ -450,6 +609,107 @@ const SOURCE_REACHING_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 
 describe('the mounted PRs & Issues surface', () => {
+    it.each([
+        ['resolve', 'ui'], ['read', 'ui'], ['resolve', 'agent'], ['read', 'agent'],
+    ] as const)('recovers an unavailable resource through its Retry (%s, %s)', async (failure, surface) => {
+        const harness = createHarness({ details: true });
+        harness.state.resourceUnavailable = failure === 'resolve';
+        harness.state.entryReadUnavailable = failure === 'read';
+        const resource = { kind: 'pullRequest' as const, url: 'https://github.com/example/repository/pull/1' };
+        const resourceSurface = defineUiSurface(() => <TriageResourceSurface resource={resource} />);
+        const page = await mountSurface(resourceSurface, harness, `resource-${failure}`, sourceContextFixture(harness));
+        await expect(page.getByText('These details are unavailable')).resolves.toBeDefined();
+        await expect(page.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
+        await expect(page.getByRole('button', { name: 'Open on GitHub' })).resolves.toBeDefined();
+        harness.state.resourceUnavailable = false;
+        harness.state.entryReadUnavailable = false;
+        const retry = harness.publishedContexts.at(-1)?.commands?.find(command => command.command.kind === 'executeAction'
+            && TriageMountedUiInputV1Schema.parse(command.command.input).operation.kind === 'refresh');
+        if (retry?.command.kind !== 'executeAction') throw new Error('Missing resource Retry command');
+        await act(async () => {
+            if (surface === 'ui') await page.press(await page.getByRole('button', { name: 'Retry' }));
+            else expect(await createTriageMountedUiActionHandler()(TriageMountedUiInputV1Schema.parse(retry.command.input), {
+                plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: `${PLUGIN_MANIFEST.id}/actions/ui/mounted-v1` },
+                invocationSurface: surface, signal: new AbortController().signal,
+                ui: page.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+            })).toEqual({ status: 'applied' });
+        });
+        await expect(page.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        await expect(page.queryByText('These details are unavailable')).resolves.toBeUndefined();
+        await expect(page.queryByRole('button', { name: 'Open on GitHub' })).resolves.toBeUndefined();
+        expect(harness.actionCalls.filter(action => action === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1)).toHaveLength(2);
+        expect(harness.scanCalls.count).toBe(0);
+        expect(harness.unroutedActions).toEqual([]);
+    });
+
+    it.each(['ui', 'agent', 'refresh'] as const)('recovers failed fix PR links through the same mounted read (%s)', async surface => {
+        const harness = createHarness({ tasks: true, details: true });
+        harness.state.fixPullRequestsUnavailable = true;
+        const shell = await mountSurface(renderShellSurface, harness, `fix-pr-retry-${surface}`, sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Replace the duplicated normalizer' }));
+        });
+        await expect(shell.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
+        const retryCommand = harness.publishedContexts.at(-1)?.commands?.find(command => {
+            if (command.command.kind !== 'executeAction') return false;
+            const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
+            return parsed.success && parsed.data.operation.kind === 'retryFixPullRequests';
+        });
+        expect(retryCommand).toBeDefined();
+        if (retryCommand?.command.kind !== 'executeAction') throw new Error('Missing fix-PR Retry command');
+        const scansBeforeRetry = harness.scanCalls.count;
+        const readsBeforeRetry = harness.actionCalls.filter(action => action === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1).length;
+        harness.state.fixPullRequestsUnavailable = false;
+        await act(async () => {
+            if (surface === 'ui') await shell.press(await shell.getByRole('button', { name: 'Retry: Fix pull request' }));
+            else expect(await createTriageMountedUiActionHandler()(surface === 'refresh'
+                ? { ...TriageMountedUiInputV1Schema.parse(retryCommand.command.input), operation: { kind: 'refresh' } }
+                : TriageMountedUiInputV1Schema.parse(retryCommand.command.input), {
+                plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: `${PLUGIN_MANIFEST.id}/actions/ui/mounted-v1` },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: shell.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+            })).toEqual({ status: 'applied' });
+        });
+        await expect(shell.queryByText('Fix pull request links could not be read.')).resolves.toBeUndefined();
+        if (surface !== 'refresh') expect(harness.scanCalls.count).toBe(scansBeforeRetry);
+        expect(harness.actionCalls.filter(action => action === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1)).toHaveLength(readsBeforeRetry + 1);
+        expect(harness.unroutedActions).toEqual([]);
+    });
+
+    it.each(['ui', 'agent'] as const)('recovers failed pins and saved views through the same mounted Retry (%s)', async surface => {
+        const harness = createHarness();
+        harness.state.savedViewsUnavailable = true;
+        harness.state.pinsUnavailable = true;
+        const shell = await mountSurface(renderShellSurface, harness, `account-retry-${surface}`, sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        await expect(shell.getByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.')).resolves.toBeDefined();
+        const retryCommand = harness.publishedContexts.at(-1)?.commands?.find(command => {
+            if (command.command.kind !== 'executeAction') return false;
+            const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
+            return parsed.success && parsed.data.operation.kind === 'retryAccountData';
+        });
+        expect(retryCommand).toBeDefined();
+        if (retryCommand?.command.kind !== 'executeAction') throw new Error('Missing Account-data Retry command');
+        const scansBeforeRetry = harness.scanCalls.count;
+        harness.state.savedViewsUnavailable = false;
+        harness.state.pinsUnavailable = false;
+        await act(async () => {
+            if (surface === 'ui') await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+            else expect(await createTriageMountedUiActionHandler()(TriageMountedUiInputV1Schema.parse(retryCommand.command.input), {
+                plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: `${PLUGIN_MANIFEST.id}/actions/ui/mounted-v1` },
+                invocationSurface: surface, signal: new AbortController().signal,
+                ui: shell.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+            })).toEqual({ status: 'applied' });
+        });
+        await expect(shell.queryByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.')).resolves.toBeUndefined();
+        expect(harness.scanCalls.count).toBe(scansBeforeRetry);
+        expect(harness.unroutedActions).toEqual([]);
+    });
+
     it('selects an externally created saved view through the mounted Action using the current Account catalog', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'external-saved-view', sourceContextFixture(harness));
@@ -516,7 +776,242 @@ describe('the mounted PRs & Issues surface', () => {
         expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.selectedViewId).toBeNull();
     });
 
+    it.each([false, true])('offers both Q1 views on the same lens and keeps the legacy Tasks entrance navigable (legacy=%s)', async legacy => {
+        const harness = createHarness({ tasks: true });
+        const entryRef = { source: SOURCE_A, kindId: 'issue', collisionScope: 'example/repository', entryId: '1' };
+        const savedViewId = '00000001-0000-4000-8000-000000000000';
+        const lens = { ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'normalizer', selectedViewId: savedViewId,
+            selection: entryRef, filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, tasks: 'everyone' as const } };
+        const created = await mutateTriageSavedViews({
+            catalog: harness.accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1), mintViewId: () => savedViewId,
+        }, { kind: 'create', expectedRevision: harness.accountKv.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+            label: 'Maintenance', query: lens.query, filters: lens.filters, order: lens.order, smartPolicy: lens.smartPolicy });
+        expect(created.status).toBe('applied');
+        const launch = buildTriageEntryDetailLaunchInput({ entryRef,
+            sourceInstance: { source: SOURCE_A, sourceInstanceId: INSTANCE_A },
+            originComposer: { kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' } });
+        const writesBeforeSwitch = harness.accountKv.setCallCount();
+        const shell = await mountSurface(legacy ? renderTasksSurface : renderShellSurface, harness, `q1-${legacy}`,
+            sourceContextFixture(harness), { subPath: buildTriageRouteSubPathV1(lens), launchInput: launch, recordSurfaceOpens: true });
+        await settleWindow('view', shell);
+        const commands = harness.publishedContexts.at(-1)?.commands ?? [];
+        const prs = commands.find(command => command.title === 'PRs & Issues');
+        expect(commands.some(command => command.title === 'Tasks')).toBe(true);
+        expect(prs?.command.kind).toBe('executeAction');
+        if (prs?.command.kind !== 'executeAction') throw new Error('Missing PRs & Issues view command');
+        const input = TriageMountedUiInputV1Schema.parse(prs.command.input);
+        await act(async () => {
+            expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, input.mountId, input.operation,
+                new AbortController().signal)).toEqual({ status: 'applied' });
+        });
+        const expected = { ...lens, filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters };
+        if (legacy) {
+            expect(harness.surfaceOpens).toEqual([expect.objectContaining({
+                view: { pluginId: 'happier.triage', localId: 'triage' }, subPath: buildTriageRouteSubPathV1(expected),
+                input: launch,
+            })]);
+            expect(parseTriageEntryDetailLaunchInput(harness.surfaceOpens[0]?.input)).toEqual({ status: 'valid', input: launch });
+        }
+        else expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toEqual(expected);
+        expect(harness.accountKv.setCallCount()).toBe(writesBeforeSwitch);
+    });
 
+    it('switches between Tasks and PRs & Issues from the page’s own view switch, without saved-view writes', async () => {
+        const harness = createHarness({ tasks: true });
+        const writesBefore = harness.accountKv.setCallCount();
+        const shell = await mountSurface(renderShellSurface, harness, 'q1-switch', sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'Tasks' })); });
+        await vi.waitFor(() => expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.filters.tasks).toBe('mine'));
+        await vi.waitFor(async () => expect(await shell.getByRole('radio', { name: 'Tasks', state: { checked: true } })).toBeDefined());
+        await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'PRs & Issues' })); });
+        await vi.waitFor(() => expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.filters.tasks).toBeUndefined());
+        expect(harness.accountKv.setCallCount()).toBe(writesBefore);
+    });
+
+    it.each([false, true])('settles unavailable admission without a loading or confirmed-empty claim (Tasks=%s)', async tasks => {
+        const harness = createHarness({ tasks });
+        const context = { ...sourceContextFixture(harness), requesterExecutionReady: false,
+            machineConnectionPending: false, machineExecutionReady: false };
+        const shell = await mountSurface(renderShellSurface, harness, `unavailable-list-${tasks}`, context,
+            tasks ? { subPath: 'tasks,everyone' } : {});
+        await expect(shell.queryByText('Reading your sources…')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
+        await expect(shell.queryByText('No tasks here')).resolves.toBeUndefined();
+        await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
+        expect(harness.scanCalls.count).toBe(0);
+        await act(async () => { await shell.updateSurface({ ...context, requesterExecutionReady: true }); });
+        await settleWindow('view', shell);
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+    });
+
+    it('reads linked Session activity without a note pushing the list down', async () => {
+        const harness = createHarness();
+        await linkEntryToSession({ collections: harness.collections,
+            entryRef: { source: SOURCE_A, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '1' },
+            sessionId: 'pending-linked-session', display: { locator: testkitLocator(), scopeLabel: LABEL_A }, nowMs: 1 });
+        harness.state.sessionRead = 'pending';
+        const shell = await mountSurface(renderShellSurface, harness, 'linked-session-pending', sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        expect(harness.state.sessionReads).toBeGreaterThan(0);
+        await expect(shell.queryByText('Reading linked Session activity…')).resolves.toBeUndefined();
+    });
+
+    it.each([
+        { initialRead: 'missing', tasks: false, surface: 'ui' },
+        { initialRead: 'failed', tasks: false, surface: 'ui' },
+        { initialRead: 'failed', tasks: false, surface: 'agent' },
+        { initialRead: 'missing', tasks: true, surface: 'ui' },
+    ] as const)('keeps terminal linked Sessions visible without Retry ($initialRead, Tasks=$tasks, $surface)', async ({ initialRead, tasks, surface }) => {
+        const harness = createHarness({ tasks });
+        const entryRef = { source: SOURCE_A, kindId: tasks ? 'issue' : 'pull-request', collisionScope: 'example/repository', entryId: '1' };
+        await linkEntryToSession({ collections: harness.collections,
+            entryRef,
+            sessionId: 'retained-linked-session', display: { locator: testkitLocator(), scopeLabel: LABEL_A }, nowMs: 1 });
+        if (initialRead === 'failed') {
+            await linkEntryToSession({ collections: harness.collections,
+                entryRef,
+                sessionId: 'known-missing-session', display: { locator: testkitLocator(), scopeLabel: LABEL_A }, nowMs: 2 });
+            harness.state.sessionReadOverrides.set('known-missing-session', 'missing');
+        }
+        harness.state.sessionRead = initialRead;
+        const shell = await mountSurface(renderShellSurface, harness, `linked-session-${initialRead}-${tasks}`, sourceContextFixture(harness),
+            tasks ? { subPath: 'tasks,agents' } : {});
+        await settleWindow('view', shell);
+        if (initialRead === 'failed') {
+            await expect(shell.getByText('Some linked Session activity could not be read.')).resolves.toBeDefined();
+            harness.state.sessionRead = 'ready';
+            await act(async () => {
+                if (surface === 'ui') await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+                else {
+                    const command = harness.publishedContexts.at(-1)?.commands?.find(command => {
+                        if (command.command.kind !== 'executeAction') return false;
+                        const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
+                        return parsed.success && parsed.data.operation.kind === 'retrySessionActivity';
+                    });
+                    expect(command).toBeDefined();
+                    if (command?.command.kind !== 'executeAction') throw new Error('Missing linked-Session Retry command');
+                    expect(await createTriageMountedUiActionHandler()(TriageMountedUiInputV1Schema.parse(command.command.input), {
+                        plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                        contribution: { id: 'ui/mounted-v1', qualifiedId: `${PLUGIN_MANIFEST.id}/actions/ui/mounted-v1` },
+                        invocationSurface: surface, signal: new AbortController().signal,
+                        ui: shell.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+                    })).toEqual({ status: 'applied' });
+                }
+            });
+        }
+        await expect(shell.getByText('Some linked Sessions are unavailable.')).resolves.toBeDefined();
+        await expect(shell.queryByText('Some linked Session activity could not be read.')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Reading linked Session activity…')).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        expect(harness.state.sessionReads).toBe(initialRead === 'failed' ? 4 : 1);
+    });
+
+    it('does not reread relations for reordered rows with unchanged membership and selected sources', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'relation-demand-producer');
+        await settleWindow('view', shell);
+        await loadRemainingPage(shell);
+        const relationReads = () => harness.actionCalls.filter(action => action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1).length;
+        const initialReads = relationReads();
+        expect(initialReads).toBeGreaterThan(0);
+        const detail = harness.publishedContexts.at(-1)?.detail;
+        if (!detail || typeof detail !== 'object' || Array.isArray(detail)) throw new Error('Expected current list context');
+        const address = detail.mountedAction;
+        if (!address || typeof address !== 'object' || Array.isArray(address) || typeof address.mountId !== 'string') {
+            throw new Error('Expected mounted list Action address');
+        }
+        const mountId = address.mountId;
+        let release!: () => void;
+        harness.state.scanGate = new Promise<void>(resolve => { release = resolve; });
+        const scansBefore = harness.scanCalls.count;
+        try {
+            await act(async () => {
+                expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, mountId, {
+                    kind: 'setLens', query: '', filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'oldest',
+                }, new AbortController().signal)).toEqual({ status: 'applied' });
+            });
+            await vi.waitFor(() => expect(harness.scanCalls.count).toBeGreaterThan(scansBefore));
+            await visibleTexts(shell, ['Replace the duplicated normalizer', 'Older change', 'Middle change']);
+            expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'oldest' });
+            // Projection/order updates reached the real shell, but no new
+            // acquisition pass or relationship selection has answered yet.
+            expect(relationReads() - initialReads).toBe(0);
+        } finally {
+            release();
+            harness.state.scanGate = null;
+            await settleWindow('view', shell);
+        }
+        // A genuine completed acquisition still asks for fresh relationships.
+        expect(relationReads() - initialReads).toBe(1);
+    });
+
+    it('shares Tasks Done disclosure between the published mounted Action and human Show/Hide without reads or writes', async () => {
+        const harness = createHarness({ tasks: true, completedTask: true });
+        const tasksContext = sourceContextFixture(harness);
+        const shell = await mountSurface(renderShellSurface, harness, 'tasks-disclosure', tasksContext, { subPath: 'tasks,everyone' });
+        await settleWindow('view', shell);
+        const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'ui/mounted-v1');
+        if (declaration?.execution.target !== 'client') throw new Error('Missing mounted client Action');
+        const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST,
+            target: { ...declaration.execution.client, platform: 'web' }, activate });
+        try {
+            const handler = client.registration('actions', declaration.id);
+            if (!handler) throw new Error('Missing mounted registration');
+            const disclosureCommand = () => harness.publishedContexts.at(-1)?.commands?.find(entry => {
+                if (entry.command.kind !== 'executeAction') return false;
+                const parsed = TriageMountedUiInputV1Schema.safeParse(entry.command.input);
+                return parsed.success && parsed.data.operation.kind === 'setGroupExpanded';
+            });
+            const invoke = async (input?: unknown) => {
+                const command = disclosureCommand();
+                expect(command).toBeDefined();
+                if (command?.command.kind !== 'executeAction') throw new Error('Missing group disclosure command');
+                return await handler(input ?? command.command.input, {
+                    plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                    contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
+                    invocationSurface: 'agent', signal: new AbortController().signal,
+                    ui: shell.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+                });
+            };
+            const before = { scans: harness.scanCalls.count, reads: harness.actionCalls.length };
+            const initial = disclosureCommand();
+            expect(initial?.command.kind).toBe('executeAction');
+            if (initial?.command.kind !== 'executeAction') throw new Error('Missing initial disclosure');
+            const show = TriageMountedUiInputV1Schema.parse(initial.command.input);
+            await expect(shell.queryByText('Completed maintenance')).resolves.toBeUndefined();
+            await act(async () => { expect(await invoke()).toEqual({ status: 'applied' }); });
+            await expect(shell.getByText('Completed maintenance')).resolves.toBeDefined();
+            // Replaying an explicit set does not toggle the group back shut.
+            await act(async () => { expect(await invoke(show)).toEqual({ status: 'applied' }); });
+            await expect(shell.getByText('Completed maintenance')).resolves.toBeDefined();
+            await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Hide, Done' })); });
+            await expect(shell.queryByText('Completed maintenance')).resolves.toBeUndefined();
+            await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Show, Done' })); });
+            await expect(shell.getByText('Completed maintenance')).resolves.toBeDefined();
+            await act(async () => { expect(await invoke()).toEqual({ status: 'applied' }); });
+            await expect(shell.queryByText('Completed maintenance')).resolves.toBeUndefined();
+            expect(harness.scanCalls.count).toBe(before.scans);
+            expect(harness.actionCalls).toHaveLength(before.reads);
+            expect(harness.accountKv.setCallCount()).toBe(0);
+            // LIST-R2 publishes the opening view for the host's page title.
+            expect(harness.settledLocations).toEqual(['tasks,everyone']);
+            // A current mount without the Tasks lens has no such control or authority.
+            await act(async () => { expect(await invoke({ mountId: show.mountId, operation: {
+                kind: 'setLens', query: '', filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters,
+                order: 'smart', smartPolicy: TRIAGE_ROUTE_DEFAULT_LENS_V1.smartPolicy,
+            } })).toEqual({ status: 'applied' }); });
+            expect(disclosureCommand()).toBeUndefined();
+            expect(await handler(show, {
+                plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: shell.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+            })).toEqual({ status: 'unavailable' });
+        } finally { await client.dispose(); }
+    });
     it('opens New task as a draft in the detail\'s place without a second list mount or a provider write', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'tasks-create-entry', {}, { subPath: 'tasks,everyone' });
@@ -527,11 +1022,37 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.getByText(DRAFT_PURPOSE)).resolves.toEqual({ content: DRAFT_PURPOSE });
         expect(harness.actionCalls.filter((id) => id === 'tasks/create-v1')).toEqual([]);
     });
+    it.each(['everyone', 'agents'] as const)('keeps linked tasks in Agents beside an unadmitted source from %s', async audience => {
+        const harness = createHarness({ tasks: true, sourceBUnavailable: true, unlinkedTaskOnFirstPage: true });
+        const entryRef = { source: SOURCE_A, kindId: 'issue', collisionScope: 'example/repository', entryId: '1' };
+        await linkEntryToSession({ collections: harness.collections, entryRef,
+            sessionId: 'agents-linked-session', display: { locator: testkitLocator(), scopeLabel: LABEL_A }, nowMs: 1 });
+        const shell = await mountSurface(renderShellSurface, harness, `agents-with-degraded-source-${audience}`, sourceContextFixture(harness),
+            { subPath: `tasks,${audience}` });
+        await settleWindow('view', shell);
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        // Inline Status is exposed through the row's accessible label, so the
+        // semantic text query intentionally omits its duplicate child text.
+        expect(document.body.textContent).toContain('Ready');
+        const relationReads = harness.actionCalls.filter(action => action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1).length;
+        if (audience === 'everyone') {
+            await expect(shell.getByText('Unlinked maintenance task')).resolves.toBeDefined();
+            await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'Agents' })); });
+            await settleWindow('view', shell);
+        }
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        expect(document.body.textContent).toContain('Ready');
+        await expect(shell.queryByText('Unlinked maintenance task')).resolves.toBeUndefined();
+        await expect(shell.getByText(`${LABEL_B} could not be read. Not installed or enabled on this machine.`)).resolves.toBeDefined();
+        expect(harness.actionCalls.filter(action => action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1))
+            .toHaveLength(relationReads);
+    });
     it('does not mistake an unreadable Session-link index for an empty Agents lens', async () => {
         const harness = createHarness({ tasks: true });
+        harness.state.sessionLinksUnavailable = true;
         const shell = await mountSurface(renderShellSurface, harness, 'tasks-agents-unavailable', {}, { subPath: 'tasks,agents' });
         await settleWindow('view', shell);
-        // This host fixture has no Account Collection transport: no link read can establish absence.
+        // An Account transport refusal cannot establish that the Agents lens is empty.
         await expect(shell.getByText('Some linked Session activity could not be read.'))
             .resolves.toEqual({ content: 'Some linked Session activity could not be read.' });
         await expect(shell.getByText('Nothing needs you')).rejects.toBeDefined();
@@ -540,6 +1061,7 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-smart-parity');
         await settleWindow('view', shell);
+        await loadRemainingPage(shell);
         const detail = harness.publishedContexts.at(-1)?.detail;
         if (!detail || typeof detail !== 'object' || Array.isArray(detail)) throw new Error('Missing current UI context');
         const address = detail.mountedAction;
@@ -558,6 +1080,10 @@ describe('the mounted PRs & Issues surface', () => {
                 expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, input.mountId, input.operation,
                     new AbortController().signal)).toEqual({ status: 'applied' });
             });
+            await settleWindow('view', shell);
+            if (readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope).loadMore?.kind === 'available') {
+                await loadRemainingPage(shell);
+            }
             expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'smart', smartPolicy, filters });
             await visibleTexts(shell, ['Replace the duplicated normalizer', 'Older change']);
             await expect(shell.queryByText('Middle change')).resolves.toBeUndefined();
@@ -580,13 +1106,13 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', {
             locale: 'fr',
-            translations: TRIAGE_UI_TRANSLATIONS.fr,
+            translations: PACKAGED_UI_TRANSLATIONS.fr,
         });
         await settleWindow('view', shell);
 
         // Refresh is the toolbar's icon control: its translated words are its name.
         await expect(shell.getByRole('button', {
-            name: TRIAGE_UI_TRANSLATIONS.fr['plugins.triage.surface.refresh'],
+            name: PACKAGED_UI_TRANSLATIONS.fr['plugins.triage.surface.refresh'],
         })).resolves.toBeDefined();
         await expect(shell.queryByRole('button', { name: 'Refresh' })).resolves.toBeUndefined();
     });
@@ -594,18 +1120,26 @@ describe('the mounted PRs & Issues surface', () => {
     it('opens Tasks with one row-producing list pass, without an initial default-lens pass', async () => {
         const harness = createHarness({ tasks: true });
         const tasksSurface = defineUiSurface(() => <TriageListShell tasksPage />);
-        await mountSurface(tasksSurface, harness, 'triage-tasks');
-        // The two configured lanes need three provider pages in ONE pass.
+        const shell = await mountSurface(tasksSurface, harness, 'triage-tasks');
+        await settleWindow('view', shell);
+        // Each source settles its own first page; continuation needs Load more.
         // Binding the initial lens is not another page-view producer.
-        expect(harness.scanCalls.count).toBe(3);
+        expect(harness.scanCalls.count).toBe(2);
         expect(harness.actionCalls.filter(action => action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1)).toHaveLength(0);
-        expect(harness.actionCalls.filter(action => action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1)).toHaveLength(2);
+        // One inventory read, then one independently settling Action per source.
+        expect(harness.actionCalls.filter(action => action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1)).toHaveLength(3);
+        expect(readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope).passes).toBe(1);
     });
 
     it('renders one window assembled from every configured source', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
         await settleWindow('view', shell);
+
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
+        await expect(shell.queryByText('Older change')).resolves.toBeUndefined();
+        expect(harness.scanCalls.count).toBe(2);
+        await loadRemainingPage(shell);
 
         await visibleTexts(shell, [
             'Replace the duplicated normalizer',
@@ -621,9 +1155,9 @@ describe('the mounted PRs & Issues surface', () => {
         // pages and source B one, all through a single Action invocation family.
         expect(harness.scanCalls.count).toBe(3);
         expect(harness.actionCalls).toContain(TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1);
-        // Everything else the mount asked for is durable reader state — the
-        // pins, the saved views, the configured actions — and none of them
-        // touches a source.
+        // The relation join reads the demanded entries through their canonical
+        // owner. These fixture sources declare corpus-owned relations, so this
+        // and the pins, saved views and configured actions reach no provider.
         //
         // The property is asserted rather than a fixed set: enumerating the
         // exact ids made this fail every time the product legitimately gained a
@@ -645,6 +1179,7 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
         await settleWindow('view', shell);
+        await loadRemainingPage(shell);
         const scansAfterList = harness.scanCalls.count;
 
         const picker = await mountSurface(renderPickerSurface, harness, 'triage-entry-picker');
@@ -668,6 +1203,7 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
         await settleWindow('view', shell);
+        await loadRemainingPage(shell);
 
         harness.state.sourceBFails = true;
         await settleWindow('manual', shell);
@@ -694,6 +1230,103 @@ describe('the mounted PRs & Issues surface', () => {
         // closed classification stays a machine word.
         await expect(shell.queryByText(`${LABEL_A} could not be read`)).resolves.toBeUndefined();
         await expect(shell.queryByText('transient')).resolves.toBeUndefined();
+    });
+
+    it('lets the host band speak alone while the Run on Machine cannot answer, and retries in the shared word', async () => {
+        // UI4 D1/D2: one outage, one voice. While the host says its Machine cannot answer, the list's own failure
+        // line and Refreshing step aside; when the list does speak, its retry is the same word as the host's.
+        const harness = createHarness();
+        const context = sourceContextFixture(harness);
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-host-outage', context);
+        await settleWindow('view', shell);
+        harness.state.sourceBFails = true;
+        await settleWindow('manual', shell);
+        const failureLine = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')]
+            .find(element => element.textContent?.includes(LABEL_B) === true);
+        await vi.waitFor(() => expect(failureLine()).toBeDefined());
+        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
+        await act(async () => { await shell.updateSurface({ ...context, machineConnectionPending: false, machineExecutionReady: false }); });
+        expect(failureLine()).toBeUndefined();
+        await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
+        expect(document.body.textContent).toContain('Replace the duplicated normalizer');
+    });
+
+    it('names one shared cause once when every connection fails for it, still naming each connection', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view', shell);
+        await loadRemainingPage(shell);
+
+        // The owner ruling (2026-11-02): one offline Machine is one cause, so it is said once, naming the Machine
+        // in the host's own words, instead of one "could not be reached" line per connection.
+        const offline = 'This operation is unavailable on MacBook Pro. Reconnect it or choose another machine with Run on.';
+        harness.state.listInvocationFailure = () => new PluginError({ code: 'unavailable', message: offline,
+            retryable: true, diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] });
+        await settleWindow('manual', shell);
+
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change',
+            `${LABEL_A} and ${LABEL_B} could not be read. ${offline}`]);
+        // REQ-01 holds: both connections are still named, in the one heading.
+        const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
+            .find(element => element.textContent?.includes(offline));
+        expect(warning?.textContent).toContain(LABEL_A);
+        expect(warning?.textContent).toContain(LABEL_B);
+        expect(document.body.textContent?.split(offline)).toHaveLength(2);
+        await expect(shell.queryByText('Some sources could not be read')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Could not be reached just now.')).resolves.toBeUndefined();
+        // Diagnostics live where the reader manages the failed sources, leaving one compact line on the list.
+        await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+        expect(document.body.textContent).toContain(`${LABEL_A} — unavailable · retryable=true`);
+        expect(document.body.textContent).toContain(`${LABEL_B} — unavailable · retryable=true`);
+    });
+
+    it('keeps different connection causes in Manage sources behind the compact failure line', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view', shell);
+        await loadRemainingPage(shell);
+
+        const offlineA = 'This operation is unavailable on MacBook Pro. Reconnect it or choose another machine with Run on.';
+        const offlineB = 'This operation is unavailable on Studio Mac. Reconnect it or choose another machine with Run on.';
+        harness.state.listInvocationFailure = (sourceInstanceId) => new PluginError({ code: 'unavailable',
+            message: sourceInstanceId === INSTANCE_A ? offlineA : offlineB, retryable: true,
+            diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] });
+        await settleWindow('manual', shell);
+
+        await visibleTexts(shell, [`${LABEL_A} and ${LABEL_B} could not be read.`]);
+        const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
+            .find(element => element.textContent?.includes(`${LABEL_A} and ${LABEL_B} could not be read.`));
+        expect(warning).toBeDefined();
+        expect(warning?.textContent).not.toContain(offlineA);
+        expect(warning?.textContent).not.toContain(offlineB);
+        await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+        expect(document.body.textContent).toContain(`${LABEL_A} — ${offlineA}`);
+        expect(document.body.textContent).toContain(`${LABEL_B} — ${offlineB}`);
+    });
+
+    it.each([false, true])('offers source management on the list-owned source warning (Tasks=%s)', async (tasks) => {
+        const harness = createHarness({ tasks, sourceBUnavailable: true });
+        const surface = tasks ? defineUiSurface(context => <TriageListShell tasksPage subPath={context.subPath} />) : renderShellSurface;
+        const shell = await mountSurface(surface, harness, `source-warning-${tasks}`, sourceContextFixture(harness),
+            tasks ? { subPath: 'tasks,everyone' } : {});
+        await settleWindow('view', shell);
+        // One partially unread source is a polite status line under the toolbar, not an alert card over every page.
+        const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
+            .find(element => element.textContent?.includes(`${LABEL_B} could not be read`));
+        expect(document.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(`${LABEL_B} could not be read`);
+        expect(warning).toBeDefined();
+        expect(warning?.textContent).toContain('Not installed or enabled on this machine.');
+        // The fix sits beside the announced sentence, outside its live region (the shared Status owns that split).
+        const manage = warning?.parentElement?.querySelector<HTMLElement>('[role="button"]');
+        expect(manage?.textContent).toContain('Manage sources');
+        await act(async () => { manage!.click(); });
+        await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
+        expect(document.body.textContent?.split(`${LABEL_B} could not be read`)).toHaveLength(2);
     });
 
     it('never claims a last known list when no source has listed anything', async () => {
@@ -744,7 +1377,7 @@ describe('the mounted PRs & Issues surface', () => {
     });
 
     it('narrows the list from the rail and says so instead of claiming nothing needs you', async () => {
-        const harness = createHarness();
+        const harness = createHarness({ quietFirstPage: true });
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
         await settleWindow('view', shell);
         await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
@@ -755,6 +1388,7 @@ describe('the mounted PRs & Issues surface', () => {
             await shell.press(await filterFacetOption(shell, 'Source', { name: LABEL_B }));
         });
         await act(async () => { await Promise.resolve(); });
+        await closeFilters(shell);
 
         await visibleTexts(shell, ['Middle change']);
         await expect(shell.queryByText('Replace the duplicated normalizer')).resolves.toBeUndefined();
@@ -765,13 +1399,31 @@ describe('the mounted PRs & Issues surface', () => {
             await shell.press(await filterFacetOption(shell, 'State', { name: 'Done' }));
         });
         await act(async () => { await Promise.resolve(); });
+        await closeFilters(shell);
 
         await expect(shell.getByText('Nothing matches these filters')).resolves.toBeDefined();
         await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
     });
 
+    it('keeps an empty Needs you in a complete list with one quiet line, and drops the claim once a facet narrows it', async () => {
+        const harness = createHarness({ quietFirstPage: true });
+        const shell = await mountSurface(renderShellSurface, harness, 'quiet-needs-you');
+        await settleWindow('view', shell);
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
+        expect(document.body.textContent).toContain('Needs you');
+        await expect(shell.getByText('Nothing needs you right now.')).resolves.toBeDefined();
+
+        await act(async () => {
+            await shell.press(await filterFacetOption(shell, 'Source', { name: LABEL_B }));
+        });
+        await act(async () => { await Promise.resolve(); });
+        await closeFilters(shell);
+        await visibleTexts(shell, ['Middle change']);
+        await expect(shell.queryByText('Nothing needs you right now.')).resolves.toBeUndefined();
+    });
+
     it('names the search rather than a filter when a query is what emptied the list', async () => {
-        const harness = createHarness();
+        const harness = createHarness({ quietFirstPage: true });
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', {}, {
             subPath: 'q,unmatchable-token',
         });
@@ -792,17 +1444,16 @@ describe('the mounted PRs & Issues surface', () => {
         await settleWindow('view', shell);
         const afterMount = harness.scanCalls.count;
 
-        // View demand inside the one shared minimum interval joins instead of
-        // multiplying. Nothing in this surface repeats on its own: there is no
-        // timer, interval or poller to wait out.
+        // Settling the mounted view is not another named read demand. The wait
+        // observes its push state; it cannot manufacture a second provider pass.
         await settleWindow('view', shell);
         expect(harness.scanCalls.count).toBe(afterMount);
 
         await shell.press(await shell.getByRole('button', { name: 'Refresh' }));
-        await settleWindow('manual', shell);
+        await settleWindow('view', shell);
 
         // Explicit Refresh is the user asking, and the user is never paced.
-        expect(harness.scanCalls.count).toBeGreaterThan(afterMount);
+        expect(harness.scanCalls.count).toBe(afterMount + 2);
     });
 
     it('publishes A, replaces it with B, and clears the mount on disposal', async () => {

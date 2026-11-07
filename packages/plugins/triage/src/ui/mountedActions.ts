@@ -1,10 +1,33 @@
-import type { PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
-import type { TriageMountedUiOperationV1, TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
+import { isPluginError, PluginError, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiResultV1Schema, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 import { TriageSourcePanelOperationV1Schema, triageSourcePanelIntentKeyV1, type TriageSourcePanelOperationV1 } from '@happier-dev/triage-sources/runtime';
 import type { TriageSourcePanelHandlerV1 } from '@happier-dev/triage-sources/ui';
 
 type MountedHandler = (operation: TriageMountedUiOperationV1, signal: AbortSignal) => Promise<TriageMountedUiResultV1>;
 type MountedBinding = { invoke: MountedHandler | null; source: Map<string, TriageSourcePanelHandlerV1> };
+
+/** Person controls use the same Action and refusal presentation on every mounted detail. */
+export function executeTriageMountedUiAction(host: PluginUiHostApi, mountId: string, operation: TriageMountedUiOperationV1,
+  text: (key: string, fallback: string) => string): void {
+  void host.executeAction(TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, { mountId, operation }).then(value => {
+    const result = TriageMountedUiResultV1Schema.parse(value);
+    if (result.status !== 'applied') throw new PluginError({
+      code: result.status === 'rejected' ? 'denied' : 'unavailable',
+      diagnostics: [{ code: `triage_mounted_ui_${result.status}`, severity: 'error' }],
+    });
+  }).catch((error: unknown) => {
+    const diagnostics = isPluginError(error) && error.diagnostics?.length
+      ? error.diagnostics : [{ code: 'triage_mounted_ui_failed', severity: 'error' as const }];
+    for (const diagnostic of diagnostics) host.diagnostic(diagnostic);
+    void host.notify(isPluginError(error) && error.code === 'denied'
+      ? text('happier.plugin-ui.action.error.denied', 'This isn’t allowed here.')
+      : text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.'),
+    { severity: 'error' }).catch(() => {
+      host.diagnostic({ code: 'triage_mounted_ui_notification_unavailable', severity: 'warning' });
+    });
+  });
+}
 
 function acquire(scope: PluginEphemeralSharedScope, mountId: string) {
   return scope.acquireExecutionBound?.<MountedBinding>(`triage.mounted-ui.v1:${mountId}`, () => {
