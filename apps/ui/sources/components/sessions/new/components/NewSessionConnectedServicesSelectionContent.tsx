@@ -1,3 +1,4 @@
+import type { DirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -45,6 +46,8 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
+    /** Where agents run on the selected target now, for the Direct delivery disclosure. */
+    directDelivery?: DirectDeliveryDisclosure;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
@@ -207,6 +210,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             teamCredentialResources: props.teamCredentialResources,
             teamCredentialResourceStatusByKey: props.teamCredentialResourceStatusByKey,
             teamNameById: props.teamNameById,
+            directDelivery: props.directDelivery,
             onRecoverTeamCredentialResource: recoverTeamCredentialResource,
             defaultProfileIdByServiceId: props.defaultProfileIdByServiceId,
             includeNativeAuthOption: props.includeNativeAuthOption,
@@ -237,6 +241,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.teamCredentialResources,
         props.teamCredentialResourceStatusByKey,
         props.teamNameById,
+        props.directDelivery,
         // Kept as a dependency on purpose: unlike the handlers above, these two
         // are INVOKED during the build and their results are baked into every
         // option's `disabled` / `subtitle` / icon variant / section title, so a

@@ -21,7 +21,7 @@ import { recoveryShortLabel, resourceShortUnavailableLabel } from '@/components/
 import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { foldUnavailableRows } from '@/components/sessions/pickers/foldUnavailableRows';
-import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility, type DirectDeliveryDisclosureTranslationKey } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
+import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility, type DirectDeliveryDisclosure, type DirectDeliveryDisclosureTranslationKey } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TranslationParams } from '@/text';
 import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { derivePoolUsage, type PoolMemberUsageInput } from '@/components/settings/connectedServices/pools/derivePoolUsage';
@@ -96,6 +96,8 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     /** Exact currentness projection from the Home catalog; stale rows stay visible but cannot be selected. */
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
+    /** Where agents run on the selected target now; unknown keeps both warnings. */
+    directDelivery?: DirectDeliveryDisclosure;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
     /** Connected-account-only consumers can suppress the implicit local CLI auth fallback. */
@@ -358,7 +360,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                     : joinHappierFacts(teamName, resourceShortUnavailableLabel(resource.readiness, resourceStatus),
                         recovery === null ? null : recoveryShortLabel(recovery))),
                 selection.deliveryMode === 'direct'
-                    ? describeDirectDeliveryVisibility(readDirectDeliveryVisibility(), params.translate) : null,
+                    ? describeDirectDeliveryVisibility(params.directDelivery?.visibility ?? readDirectDeliveryVisibility(), params.translate, params.directDelivery?.placement) : null,
                 ].filter(Boolean).join('\n\n');
                 options.push({
                     id: optionId,
@@ -410,7 +412,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                     )
                     : params.translate('common.unavailable'),
                     binding.deliveryMode === 'direct'
-                        ? describeDirectDeliveryVisibility(readDirectDeliveryVisibility(), params.translate) : null,
+                        ? describeDirectDeliveryVisibility(params.directDelivery?.visibility ?? readDirectDeliveryVisibility(), params.translate, params.directDelivery?.placement) : null,
                 ].filter(Boolean).join('\n\n'),
                 subtitleLines: binding.deliveryMode === 'direct' ? 0 : undefined,
                 icon: params.renderRowIcon({ kind: 'team', variant: 'warning' }),

@@ -890,6 +890,9 @@ export const english = {
                 body: 'Happier may provide credential material to local tools used by this Session. Continue only if you trust those tools with this credential.',
                 ownerVisibility: 'The Machine owner can inspect keys and selected credentials delivered here, even after members have separate users.',
                 sharedUserVisibility: 'On a shared Machine, members and the owner’s isolated Agent can read Direct-delivered keys while they share an Agent user. Enabled or pending setup does not prove member separation.',
+                separatePlacement: 'Their agents run as their own user on this Machine.',
+                sharedPlacement: 'Their agents run as you on this Machine.',
+                sharedBeforeSeparation: 'Anything shared before separate users were turned on may still be visible to them.',
             },
             delete: {
                 action: 'Delete shared credential',

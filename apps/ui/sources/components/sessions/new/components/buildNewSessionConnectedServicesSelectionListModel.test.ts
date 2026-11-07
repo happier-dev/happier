@@ -1,3 +1,4 @@
+import { presentDirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import { describe, expect, it, vi } from 'vitest';
 import type { GestureResponderEvent } from 'react-native';
 import { buildConnectedServiceAccountGroupOptionsByServiceId } from '../modules/connectedServicesNewSessionBindings';
@@ -345,6 +346,30 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(setBindingForService).not.toHaveBeenCalled();
         option?.onSelect?.();
         expect(setBindingForService).toHaveBeenCalledWith('service.plugin/mail', selection);
+    });
+
+    it('says where agents run on the selected target now: their own user once separate users are effective', () => {
+        const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'direct' as const,
+            disclosedMember: { service: { pluginId: 'service.plugin', localId: 'mail' }, accountId: 'shared-account' } };
+        const model = buildModel({
+            supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {}, bindingsByServiceId: {},
+            includeNativeAuthOption: false, setBindingForService: vi.fn(),
+            teamCredentialResources: [{
+                id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', resourceRevision: 7,
+                readiness: { kind: 'available' }, recoveryAction: null, mayBroker: false, mayReceiveDirect: true,
+                directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
+                providerModels: [], sourcePresentation: { kind: 'connected_service', service: selection.disclosedMember.service },
+                connectedServiceSelections: [selection],
+            }],
+            directDelivery: presentDirectDeliveryDisclosure({ platform: 'linux',
+                isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+                isolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } }),
+        });
+        const subtitle = firstStaticSection(model).options.find((candidate) => (
+            candidate.id === createTeamResourceServiceOptionId(selection)))?.subtitle;
+        expect(subtitle).toContain('teams.credentials.directUse.separatePlacement');
+        expect(subtitle).toContain('teams.credentials.directUse.sharedBeforeSeparation');
+        expect(subtitle).not.toContain('teams.credentials.directUse.sharedUserVisibility');
     });
 
     it('keeps an unavailable Team resource keyboard-action and routes its recovery without changing the binding', () => {

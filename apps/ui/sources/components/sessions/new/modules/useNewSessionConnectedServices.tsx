@@ -1,3 +1,4 @@
+import { useDirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import React from 'react';
 import { Modal } from '@/modal';
@@ -33,7 +34,7 @@ import { resolveAgentConnectedServicesDefaultBindings } from '@/sync/domains/con
 import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { PluginProjectedAgentConnectedAccountPurposeV2, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
-import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import type { ManagedSessionDefaultsContext, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
 import type { SessionRouteSources } from '@/components/sessions/new/components/useSessionRouteSourceSections';
@@ -104,6 +105,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
   /** The selected Agent's Gateways and Providers for the "Runs through" popover; omitted, it names none. */
   routeSources?: SessionRouteSources;
   nativeAgentTargetKey?: string;
+  managedSessionDefaults?: ManagedSessionDefaultsContext;
   modelRouteTeamSources?: SessionRoutePresentationInput['teamSources'];
   providerSettings?: Pick<ProviderSettingsV1, 'connections' | 'secretBindingsByConnectionId'>;
   providerProjection?: PluginProjectionV2 | null;
@@ -173,6 +175,14 @@ export function useNewSessionConnectedServices(params: Readonly<{
   const hasControlledBindings = hasConnectedServicesBindingsInAgentOptionState(agentOptionState);
   const hasOptimisticBindings = optimisticAuthored?.contextKey === authoredContextKey && optimisticAuthored.options === agentOptionState;
   const hasExplicitBindings = hasControlledBindings || hasOptimisticBindings;
+  const [optimisticBindings, setOptimisticBindings] = React.useState<Readonly<{
+    contextKey: string; bindings: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
+  }>>(() => ({ contextKey: authoredContextKey, bindings: {} }));
+  const explicitBindings = React.useMemo(() => (
+    hasOptimisticBindings && optimisticBindings.contextKey === authoredContextKey
+      ? optimisticBindings.bindings
+      : hasExplicitBindings ? parseConnectedServicesBindingsByServiceIdFromAgentOptionState({ agentOptionState }) : undefined
+  ), [agentOptionState, authoredContextKey, hasExplicitBindings, hasOptimisticBindings, optimisticBindings]);
   const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedAccountServiceKey>>(() => (
     resolveProjectedConnectedAccountServiceKeys(connectedAccounts)
   ), [connectedAccounts]);
@@ -293,39 +303,38 @@ export function useNewSessionConnectedServices(params: Readonly<{
   ), [accountProfile?.connectedAccountGroupsV4, labelsByKey, supportedConnectedServiceIds]);
 
   const connectedServicesBindingsByServiceId = React.useMemo(() => {
-    const explicitBindings = parseConnectedServicesBindingsByServiceIdFromAgentOptionState({ agentOptionState });
-    if (hasExplicitBindings) return explicitBindings;
-    if (!defaultAuthAgentId || !defaultAuthConsumer || !purposeCatalog.value) return explicitBindings;
+    if (explicitBindings && !params.managedSessionDefaults) return explicitBindings;
+    if (!defaultAuthAgentId || !defaultAuthConsumer) return explicitBindings ?? {};
+    if (!purposeCatalog.value && !params.managedSessionDefaults) return explicitBindings ?? {};
 
     return resolveAgentConnectedServicesDefaultBindings({
       settings: {
         connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
         connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
       },
-      purposeBindings: purposeCatalog.value,
+      purposeBindings: purposeCatalog.value ?? { v: 1, bindings: [] },
       agentId: defaultAuthAgentId,
       consumer: defaultAuthConsumer,
       declarations: connectedAccounts,
+      managedSessionDefaults: params.managedSessionDefaults,
+      agentTargetKey: params.nativeAgentTargetKey,
+      explicitBindings,
     }).bindingsByServiceId;
   }, [
-    agentOptionState,
     connectedAccounts,
     defaultAuthAgentId,
     defaultAuthConsumer,
-    hasExplicitBindings,
+    explicitBindings,
+    params.managedSessionDefaults,
+    params.nativeAgentTargetKey,
     purposeCatalog.value,
     settings.connectedServicesDefaultAuthByAgentIdV1,
     settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
   ]);
 
-  const [optimisticBindings, setOptimisticBindings] = React.useState(() => ({
-    contextKey: authoredContextKey, bindings: connectedServicesBindingsByServiceId,
-  }));
-  const optimisticBindingsByServiceId = hasOptimisticBindings && optimisticBindings.contextKey === authoredContextKey
-    ? optimisticBindings.bindings : connectedServicesBindingsByServiceId;
   // One model choice can author native auth for several services before React commits a render.
-  const bindingsForSelectionRef = React.useRef(optimisticBindingsByServiceId);
-  bindingsForSelectionRef.current = optimisticBindingsByServiceId;
+  const bindingsForSelectionRef = React.useRef(connectedServicesBindingsByServiceId);
+  bindingsForSelectionRef.current = connectedServicesBindingsByServiceId;
   React.useEffect(() => {
     if (optimisticAuthored && (optimisticAuthored.contextKey !== authoredContextKey || optimisticAuthored.options !== agentOptionState)) {
       setOptimisticAuthored(null);
@@ -338,7 +347,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
       supportedConnectedServiceIds,
       connectedServiceProfileOptionsByServiceId,
       connectedServiceAccountGroupOptionsByServiceId,
-      connectedServicesBindingsByServiceId: optimisticBindingsByServiceId,
+      connectedServicesBindingsByServiceId,
       defaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
       accountGroupsFeatureEnabled,
       ...(params.emitWhenAllNative === undefined ? {} : { emitWhenAllNative: params.emitWhenAllNative }),
@@ -348,7 +357,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     connectedAccountDefaultsStatus,
     connectedServiceAccountGroupOptionsByServiceId,
     connectedServiceProfileOptionsByServiceId,
-    optimisticBindingsByServiceId,
+    connectedServicesBindingsByServiceId,
     params.emitWhenAllNative,
     settings.connectedServicesDefaultProfileByServiceId,
     supportedConnectedServiceIds,
@@ -486,7 +495,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
 
   const authLabel = React.useMemo(() => resolveConnectedServicesAuthLabel({
     supportedServiceIds: supportedConnectedServiceIds,
-    bindingsByServiceId: optimisticBindingsByServiceId,
+    bindingsByServiceId: connectedServicesBindingsByServiceId,
     profileOptionsByServiceId: connectedServiceProfileOptionsByServiceId,
     accountGroupOptionsByServiceId: connectedServiceAccountGroupOptionsByServiceId,
     accountGroupsEnabled: accountGroupsFeatureEnabled,
@@ -498,7 +507,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     accountGroupsFeatureEnabled,
     connectedServiceAccountGroupOptionsByServiceId,
     connectedServiceProfileOptionsByServiceId,
-    optimisticBindingsByServiceId,
+    connectedServicesBindingsByServiceId,
     resolveServiceTitle,
     settings.connectedServicesDefaultProfileByServiceId,
     supportedConnectedServiceIds,
@@ -534,16 +543,19 @@ export function useNewSessionConnectedServices(params: Readonly<{
     teamSources: params.modelRouteTeamSources,
   }), [params.modelSelection, params.providerSources, params.modelRouteTeamSources, authLabel, nativeAuthSource]);
 
+  // Direct delivery says where agents run on the selected Machine now (MI-2), from facts its record holds.
+  const directDelivery = useDirectDeliveryDisclosure(params.sourceMachineId, targetServerId);
   const connectedServicesAuthPopoverContent = React.useCallback(({ maxHeight }: AgentInputContentPopoverRenderArgs) => (
     <NewSessionConnectedServicesSelectionContent
       supportedServiceIds={supportedConnectedServiceIds}
       profileOptionsByServiceId={connectedServiceProfileOptionsByServiceId}
       groupOptionsByServiceId={connectedServiceAccountGroupOptionsByServiceId}
-      bindingsByServiceId={optimisticBindingsByServiceId}
+      bindingsByServiceId={connectedServicesBindingsByServiceId}
       bindingsKnown={connectedAccountDefaultsStatus === 'ready'}
       teamCredentialResources={params.teamCredentialResources}
       teamCredentialResourceStatusByKey={params.teamCredentialResourceStatusByKey}
       teamNameById={params.teamNameById}
+      directDelivery={directDelivery}
       onRecoverTeamCredentialResource={(resource) => {
         if (!targetServerId) return;
         router.push(teamCredentialDetailPath({ serverId: targetServerId, teamId: resource.teamId }, resource.id));
@@ -573,7 +585,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     connectedServiceProfileOptionsByServiceId,
     connectedServiceAccountGroupOptionsByServiceId,
     connectedAccountDefaultsStatus,
-    optimisticBindingsByServiceId,
+    connectedServicesBindingsByServiceId,
     resolveOptionAvailability,
     router,
     setBindingForService,
@@ -582,6 +594,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     params.teamCredentialResources,
     params.teamCredentialResourceStatusByKey,
     params.teamNameById,
+    directDelivery,
     params.routeSources,
     params.nativeAgentTargetKey,
     routePresentation.applied,
