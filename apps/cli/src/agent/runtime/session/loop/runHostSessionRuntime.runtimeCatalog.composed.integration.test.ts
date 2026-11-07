@@ -13754,6 +13754,52 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.wakePendingMaterialization).toHaveBeenCalledTimes(1);
   });
 
+  it('performs zero capability observations for 25 unrelated preference changes while retaining timing, MCP, skill and lifetime signals', async () => {
+    const harness = createHarness();
+    const { runSessionLoopLifecycle } = await import('./lifecycle');
+    const owner = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+    let observations = 0;
+    harness.deps.runSessionLoopLifecycleFn = async (params: Parameters<typeof runSessionLoopLifecycle>[0]) => {
+      const selection = params.capabilitySelection;
+      if (!selection?.subscribeAccountSettings) throw new Error('Expected Account capability observations');
+      // Consume the real host subscription; this harness's prompt loop does not
+      // start a provider capability synchronizer of its own.
+      const unsubscribe = selection.subscribeAccountSettings(() => { observations++; });
+      try {
+        await runSessionLoopLifecycle(params);
+      } finally {
+        unsubscribe();
+      }
+    };
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      for (let index = 0; index < 25; index++) {
+        const current = getActiveAccountSettingsSnapshot()!;
+        setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+          settings: { ...current.settings, analyticsOptOut: index % 2 === 0 } });
+      }
+      expect(observations).toBe(0);
+      const current = getActiveAccountSettingsSnapshot()!;
+      setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+        settings: { ...current.settings, sessionPendingQueueDeliveryTiming:
+          current.settings.sessionPendingQueueDeliveryTiming === 'after_runtime_idle'
+            ? 'after_foreground_ready' : 'after_runtime_idle' } });
+      expect(observations).toBe(1);
+      const scopeKey = current.scopeKey!;
+      const lifetimeToken = owner.getActiveAccountSettingsSnapshotLifetimeToken();
+      owner.commitActiveMcpServerCatalog({ scopeKey, lifetimeToken, catalog: { status: 'ready', authority: 'active',
+        revision: 1, diagnostics: [], catalog: emptyMcpServerCatalogV1() } });
+      expect(observations).toBe(2);
+      const catalog = getActiveAccountSettingsSnapshot()!.promptLibraryCatalog;
+      if (catalog?.status !== 'ready') throw new Error('Expected initial skill catalog');
+      owner.commitActivePromptLibraryCatalog({ scopeKey, lifetimeToken,
+        catalog: { ...catalog, rows: catalog.rows.map(row => ({ ...row, revision: row.revision + 1 })) } });
+      expect(observations).toBe(3);
+      owner.clearActiveAccountSettingsSnapshot();
+      expect(observations).toBe(4);
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
   it('does not stamp provider-enforced permission traces from the shared host path by default', async () => {
     const harness = createHarness();
     let observedToolTrace: unknown;

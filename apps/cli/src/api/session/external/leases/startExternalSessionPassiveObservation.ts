@@ -23,7 +23,7 @@ import { resolveOccurrenceBoundExternalSessionFollowSurface } from '@/session/ac
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
 import {
     getActiveAccountSettingsSnapshot,
-    subscribeActiveAccountSettingsSnapshot,
+    subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -1198,7 +1198,8 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
     };
     const unsubscribeRestoreEnabled = (
         params.subscribeRestoreEnabled
-        ?? ((listener: () => void) => subscribeActiveAccountSettingsSnapshot(
+        ?? ((listener: () => void) => subscribeActiveAccountSettingsKeys(
+            { settings: ['externalSessionsSettingsV1'] },
             () => listener(),
         ))
     )(() => {

@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+    getActiveAccountSettingsSnapshot,
     resetActiveAccountSettingsSnapshotForTests,
     setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -135,6 +136,36 @@ function accountSettingsWithPassiveRestore(enabled: boolean) {
 }
 
 describe('startExternalSessionPassiveObservation', () => {
+    it('performs zero restore preference reads for 25 unrelated publications and still observes restore changes and Account rotation', async () => {
+        setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'passive-first',
+            settings: accountSettingsWithPassiveRestore(false), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+        const readRestore = vi.fn(() => getActiveAccountSettingsSnapshot()?.settings.externalSessionsSettingsV1.keepPassivelyFollowingAfterRestart === true);
+        const lifecycle = startExternalSessionPassiveObservation({ machineId: 'machine-1', startPaused: true,
+            projection: { reconcileLink: vi.fn(async () => ({ state: 'observing' })),
+                removeLink: vi.fn(async () => ({ removed: true })), releaseLink: vi.fn(async () => ({ removed: true as const })) },
+            listCurrentLinks: async () => [], isRestoreEnabled: readRestore });
+        try {
+            await lifecycle.ready;
+            readRestore.mockClear();
+            for (let index = 0; index < 25; index++) {
+                const current = getActiveAccountSettingsSnapshot()!;
+                setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+                    settings: { ...current.settings, analyticsOptOut: index % 2 === 0 } });
+            }
+            expect(readRestore).toHaveBeenCalledTimes(0);
+            const current = getActiveAccountSettingsSnapshot()!;
+            setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+                settings: accountSettingsWithPassiveRestore(true) });
+            expect(readRestore).toHaveBeenCalled();
+            readRestore.mockClear();
+            setActiveAccountSettingsSnapshot({ ...getActiveAccountSettingsSnapshot()!, scopeKey: 'passive-second' });
+            expect(readRestore).toHaveBeenCalled();
+        } finally {
+            await lifecycle.dispose();
+            resetActiveAccountSettingsSnapshotForTests();
+        }
+    });
+
     beforeEach(() => {
         for (const mock of Object.values(defaultRestoreMocks)) {
             mock.mockReset();

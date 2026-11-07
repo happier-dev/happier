@@ -12,7 +12,7 @@ import { configuration } from '@/configuration';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
-  subscribeActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+  subscribeActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 /** The native daemon supplies one captured executor and its Account policy reader. */
 export function createNativePublicProfileRefreshActions(params: Readonly<{
@@ -74,7 +74,7 @@ export async function captureNativePublicProfileRefresh(params: Readonly<{
       lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
     }
   };
-  const unsubscribe = subscribeActiveAccountSettingsSnapshot(observeLifetime);
+  const unsubscribe = subscribeActiveAccountSettingsKeys({}, observeLifetime);
   signal.addEventListener('abort', unsubscribe, { once: true });
   observeLifetime();
   const isCurrent = async () => {

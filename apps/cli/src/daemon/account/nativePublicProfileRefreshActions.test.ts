@@ -1,4 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { captureNativePublicProfileRefresh } from './nativePublicProfileRefreshActions';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot,
+  resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import { createNativePublicProfileRefreshFixture } from './publicProfileRefresh.testkit';
 
@@ -6,6 +11,7 @@ describe('native public-profile Account Action adapter', () => {
   const fixtures: Awaited<ReturnType<typeof createNativePublicProfileRefreshFixture>>[] = [];
   afterEach(async () => {
     for (const fixture of fixtures.splice(0)) await fixture.dispose();
+    resetActiveAccountSettingsSnapshotForTests();
   });
   const context = () => ({ surface: 'cli' as const, signal: new AbortController().signal });
   async function fixture(settings: unknown) {
@@ -13,6 +19,32 @@ describe('native public-profile Account Action adapter', () => {
     fixtures.push(account);
     return account;
   }
+
+  it.each(['clear', 'scope', 'keys'] as const)('keeps native refresh alive through unrelated preferences and retires it once on %s withdrawal', async withdrawal => {
+    const credentials = { token: 'native-refresh-test', encryption: null };
+    const scopeKey = resolveAccountSettingsScopeKey(credentials);
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey, settings: accountSettingsParse({}),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+    const controller = new AbortController();
+    const refresh = await captureNativePublicProfileRefresh({ credentials, signal: controller.signal,
+      serverId: 'test', serverHttpBaseUrl: 'https://home.test', resolveServerFeaturesSnapshot: () => undefined });
+    const retired = vi.fn();
+    refresh.signal.addEventListener('abort', retired);
+    try {
+      for (let index = 0; index < 25; index++) {
+        const current = getActiveAccountSettingsSnapshot()!;
+        setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+          settings: { ...current.settings, analyticsOptOut: index % 2 === 0 } });
+      }
+      expect(retired).toHaveBeenCalledTimes(0);
+      const current = getActiveAccountSettingsSnapshot()!;
+      if (withdrawal === 'clear') clearActiveAccountSettingsSnapshot();
+      else setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1,
+        ...(withdrawal === 'scope' ? { scopeKey: 'replacement-account' } : { settingsSecretsReadKeys: [new Uint8Array([1])] }) });
+      expect(retired).toHaveBeenCalledTimes(1);
+      expect(refresh.signal.aborted).toBe(true);
+    } finally { controller.abort(); }
+  });
 
   it.each([
     { policy: { v: 1 }, code: 'approval_required' },

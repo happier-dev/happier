@@ -127,7 +127,7 @@ import {
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
   readAccountRoleOverridesFromSnapshot,
-  subscribeActiveAccountSettingsSnapshot,
+  subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { prepareActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -2628,7 +2628,10 @@ export async function runHostSessionRuntime(
   let observeCapabilityAccountSettings: (() => void) | null = null;
   const unsubscribePendingQueueDeliveryTiming = runtimeAuthority.scope === 'session'
     ? () => undefined
-    : subscribeActiveAccountSettingsSnapshot(() => {
+    : subscribeActiveAccountSettingsKeys({
+      settings: ['sessionPendingQueueDeliveryTiming'],
+      facets: ['mcpServerCatalog', 'promptLibraryCatalog'],
+    }, () => {
       applyMcpAccountPolicyUpdate?.();
       observeCapabilityAccountSettings?.();
       const nextPendingQueueDeliveryTiming = readPendingQueueDeliveryTiming();
