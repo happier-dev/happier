@@ -9675,6 +9675,7 @@ const enSession = {
       agent_startup_invalid_state: 'Agent startup encountered invalid local runtime state.',
       agent_startup_model_reconciliation_failed: 'The selected model could not be applied during startup. Review the model selection, then retry the session.',
       agent_startup_failed: 'Agent startup failed.',
+      SOURCE_RUNTIME_RELOAD_REQUIRED: 'This machine needs a Happier reload before the step can start',
       AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing.',
       codex_refresh_free_auth_unsupported: 'Agent startup authentication is unavailable.',
       codex_refresh_bridge_unavailable: "Agent sign-in is unavailable on this machine. Reconnect or update Happier on the machine.",
@@ -13252,7 +13253,7 @@ const enLocalServices = {
     createSubtitle: 'Create a shareable preview link',
     activeSubtitle: 'Shareable link active',
     secretLinkMode: 'Secret link',
-    authenticatedMode: 'Signed-in access',
+    peopleMode: 'Specific people',
     publicMode: 'Anyone with the link',
     expiredSubtitle: 'Link expired',
     expiresInMinutes: ({ count }: { count: number }) => `Expires in ${count}m`,
@@ -13314,7 +13315,10 @@ const enLocalServices = {
     revokeConfirmCta: 'Revoke link',
     consequenceReach:
       'Anyone who has the link can open this service. No sign-in is required.',
-    consequenceReachSignedIn: `Only people signed in to Happier who can open this session can open the link.`,
+    consequenceReachPeople: 'Only the people, Teams and Groups you choose can open it, signed in to Happier.',
+    audienceLabel: 'Who can open it',
+    canOpen: 'Can open',
+    landing: { title: 'Service preview', signIn: 'Sign in to Happier to open this preview.', signInCta: 'Sign in', opening: 'Opening the preview…', noAccess: 'This preview wasn’t shared with you.', ended: 'This preview link expired or was revoked.', unavailable: 'The preview isn’t reachable right now.', retry: 'Try again' },
     consequenceExpiry:
       'The link stops working on its own when the lifetime below runs out.',
     consequenceRevoke: 'You can revoke it at any time, from this pane.',
@@ -13528,15 +13532,10 @@ const enBrowserLaunchpad = {
 };
 
 const enBrowserShell = {
-
   engineSwitch: {
-
-    managed: "Open in managed browser",
-
-    embedded: "Open here",
-
-    signInAgain: "You may need to sign in again",
-
+    managed: 'Open in managed browser',
+    embedded: 'Open here',
+    signInAgain: 'You may need to sign in again',
   },
   viewport: { title: 'Device preview', fitViewer: 'Fit viewer' },
   address: {
@@ -22041,7 +22040,7 @@ const enProjects = {
       factData: "Data",
       factDataValue: "Volumes are kept unless you choose Delete and confirm their exact name.",
       volumeConfirmation: ({ name }: { name: string }) => `Type ${name} to delete this volume`,
-      volumeReviewError: "Could not load the named volumes. Close this review and retry.",
+      volumeReviewError: "Could not load the named volumes.",
       noDataToKeep: "No data to keep.",
       factKeeps: "Keeps",
       factKeepsValue: "The deployment history and backups",

@@ -6739,6 +6739,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               agent_startup_invalid_state: "代理程式啟動時遇到無效的本機執行階段狀態。",
               agent_startup_model_reconciliation_failed: "啟動時無法套用所選模型。請檢查模型選擇，然後重試啟動工作階段。",
               agent_startup_failed: "代理程式啟動失敗。",
+              SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在這台機器上重新載入 Happier，才能開始此步驟",
               AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少繼續所需的代理程式原生狀態。",
               codex_refresh_free_auth_unsupported: "代理程式啟動所需的驗證無法使用。",
               codex_refresh_bridge_unavailable: "此機器上的代理程式登入無法使用。請重新連線或更新機器上的 Happier。",
@@ -9267,7 +9268,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             createSubtitle: '建立可分享的預覽連結',
             activeSubtitle: '分享連結已啟用',
             secretLinkMode: '秘密連結',
-            authenticatedMode: '登入後存取',
+            peopleMode: '指定的人',
             publicMode: '擁有連結的任何人',
             expiredSubtitle: '連結已過期',
             expiresInMinutes: ({ count }: { count: number }) => `${count} 分鐘後過期`,
@@ -9316,7 +9317,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             revokeConfirmMessage: ({ url }: { url: string }) => `要撤銷公開預覽連結 ${url} 嗎？正在使用它的人都會失去存取權。`,
             revokeConfirmCta: '撤銷連結',
             consequenceReach: '任何拿到連結的人都能開啟此服務，不需要登入。',
-            consequenceReachSignedIn: `只有已登入 Happier 且能開啟此工作階段的人才能開啟該連結。`,
+            consequenceReachPeople: '只有你選擇的人、團隊和群組登入 Happier 後才能開啟。',
+            audienceLabel: '誰可以開啟',
+            canOpen: '可開啟',
+            landing: { title: '服務預覽', signIn: '登入 Happier 以開啟此預覽。', signInCta: '登入', opening: '正在開啟預覽…', noAccess: '此預覽未與你共用。', ended: '此預覽連結已過期或已被撤銷。', unavailable: '預覽暫時無法存取。', retry: '重試' },
             consequenceExpiry: '下方的有效期用完後，連結會自動失效。',
             consequenceRevoke: '你隨時可以在此面板撤銷它。',
             lifetimeLabel: '有效期',
@@ -9520,13 +9524,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     browserShell: {
 
       engineSwitch: {
-
-        managed: "在託管瀏覽器中開啟",
-
-        embedded: "在此開啟",
-
-        signInAgain: "你可能需要重新登入",
-
+        managed: '在託管瀏覽器中開啟',
+        embedded: '在此開啟',
+        signInAgain: '你可能需要重新登入',
       },
       viewport: { title: '裝置預覽', fitViewer: '適應檢視器' },
         address: {

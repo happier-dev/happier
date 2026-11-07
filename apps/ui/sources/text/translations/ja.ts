@@ -8513,6 +8513,7 @@ localTailscale: {
         agent_startup_invalid_state: "エージェントの起動中に、無効なローカルランタイム状態が見つかりました。",
         agent_startup_model_reconciliation_failed: "起動時に選択したモデルを適用できませんでした。モデルの選択を確認してから、セッションの開始をもう一度お試しください。",
         agent_startup_failed: "エージェントを起動できませんでした。",
+        SOURCE_RUNTIME_RELOAD_REQUIRED: "このステップを開始するには、このマシンで Happier を再読み込みする必要があります",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "再開に必要なエージェントのネイティブ状態が見つかりません。",
         codex_refresh_free_auth_unsupported: "エージェントの起動認証を利用できません。",
         codex_refresh_bridge_unavailable: "このマシンではエージェントにサインインできません。マシン上の Happier を再接続または更新してください。",
@@ -11757,7 +11758,7 @@ localTailscale: {
       createSubtitle: '共有できるプレビューリンクを作成',
       activeSubtitle: '共有リンクが有効です',
       secretLinkMode: 'シークレットリンク',
-      authenticatedMode: 'サインイン済みのアクセス',
+      peopleMode: '特定のユーザー',
       publicMode: 'リンクを知っている全員',
       expiredSubtitle: 'リンクの有効期限切れ',
       expiresInMinutes: ({ count }: { count: number }) => `あと${count}分で期限切れ`,
@@ -11806,7 +11807,10 @@ localTailscale: {
             revokeConfirmMessage: ({ url }: { url: string }) => `公開プレビューリンク ${url} を取り消しますか？利用中のユーザーはアクセスできなくなります。`,
             revokeConfirmCta: 'リンクを取り消す',
             consequenceReach: 'リンクを知っている人は誰でもこのサービスを開けます。サインインは不要です。',
-            consequenceReachSignedIn: `Happier にサインインしていて、このセッションを開ける人だけがリンクを開けます。`,
+            consequenceReachPeople: '選んだユーザー、チーム、グループだけが Happier にサインインして開けます。',
+            audienceLabel: '開ける人',
+            canOpen: '開ける',
+            landing: { title: 'サービスのプレビュー', signIn: 'このプレビューを開くには Happier にサインインしてください。', signInCta: 'サインイン', opening: 'プレビューを開いています…', noAccess: 'このプレビューはあなたと共有されていません。', ended: 'このプレビューリンクは期限切れか、取り消されました。', unavailable: '現在プレビューにアクセスできません。', retry: '再試行' },
             consequenceExpiry: '下に表示された有効期間が切れると、リンクは自動的に使えなくなります。',
             consequenceRevoke: 'このパネルからいつでも取り消せます。',
             lifetimeLabel: '有効期間',
@@ -12012,13 +12016,9 @@ localTailscale: {
   browserShell: {
 
     engineSwitch: {
-
-      managed: "管理ブラウザで開く",
-
-      embedded: "ここで開く",
-
-      signInAgain: "再ログインが必要な場合があります",
-
+      managed: '管理ブラウザで開く',
+      embedded: 'ここで開く',
+      signInAgain: '再ログインが必要な場合があります',
     },
     viewport: { title: 'デバイスプレビュー', fitViewer: '表示領域に合わせる' },
     address: {

@@ -90,6 +90,7 @@ function resolveSessionStartupFailureCause(code: unknown, issue?: SessionRuntime
     if (code === 'update_required') return resourceStateLabel('update_required');
     if (code === 'no_eligible_member') return t('connectedServices.diagnostics.body.no_eligible_group_member');
     if (code === 'machine_target_not_current') return t('session.startFailure.cause.admission_unavailable');
+    if (code === 'SOURCE_RUNTIME_RELOAD_REQUIRED') return t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED');
     if (code === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) return t('errors.workspaceFolderMissing');
     if (code === 'broker_unavailable') return [
         t('teams.credentials.errors.brokerUnavailable'),

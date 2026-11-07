@@ -7896,6 +7896,7 @@ export const zhHans: TranslationStructure = {
         agent_startup_invalid_state: "智能体启动时遇到无效的本地运行时状态。",
         agent_startup_model_reconciliation_failed: "启动时无法应用所选模型。请检查模型选择，然后重试启动会话。",
         agent_startup_failed: "智能体启动失败。",
+        SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在这台机器上重新加载 Happier，才能开始此步骤",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少恢复所需的智能体原生状态。",
         codex_refresh_free_auth_unsupported: "智能体启动所需的身份验证不可用。",
         codex_refresh_bridge_unavailable: "此机器上的智能体登录不可用。请重新连接或更新机器上的 Happier。",
@@ -11096,7 +11097,7 @@ export const zhHans: TranslationStructure = {
       createSubtitle: '创建可分享的预览链接',
       activeSubtitle: '分享链接已启用',
       secretLinkMode: '秘密链接',
-      authenticatedMode: '登录后访问',
+      peopleMode: '指定的人',
       publicMode: '拥有链接的任何人',
       expiredSubtitle: '链接已过期',
       expiresInMinutes: ({ count }: { count: number }) => `${count} 分钟后过期`,
@@ -11145,7 +11146,10 @@ export const zhHans: TranslationStructure = {
             revokeConfirmMessage: ({ url }: { url: string }) => `撤销公开预览链接 ${url}？正在使用它的所有人都将失去访问权限。`,
             revokeConfirmCta: '撤销链接',
             consequenceReach: '任何拿到链接的人都能打开此服务，无需登录。',
-            consequenceReachSignedIn: `只有已登录 Happier 且能打开此会话的人才能打开该链接。`,
+            consequenceReachPeople: '只有你选择的人、团队和群组登录 Happier 后才能打开。',
+            audienceLabel: '谁可以打开',
+            canOpen: '可打开',
+            landing: { title: '服务预览', signIn: '登录 Happier 以打开此预览。', signInCta: '登录', opening: '正在打开预览…', noAccess: '此预览未与你共享。', ended: '此预览链接已过期或已被撤销。', unavailable: '预览暂时无法访问。', retry: '重试' },
             consequenceExpiry: '下方的有效期用完后，链接会自动失效。',
             consequenceRevoke: '你随时可以在此面板撤销它。',
             lifetimeLabel: '有效期',
@@ -11351,13 +11355,9 @@ export const zhHans: TranslationStructure = {
   browserShell: {
 
     engineSwitch: {
-
-      managed: "在托管浏览器中打开",
-
-      embedded: "在此打开",
-
-      signInAgain: "你可能需要重新登录",
-
+      managed: '在托管浏览器中打开',
+      embedded: '在此打开',
+      signInAgain: '你可能需要重新登录',
     },
     viewport: { title: '设备预览', fitViewer: '适应查看器' },
     address: {

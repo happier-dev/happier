@@ -240,10 +240,11 @@ describe('managed workflow Run presentation', () => {
             reason: { code, message: producer } });
         const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: producer, headline: t(key) });
-        // A step's own refusal is that step's story; its recorded message stays its headline.
+        // A step's typed Discussion refusal uses that owner's sentence; raw prose remains technical detail.
         const step = projectWorkflowInvocationRecovery({ run, invocation, machineHomeDirectory: null,
             progress: { ...progress, blockKind: 'step', invocationPath: { blockId: 'a', scope: [] } } });
-        expect(step.failureCause).toMatchObject({ headline: producer });
+        expect(step.failureCause).toMatchObject({ code, message: producer,
+            headline: code === 'discussion_post_denied' ? t('session.collaboration.discussion.postDenied') : producer });
     });
     it('presents a retained native startup failure through the Session cause owner', () => {
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
@@ -256,10 +257,39 @@ describe('managed workflow Run presentation', () => {
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code: 'agent_startup_failed', message,
             headline: t('session.startFailure.cause.agent_startup_failed') });
     });
+    it('localizes a machine reload startup refusal while retaining its technical cause', () => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const code = 'SOURCE_RUNTIME_RELOAD_REQUIRED';
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code, message: code } });
+        const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+            invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: code,
+            headline: t('session.startFailure.cause.SOURCE_RUNTIME_RELOAD_REQUIRED') });
+        expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle,
+            step: null, recovery })).not.toContain(code);
+    });
+    it.each([undefined, 'FUTURE_STARTUP_REFUSAL'])('leaves an unmapped startup code in technical facts, not the outcome (%s)', message => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const code = 'FUTURE_STARTUP_REFUSAL';
+        const run = createWorkflowRunSummaryFixture({ state: 'failed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code, ...(message ? { message } : {}) } });
+        const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: message ?? null, headline: null });
+        expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle,
+            step: null, recovery })).toBeNull();
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: summarizeWorkflowInvocationCoverage([invocation], {
+            kindsByInvocationId: new Map([[invocation.id, 'executable']]), historyComplete: true,
+        }) }))
+            .toBe(t('workflows.run.failedSentence'));
+    });
     it.each([
         ['session_input_target_update_required', 'session.pendingMessages.admissionRejected.targetUpdateRequired'],
         ['unmapped_recorded_failure', null],
-    ] as const)('keeps the recorded %s cause visible when its producer supplied no message', (code, key) => {
+    ] as const)('retains the recorded %s cause without leaking an unmapped code', (code, key) => {
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
         const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
             invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
@@ -267,7 +297,24 @@ describe('managed workflow Run presentation', () => {
         const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
             invocation, progress, machineHomeDirectory: null });
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: null,
-            headline: key === null ? code : t(key) });
+            headline: key === null ? null : t(key) });
+    });
+    it('keeps an unknown startup issue and its request identity in technical facts without heading the pane with its code', () => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const code = 'FUTURE_STARTUP_REFUSAL';
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code: 'session_start_refused', runtimeIssueV1: {
+                v: 1, scope: 'primary_session', status: 'failed', source: 'dependency_failure', code,
+                occurredAt: 100, sanitizedPreview: code,
+                failureCause: { phase: 'client_start', failureReason: 'unknown', requestId: 'startup-request-1' },
+            } } });
+        const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+            invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code: 'session_start_refused',
+            headline: null, runtimeIssue: progress.reason!.runtimeIssueV1 });
+        expect(recovery.failureCause?.kind === 'reported_failure' && recovery.failureCause.message)
+            .toContain('startup-request-1');
     });
     it.each([
         ['native_check_unsupported', 'errors.machineNativeCheckUnsupported'],

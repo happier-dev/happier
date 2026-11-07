@@ -20,6 +20,7 @@ import { resourceStateLabel } from '@/components/settings/teams/credentials/read
 const KNOWN_CODE = 'native_agent_privileged_effect_authority_unavailable';
 const ENGLISH_PREVIEW = SESSION_PREPARATION_FAILURE_PREVIEWS[KNOWN_CODE];
 const CLOSED_CODES = [
+    'SOURCE_RUNTIME_RELOAD_REQUIRED',
     ...Object.keys(SESSION_PREPARATION_FAILURE_PREVIEWS),
     ...ProviderBrokerAdmissionFailureCodeV1Schema.options,
     ...Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS),

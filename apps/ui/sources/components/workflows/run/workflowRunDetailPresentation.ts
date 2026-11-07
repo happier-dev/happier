@@ -312,13 +312,17 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             ? lastSeenAt : null } : null;
     const issue = presentSessionRuntimeIssue(runtimeIssue);
     const reportedMessage = issue.message ?? params.progress?.reason?.message ?? null;
+    const headline = failed && params.progress?.reason
+        ? issue.summary ?? presentSessionStartupFailureCause(params.progress.reason.code)
+            ?? describeRecordedTransportFailure(params.progress.reason.code)
+            ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
+            ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code)
+        : null;
     const failureCause: WorkflowInvocationRecoveryPresentation['failureCause'] = failed && params.progress?.reason
         ? { kind: 'reported_failure', blockKind: params.progress.blockKind, code: params.progress.reason.code,
             message: reportedMessage,
-            headline: issue.message ?? presentSessionStartupFailureCause(params.progress.reason.code)
-                ?? describeRecordedTransportFailure(params.progress.reason.code)
-                ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
-                ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code),
+            // Unmapped codes remain technical facts; the page and pane already own generic outcomes.
+            headline: headline === params.progress.reason.code || headline === runtimeIssue?.code ? null : headline,
             reset: issue.reset,
             runtimeIssue: params.progress.reason.runtimeIssueV1 ?? null,
             at: params.progress.timing?.finishedAt ?? null }
