@@ -25,11 +25,17 @@ export type BrowserDaemonRuntimeActionDisabledReason =
   | 'browser_ui_automation_unavailable'
   | 'browser_context_route_unavailable'
   | 'browser_control_route_unavailable'
+  | 'browser_sidecar_disabled'
   | 'browser_diagnostics_route_unavailable'
   | 'browser_recording_attachments_unavailable'
   | 'browser_recording_route_unavailable';
 
 type BrowserDaemonRuntimeActionFailure = Extract<ActionExecuteResult, Readonly<{ ok: false }>>;
+
+type BrowserControlUnavailableDetails = Readonly<
+  | { cause: 'browser_sidecar_disabled'; phase: 'browser.control.feature_decision'; retryable: false }
+  | { cause: 'browser_control_route_unavailable'; phase: 'browser.control.route_resolution'; retryable: false }
+>;
 
 export type BrowserRecordingAttachToComposerExecutor = (
   input: BrowserRecordingAttachToComposerInput,
@@ -74,9 +80,10 @@ export type CreateBrowserDaemonRuntimeActionExecutorInput = Readonly<{
    * Dispatch-time provisioning for the managed browser runtime (user ruling, 2026-08-23). The
    * ~150MB Chrome-for-Testing fetch is acceptable as a consequence of an agent asking for
    * automation, and unacceptable as a silent cost on every daemon start — including machines that
-   * never touch the browser. So the daemon startup gate passes `autoInstallWhenMissing: false` and
-   * the install is triggered from HERE, the one seam every `browser.automation.*` dispatch reaches
-   * when no route exists. Absent ⇒ the family stays fail-closed exactly as before.
+   * never touch the browser. The startup factory only resolves installed artifacts, and
+   * acquisition is checked here on explicit open and on owned automation without a route.
+   * A published route alone cannot establish that its executable remains installed.
+   * Absent ⇒ the family stays fail-closed exactly as before.
    */
   provisionAutomationRuntime?: ProvisionBrowserAutomationRuntime;
   fallback?: RuntimeActionExecute;
@@ -102,10 +109,20 @@ const invalidParametersResult = {
 function browserRuntimeActionDisabledResult(
   reason: BrowserDaemonRuntimeActionDisabledReason,
 ): BrowserDaemonRuntimeActionFailure {
+  const details: BrowserControlUnavailableDetails | undefined = reason === 'browser_sidecar_disabled'
+    ? { cause: reason, phase: 'browser.control.feature_decision', retryable: false }
+    : reason === 'browser_control_route_unavailable'
+      ? { cause: reason, phase: 'browser.control.route_resolution', retryable: false }
+      : undefined;
   return {
     ok: false,
     errorCode: 'runtime_action_disabled',
     error: `runtime_action_disabled:browser:${reason}`,
+    ...(details ? { details, failureCause: {
+      phase: details.phase, errorClass: 'Error' as const,
+      // This refusal has no underlying platform/transport exception code.
+      errorCode: null, httpStatus: null,
+    } } : {}),
   };
 }
 
@@ -151,27 +168,29 @@ async function executeBrowserControlAction(
   }
 
   let control = input.control ?? input.resolveControl?.();
-  if (!control) {
-    if (command.data.kind === 'openView' && input.provisionAutomationRuntime) {
-      const open = command.data;
-      const outcome = await input.provisionAutomationRuntime({ onProvisioning: () => {
-        args.context.operationOwnerUpdate?.update({ state: 'running',
-          progress: { phase: 'browser_runtime_provisioning' } });
-        const acceptance = args.context.operationAcceptance;
-        if (acceptance?.actionId === args.actionId) {
-          acceptance.accept(BrowserOpenViewInProgressV1Schema.parse({ v: 1, status: 'in_progress',
-            phase: 'browser_runtime_provisioning', commandId: open.commandId,
-            browserSessionId: open.browserSessionId, viewId: open.viewId, operationId: acceptance.operationId }));
-        }
-      } });
-      if (outcome === 'failed') return provisioningFailure();
-      if (outcome === 'ready') {
-        await input.featureGate.refresh();
-        if (input.featureGate.isEnabled('browser.sidecar')) control = input.resolveControl?.();
+  // A published control route does not prove its managed executable still exists:
+  // the product adapter resolves that binary before publishing its Session launcher.
+  // Recheck acquisition on explicit open so a removed install can refresh that owner.
+  if (command.data.kind === 'openView' && input.provisionAutomationRuntime) {
+    const open = command.data;
+    const outcome = await input.provisionAutomationRuntime({ onProvisioning: () => {
+      args.context.operationOwnerUpdate?.update({ state: 'running',
+        progress: { phase: 'browser_runtime_provisioning' } });
+      const acceptance = args.context.operationAcceptance;
+      if (acceptance?.actionId === args.actionId) {
+        acceptance.accept(BrowserOpenViewInProgressV1Schema.parse({ v: 1, status: 'in_progress',
+          phase: 'browser_runtime_provisioning', commandId: open.commandId,
+          browserSessionId: open.browserSessionId, viewId: open.viewId, operationId: acceptance.operationId }));
       }
+    } });
+    if (outcome === 'failed') return provisioningFailure();
+    if (outcome === 'ready') {
+      await input.featureGate.refresh();
+      if (!input.featureGate.isEnabled('browser.sidecar')) return browserRuntimeActionDisabledResult('browser_sidecar_disabled');
+      control = input.resolveControl?.();
     }
-    if (!control) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
   }
+  if (!control) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
 
   return await control.dispatchCommand(command.data, args.context);
 }
@@ -253,20 +272,11 @@ export function createBrowserDaemonRuntimeActionExecutor(
       ? (args.input as Record<string, unknown>).browserSessionId : undefined;
     const sessionBrowserMismatch = Boolean(sessionId && typeof browserSessionId === 'string' && browserSessionId !== sessionId);
 
-    // The ActionSpec's canonical agent surface is the single authority on which browser Actions a
-    // caller may reach; a family member excluded from `RUNTIME_ACTION_REAL_EXECUTOR_*` is refused
-    // here rather than routed on family membership alone. Every browser Action currently carries
-    // `surfaces.agent`, so this chokepoint is fail-closed headroom for the next unbacked id, not a
-    // live rejection path.
-    if (!getActionSpec(args.actionId).surfaces.agent) {
-      return browserRuntimeActionDisabledResult('browser_action_unbacked');
-    }
-
     if (args.actionId === 'browser.sandbox.install') {
       return await executeManagedChromiumSandboxInstall(args);
     }
 
-    const requiredFeatureId = getActionRequiredServerFeatureId(args.actionId);
+    const requiredFeatureId = getActionRequiredServerFeatureId(args.actionId, args.context);
     if (requiredFeatureId === 'browser.automation' && !featureGate.isEnabled(requiredFeatureId)) {
       return browserRuntimeActionDisabledResult('browser_automation_route_unavailable');
     }
@@ -304,7 +314,7 @@ export function createBrowserDaemonRuntimeActionExecutor(
         }
       }
       if (!featureGate.isEnabled('browser.sidecar')) {
-        return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
+        return browserRuntimeActionDisabledResult('browser_sidecar_disabled');
       }
       if (sessionBrowserMismatch) return invalidParametersResult;
       return await executeBrowserControlAction(args, input);

@@ -12,10 +12,10 @@ import { resolveManagedBrowserSidecarCandidate } from './source';
  * - NOT at daemon startup. `browser.sidecar` is default-ALLOW and the startup route refresh runs on
  *   every daemon, so a startup fetch would be a silent cost on machines that never touch a browser.
  *   The startup factory only resolves already-installed artifacts.
- * - NOT never. That would leave the daemon automation path permanently dark, since
- *   `getArchiveDownloadInstallableAdapter` has no other caller — there is no user-initiated install.
  * - On the first explicit Browser open or daemon automation dispatch. The download
  *   becomes a consequence of the admitted Browser request.
+ * - Explicit sandbox recovery shares managed acquisition before installing its OS profile;
+ *   the daemon still refreshes its routes when a later Browser request finds that artifact.
  *
  * Concurrent dispatches share installation and route refresh. Each original
  * dispatch awaits their terminal outcome; only a fresh request can retry failure.
@@ -66,20 +66,23 @@ export function createBrowserAutomationRuntimeProvisioner(input: Readonly<{
                         started(false);
                         return 'unavailable';
                     }
-                    // An installed artifact with no route is a launch problem; an
-                    // unsupported/unpinned platform cannot be provisioned.
-                    if (!candidate || candidate.available !== false) {
+                    // Sandbox installation can acquire Chromium outside this daemon.
+                    // Its startup routes still need the same publication refresh.
+                    // Only an unsupported/unpinned source cannot be provisioned.
+                    if (!candidate) {
                         started(false);
                         return 'unavailable';
                     }
-                    started(true);
+                    started(candidate.available === false);
                     try {
-                        const result = await install({ platform, arch });
-                        if (!result.ok) {
-                            input.onError?.(new Error(
-                                `[browser] managed Chromium provisioning failed: ${result.errorMessage}`,
-                            ));
-                            return 'failed';
+                        if (candidate.available === false) {
+                            const result = await install({ platform, arch });
+                            if (!result.ok) {
+                                input.onError?.(new Error(
+                                    `[browser] managed Chromium provisioning failed: ${result.errorMessage}`,
+                                ));
+                                return 'failed';
+                            }
                         }
                         // Refresh before releasing the original dispatch to re-read its route.
                         await input.refreshRouteOwners();

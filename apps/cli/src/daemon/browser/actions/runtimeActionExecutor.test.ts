@@ -1,3 +1,4 @@
+import { snapshotReadBoundaryFixture } from '../context/cdp/snapshotMasking.testkit';
 import type {
   BrowserCommandV1,
   RuntimeActionExecuteArgs,
@@ -153,6 +154,8 @@ async function createRealAutomationPath(name: string, featureGate: BrowserDaemon
   const boundary = { openPage: async () => ({ targetId: 'target_1', sessionId: 'session_1' }), dispatchBrowserCommand: async () => ({}),
     dispatchPageCommand: async (input: { method: string; params?: Record<string, unknown> }) => {
       calls.push(input);
+      const snapshotRead = snapshotReadBoundaryFixture(input);
+      if (snapshotRead !== undefined) return snapshotRead;
       if (input.method === 'Runtime.evaluate') {
         const value: unknown = Function('document', 'window', 'CSS', `return ${String(input.params?.expression)};`)(document, { CSS: true }, { escape: String });
         return { result: { type: typeof value, value } };
@@ -230,6 +233,8 @@ describe('daemon browser runtime action executor', () => {
       ok: false,
       errorCode: 'runtime_action_disabled',
       error: 'runtime_action_disabled:browser:browser_control_route_unavailable',
+      details: { cause: 'browser_control_route_unavailable', phase: 'browser.control.route_resolution', retryable: false },
+      failureCause: { phase: 'browser.control.route_resolution', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 
@@ -547,7 +552,9 @@ describe('daemon browser runtime action executor', () => {
     }))).resolves.toEqual({
       ok: false,
       errorCode: 'runtime_action_disabled',
-      error: 'runtime_action_disabled:browser:browser_control_route_unavailable',
+      error: 'runtime_action_disabled:browser:browser_sidecar_disabled',
+      details: { cause: 'browser_sidecar_disabled', phase: 'browser.control.feature_decision', retryable: false },
+      failureCause: { phase: 'browser.control.feature_decision', errorClass: 'Error', errorCode: null, httpStatus: null },
     });
     expect(dispatchCommand).not.toHaveBeenCalled();
   });

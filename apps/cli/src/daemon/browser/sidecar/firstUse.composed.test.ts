@@ -1,3 +1,4 @@
+import { createSnapshotCaptureTestRoutes, snapshotReadBoundaryFixture } from '../context/cdp/snapshotMasking.testkit';
 import '../../../../../ui/sources/dev/vitestSetup';
 import { createHash, randomBytes } from 'node:crypto';
 import axios from 'axios';
@@ -33,6 +34,10 @@ import { createBrowserDaemonControlBroker } from '../control/broker';
 import { createBrowserDaemonControlRoutes } from '../control/routes';
 import { createBrowserSidecarCdpControlAdapter } from './controlAdapter';
 import { createBrowserAutomationRuntimeProvisioner } from './provisioning';
+import { createBrowserAutomationRoutes } from '../automation/routes';
+import { createBrowserAutomationDaemonService } from '../automation/service';
+import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
+import { createControlAdapterAutomationTransport } from '../automation/adapters/controlBridge';
 import { resolveManagedBrowserSidecarCandidate } from './source';
 import { ApiMachineClient, createActionOperationSnapshotPublisher } from '@/api/apiMachine';
 import { createRequesterSessionControlRuntimeFixture } from '../../testkit/requesterSessionControlRuntimeFixture';
@@ -56,6 +61,8 @@ import { useSessionCompletedBrowserActionKey } from '../../../../../ui/sources/s
 import { actionOperationStore } from '../../../../../ui/sources/sync/domains/actionOperations/actionOperationStore';
 import { writeStoredCredentialsForServerId } from '@/persistence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { dispatchRuntimeAction } from '@happier-dev/protocol/actions/executor/dispatch';
+import { createBrowserRuntimeActionExecutor } from '../../../../../ui/sources/sync/domains/browser/actions/runtimeActionExecutor';
 
 // A tiny valid ZIP with an executable and companion file; no real Chromium is fetched.
 const archive = Buffer.from('UEsDBBQAAAAAAKCqIl2/ze6ZDgAAAA4AAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyc2VydmVyLWZpeHR1cmVQSwMEFAAAAAAAoKoiXeOBVF8PAAAADwAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxoYXJuZXNzLWZpeHR1cmVQSwECFAMUAAAAAACgqiJdv83umQ4AAAAOAAAAEgAAAAAAAAAAAAAA7YEAAAAAYWd5X2FjcF9zZXJ2ZXIucGFyUEsBAhQDFAAAAAAAoKoiXeOBVF8PAAAADwAAABUAAAAAAAAAAAAAAO2BPgAAAGxvY2FsaGFybmVzc19leHRlcm5hbFBLBQYAAAAAAgACAIMAAACAAAAAAAA=', 'base64');
@@ -81,7 +88,7 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function setup(pageOpenFailure?: Error) {
+async function setup(pageOpenFailure?: Error, publishControlBeforeInstall = false) {
     boundary.home = await mkdtemp(join(tmpdir(), 'happier-browser-first-use-'));
     homes.push(boundary.home);
     const downloading = deferred();
@@ -102,34 +109,70 @@ async function setup(pageOpenFailure?: Error) {
         refreshRouteOwners: async () => {
             expect(await resolveManagedBrowserSidecarCandidate({ platform: 'linux', arch: 'x64', assetOverride: asset }))
                 .toMatchObject({ available: true });
+            // Match the publication owner's idempotent reuse of an existing adapter.
+            if (routes.browserAutomation) return;
             // CDP is the other external boundary; real adapter/broker own view state.
-            broker.registerAdapter(createBrowserSidecarCdpControlAdapter({ browserSessionId: 'session', sidecarId: 'sidecar',
-                transport: { openPage: async ({ url }) => {
+            const transport = { openPage: async ({ url }: { url: string }) => {
                     if (pageOpenFailure) throw pageOpenFailure;
                     opened.push(url); return { targetId: 'target', sessionId: 'cdp' };
                 },
-                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}) } }));
-            routes = { ...routes, browserControl: createBrowserDaemonControlRoutes({ broker }) };
+                dispatchPageCommand: async (command: { method: string; params?: Record<string, unknown> }) => snapshotReadBoundaryFixture(command)
+                    ?? (command.method === 'Runtime.evaluate' ? { result: { type: 'string', value: 'Provisioned page' } } : {}),
+                dispatchBrowserCommand: async () => ({}) };
+            const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'session', sidecarId: 'sidecar', transport });
+            broker.registerAdapter(adapter);
+            const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+                transport: createControlAdapterAutomationTransport({ adapter,
+                    browserContext: createSnapshotCaptureTestRoutes({ transport, resolvePageHandle: adapter.resolvePageHandle }),
+                    contextCapture: { transport, resolvePageHandle: adapter.resolvePageHandle,
+                        getNavigationState: adapter.getNavigationState } }) }) });
+            routes = { ...routes, browserControl: createBrowserDaemonControlRoutes({ broker }),
+                browserAutomation: createBrowserAutomationRoutes({ service }),
+                browserUiAutomation: { ownsAutomationView: broker.ownsView,
+                    uiAutomation: async () => { throw new Error('Owned managed view must not dispatch to UI'); } } };
         },
     });
-    routes = { provisionBrowserAutomationRuntime: provisioner.provision };
+    routes = { provisionBrowserAutomationRuntime: provisioner.provision,
+        ...(publishControlBeforeInstall ? { browserControl: createBrowserDaemonControlRoutes({ broker }) } : {}) };
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
         generateOperationId: (() => { let count = 0; return () => count++ ? `open-operation-${count}` : 'first-open-operation'; })() });
+    let sidecarEnabled = true;
     const runtime = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' }, resolveRouteOwners: () => routes,
         observeExecution: operations.observeExecution,
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
-            browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } },
+            browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: sidecarEnabled }, automation: { enabled: true } },
         } }) }),
     });
+    const uiRuntime = createBrowserRuntimeActionExecutor({ executeOnMachine: args => dispatchRuntimeAction({
+        ...args, runtimeActionExecute: runtime,
+    }) });
     const execute = async (input: BrowserCommandV1 = command) => {
-        const result = await runtime({ actionId: 'browser.view.open', input,
+        const result = await dispatchRuntimeAction({ runtimeActionExecute: uiRuntime, actionId: 'browser.view.open', input,
             context: { surface: 'agent', authority: 'account_automation', bypassApprovals: true,
                 externalActionTarget: { kind: 'machine', machineId: 'machine' } } });
         const accepted = BrowserOpenViewInProgressV1Schema.safeParse(result);
         if (accepted.success) pending.push(operations.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, accepted.data.operationId));
         return result;
     };
-    return { execute, operations, broker, downloading, release, opened, provisioner, routes: () => routes, errors };
+    const snapshot = () => runtime({ actionId: 'browser.automation.snapshot', input: {
+        v: 1, automationRequestId: 'after-provisioning', browserSessionId: 'session', viewId: command.viewId,
+        navigationGeneration: 0, actionKind: 'snapshot', payload: {}, requestedBy: 'agent', timeoutMs: 5_000,
+        requesterRef: { kind: 'agent', id: 'first-use-agent' },
+    }, context: { surface: 'agent', authority: 'account_automation', bypassApprovals: true, defaultSessionId: 'session' } });
+    return { execute, snapshot, operations, broker, downloading, release, opened, provisioner, routes: () => routes, errors,
+        disableSidecar: () => { sidecarEnabled = false; },
+        clearRoutes: () => { routes = {}; },
+        installBeforeOpen: async () => {
+            // Sandbox installation uses this same acquisition owner before installing
+            // the OS profile. No daemon route refresh accompanies that CLI/Action effect.
+            expect(await resolveManagedBrowserSidecarCandidate({ platform: 'linux', arch: 'x64', assetOverride: asset }))
+                .toMatchObject({ available: false });
+            release.resolve();
+            expect(await installChromiumForTesting({ platform: 'linux', arch: 'x64', asset })).toMatchObject({ ok: true });
+            expect(broker.listViews('session')).toEqual([]);
+            expect(routes.browserControl).toBeUndefined();
+            boundary.download.mockClear();
+        } };
 }
 
 async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 'decision' | 'daemon' = 'decision') {
@@ -162,6 +205,8 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
         if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: settings }, version: 1 } };
         if (path === '/v1/artifacts') return { status: 200, data: artifact ? [artifact] : [] };
         if (artifact && path === `/v1/artifacts/${artifact.id}`) return { status: 200, data: artifact };
+        // The real store admits HTTP statuses with validateStatus, then treats 404 as absent.
+        if (/^\/v1\/artifacts\/[^/]+$/.test(path)) return { status: 404, data: { error: 'Artifact not found' } };
         throw new Error(`Unexpected Home read: ${path}`);
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
@@ -288,12 +333,18 @@ describe('managed Browser provisioning through the approved first open', () => {
     it('refuses daemon replay when the original requester authorization is no longer current', async () => {
         const fixture = await setupInstalledRequester('bob', 'daemon');
         try {
-            expect(await fixture.invoke('browser.view.open', command, 'first-use')).toMatchObject({ ok: true,
+            const approval = await fixture.invoke('browser.view.open', command, 'first-use');
+            expect(approval, JSON.stringify(approval)).toMatchObject({ ok: true,
                 result: { kind: 'approval_request_created' } });
             fixture.retireOriginalAuthorization();
-            expect(await fixture.approve()).toMatchObject({ ok: true });
-            expect(await fixture.approval()).toMatchObject({ status: 'failed',
-                execution: { ok: false, errorCode: 'approval_stale' } });
+            // The daemon RPC starts a new replay admission, not just a consent receipt.
+            // Approval cannot revive the original requester's withdrawn authorization.
+            expect(await fixture.approve()).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+            // Requester-confirmation admission refuses replay before an execution claim;
+            // the previously committed consent remains, without an execution receipt.
+            const approved = await fixture.approval();
+            expect(approved).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+            expect(approved.execution).toBeUndefined();
             expect((await fixture.list()).items).toEqual([]);
             expect(fixture.opened).toEqual([]);
             expect(boundary.download).not.toHaveBeenCalled();
@@ -308,7 +359,8 @@ describe('managed Browser provisioning through the approved first open', () => {
         const fixture = await setupInstalledRequester(accountId, replayRoute);
         const observation = vi.spyOn(fixture.machine, 'observeActionExecution');
         try {
-            expect(await fixture.invoke('browser.view.open', command, 'first-use')).toMatchObject({ ok: true,
+            const approval = await fixture.invoke('browser.view.open', command, 'first-use');
+            expect(approval, JSON.stringify(approval)).toMatchObject({ ok: true,
                 result: { kind: 'approval_request_created' } });
             expect(fixture.opened).toEqual([]);
             expect(boundary.download).not.toHaveBeenCalled();
@@ -377,8 +429,8 @@ describe('managed Browser provisioning through the approved first open', () => {
             }
         } finally { await fixture.close(); }
     });
-    it('accepts an installing open, then opens that same view once after route refresh', async () => {
-        const fixture = await setup();
+    it.each([false, true])('accepts an installing open with an existing control route=%s, then opens that same view once after route refresh', async publishControlBeforeInstall => {
+        const fixture = await setup(undefined, publishControlBeforeInstall);
         try {
             const result = await fixture.execute();
             expect(result).toMatchObject({ status: 'in_progress', commandId: command.commandId,
@@ -391,6 +443,35 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(terminal).toMatchObject({ state: 'succeeded', result: { commandId: command.commandId, status: 'dispatched' } });
             expect(fixture.broker.listViews('session')).toMatchObject([{ browserSessionId: 'session', viewId: 'view' }]);
             expect(fixture.opened).toEqual([command.target.url]);
+            expect(boundary.download).toHaveBeenCalledOnce();
+            expect(await fixture.snapshot()).toMatchObject({ status: 'succeeded', fidelity: 'cdp',
+                resultSummary: { visibleText: 'Provisioned page' } });
+        } finally { fixture.release.resolve(); }
+    });
+
+    it('refreshes cold routes after sandbox acquisition installed Chromium outside the daemon', async () => {
+        const fixture = await setup();
+        await fixture.installBeforeOpen();
+        expect(await fixture.execute()).toMatchObject({ status: 'dispatched', commandId: command.commandId });
+        expect(await fixture.operations.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, 'first-open-operation'))
+            .toMatchObject({ state: 'succeeded', result: { status: 'dispatched', commandId: command.commandId } });
+        expect(fixture.broker.listViews('session')).toMatchObject([{ viewId: command.viewId }]);
+        expect(fixture.opened).toEqual([command.target.url]);
+        expect(boundary.download).not.toHaveBeenCalled();
+    });
+
+    it('preserves distinct feature-decision and genuinely absent route causes through UI and protocol dispatch', async () => {
+        const fixture = await setup();
+        try {
+            fixture.clearRoutes();
+            expect(await fixture.execute()).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled',
+                details: { cause: 'browser_control_route_unavailable', phase: 'browser.control.route_resolution', retryable: false } });
+            fixture.disableSidecar();
+            expect(await fixture.execute({ ...command, commandId: 'disabled-open' })).toMatchObject({ ok: false,
+                errorCode: 'runtime_action_disabled',
+                details: { cause: 'browser_sidecar_disabled', phase: 'browser.control.feature_decision', retryable: false } });
+            expect(boundary.download).not.toHaveBeenCalled();
+            expect(fixture.opened).toEqual([]);
         } finally { fixture.release.resolve(); }
     });
 
@@ -417,6 +498,40 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(boundary.download).toHaveBeenCalledTimes(2);
         } finally { fixture.release.resolve(); }
     });
+    it('does not dispatch an existing control route if the sidecar is disabled while provisioning', async () => {
+        const fixture = await setup(undefined, true);
+        try {
+            const accepted = BrowserOpenViewInProgressV1Schema.parse(await fixture.execute());
+            await fixture.downloading.promise;
+            fixture.disableSidecar();
+            fixture.release.resolve();
+            expect(await fixture.operations.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, accepted.operationId))
+                .toMatchObject({ state: 'failed', error: { errorCode: 'runtime_action_disabled',
+                    error: 'runtime_action_disabled:browser:browser_sidecar_disabled',
+                    failureCause: { phase: 'browser.control.feature_decision', errorClass: 'Error', errorCode: null, httpStatus: null } } });
+            expect(fixture.opened).toEqual([]);
+        } finally { fixture.release.resolve(); }
+    });
+    it('reprovisions on open when the installed executable disappears after control publication', async () => {
+        const fixture = await setup();
+        try {
+            const first = BrowserOpenViewInProgressV1Schema.parse(await fixture.execute());
+            fixture.release.resolve();
+            expect(await fixture.operations.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, first.operationId))
+                .toMatchObject({ state: 'succeeded' });
+            const installed = await resolveManagedBrowserSidecarCandidate({ platform: 'linux', arch: 'x64', assetOverride: asset });
+            if (!installed?.executablePath) throw new Error('Fixture Chromium executable was not installed');
+            await rm(installed.executablePath);
+            expect(await resolveManagedBrowserSidecarCandidate({ platform: 'linux', arch: 'x64', assetOverride: asset }))
+                .toMatchObject({ available: false });
+            const recovered = BrowserOpenViewInProgressV1Schema.parse(await fixture.execute({ ...command,
+                commandId: 'recover-missing-install', viewId: 'recovered-view' }));
+            expect(await fixture.operations.runner.waitForTerminal({ accountId: 'account', machineId: 'machine' }, recovered.operationId))
+                .toMatchObject({ state: 'succeeded', result: { commandId: 'recover-missing-install', status: 'dispatched' } });
+            expect(fixture.broker.listViews('session')).toContainEqual(expect.objectContaining({ viewId: 'recovered-view' }));
+            expect(boundary.download).toHaveBeenCalledTimes(2);
+        } finally { fixture.release.resolve(); }
+    });
     it('retains a typed command failure and its completion uncertainty for the bound operation get', async () => {
         const fixture = await setup(new Error('fixture CDP acknowledgement lost'));
         try {
@@ -434,12 +549,18 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(await fixture.operations.handlers.getV2({ operationId: accepted.operationId }))
                 .toMatchObject({ kind: 'found', operation: { result: terminal?.result } });
             const installed = await fixture.execute({ ...command, commandId: 'installed-command-failure', viewId: 'installed-failure' });
-            expect(installed).toMatchObject({ status: 'failed', completion: 'unknown', error: { code: 'adapter_unavailable' } });
+            // Protocol projects a command failure once at the Action boundary;
+            // the operation itself retains the original Browser command result.
+            expect(installed).toMatchObject({ ok: false, errorCode: 'adapter_unavailable',
+                details: { status: 'failed', completion: 'unknown', error: { code: 'adapter_unavailable' } } });
             const settled = (await fixture.operations.handlers.listV2({})).items;
             expect(settled).toHaveLength(2);
             const installedOperation = settled.find(operation => operation.operationId !== accepted.operationId);
             expect(await fixture.operations.handlers.getV2({ operationId: installedOperation!.operationId }))
-                .toMatchObject({ kind: 'found', operation: { result: installed } });
+                .toMatchObject({ kind: 'found', operation: { result: {
+                    commandId: 'installed-command-failure', status: 'failed', completion: 'unknown',
+                    error: { code: 'adapter_unavailable' },
+                } } });
         } finally { fixture.release.resolve(); }
     });
     it('reports a thrown installer failure through onError without an unhandled operation rejection', async () => {
@@ -469,7 +590,7 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(results.map(result => result?.state)).toEqual(['succeeded', 'succeeded']);
             expect(fixture.broker.listViews('session')).toHaveLength(2);
             expect(fixture.opened).toHaveLength(2);
-            expect(await fixture.provisioner.provision()).toBe('unavailable');
+            expect(await fixture.provisioner.provision()).toBe('ready');
             expect(boundary.download).toHaveBeenCalledOnce();
         } finally { fixture.release.resolve(); }
     });
