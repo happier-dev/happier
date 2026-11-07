@@ -253,7 +253,8 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       const navigate = async pathname => {
         const url = new URL(restoreUrl);
         url.pathname = pathname;
-        if (pathname !== '/restore/manual') url.searchParams.delete('server');
+        // Each full document load needs the explicit Home entry again.
+        // Keep the browser's saved default unchanged while verifying this stack.
         loaded = Promise.withResolvers();
         loadedFrames.clear();
         navigatedFrames.clear();

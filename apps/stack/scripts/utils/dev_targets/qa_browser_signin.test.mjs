@@ -156,16 +156,22 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false, interruptedPath, navigationBeforeReply = false, childNavigation = false } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
+    homeOrigin = canonicalServerUrl;
     constructor() { super(); queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
     message(value) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
       queueMicrotask(() => {
         const loaderId = `document-${this.navigations + 1}`;
+        if (method === 'Page.navigate') {
+          this.homeOrigin = browserDefaultOrigin
+            ? new URL(params.url).searchParams.get('server') ?? browserDefaultOrigin
+            : profileOrigin;
+        }
         if (method === 'Network.getResponseBody' && bodyUnavailable) {
           this.message({ id, error: { code: -32000, message: 'No resource with given identifier found' } });
           return;
@@ -183,7 +189,7 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           : method === 'Runtime.callFunctionOn'
             ? { result: { value: params.arguments[0].value === 'account' ? (accountReady ? 'account' : 'account_unavailable')
               : params.arguments[0].value === 'restore' ? restoreOutcome
-                : params.arguments[0].value === 'home-revisions' ? { expectedRevision: 27, actualRevision: 62 } : 'home' } }
+                : params.arguments[0].value === 'home-revisions' ? { expectedRevision: 27, actualRevision: 62 } : this.homeOrigin === canonicalServerUrl ? 'home' : 'welcome' } }
             : method === 'Network.getResponseBody'
               ? { body: malformed ? '{' : JSON.stringify(params.requestId === 'profile' ? profile : { id: 'wrong-account' }) } : {} });
         if (method !== 'Page.navigate') return;
@@ -216,7 +222,7 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
             ['previous', canonicalServerUrl, 'main', 'previous'],
             ['foreign', 'https://other-home.invalid', 'main', foreignInCurrentDocument ? loaderId : 'previous'],
             ['iframe', canonicalServerUrl, 'child', loaderId],
-            ['profile', profileOrigin, 'main', loaderId],
+            ['profile', this.homeOrigin, 'main', loaderId],
           ]) {
             this.message({ method: 'Network.requestWillBeSent', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
               request: { method: 'GET', url: `${url}/v1/account/profile` },
@@ -242,6 +248,10 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
       webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
   });
 }
+
+test('keeps the signed-in Home through Account verification and final Home navigation despite a different browser default', async () => {
+  assert.deepEqual(await profileSignin({ browserDefaultOrigin: aliasUrl }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
+});
 
 test('reads Account identity only from this main-frame navigation, ignoring previous documents and child frames', async () => {
   assert.deepEqual(await profileSignin(), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
