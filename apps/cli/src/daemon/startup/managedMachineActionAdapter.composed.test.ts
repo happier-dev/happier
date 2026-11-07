@@ -434,7 +434,7 @@ describe('daemon managed Machine Action factory', () => {
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' }),
             acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
             observeActionExecution: request => operations.observeExecution(request),
-            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current, runApproved,
+            executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose, runApproved,
                 context: wake ? context : { ...context, surface: 'cli', runtimeAccountId: 'account', serverIdentityId: 'srv_home', defaultSessionMachineId: 'controller' },
                 serverId: configuration.activeServerId, createExecutor: overrides => wake
                     ? createCliActionExecutorFromCredentials({ ...executorParams, serverApiUrl: serverUrl, machineId: 'controller',
@@ -639,7 +639,7 @@ describe('daemon managed Machine Action factory', () => {
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' }),
             acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
             observeActionExecution: request => operations.observeExecution(request),
-            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current, context,
+            executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose, context,
                 serverId: configuration.activeServerId, runApproved, createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
         });
         const rpc = new RpcHandlerManager({ scopePrefix: 'controller', encryptionMode: 'plain', logger: () => {} });

@@ -347,6 +347,61 @@ describe('unused Stop through guest drain and controller operation custody', () 
             expect(snapshot.domainRef).toMatchObject({ kind: 'managedMachine', id: machine.id });
         }
     });
+    it('finishes its admitted unused Stop when Home publishes the policy intent before native submission', async () => {
+        const test = setup({ kind: 'idle', since: Date.now() - 60_000 }, undefined, 'stop');
+        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 60_000, effect: 'stop' },
+            observation: { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained' } });
+        const machine = test.readMachine();
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner',
+            generateOperationId: () => 'policy-stop' });
+        let finished = false;
+        let admitted = false;
+        const failures: unknown[] = [];
+        const home = test.post.getMockImplementation()!;
+        // Home's row push is delivered after admission persists Stop, before the
+        // same response resumes native submission. The driver and scheduler stay real.
+        test.post.mockImplementation(async (url, body, config) => {
+            const response = await home(url, body, config);
+            if (String(url).endsWith('/admit-policy')) {
+                admitted = true;
+                await runtime.notifyChanged();
+            }
+            return response;
+        });
+        const runtime = createDaemonManagedMachinePolicyRuntime({
+            // Census, guest registration and native provider IO are system boundaries.
+            loadMachine: async id => ({ id, encryptionMode: 'plain', active: true, metadata: null, metadataVersion: 0,
+                daemonState: { status: 'running' }, daemonStateVersion: 1 }),
+            readCensus: async () => ({ machines: [test.readMachine()], targets: [],
+                ...(admitted ? { retentionContinuations: [{ managedId: machine.id, requestId: 'control' }] } : {}) }),
+            executePolicy: async request => operations.observeExecution({ actionId: 'machines.managed.power.set', input: {},
+                actionRequestId: 'control', execute: async operation => {
+                    const context = { ...operation, signal: request.signal };
+                    try {
+                        return { ok: true, result: await test.driver.executePolicy(request.machine, request.purpose, {
+                            requestId: 'control', context, signal: request.signal,
+                            runPolicyAction: (preview, runApproved) => executeManagedMachinePolicyAction({
+                                machine: preview, purpose: request.purpose, context, runApproved, serverId: machine.homeId,
+                                createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }),
+                            }),
+                        }) };
+                    } catch (error) {
+                        failures.push(error);
+                        return { ok: false, errorCode: request.signal?.aborted ? 'cancelled' : 'policy_failed', error: 'Policy failed' };
+                    } finally { finished = true; }
+                } }),
+        });
+        try {
+            await runtime.notifyChanged();
+            await vi.waitFor(() => expect(finished).toBe(true));
+            expect(failures).toEqual([]);
+            expect(await operations.handlers.getV2({ operationId: 'policy-stop' })).toMatchObject({ kind: 'found',
+                operation: { state: 'succeeded' } });
+            expect(test.effects).toEqual(['power']);
+            expect(test.nativeInputs).toContainEqual({ resource: machine.resource!.value, intent: 'stop' });
+            expect(test.post.mock.calls.filter(([url]) => String(url).endsWith('/admit-policy'))).toHaveLength(1);
+        } finally { await runtime.stop(); }
+    });
     it('does not recreate unused Stop operations after observed settlement and resumes the policy after observed Start', async () => {
         const test = setup(undefined, undefined, 'stop', {
             observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained',
@@ -436,22 +491,31 @@ describe('unused Stop through guest drain and controller operation custody', () 
         expect(await operations.handlers.getV2({ operationId: 'already-running-wake' })).toMatchObject({ kind: 'not_found' });
         expect(test.effects).toEqual([]);
     });
-    it.each(['idle', 'busy', 'unknown', 'missing-confirmation', 'approval-held', 'approval-approved', 'approval-rejected', 'approval-observation-failed',
+    it.each(['idle', 'configured-stop', 'configured-suspend', 'busy', 'unknown', 'missing-confirmation', 'approval-held', 'approval-approved', 'approval-rejected', 'approval-observation-failed',
         'within-window', 'refused-reopen', 'lost-probe-reply', 'aborted-probe'] as const)(
-        'settles unused Stop only with confirmed idle (%s)', async disposition => {
+        'settles retention power with configured consent or its required review (%s)', async disposition => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(1_790_000_000_000);
-        const test = setup(undefined, undefined, 'stop');
-        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } });
+        const intent = disposition === 'configured-suspend' ? 'suspend' : 'stop';
+        const test = setup(undefined, undefined, intent);
+        test.setMachine({ desired: 'start', retention: disposition.startsWith('approval-')
+            ? { kind: 'deadline', at: Date.now(), effect: 'stop' }
+            : { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } });
         const machine = test.readMachine();
         const nativeController = machine.controller;
         if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const home = test.post.getMockImplementation()!;
         test.post.mockImplementation(async (url, body, config) => {
             if (String(url).endsWith('/prepare-policy')) return { status: 200, data: {
-                machine: { ...test.readMachine(), desired: 'stop', desiredWhen: 'now' },
+                machine: { ...test.readMachine(), desired: intent, desiredWhen: 'now' },
             } };
-            if (String(url).endsWith('/admit-policy')) test.setMachine({ desired: 'stop' });
+            if (String(url).endsWith('/admit-policy')) {
+                const response = await home(url, body, config);
+                if (!response || typeof response !== 'object' || !('data' in response)
+                    || !response.data || typeof response.data !== 'object') throw new Error('Invalid Home admission fixture');
+                test.setMachine({ desired: intent });
+                return { ...response, data: { ...response.data, machine: test.readMachine() } };
+            }
             return await home(url, body, config);
         });
         const drain = createDaemonAdmissionDrain();
@@ -526,9 +590,9 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 execute: async operation => {
                     work = driver.executePolicy(machine, { kind: 'retention' }, { requestId: 'control',
                         context: operation, signal: operation.signal,
-                        ...(disposition.startsWith('approval-') ? {
+                        ...(disposition.startsWith('approval-') || disposition.startsWith('configured-') ? {
                             runPolicyAction: (preview, runApproved) => executeManagedMachinePolicyAction({
-                                machine: preview, runApproved, serverId: 'home',
+                                machine: preview, purpose: { kind: 'retention' }, runApproved, serverId: 'home',
                                 context: { ...operation, actionRequestId: 'control', surface: 'cli', runtimeAccountId: 'owner',
                                     serverIdentityId: machine.homeId, defaultSessionMachineId: nativeController.machineId,
                                     actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
@@ -571,7 +635,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
                     finally { settled = true; }
                 } });
             while (!settled) {
-                if (disposition.startsWith('approval-') && storedApproval) break;
+                if ((disposition.startsWith('approval-') || disposition.startsWith('configured-')) && storedApproval) break;
                 const result = await controller.handlers.getV2({ operationId: 'unused-stop' });
                 const expected = disposition === 'busy' ? 'managed.intent.busy' : 'managed.intent.activity-unknown';
                 if (result.kind === 'found' && result.operation.progress?.kind === 'phase'
@@ -599,6 +663,14 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 await controller.handlers.cancel({ operationId: 'unused-stop' });
                 await observed;
                 expect(drain.isQuiescing()).toBe(false);
+            } else if (disposition.startsWith('configured-')) {
+                expect(storedApproval).toBeUndefined();
+                await observed;
+                await expect(controller.handlers.getV2({ operationId: 'unused-stop', waitForTerminal: true }))
+                    .resolves.toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+                expect(test.effects).toEqual(['power']);
+                expect(test.nativeInputs).toContainEqual({ resource: machine.resource!.value, intent });
+                expect(test.post.mock.calls.filter(([url]) => String(url).endsWith('/admit-policy'))).toHaveLength(1);
             } else if (disposition.startsWith('approval-')) {
                 expect(storedApproval).toMatchObject({ status: 'open', actionId: 'machines.managed.power.set',
                     approval: { flow: 'blocking', result: 'required' },
@@ -651,7 +723,8 @@ describe('unused Stop through guest drain and controller operation custody', () 
                     expect(terminal.operation.progress).not.toMatchObject({ phase: 'waiting_for_approval' });
                 }
                 expect(test.effects).toEqual(disposition === 'approval-approved' ? ['power'] : []);
-                expect(drain.isQuiescing()).toBe(disposition === 'approval-approved');
+                // Absolute-deadline effects retain review but do not drain guest work.
+                expect(drain.isQuiescing()).toBe(false);
             } else if (disposition === 'busy' || disposition === 'unknown') {
                 await expect(controller.handlers.getV2({ operationId: 'unused-stop' })).resolves.toMatchObject({ kind: 'found', operation: {
                     state: 'running', progress: { phase: disposition === 'busy' ? 'managed.intent.busy' : 'managed.intent.activity-unknown' } } });
@@ -895,7 +968,7 @@ describe('managed native intent through the accepted Action', () => {
             isAccountCurrent: async () => true,
             listAccountApiTokens: async () => ({ tokens: [] }) });
         const work = test.driver.executePolicy(machine, { kind: 'accepted-input-start', target }, { ...test.options, signal: lifetime.signal, actionOrigin,
-            runPolicyAction: (policyMachine, runApproved) => executeManagedMachinePolicyAction({ machine: policyMachine,
+            runPolicyAction: (policyMachine, runApproved) => executeManagedMachinePolicyAction({ machine: policyMachine, purpose: { kind: 'accepted-input-start', target },
                 context: { ...test.options.context, signal: lifetime.signal, actionRequestId: 'control', surface: 'cli', runtimeAccountId: 'owner',
                     serverIdentityId: machine.homeId, defaultSessionMachineId: nativeController.machineId,
                     actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'machines.managed.power.set': { approvalRequiredSurfaces: ['cli'] } } }) },
@@ -936,7 +1009,8 @@ describe('managed native intent through the accepted Action', () => {
             if (disposition === 'approve') {
                 expect(result).toMatchObject({ value: { kind: 'accepted', intentRevision: 2 } });
                 expect(stored).toMatchObject({ execution: { ok: true, result: { kind: 'accepted', intentRevision: 2 } } });
-                expect(test.effects).toEqual(['power']);
+                // Fresh Inspect already sees running compute; only guest startup remains.
+                expect(test.effects).toEqual(['bootstrap']);
             }
             else { expect(result).toHaveProperty('error'); expect(test.effects).toEqual([]); }
         } finally {
@@ -1631,7 +1705,7 @@ describe('managed native intent through the accepted Action', () => {
             runPolicyAction: (machine, runApproved) => {
                 const nativeController = machine.controller;
                 if (!nativeController) throw new Error('The native fixture requires its installed controller.');
-                return executeManagedMachinePolicyAction({ machine, runApproved, serverId: 'home',
+                return executeManagedMachinePolicyAction({ machine, purpose: { kind: 'retention' }, runApproved, serverId: 'home',
                 context: { ...test.options.context, signal: lifetime.signal, actionRequestId: 'control', surface: 'cli',
                     runtimeAccountId: 'owner', serverIdentityId: machine.homeId, defaultSessionMachineId: nativeController.machineId,
                     actionsSettings: normalizeActionsSettingsV1({ v: 1,

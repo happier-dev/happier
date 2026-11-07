@@ -81,7 +81,7 @@ it('does not create an unused-power operation from the real Home census before g
         serverId: configuration.activeServerId, serverBaseUrl: serverUrl, installationIdentity: null,
         acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime installed'); },
         observeActionExecution: request => operations.observeExecution(request),
-        executeManagedPolicyAction: (machine, context, runApproved) => executeManagedMachinePolicyAction({ machine, context,
+        executeManagedPolicyAction: (machine, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine, purpose, context,
             runApproved, serverId: configuration.activeServerId, createExecutor: overrides => createActionExecutor(overrides) }),
     });
     const censusInput = { homeId, controller: { machineId: controller.id, installationId: controller.installationId! },
@@ -216,7 +216,7 @@ it('keeps the real fire-time Ask and original input waiting when a competing run
         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: controller.id }),
         acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
         observeActionExecution: request => operations.observeExecution(request),
-        executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current, context,
+        executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose, context,
             runApproved, serverId: configuration.activeServerId, createExecutor: overrides => createCliActionExecutorFromCredentials({
                 credentials, serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: homeId,
                 machineId: controller.id, readCredentials: async () => credentials, ...overrides }) }) });

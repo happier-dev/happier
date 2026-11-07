@@ -1,10 +1,13 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, createActionExecutor } from '@happier-dev/protocol';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
-/** The installed native owner retains its existing shared Action/Ask continuation. */
+/** Configured unused Stops consume rule consent; other policy effects retain shared Ask. */
 export async function executeManagedMachinePolicyAction(input: Readonly<{
     machine: ManagedMachineV1;
+    purpose: ManagedPolicyPurposeV1;
     context: ActionExecutorContext;
     serverId: string;
     runApproved(context: ActionExecutorContext): Promise<ManagedMachineV1>;
@@ -19,6 +22,12 @@ export async function executeManagedMachinePolicyAction(input: Readonly<{
     if (!operationId || !signal || !context.operationOwnerUpdate) {
         throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
     }
+    // The rule's admission is consent for its later unused Stop/Suspend.
+    // Home still admits this exact policy/revision before native submission.
+    if (input.purpose.kind === 'retention' && machine.retention.kind === 'unused'
+        && machine.retention.effect === 'stop' && (machine.desired === 'stop' || machine.desired === 'suspend')) {
+        return await input.runApproved(context);
+    }
     const actionId = machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
     const actionInput = {
         homeId: machine.homeId, managedId: machine.id, intent: machine.desired,
@@ -30,6 +39,10 @@ export async function executeManagedMachinePolicyAction(input: Readonly<{
     const result = await input.createExecutor({
         hostActionApprovalLifetime: { operationId, signal },
         managedMachineAction: async request => {
+            if (request.actionId === 'machines.managed.get') {
+                const target = ManagedMachineActionInputSchemasV1['machines.managed.get'].safeParse(request.input);
+                if (target.success && target.data.homeId === machine.homeId && target.data.managedId === machine.id) return machine;
+            }
             if (request.actionId !== actionId
                 || request.context.operationAcceptance?.operationId !== operationId
                 || request.context.signal !== signal

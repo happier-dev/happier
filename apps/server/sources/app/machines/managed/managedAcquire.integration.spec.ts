@@ -221,7 +221,7 @@ describe("managed acquisition durable authority", () => {
         const provider = { pluginId: 'fixture.compute', localId: 'vm' };
         const expected: Array<{ managedId: string; requestId: string }> = [];
         const ids: string[] = [];
-        for (const kind of ['control', 'policy'] as const) for (const intent of ['stop', 'suspend'] as const) {
+        for (const kind of ['control', 'policy'] as const) for (const intent of ['stop', 'suspend'] as const) for (const submitted of [false, true]) {
             const requestId = crypto.randomUUID();
             const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
                 controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
@@ -235,7 +235,7 @@ describe("managed acquisition durable authority", () => {
                 currentAdmission: kind === 'policy' ? { kind, request: { ...correlation, purpose: { kind: 'retention' } } }
                     : { kind, request: { action: 'machines.managed.power.set', requestId,
                         input: { homeId, managedId: row.id, intent, when: 'now', expectedRevision: 0 } } },
-                submittedEffect: { ...correlation, intent },
+                ...(submitted ? { submittedEffect: { ...correlation, intent } } : {}),
             } } });
             ids.push(row.id);
             if (kind === 'policy') expected.push({ managedId: row.id, requestId });

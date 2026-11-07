@@ -4,7 +4,7 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine } from '@/api/types';
 import type { ManagedControllerV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
-import { hasSubmittedManagedRetentionEffect } from '@/machines/managed/managedRetentionPolicy';
+import { canPrepareManagedRetentionPolicy, hasSubmittedManagedRetentionEffect } from '@/machines/managed/managedRetentionPolicy';
 import { logger } from '@/ui/logger';
 import { MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT,
     type createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
@@ -109,6 +109,13 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                 wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage, purpose: purpose.kind,
                 ...(purpose.kind === 'accepted-input-start' ? { origin: purpose.target.origin } : {}) };
             const prior = active.get(machine.id);
+            const continuationRequestId = retentionContinuations.get(machine.id);
+            const canPrepareRetention = canPrepareManagedRetentionPolicy(machine, continuationRequestId);
+            // Manual power-down retires pre-effect work; Home policy custody continues.
+            if (purpose.kind === 'retention' && !machine.submittedNativeEffect && !canPrepareRetention) {
+                if (prior) abortPolicy(machine.id, prior.cancel, 'policy_replaced');
+                continue;
+            }
             // Native Stop, or Suspend where that is how the provider parks, satisfies a Stop policy until compute runs again.
             // A submitted native effect still needs its incumbent reconciliation,
             // and an accepted wake target takes precedence over retention above.
@@ -126,14 +133,10 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             // Controller publications only recheck an incumbent's currentness.
             // They cannot admit new work, including after that work has failed.
             if (!scheduleNew) continue;
-            // Delete already owns this resource. Preserve any incumbent native
-            // completion above, but never create competing retention work.
-            if (purpose.kind === 'retention' && (machine.desired === 'delete' || machine.submittedNativeEffect?.intent === 'delete')) continue;
-            const continuationRequestId = retentionContinuations.get(machine.id);
             const continuesRetention = hasSubmittedManagedRetentionEffect(machine, continuationRequestId);
-            // A person's submitted Stop/Suspend already has its own execution
-            // owner. Only Home-admitted policy custody can resume it here.
-            if (purpose.kind === 'retention' && machine.submittedNativeEffect && !continuesRetention) continue;
+            // Manual Stop/Suspend/Delete owns its intent. Only Home-admitted
+            // retention custody may prepare or continue this policy.
+            if (purpose.kind === 'retention' && !canPrepareRetention) continue;
             // New unused retention needs registration and positive guest evidence.
             // Only a policy-owned submitted Stop/Suspend continues without enrollment.
             if (purpose.kind === 'retention' && machine.retention.kind === 'unused' && !continuesRetention) {
@@ -168,7 +171,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                     await prior?.task;
                     cancel.signal.throwIfAborted();
                     await params.executePolicy({ machine, purpose, signal: cancel.signal,
-                        ...(continuesRetention ? { retentionContinuationRequestId: continuationRequestId } : {}) });
+                        ...(continuationRequestId ? { retentionContinuationRequestId: continuationRequestId } : {}) });
                 } catch (error) {
                     if (!cancel.signal.aborted) params.onUnavailable?.(error);
                 } finally {

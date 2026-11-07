@@ -39,7 +39,7 @@ describe('daemon managed policy census transport', () => {
             machineId: 'controller', serverId: 'home', serverBaseUrl: 'https://policy.example', installationIdentity: null,
             acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime is installed'); },
             observeActionExecution: request => operations.observeExecution(request),
-            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current,
+            executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose,
                 context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
         });
         const runtime = createDaemonManagedMachinePolicyRuntime({
@@ -205,7 +205,7 @@ describe('daemon managed policy census transport', () => {
             machineId: 'controller', serverId: 'home', serverBaseUrl: 'https://home.example', installationIdentity: null,
             acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime is installed'); },
             observeActionExecution: request => operations.observeExecution(request),
-            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current,
+            executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose,
                 context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
         });
         const runtime = createDaemonManagedMachinePolicyRuntime({
@@ -241,7 +241,7 @@ describe('daemon managed policy census transport', () => {
             machineId: 'controller', serverId: 'home', serverBaseUrl: 'https://home.example', installationIdentity: null,
             acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime is installed'); },
             observeActionExecution: request => operations.observeExecution(request),
-            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current,
+            executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose,
                 context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
         });
         const list = async () => ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items;
@@ -304,7 +304,7 @@ describe('daemon managed policy census transport', () => {
             machineId: 'guest', serverId: 'home', serverBaseUrl: 'https://home.example', installationIdentity: null,
             acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime is installed'); },
             observeActionExecution: request => operations.observeExecution(request),
-            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current,
+            executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose,
                 context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
         });
         let remoteReads = 0;

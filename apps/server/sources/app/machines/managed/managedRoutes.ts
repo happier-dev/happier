@@ -181,9 +181,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                     { allocation: { in: ['bound', 'may-exist'] }, creationState: 'canceled', desired: 'delete', desiredWhen: 'now' }] } });
             const retentionContinuations = rows.flatMap(row => {
                 const admitted = readManagedAdmissionState(row.admittedInput);
-                return admitted.submittedEffect && admitted.currentAdmission?.kind === 'policy'
+                return admitted.currentAdmission?.kind === 'policy'
                     && admitted.currentAdmission.request.purpose.kind === 'retention'
-                    ? [{ managedId: row.id, requestId: admitted.submittedEffect.requestId }] : [];
+                    ? [{ managedId: row.id, requestId: readManagedCurrentRequestId(row) }] : [];
             });
             const nativeCredentialPolicies = request.body.includeNativeCredentialBindings ? await Promise.all(rows.map(async row => {
                 const native = await readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {

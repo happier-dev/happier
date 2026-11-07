@@ -36,7 +36,7 @@ export type ManagedMachineEnvironmentSetupV1 = z.infer<typeof ManagedMachineEnvi
 export const RetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('until-delete') }),
   z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gt(0)), effect: z.enum(['stop', 'delete']) }),
-  z.strictObject({ kind: z.literal('deadline'), at: z.number().check(z.gte(0)), effect: z.enum(['stop', 'delete']), interrupts: z.literal(true) }),
+  z.strictObject({ kind: z.literal('deadline'), at: z.number().check(z.gte(0)), effect: z.enum(['stop', 'delete']) }),
 ]));
 /** Reusable choices cannot carry an absolute time from another allocation. */
 export const ReusableRetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
