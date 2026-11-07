@@ -39,6 +39,7 @@ import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/
 import { readContributedActionExecutionPlacement } from '@/session/actions/readContributedActionExecutionPlacement';
 import { readServerIdentityIdFromFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
 type SessionActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
 type SessionActionAuthority = Readonly<{ sessionId: string; isCurrent(): Promise<boolean>; signal?: AbortSignal }>;
@@ -103,6 +104,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     originalActionEnvelope?: ExternalActionRequestEnvelope;
     /** Home-observed version that must govern daemon-side Account policy admission. */
     accountSettingsVersion?: number;
+    /** Local receiving ingress retained by the original installed Session issuer. */
+    verifyMachineAdmissionCurrent?: ActionExecutorContext['verifyMachineAdmissionCurrent'];
   }> | ActionExecuteFailure | null | undefined>;
 }>) {
   const actionSettingsProvider = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createActionSettingsProvider({
@@ -217,6 +220,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     let context: ActionExecutorContext = {
       recordActionStartDiagnostic,
       surface: operationSurface, authority: 'account_automation', serverId: params.serverId,
+      runtimeAccountId: readAccountIdFromToken(params.token) ?? undefined,
       actionCaller: caller.data,
       ...(witness.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const } : {}),
       ...(operation.executionRun ? {
@@ -403,6 +407,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...context,
       ...(source ? { defaultSessionMachineId: source.machineId } : {}),
       ...(external ? { externalActionExecutionAuthorization: external.authorization, externalActionTarget: external.target } : {}),
+      ...(external?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: external.verifyMachineAdmissionCurrent } : {}),
       ...(external?.originalActionEnvelope ? { originalActionEnvelope: external.originalActionEnvelope } : {}),
     }));
     if (!outcome.ok && outcome.errorCode === 'target_unavailable') {

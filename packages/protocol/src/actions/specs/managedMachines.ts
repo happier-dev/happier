@@ -102,7 +102,7 @@ function createManagedMachineActionSpecs() {
       'machines.managed.retire': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
     } as Partial<Record<typeof actionId, Pick<PreNormalizedActionSpec, 'confirmVerb' | 'irreversible'>>>)[actionId],
     description: actionId === 'machines.managed.acquire'
-      ? 'Create Account-owned compute and install Happier using the reviewed provider, price and lifetime on the selected Home.'
+      ? 'Create Account-owned compute and install Happier using the reviewed provider, price and lifetime on the selected Home. For a one-off selection, read descriptor.launchSchema on the selected entry from machines.provisioners.list and resolve its options with machines.provisioners.options. Supply schema-shaped launch.choices; an option display label is not a launch input. Retain the reviewed facts from that configuration.'
       : actionId === 'machines.managed.bootstrap.retry'
         ? 'Retry installation on the same managed resource using its current enrollment attempt.'
         : actionId === 'machines.managed.cancel'

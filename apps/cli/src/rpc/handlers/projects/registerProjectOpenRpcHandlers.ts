@@ -25,7 +25,7 @@ export function registerProjectOpenRpcHandlers(registrar: RpcHandlerRegistrar, i
     const origin = authorization.binding.sessionActionOrigin;
     const source = authorization.binding.sessionActionSource;
     const admission = context.machineAdmission;
-    if (authorization.requesterAccountProjection && authorization.requesterHttpProjection) {
+    if (origin?.caller.kind !== 'session' && authorization.requesterAccountProjection && authorization.requesterHttpProjection) {
       const installation = await boundary?.readInstallation?.().catch(() => null);
       if (!installation || !admission || installation.machineId !== input.machineId
         || admission.machineId !== input.machineId || installation.identity.installationId !== admission.installationId
@@ -79,6 +79,10 @@ export function registerProjectOpenRpcHandlers(registrar: RpcHandlerRegistrar, i
     }
     const result = OpenProjectResultV1Schema.safeParse(await withRequesterContext(context, async (admitted, signing) => {
       const runtime = { ...input.runtime!, ...(signing ? { requesterMachineRpcSigning: signing } : {}) };
+      const acceptance = admitted?.localActionContext?.operationAcceptance;
+      if (acceptance?.actionId === 'projects.open') {
+        return openProject(parsed.data, runtime, admitted, acceptance);
+      }
       if (!input.observeExecution || !admitted) {
         return openProject(parsed.data, runtime, admitted);
       }
@@ -89,7 +93,8 @@ export function registerProjectOpenRpcHandlers(registrar: RpcHandlerRegistrar, i
           ...admitted, signal: AbortSignal.any([admitted.signal, operation.signal]),
         }, operation.operationAcceptance) }),
       });
-      return observed.ok ? observed.result : { kind: 'refused', code: observed.errorCode ?? 'project_open_unavailable' };
+      return observed.ok ? observed.result : { kind: 'refused', code: observed.errorCode ?? 'project_open_unavailable',
+        ...(observed.failureCause ? { failureCause: observed.failureCause } : {}) };
     }));
     if (!result.success) logger.warnLocalFile('[Project Open RPC] Invalid settlement', { issues: result.error.issues });
     return result.success ? result.data : { kind: 'outcomeUnknown' };

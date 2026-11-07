@@ -1165,8 +1165,9 @@ private Sync source route retain the local profile for credentials and requester
 custody, while Workspace and Source addressing uses the admitted Home id. Current
 Machine admission and requester authorization remain required.
 
-Project Open retains the approved Agent's exact Session requester bootstrap when
-selecting execution identity. In 0.3 development, an Agent acting for the Machine
+The Session Action owner stamps its authenticated requester Account into approval
+context. Project Open retains the approved Agent's exact Session requester bootstrap
+when selecting execution identity. In 0.3 development, an Agent acting for the Machine
 custodian's own Account may attach the approved raw folder directly. Agents for
 other Accounts, including Team members with Machine access, still require a
 Workspace ref or clone and the existing private-root isolation; the deciding

@@ -15,13 +15,14 @@ import { resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/p
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readProjectAccountRows, createProjectAccountSnapshotMutation, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { materializeWorkspaceSyncForOpen } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
-import { assertWorkspaceSyncRequesterBootstrapSupported, WorkspaceSyncInitialPreparationRefusal } from '@/workspaces/sync/workspaceSyncPreparation';
+import { WorkspaceSyncPreparationRefusal } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { materializeProjectCheckout } from './materializeProjectCheckout';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
@@ -32,6 +33,7 @@ import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourc
 import type { ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { doesWorkspaceSyncProjectSourceRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 
@@ -66,7 +68,7 @@ function privateExecutionDiagnostic(error: unknown, code?: string): Readonly<{ r
     || code === 'session_requester_unavailable')) return { reason: code, phase: 'native_execution_admission' };
   return undefined;
 }
-function refused(code: string, error?: unknown): Extract<OpenProjectResultV1, { kind: 'refused' }> {
+function projectRefusal(code: string, error?: unknown): Extract<OpenProjectResultV1, { kind: 'refused' }> {
   logger.warnLocalFile('[Project Open] Refused', { code, ...privateExecutionDiagnostic(error, code) });
   if (error && typeof error === 'object') {
     const result = OpenProjectResultV1Schema.safeParse({ kind: 'refused', code,
@@ -89,30 +91,25 @@ function codeOf(error: unknown): string {
 type ProjectRequester = Readonly<{
   rows: ProjectAccountRowsInput;
   credentials: StoredCredentials | null;
-  isCurrent(): Promise<boolean>;
   externalAction?: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>;
 }>;
 async function resolveProjectRequester(runtime: ProjectOpenRuntime, context: RpcHandlerContext): Promise<ProjectRequester> {
-  const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+  const fail = (code: string, reason: string): never => {
+    throw Object.assign(new Error(code), { code, details: { reason, phase: 'requester_projection' } });
+  };
   const admission = context.machineAdmission!;
   const authorization = context.callerInputAuthorization;
   if (authorization) {
     const account = authorization.requesterAccountProjection;
     const http = authorization.requesterHttpProjection;
-    if (!account || !http || authorization.binding.actionId !== 'projects.open'
-      || authorization.binding.accountId !== admission.actorAccountId
-      || authorization.binding.custodianAccountId !== admission.custodianAccountId
-      || authorization.binding.machineId !== admission.machineId || authorization.binding.installationId !== admission.installationId
-      || account.accountId !== admission.actorAccountId || http.accountId !== account.accountId
-      || account.serverId !== runtime.serverId || http.serverId !== runtime.serverId
-      || http.serverHttpBaseUrl.replace(/\/+$/, '') !== runtime.serverHttpBaseUrl.replace(/\/+$/, '')) return fail('requester_authority_unavailable');
-    const isCurrent = async () => !context.signal.aborted && await account.isCurrent() && await http.isCurrent();
-    if (!await isCurrent()) return fail('requester_authority_unavailable');
+    if (!account) return fail('requester_authority_unavailable', 'requester_account_projection_missing');
+    if (!http) return fail('requester_authority_unavailable', 'requester_http_projection_missing');
+    // The admitted HTTP projection owns Account and installed-host currentness.
+    // Physical execution identity is reconciled by selectHostRequesterExecutionIdentity.
+    if (context.signal.aborted || !await http.isCurrent()) return fail('requester_authority_unavailable', 'requester_projection_not_current');
     const bootstrap = context.requesterSessionBootstrap;
-    if (bootstrap && (bootstrap.attribution.accountId !== account.accountId || bootstrap.attribution.serverId !== runtime.serverId
-      || !await bootstrap.isCurrent())) return fail('requester_authority_unavailable');
     return { rows: { authorization, effectActionId: 'projects.open', serverId: runtime.serverId, signal: context.signal },
-      credentials: bootstrap?.credentials ?? readRequesterAccountActionContext(authorization)?.credentials ?? null, isCurrent,
+      credentials: bootstrap?.credentials ?? readRequesterAccountActionContext(authorization)?.credentials ?? null,
       ...(runtime.requesterMachineRpcSigning ? { externalAction: { ...runtime.requesterMachineRpcSigning, effectActionId: 'projects.open',
         context: { externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
           serverId: runtime.serverId, authority: context.callerAuthority, signal: context.signal,
@@ -120,12 +117,11 @@ async function resolveProjectRequester(runtime: ProjectOpenRuntime, context: Rpc
         } } } : {}) };
   }
   if (context.callerAuthority !== 'present_user' || context.callerInputConstraints || context.sessionActionOrigin
-    || context.authorization || context.localActionContext) return fail('requester_authority_unavailable');
-  if (admission.actorAccountId !== runtime.accountId || admission.custodianAccountId !== runtime.accountId) return fail('requester_account_unavailable');
+    || context.authorization || context.localActionContext) return fail('requester_authority_unavailable', 'native_requester_not_present_owner');
+  if (admission.actorAccountId !== runtime.accountId || admission.custodianAccountId !== runtime.accountId) return fail('requester_account_unavailable', 'native_requester_account_mismatch');
   const credentials = await runtime.readCredentials();
-  if (!credentials || readAccountIdFromToken(credentials.token) !== runtime.accountId) return fail('requester_account_unavailable');
-  return { rows: { credentials, serverId: runtime.serverId, signal: context.signal }, credentials,
-    isCurrent: async () => (await runtime.readCredentials())?.token === credentials.token };
+  if (!credentials || readAccountIdFromToken(credentials.token) !== runtime.accountId) return fail('requester_account_unavailable', 'native_requester_credentials_unavailable');
+  return { rows: { credentials, serverId: runtime.serverId, signal: context.signal }, credentials };
 }
 
 function admitOpenSource(input: OpenProjectInputV1 & { source: Extract<OpenProjectInputV1['source'], { kind: 'source' }> },
@@ -150,6 +146,9 @@ function admitOpenSource(input: OpenProjectInputV1 & { source: Extract<OpenProje
 /** Account row acceptance is the only writer; SCM/Sync remain the checkout effect owners. */
 export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpenRuntime, context?: RpcHandlerContext,
   operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance']): Promise<OpenProjectResultV1> {
+  let effectsIssued = false;
+  const refused = (code: string, error?: unknown): Extract<OpenProjectResultV1, { kind: 'refused' }> =>
+    ({ ...projectRefusal(code, error), effectAttempted: effectsIssued });
   const acceptance = operationAcceptance ?? context?.localActionContext?.operationAcceptance;
   // Observation metadata is not requester custody: keep authenticated ingress
   // intact rather than synthesizing a local Action invocation to carry the id.
@@ -167,7 +166,6 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
   if (input.materialization.kind === 'sync' && !runtime.workspaceSyncAdapter) return refused('workspace_sync_unavailable');
   if (input.source.kind !== 'source' && (input.source.kind === 'repository') !== (input.materialization.kind === 'clone')) return refused('invalid_materialization');
 
-  let effectsIssued = false;
   let privateCheckout: Awaited<ReturnType<typeof preparePrivateProjectOpenCheckout>> | undefined;
   let retainedRequesterCustody: RetainedRequesterAccountCustody | undefined;
   let privateSyncOperationId: string | undefined;
@@ -176,20 +174,17 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
     context.signal.throwIfAborted();
     if (!await context.verifyMachineAdmissionCurrent()) return refused('machine_access_denied');
     const requester = await resolveProjectRequester(authorityRuntime, context);
-    const executionIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: homeId });
+    const executionIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: homeId,
+      sessionRequester: context.requesterSessionBootstrap?.attribution,
+      sessionRequesterHomeServerIdentityId: context.requesterSessionBootstrap?.homeServerIdentityId });
     if (executionIdentity.kind === 'unknown') return refused(executionIdentity.reason);
+    const usesOwnerRoot = isHostRequesterUnrestrictedOwner(executionIdentity)
+      || input.source.kind === 'folder' && input.materialization.kind === 'attach'
+        && executionIdentity.requester.accountId === admission.custodianAccountId;
     // Verified ingress admits this finite operation once. Its captured identity
     // remains local; cancellation and the native lifetime retire ongoing work.
-    const resolveRequesterIdentity = async () => {
-      context.signal.throwIfAborted();
-      return executionIdentity;
-    };
-    if (!isHostRequesterUnrestrictedOwner(executionIdentity) && !runtime.privateCheckout) return refused('workspace_private_checkout_required');
-    const privateSync = !isHostRequesterUnrestrictedOwner(executionIdentity) && input.materialization.kind === 'sync';
-    if (input.materialization.kind === 'sync' && input.materialization.workspaceAction.kind === 'create_relationship' && !privateSync) {
-      assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context.callerInputAuthorization,
-        admission: context.machineAdmission, receivingAccountId: runtime.accountId, ownerKind: 'relationship' });
-    }
+    if (!usesOwnerRoot && !runtime.privateCheckout) return refused('workspace_private_checkout_required');
+    const privateSync = !usesOwnerRoot && input.materialization.kind === 'sync';
     const credentials = requester.credentials;
     return await runWithServerHttpBaseUrl<Promise<OpenProjectResultV1>>(runtime.serverHttpBaseUrl, async () => {
       let selector = input.source.kind === 'repository' ? input.source.selector : undefined;
@@ -222,13 +217,14 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         sourceDirectory = sourceRootPath = source.ref.rootPath;
         sourceMachineId = source.ref.machineId;
         sourceWorkspaceRefId = source.ref.id;
+        if (input.materialization.kind === 'worktree') parentWorkspace = workspaceAddressFromRefV1(source.ref);
         facts = { ...(source.ref.repositoryIdentity ? { repositoryIdentity: source.ref.repositoryIdentity } : {}),
           ...(source.ref.source ? { source: source.ref.source } : {}) };
       } else if (input.source.kind === 'folder') {
         sourceDirectory = sourceRootPath = input.source.path;
       }
       if (sourceProvenance) facts = { ...facts, source: sourceProvenance };
-      if (!isHostRequesterUnrestrictedOwner(executionIdentity)) {
+      if (!usesOwnerRoot) {
         const { preparePrivateProjectOpenCheckout } = await import('./privateProjectOpenCheckout');
         // The actual existing invocation lifetime names transient native material;
         // neither a new Session nor another Account/checkout identity is minted.
@@ -256,7 +252,6 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
             ? resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, { serverId: runtime.serverId,
               machineId: runtime.machineId, rootPath: input.materialization.targetPath })?.id : sourceWorkspaceRefId,
           materializationKey, signal: context.signal,
-          resolveRequesterIdentity,
           onEffectsIssued: () => { effectsIssued = true; } });
         if (input.materialization.kind === 'attach' && sourceRootPath !== privateCheckout.prepared.rootPath)
           return refused('workspace_private_checkout_required');
@@ -270,11 +265,12 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       // Native selection/acquisition happens before Open. Qualify only the
       // caller's chosen Machine; a manifest cannot redirect browse acceptance.
       const children = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
+        relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
         serverHttpBaseUrl: runtime.serverHttpBaseUrl, ...(credentials ? { credentials } : {}), machineIds: [runtime.machineId],
         ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}),
         purpose: 'child_namespace', signal: context.signal });
       const child = children[0];
-      if (child && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,
+      if (child?.managedMachine && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,
         machineId: runtime.machineId, projection: child.projection, managedMachine: child.managedMachine })) return refused('workspace_sync_child_unavailable');
       const acceptsSelectedRoot = (rootPath: string) => {
         if (!child) return true;
@@ -317,6 +313,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         if (action.kind === 'copy_once' || action.kind === 'create_relationship') {
           const mappingPurpose = requester.rows.authorization ? 'admitted_mapping' as const : 'physical_sync' as const;
           const childMachines = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
+            relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
             serverHttpBaseUrl: runtime.serverHttpBaseUrl, purpose: mappingPurpose,
             ...(credentials ? { credentials } : {}), machineIds: [sourceMachineId, runtime.machineId], signal: context.signal,
             ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}) });
@@ -359,7 +356,8 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           if (sameSyncEndpoint) remoteSyncSource = undefined;
         }
         sync = { adapter: runtime.workspaceSyncAdapter!, context, request: {
-          operationId: randomUUID(), accountServerId: runtime.serverId,
+          operationId: requester.rows.authorization?.binding.workspaceSyncAdmission
+            ? requester.rows.authorization.binding.requestId : randomUUID(), accountServerId: runtime.serverId,
           sourceMachineId: syncSourceMachineId, targetMachineId: syncTarget?.machineId ?? runtime.machineId, sourceRootPath: syncSourceRootPath,
           ...(syncSourceWorkspaceRefId ? { sourceWorkspaceRefId: syncSourceWorkspaceRefId } : {}),
           ...(syncTarget ? { targetWorkspaceRefId: syncTarget.id } : {}),
@@ -418,10 +416,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         if (materialized.data.kind === 'refused') return refused(materialized.data.code);
       }
       if (privateSync && sync && !remoteSyncSource && !sameSyncEndpoint && input.materialization.kind === 'sync') {
-        // Sync may publish endpoint rows before native bootstrap effects begin.
-        effectsIssued = true;
         await materializeWorkspaceSyncForOpen(sync.adapter, { ...sync.request, action: input.materialization.workspaceAction,
-          targetRootPath: privateCheckout!.prepared.rootPath, signal: context.signal }, context);
+          targetRootPath: privateCheckout!.prepared.rootPath, signal: context.signal,
+          onEffectsIssued: () => { effectsIssued = true; } }, context);
       }
       const checkout = privateCheckout ? await privateCheckout.materialize() : await materializeProjectCheckout((remoteSyncSource || sameSyncEndpoint) && input.materialization.kind === 'sync' ? {
         materialization: { kind: 'attach' }, sourceDirectory: input.materialization.targetPath,
@@ -435,6 +432,27 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       });
       if (!acceptsSelectedRoot(checkout.rootPath)) return refused('workspace_sync_child_unavailable');
       if (checkout.repositoryIdentity) facts = { ...facts, repositoryIdentity: checkout.repositoryIdentity };
+      let parentRootPath: string | undefined;
+      if (!privateCheckout && !parentWorkspace
+        && (input.materialization.kind === 'attach' || input.materialization.kind === 'worktree')
+        && !resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, {
+          serverId: runtime.serverId, machineId: runtime.machineId, rootPath: checkout.rootPath,
+        })) {
+        const inspected = await inspectWorkspaceLocationWithScmWorkspace({
+          candidatePath: checkout.rootPath, registry: runtime.registry, signal: context.signal,
+        }).catch(error => {
+          context.signal.throwIfAborted();
+          logger.warnLocalFile('[Project Open] Repository association inspection unavailable', {
+            code: codeOf(error), error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        });
+        const rootIdentity = resolveCanonicalAbsolutePathComparisonIdentity(checkout.rootPath);
+        if (inspected && rootIdentity !== null
+          && rootIdentity === resolveCanonicalAbsolutePathComparisonIdentity(inspected.inspection.rootPath)) {
+          parentRootPath = inspected.parentRootPath;
+        }
+      }
       context.signal.throwIfAborted();
       let acceptedId: string | undefined;
       // Once submitted, row transport ambiguity or cancellation cannot be described as no effect.
@@ -444,7 +462,8 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         privateCheckout?.validateCurrentRows(current.workspaceRefs);
         const materialized = materializeWorkspaceRefForMachineRoot(current.workspaceRefs, {
           serverId: runtime.serverId, machineId: runtime.machineId, rootPath: checkout.rootPath,
-          ...facts, ...(parentWorkspace ? { parentWorkspace } : {}), nowMs: Date.now(), createId: privateCheckout ? () => privateCheckout!.prepared.workspaceRefId : randomUUID,
+          ...facts, ...(parentWorkspace ? { parentWorkspace } : {}), ...(parentRootPath ? { parentRootPath } : {}),
+          nowMs: Date.now(), createId: privateCheckout ? () => privateCheckout!.prepared.workspaceRefId : randomUUID,
         });
         if (privateCheckout && materialized.workspaceRef.id !== privateCheckout.prepared.workspaceRefId)
           throw Object.assign(new Error('Private checkout identity changed'), { code: 'workspace_private_checkout_required',
@@ -494,7 +513,8 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       ...privateExecutionDiagnostic(error, codeOf(error)),
       ...(!privateExecutionDiagnostic(error, codeOf(error))
         ? { error: error instanceof Error ? error.stack ?? error.message : String(error) } : {}) });
-    if (error instanceof WorkspaceSyncInitialPreparationRefusal) return refused(context.signal.aborted ? 'cancelled' : codeOf(error));
+    if (isPluginError(error) && error.data.failureCause?.phase === 'project_open.checkout_ref') return refused(error.code, error);
+    if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code, error.cause);
     return effectsIssued ? outcomeUnknown('Exception after materialization or row submission') : refused(context.signal.aborted ? 'cancelled' : codeOf(error), context.signal.aborted ? undefined : error);
   } finally {
     try {
@@ -521,6 +541,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
 
 /** Thin source-host route for the incumbent source-controller-only copy/create operations. */
 export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, runtime: ProjectOpenRuntime, context?: RpcHandlerContext): Promise<ProjectOpenSyncMaterializationResultV1> {
+  const refused = projectRefusal;
   const homeId = await resolveServerProfileHomeIdentityId(runtime.serverId);
   if (!homeId || !await isServerProfileHomeIdentity(runtime.serverId, input.serverId)) return refused('target_mismatch');
   if ((input.source.kind !== 'workspace' && input.source.kind !== 'source')
@@ -543,19 +564,19 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
     let issued = false;
     try {
       context.signal.throwIfAborted();
-      if (!await context.verifyMachineAdmissionCurrent()) return refused('machine_access_denied');
       const selected = input.source.checkout;
-      issued = true;
       await materializeWorkspaceSyncForOpen(runtime.workspaceSyncAdapter, { operationId: routing.operationId,
         accountServerId: runtime.serverId, action: input.materialization.workspaceAction,
         sourceMachineId: routing.sourceMachineId, sourceRootPath: routing.sourceRootPath,
         ...(selected ? { sourceWorkspaceRefId: selected.workspaceId } : {}), targetMachineId: input.machineId,
         targetRootPath: input.materialization.targetPath, signal: context.signal,
+        onEffectsIssued: () => { issued = true; },
       }, context, routing.sourceContext);
       return { kind: 'materialized' };
     } catch (error) {
       logger.warnLocalFile('[Project Open] Source Sync settlement failed', { effectsIssued: issued, code: codeOf(error),
         error: error instanceof Error ? error.stack ?? error.message : String(error) });
+      if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code);
       return issued ? unconfirmedOutcome('Source Sync exception after effects') : refused(codeOf(error));
     }
   }
@@ -567,10 +588,6 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
     context.signal.throwIfAborted();
     if (!await context.verifyMachineAdmissionCurrent()) return refused('machine_access_denied');
     const requester = await resolveProjectRequester(authorityRuntime, context);
-    if (action.kind === 'create_relationship') {
-      assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context.callerInputAuthorization,
-        admission: context.machineAdmission, receivingAccountId: runtime.accountId, ownerKind: 'relationship' });
-    }
     const credentials = requester.credentials;
     return await runWithServerHttpBaseUrl<Promise<ProjectOpenSyncMaterializationResultV1>>(runtime.serverHttpBaseUrl, async () => {
       if (input.source.kind === 'source') {
@@ -590,6 +607,7 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
       });
       const mappingPurpose = requester.rows.authorization ? 'admitted_mapping' as const : 'physical_sync' as const;
       const childMachines = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
+        relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
         serverHttpBaseUrl: runtime.serverHttpBaseUrl, purpose: mappingPurpose,
         ...(credentials ? { credentials } : {}), machineIds: [source.ref.machineId, input.machineId], signal: context.signal,
         ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}) });
@@ -603,13 +621,14 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
         ? { kind: 'materialized' } : refused('workspace_sync_child_unavailable');
       if (!runtime.workspaceSyncAdapter) return refused('workspace_sync_unavailable');
       context.signal.throwIfAborted();
-      effectsIssued = true;
       await materializeWorkspaceSyncForOpen(runtime.workspaceSyncAdapter!, {
-        operationId: randomUUID(), accountServerId: runtime.serverId, action,
+        operationId: requester.rows.authorization?.binding.workspaceSyncAdmission
+          ? requester.rows.authorization.binding.requestId : randomUUID(), accountServerId: runtime.serverId, action,
         // Retain actual aliases until the incumbent Sync adapter derives physical copy custody.
         sourceMachineId: source.ref.machineId, sourceRootPath: source.ref.rootPath, sourceWorkspaceRefId: source.ref.id,
         targetMachineId: input.machineId, targetRootPath: input.materialization.kind === 'sync' ? input.materialization.targetPath : '',
         ...(target ? { targetWorkspaceRefId: target.id } : {}), signal: context.signal,
+        onEffectsIssued: () => { effectsIssued = true; },
       }, context);
       context.signal.throwIfAborted();
       return { kind: 'materialized' };
@@ -617,7 +636,7 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
   } catch (error) {
     logger.warnLocalFile('[Project Open] Source Sync settlement failed', { effectsIssued, code: codeOf(error),
       error: error instanceof Error ? error.stack ?? error.message : String(error) });
-    if (error instanceof WorkspaceSyncInitialPreparationRefusal) return refused(context.signal.aborted ? 'cancelled' : codeOf(error));
+    if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code);
     return effectsIssued ? unconfirmedOutcome('Source Sync exception after effects') : refused(context.signal.aborted ? 'cancelled' : codeOf(error));
   }
 }
