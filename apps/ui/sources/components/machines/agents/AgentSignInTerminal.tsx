@@ -10,7 +10,7 @@ import { useMachine } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { AgentSignInTerminalView } from './AgentSignInTerminalView';
 import { MachineAgentMark } from './MachineAgentMark';

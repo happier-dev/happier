@@ -158,6 +158,8 @@ const BROWSER_REASON_KEYS = {
     browser_context_annotation_capture_unavailable: 'browserShell.unavailable.annotationCaptureUnavailable',
     preview_ended: 'browserShell.unavailable.previewEnded',
     preview_transport_unavailable: 'browserShell.unavailable.previewTransportUnavailable',
+    preview_private_route_unavailable: 'browserShell.unavailable.previewElsewhereNoRoute',
+    destination_port_not_allowed: 'browserShell.unavailable.previewPortNotAllowed',
 } as const satisfies Record<
     BrowserAdapterUnavailableReasonCode | 'managed_package_missing' | 'browser_runtime_provisioning_failed' | 'sandbox_unavailable' | 'browser_profile_missing' | 'hosted_plugin_security_policy_blocked' | 'invalid_url' | 'owner_disconnected'
     | 'browser_context_annotation_iframe_capture_unavailable' | 'browser_context_annotation_capture_unavailable'
@@ -175,6 +177,8 @@ const BROWSER_DIAGNOSTICS_INTERACTION_KEYS = {
 const BROWSER_FRAME_TITLE_KEYS = {
     preview_ended: 'browserShell.unavailable.previewEndedTitle',
     preview_transport_unavailable: 'browserShell.unavailable.previewTransportUnavailableTitle',
+    preview_private_route_unavailable: 'browserShell.unavailable.previewPrivateRouteTitle',
+    destination_port_not_allowed: 'browserShell.unavailable.previewPortNotAllowedTitle',
 } as const satisfies Record<BrowserPreviewRefusalReasonCode, string>;
 
 const BROWSER_SURFACE_KEYS = {
@@ -302,7 +306,7 @@ const LOCAL_SERVICE_ACTION_KEYS = {
     terminate_signal_failed: 'localServices.actions.failure.incomplete',
 
     // Front-door refusals, from `ActionExecutor.execute`'s `{ ok:false, errorCode }` envelope.
-    action_disabled: 'localServices.actions.failure.refused',
+    action_disabled: 'actionConfirmations.turnedOffUnnamedMessage',
     invalid_parameters: 'localServices.actions.failure.unavailable',
 } as const satisfies Record<string, LocalServiceActionMessageKey>;
 
@@ -697,6 +701,7 @@ type LocalServiceLauncherMessageKey =
     | 'localServices.launcher.unavailableReason.unavailable';
 
 type LocalServiceActionMessageKey =
+    | 'actionConfirmations.turnedOffUnnamedMessage'
     | 'localServices.actions.failure.outcomeUnknown'
     | 'localServices.actions.failure.serviceNotRunning'
     | 'localServices.actions.failure.previewNotReady'
@@ -792,7 +797,8 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesA
         }
         case 'localServiceAction': {
             const key = LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS];
-            return key === 'localServices.actions.failure.unavailable' || key === 'localServices.actions.failure.browserViewUnavailable' ? t(key)
+            return key === 'localServices.actions.failure.unavailable' || key === 'localServices.actions.failure.browserViewUnavailable'
+                || key === 'actionConfirmations.turnedOffUnnamedMessage' ? t(key)
                 : key ? t(key, { servicesActionOffered }) : null;
         }
         case 'simulatorPreview': {
@@ -833,6 +839,7 @@ export function resolveReasonCopy(input: Readonly<{
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
     machineName?: string;
     serviceName?: string;
+    port?: number;
     /** Declaration diagnostic metadata; the root uses the source Machine's path display owner. */
     inventoryObservation?: Readonly<{ root: string | null; code: string | null }>;
     /** True only when this presentation offers a Services control. */
@@ -861,6 +868,9 @@ export function resolveReasonCopy(input: Readonly<{
             : 'localServices.inventory.scanCause.rootUnreadable', { path: observation.root })
         : startFailed && input.serviceName
         ? t('localServices.actions.failure.namedStartFailed', { service: input.serviceName })
+        : (input.kind === 'browserFrame' || input.kind === 'browserStatus')
+        && rawCode === 'destination_port_not_allowed' && input.port !== undefined
+        ? t('browserShell.unavailable.previewPortNotAllowedAtPort', { port: input.port })
         : stoppedService ? input.serviceName
         ? t('localServices.actions.failure.namedServiceNotRunning', { service: input.serviceName, servicesActionOffered: input.servicesActionOffered })
         : t('localServices.actions.failure.serviceNotRunning', { servicesActionOffered: input.servicesActionOffered })

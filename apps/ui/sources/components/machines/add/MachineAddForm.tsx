@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Linking, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RemoteSshChecklistPromptCard } from '@/components/onboarding/checklists/remoteSsh/RemoteSshChecklistPromptCard';
 import { HomePairingPanel } from '@/components/auth/pairing/HomePairingPanel';
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
+import { useSshHostKeyTrustSheet } from '@/components/ssh/SshHostKeyTrustSheet';
 import type { RemoteSshBootstrapPrompt } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { OsCommandBlock } from '@/components/ui/code/blocks/OsCommandBlock';
@@ -19,7 +20,8 @@ import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
+import { machineAddLeadsWithCreate, resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
+import { readMachineAddDevice } from './useMachineAddPaths';
 import {
     MachineAddFailureNotice,
     MachineAddPaneHeader,
@@ -36,9 +38,9 @@ import { machineCollectionHref } from '@/components/settings/machines/collection
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
-import type { ManagedControllerScope } from '@/components/settings/machines/managed/useManagedControllerScope';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 export type MachineAddFormLayout = 'page' | 'panel';
 
@@ -85,8 +87,6 @@ type MachineAddFormProps = Readonly<{
     onNewPool?: (() => void) | null;
     /** `page` only: this Home's Account allows Create one (the page reads it once, for its header too). */
     canCreate?: boolean;
-    /** `page` only: the "Managed from" scope whose chip the page shows in its header while Create one is open. */
-    managedScope?: ManagedControllerScope;
     /** Once, when a machine joins (first-run onboarding advances on it). */
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
 }>;
@@ -119,6 +119,8 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     const active = flow.path ?? resolveMachineAddInitialPath(flow.paths, props.initialPath);
 
     const offerCreate = props.layout === 'page' && props.canCreate === true;
+    // A phone or a browser leads with Create one (58d §D2): it is the first way in on the bar.
+    const leadsWithCreate = offerCreate && machineAddLeadsWithCreate(readMachineAddDevice());
     const showCreate = offerCreate && (creating || paths.length === 0 || active === null);
     // At phone width four ways in don't fit one bar: they group as Connect | Create, and the connection
     // paths list under Connect (lab m-add Ap).
@@ -138,13 +140,10 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
         );
     }
 
-    // Create one's "Managed from" chip ends the row of ways in (lab m-add has no header control): it appears
-    // beside the bar it belongs to, so choosing Create one moves nothing above or below it. A phone has no
-    // room beside its two segments; there the picker leads with the chip as its own row.
-    const scopeChip = showCreate && !grouped ? props.managedScope?.chip ?? null : null;
+    // The bar names ways in only (lab af-add): which computer runs a computer-created VM is the picker's
+    // to say, on that section, and Account-created machines name none.
     const pane = showCreate || active === null
-        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer}
-            scope={scopeChip ? props.managedScope : undefined} />
+        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} />
         : <MachineAddPane flow={flow} pathId={active} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>
@@ -189,8 +188,9 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
                     { id: 'connect', label: t('managedMachines.add.connect') },
                     { id: 'create', label: t('managedMachines.add.create') },
                 ] : [
+                    ...(leadsWithCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
                     ...paths.map((path) => ({ id: path.id, label: path.chipLabel ?? path.title })),
-                    ...(offerCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
+                    ...(offerCreate && !leadsWithCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
                 ]}
                 activeTabId={showCreate || active === null ? 'create' : grouped ? 'connect' : active}
                 onSelectTab={(next) => {
@@ -200,7 +200,6 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
                 }}
             />
             </View>
-            {scopeChip}
             </View>
             </ItemGroup>
             {grouped && !showCreate && active !== null && paths.length > 1 ? (
@@ -242,6 +241,12 @@ function MachineAddPane(props: Readonly<{
     React.useEffect(() => {
         if (commandShown && flow.watch.status === 'idle') startWatching();
     }, [flow.watch.status, commandShown, startWatching]);
+    // A server's host key is asked in the trust sheet (lab af-ssh Kp), not inline; the answer goes back through the flow.
+    const sshPrompt = pathId === 'ssh' && flow.run?.kind === 'ssh' ? flow.run.prompt as RemoteSshBootstrapPrompt | null : null;
+    const hostKeyPrompt = sshPrompt && (sshPrompt.kind === 'ssh.trustHost' || sshPrompt.kind === 'ssh.replaceHostKey') ? sshPrompt : null;
+    useSshHostKeyTrustSheet(hostKeyPrompt ? { host: hostKeyPrompt.host, keyType: hostKeyPrompt.keyType,
+        fingerprint: hostKeyPrompt.fingerprint, existingFingerprint: hostKeyPrompt.existingFingerprint } : null,
+    (trusted) => { if (trusted) flow.continueSshPrompt(); else flow.declineSshPrompt(); });
 
     if (flow.arrived) {
         const arrived = flow.arrived;
@@ -303,7 +308,7 @@ function MachineAddPane(props: Readonly<{
                         {watching}
                         <Text style={styles.hint}>
                             {t('addFlows.desktopAppHint')}{' '}
-                            <Text accessibilityRole="link" style={styles.hintLink} onPress={() => { void Linking.openURL(HAPPIER_DESKTOP_DOWNLOAD_URL); }}>
+                            <Text accessibilityRole="link" style={styles.hintLink} onPress={() => { void requestOpenExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }}>
                                 {t('addFlows.desktopAppLink')}
                             </Text>
                         </Text>
@@ -366,11 +371,15 @@ function MachineAddPane(props: Readonly<{
             const approvalNotice = flow.approval.approvalId ? <AttentionBanner testID={`${testID}.approval`} title={t('approvals.title')} description={t('approvals.status.open')}
                 action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(flow.approval.approvalId!)}?serverId=${encodeURIComponent(flow.serverId)}` as never) }} /> : null;
             if (run) {
+                const onPhone = readMachineAddDevice() === 'phone';
+                const username = flow.ssh.draft.username.trim();
                 return (
                     <View style={styles.pane}>
-                        <MachineAddPaneHeader title={t('addFlows.sshRunningTitle', { host })} lead={t('addFlows.sshRunningLead')} />
+                        {/* The phone runs the SSH session itself, so leaving the app would stop it (58d AF4). */}
+                        <MachineAddPaneHeader title={t('addFlows.sshRunningTitle', { host })}
+                            lead={onPhone ? t('addFlows.sshRunningLeadPhone') : t('addFlows.sshRunningLead')} />
                         {run.failure ? <MachineAddFailureNotice testID={`${testID}.failure`} failure={run.failure} onRetry={flow.retry} /> : null}
-                        {run.prompt ? (
+                        {run.prompt && !hostKeyPrompt ? (
                             <View style={styles.prompt}>
                                 <RemoteSshChecklistPromptCard
                                     testID={`${testID}.prompt`}
@@ -386,7 +395,9 @@ function MachineAddPane(props: Readonly<{
                             </View>
                         ) : null}
                         {approvalNotice}
-                        <MachineAddStepList testID={`${testID}.steps`} steps={run.steps} />
+                        <MachineAddStepList testID={`${testID}.steps`} steps={run.steps}
+                            identity={{ title: username ? `${username}@${host}` : host, subtitle: t('addFlows.machineJoinsHome', { home: flow.homeName }) }}
+                            hold={onPhone && run.running ? t('addFlows.sshKeepOpen', { host }) : null} />
                         {run.running ? (
                             <View style={styles.actions}>
                                 <RoundButton testID={`${testID}.cancel`} size="small" display="inverted" title={t('addFlows.cancelSetup')} onPress={flow.cancel} />

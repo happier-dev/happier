@@ -6,7 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { DaemonLocalServiceActionExecuteResponseV1Schema, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { t } from '@/text';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -19,6 +19,21 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 
 import { buildLocalServiceInventoryRow } from '@/dev/testkit/fixtures/localServices';
+
+const { Pressable } = await import('react-native');
+
+function SharedPortConsumer(props: Readonly<{ port: number }>) {
+  const [open, setOpen] = React.useState(false);
+  const [result, setResult] = React.useState<boolean | null>(null);
+  const entry = useMachinePortEntry({ port: props.port }, open);
+  return (
+    <>
+      <Pressable testID="shared-port-demand" onPress={() => { entry.actions?.demand(); setOpen(true); }} />
+      <Pressable testID="shared-port-result" accessibilityValue={{ text: String(result) }} />
+      {entry.open ? <Pressable testID="shared-port-open" onPress={async () => { setResult(await entry.open!()); }} accessibilityHint={entry.offered?.openUnavailableReason ?? undefined} /> : null}
+    </>
+  );
+}
 
 import {
   createProcessesAnswer,
@@ -59,6 +74,7 @@ const { machineProcessesStore } =
   await import('@/sync/domains/machines/processes/machineProcessesStore');
 const { MachinePageStateContext } =
   await import('@/components/machines/page/machinePageContext');
+const { MachinePortActionsProvider, useMachinePortEntry } = await import('@/components/machines/localServices/MachinePortActions');
 const { MachineProcessesTab } = await import('./MachineProcessesTab');
 const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
 const { measureMountedCollections } = await import('@/dev/testkit/render/renderInCollectionLayout');
@@ -111,6 +127,7 @@ async function mount(
     askBeforeKill?: boolean;
     askBeforeStop?: boolean;
     askBeforePortStop?: boolean;
+    sharedPort?: number;
   }> = {},
 ) {
   const serverId = await home.addHome({
@@ -175,6 +192,7 @@ async function mount(
     <AuthProvider initialCredentials={{ token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` }}>
 <ModalProvider>
       <MachinePageStateContext.Provider value={pageState}>
+        {options.sharedPort === undefined ? (
         <MachineProcessesTab
           serverId={serverId}
           machineId="machine"
@@ -183,11 +201,16 @@ async function mount(
           params={options.params ?? { id: 'processes' }}
           setParams={setParams}
         />
+        ) : (
+          <MachinePortActionsProvider serverId={serverId} machineId="machine">
+            <SharedPortConsumer port={options.sharedPort} />
+          </MachinePortActionsProvider>
+        )}
       </MachinePageStateContext.Provider>
     </ModalProvider>
     </AuthProvider>,
   );
-  if (options.waitForRows !== false) await act(async () => {
+  if (options.waitForRows !== false && options.sharedPort === undefined) await act(async () => {
     await vi.waitFor(() =>
       expect(
         screen.root.findAll((node) => String(node.props.testID ?? '').startsWith('machine-processes-row-')).length,
@@ -222,6 +245,21 @@ it('displays native ceiling utilization and the unverifiable count without inven
   expect(screen.root.findAll(node => String(node.props.testID ?? '').startsWith('machine-processes-row-unknown'))).toHaveLength(0);
   const phone = await mount({ answer, params: { id: 'processes', page: 'owner', owner: answer.owners[0].rowId }, waitForRows: false });
   expect(phone.screen.findByTestId('machine-processes-ceiling-throttles')).not.toBeNull();
+});
+it('keeps the vitals above "Nothing running" while the machine is short on memory, and leaves a calm one quiet', async () => {
+  const quiet = createProcessesAnswer();
+  const nothing = { ...quiet, leftBehind: [], owners: quiet.owners.filter(owner => owner.owner.kind === 'happier') };
+  const calm = await mount({ answer: nothing });
+  expect(calm.screen.findByTestId('machine-processes-nothing')).not.toBeNull();
+  // The state agrees with the table beneath it, which still lists Happier itself.
+  expect(textOf(calm.screen.findByTestId('machine-processes-nothing'))).toContain('Only Happier is running on leeroy-mbp');
+  expect(calm.screen.findByTestId('machine-processes-tile-memory')).toBeNull();
+  const short = await mount({ answer: nothing, machine: { daemonState: { resources: { v: 1, vitals: { state: 'reporting' },
+    host: { logicalCores: 18, memoryTotalBytes: 128 * GB, bootedAt: 1 },
+    attention: { level: 'needs_you', reasons: [{ key: 'memory', kind: 'memory_pressure', level: 'needs_you', since: 1, metric: 'memory',
+      nextStep: 'review_processes', pressure: 'critical', swapping: true }] } } } } });
+  expect(short.screen.findByTestId('machine-processes-nothing')).not.toBeNull();
+  expect(short.screen.findByTestId('machine-processes-tile-memory')).not.toBeNull();
 });
 it('lists the one process of a single-process owner on its phone page, so it can be opened', async () => {
   const answer = createProcessesAnswer();
@@ -260,6 +298,45 @@ afterEach(async () => {
 });
 
 describe('MachineProcessesTab', () => {
+  it('conceals hidden left-behind Session bylines and restores them after sharing', async () => {
+    const { screen, serverId } = await mount({ params: { id: 'processes', filter: 'leftBehind' } });
+    const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+    const previous = storage.getState();
+    const row = createSessionListRenderableSessionFixture({ id: 'ended', metadata: {
+      name: 'Private ended project', path: '/private-ended', host: 'host', machineId: 'machine',
+    } });
+    try {
+      await act(async () => {
+        storage.setState({ sessionListRowsByServerId: { ...previous.sessionListRowsByServerId, [serverId]: { [row.id]: row } } });
+        storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+        storage.getState().setSessionTagAssignmentsOptimistic(serverId, row.id, ['private']);
+      });
+      expect(screen.getTextContent()).toContain('Private ended project');
+      await act(async () => { setScreenSharingPrivacyActive(true); });
+      expect(screen.getTextContent()).not.toContain('Private ended project');
+      expect(screen.findByTestId('machine-processes-row-l:left-next')).not.toBeNull();
+      await act(async () => { setScreenSharingPrivacyActive(false); });
+      expect(screen.getTextContent()).toContain('Private ended project');
+    } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); storage.setState(previous, true); }
+  });
+
+  it('keeps native container inspection but offers no raw process Stop or Kill', async () => {
+    const answer = createProcessesAnswer();
+    const owner = answer.owners[0];
+    owner.owner = { kind: 'container', serverId: 'home', machineId: 'machine', serviceId: 'production/web',
+      containerId: 'a'.repeat(64), composeProject: 'production', composeService: 'web', environmentId: 'environment' };
+    const { screen } = await mount({ answer });
+    expect(screen.root.findAll(node => node.props.testID === `machine-processes-menu-o:${owner.rowId}`)).toHaveLength(0);
+    await act(async () => { screen.pressByTestId(`machine-processes-row-o:${owner.rowId}`); });
+    const menu = await vi.waitFor(() => {
+      const found = screen.root.findAll(node => node.props.testID === 'machine-processes-menu-p:agent' && Array.isArray(node.props.items))[0];
+      expect(found).toBeDefined(); return found!;
+    });
+    expect(menu.props.items.map((item: { id: string }) => item.id)).toContain('copy');
+    expect(menu.props.items.map((item: { id: string }) => item.id)).not.toContain('kill');
+    expect(transport.rpc.mock.calls.some(call => [RPC_METHODS.MACHINES_PROCESSES_KILL, RPC_METHODS.MACHINES_PROCESSES_STOP].includes(call[0]?.method))).toBe(false);
+  });
   it('keeps mounted Processes snapshots stable and updates CPU and memory from its Account-qualified demand', async () => {
     const snapshots = new Set<() => unknown>();
     const useSyncExternalStore = React.useSyncExternalStore;
@@ -404,7 +481,10 @@ describe('MachineProcessesTab', () => {
       happyHomeDir: '/Users/leeroy/.happier', homeDir: '/Users/leeroy', resourcesPolicyV1: { v: 1, processes: { allProcessesVisible: true } } } as Machine['metadata'] } });
     await act(async () => { screen.pressByTestId('machine-processes-scope:all'); });
     await act(async () => { screen.changeTextByTestId('machine-processes-search', 'backend'); });
-    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-processes-row-m:docker-backend')).not.toBeNull()); });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('machine-processes-row-m:docker-backend')).not.toBeNull();
+    });
     await act(async () => { screen.pressByTestId('machine-processes-row-m:docker-backend'); });
     expect(screen.findByTestId('machine-processes-row-m:docker-backend:peek-cell')).toBeNull();
   });
@@ -614,12 +694,11 @@ describe('MachineProcessesTab', () => {
     await act(async () => {
       chooseMenuItem(screen, 'p:vite', 'kill');
     });
-    await act(async () => {
-      await vi.waitFor(() =>
-        expect(
-          textOf(screen.findByTestId('machine-processes-kill-ask-first-note')),
-        ).toContain('Checked again just now: same process, started'),
-      );
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(
+        textOf(screen.findByTestId('machine-processes-kill-ask-first-note')),
+      ).toContain('Checked again just now: same process, started');
     });
     expect(screen.getTextContent()).toContain(
       'Same group as the session, and its port opened while it ran',
@@ -994,6 +1073,11 @@ function localServicesReply(executed: Record<string, unknown>[]) {
         },
       };
     if (rpc.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE) {
+      if (rpc.payload?.inventoryEntryId === 'entry-8080') return {
+        protocolVersion: 1, status: 'existing', preview: unreachablePreview,
+        snapshot: { v: 1, machineId: 'machine', generatedAt: 3_000, refreshState: 'idle',
+          resources: [previewResource(8080)], previews: [unreachablePreview], diagnostics: [] },
+      };
       const preview = { previewId: 'preview-4000', resource: previewResource(4000), accessUrl: ACCESS_URL_4000, expiresAt: 61_000, diagnostics: [] };
       return {
         protocolVersion: 1,
@@ -1062,6 +1146,72 @@ async function openTerminal(screen: Screen) {
 }
 
 describe('MachineProcessesTab port chips', () => {
+  it('refuses the final external tab when the link Action is disabled, then opens the admitted preview when allowed', async () => {
+    const { screen, serverId } = await mount({ answer: terminalPortsAnswer(), reply: localServicesReply([]) });
+    const { Linking } = await import('react-native');
+    const openURL = vi.spyOn(Linking, 'openURL');
+    const { Modal } = await import('@/modal');
+    const alert = vi.mocked(Modal.alert);
+    alert.mockClear();
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+    const setLinkPolicy = async (disabled: boolean) => {
+      const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1,
+        ...(disabled ? { actions: { 'links.openExternal': { enabled: false } } } : {}),
+      });
+      home.answer(serverId, '/v2/account/settings', { body: {
+        content: { t: 'plain', v: { actionsSettingsV1 } }, version: disabled ? 2 : 3,
+      } });
+      await act(async () => { storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1 } })); });
+    };
+    await openTerminal(screen);
+    await setLinkPolicy(true);
+    const denied = await openPortMenu(screen, 'p:term-server', 4000, 'open-browser');
+    await act(async () => { denied.props.onSelect('open-browser'); });
+    await vi.waitFor(() => expect(alert).toHaveBeenCalled());
+    expect(openURL).not.toHaveBeenCalled();
+    expect(alert.mock.calls[0]?.[1]).toBe(t('actionConfirmations.turnedOffUnnamedMessage'));
+    const details = alert.mock.calls[0]?.[2]?.find(button => button.text === t('common.details'));
+    expect(details).toBeDefined();
+    await act(async () => { details?.onPress?.(); });
+    expect(alert.mock.calls.at(-1)?.[1]).toContain('action_disabled');
+    await setLinkPolicy(false);
+    const allowed = await openPortMenu(screen, 'p:term-server', 4000, 'open-browser');
+    await act(async () => { allowed.props.onSelect('open-browser'); });
+    await vi.waitFor(() => expect(openURL).toHaveBeenCalled());
+    expect(openURL).toHaveBeenCalledExactlyOnceWith(ACCESS_URL_4000);
+    openURL.mockRestore();
+  });
+
+  it('lets a Services-style port consumer open through the same lazy owner without a Processes controller', async () => {
+    const { screen } = await mount({ sharedPort: 4000, reply: localServicesReply([]) });
+    const serviceReads = () => transport.rpc.mock.calls.filter(([rpc]) => rpc.method.startsWith('daemon.localServices.'));
+    expect(serviceReads()).toHaveLength(0);
+    const { Linking } = await import('react-native');
+    const openURL = vi.spyOn(Linking, 'openURL');
+    await act(async () => { screen.pressByTestId('shared-port-demand'); });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('shared-port-open')).not.toBeNull()); });
+    await act(async () => { screen.pressByTestId('shared-port-open'); });
+    await act(async () => { await vi.waitFor(() => expect(openURL).toHaveBeenCalledWith(ACCESS_URL_4000)); });
+    expect(transport.rpc.mock.calls.filter(([rpc]) => rpc.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE))
+      .toHaveLength(1);
+    openURL.mockRestore();
+  });
+
+  it('keeps the shared port consumer on the preview owner refusal when this device has no private route', async () => {
+    const { screen } = await mount({ sharedPort: 8080, reply: localServicesReply([]) });
+    const { Linking } = await import('react-native');
+    const openURL = vi.spyOn(Linking, 'openURL');
+    await act(async () => { screen.pressByTestId('shared-port-demand'); });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('shared-port-open')?.props.accessibilityHint)
+      .toBe(t('browserShell.unavailable.previewElsewhere'))); });
+    // The external adapter also refuses the admitted preview when it has no access URL.
+    await act(async () => { screen.pressByTestId('shared-port-open'); });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('shared-port-result')?.props.accessibilityValue)
+      .toEqual({ text: 'false' })); });
+    expect(openURL).not.toHaveBeenCalled();
+    openURL.mockRestore();
+  });
+
   it('keeps a row to its first listener and a count; the rest are in its detail', async () => {
     const answer = terminalPortsAnswer();
     const terminal = answer.owners.find((owner) => owner.rowId === 'terminal:dev')!;
@@ -1094,6 +1244,8 @@ describe('MachineProcessesTab port chips', () => {
     const executed: Record<string, unknown>[] = [];
     const { screen } = await mount({ answer: terminalPortsAnswer(), reply: localServicesReply(executed) });
     await openTerminal(screen);
+    expect(transport.rpc.mock.calls.some(([rpc]: readonly unknown[]) => typeof rpc === 'object' && rpc !== null
+      && 'method' in rpc && typeof rpc.method === 'string' && rpc.method.includes('daemon.localServices.'))).toBe(false);
     // Copy address appears once the inventory names where the listener answers.
     const menu = await openPortMenu(screen, 'p:term-server', 4000, 'copy');
     const items = menu.props.items as PortMenuItem[];
@@ -1134,7 +1286,7 @@ describe('MachineProcessesTab port chips', () => {
         ).toMatchObject({
           title: 'Open in browser',
           disabled: true,
-          subtitle: 'This device can’t open it directly. Share a link from Services to open it here.',
+          subtitle: t('browserShell.unavailable.previewElsewhere'),
         }),
       );
     });
@@ -1170,6 +1322,7 @@ describe('MachineProcessesTab port chips', () => {
     await act(async () => {
       shellMenu.props.onSelect('stop');
     });
+    expect(portMenu(screen, 'o:terminal:dev', 8080)!.props.open).toBe(false);
     await act(async () => {
       await vi.waitFor(() =>
         expect(screen.findByTestId('machine-processes-port-close-terminal')).not.toBeNull(),

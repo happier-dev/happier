@@ -11,7 +11,7 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import { Modal } from '@/modal';

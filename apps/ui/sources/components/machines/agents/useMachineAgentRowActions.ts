@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { withAgentInstallJobFailureFeedback } from '@/agents/machineAgents/installJobs/installJobActionFeedback';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
 import type { MachineAgentRowAction } from './machineAgentPresentation';

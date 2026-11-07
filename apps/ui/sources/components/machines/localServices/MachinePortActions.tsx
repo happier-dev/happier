@@ -14,8 +14,9 @@ import { useLocalServicePreviewStateController } from '@/sync/domains/local/serv
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { buildLocalServiceRows, selectLocalServiceRowForInventoryEntry, type ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrlResult } from '@/utils/url/requestOpenExternalUrl';
 
 /** The machine's Local services, read once a port is first pressed and kept while the tab is open. */
 type PortServices = Readonly<{
@@ -42,12 +43,10 @@ const unopenable = (errorCode: string): ActionExecuteResult => ({
  * Services owner's (`bindServicesOpenInBrowser`); the URL is the one it admits for this viewer — the
  * preview's access URL — never the service's raw address. No access URL means no route from here.
  */
-const openInExternalTab: OpenBrowserViewTarget = async (target, options) => {
+const openInExternalTab = (scope: ServerAccountScope | undefined): OpenBrowserViewTarget => async (target, options) => {
   const url = target.kind === 'externalUrl' ? target.url : options?.currentUrl;
   if (!url) return unopenable('preview_private_route_unavailable');
-  return (await openExternalUrl(url))
-    ? { ok: true, result: null }
-    : unopenable('browser_adapter_unavailable');
+  return requestOpenExternalUrlResult(url, { serverId: scope?.serverId, expectedAccountId: scope?.accountId });
 };
 
 type PortActions = Readonly<{
@@ -122,7 +121,7 @@ function PortServicesHost(
   const openInBrowser = React.useMemo(
     () =>
       bindServicesOpenInBrowser({
-        onOpenTarget: openInExternalTab,
+        onOpenTarget: openInExternalTab(previewController.accountLifetime?.scope),
         platform: resolveBrowserSurfacePlatform(),
         serverId: props.serverId,
         accountLifetime: previewController.accountLifetime,
