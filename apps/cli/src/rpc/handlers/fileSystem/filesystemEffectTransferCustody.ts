@@ -1,6 +1,6 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
-/** Native file transfers never acquire Session attachment or composer custody.
+/** Machine-scoped native file transfers never acquire Session attachment or composer custody.
  * Payload validation remains with the incumbent transfer handlers. */
 export function hasFilesystemEffectTransferCustody(method: string, input: unknown): boolean {
   const kind: unknown = input && typeof input === 'object' ? Reflect.get(input, 't') : undefined;
