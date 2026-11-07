@@ -11,7 +11,7 @@ const FAILED: ReadonlySet<string> = new Set(['permission_required', 'error']);
 const CALL_FIRST: ReadonlySet<string> = new Set(['connecting', 'reconnecting', 'permission_required', 'error']);
 
 type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surfaceState' | 'captionLabel'>
-    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell'>>;
+    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput'>>;
 
 /**
  * The call state's one helpful line (lab `voice-presence` captions): a failure's reason from the
@@ -25,6 +25,7 @@ export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: str
     if (FAILED.has(voice.surfaceState)) return voice.captionLabel.trim() || null;
     if (voice.live && voice.muted) return t('voicePresence.captions.muted');
     if (voice.live && voice.statusCell === 'needs_you') return t('voicePresence.captions.needsYou');
+    if (voice.live && voice.surfaceState === 'thinking' && voice.canCommitInput === false) return t('voicePresence.captions.thinkingInputUnavailable');
     if (voice.surfaceState === 'connecting' && targetName) return t('sessionVoice.preparing', { name: targetName });
     if (CAPTIONED.has(voice.surfaceState)) return t(`voicePresence.captions.${voice.surfaceState as CaptionedState}`);
     return null;
@@ -43,7 +44,8 @@ export function resolveVoiceCompactLine(
     targetName: string | null = null,
 ): Readonly<{ kind: 'caption' | 'transcript'; text: string }> | null {
     const caption = resolveVoicePresenceCaption(voice, targetName);
-    const callFirst = (voice.live && voice.muted) || CALL_FIRST.has(voice.surfaceState);
+    const callFirst = (voice.live && (voice.muted
+        || (voice.surfaceState === 'thinking' && voice.canCommitInput === false))) || CALL_FIRST.has(voice.surfaceState);
     if (callFirst) return caption ? { kind: 'caption', text: caption } : null;
     const line = latestTranscriptText?.trim();
     if (line) return { kind: 'transcript', text: line };

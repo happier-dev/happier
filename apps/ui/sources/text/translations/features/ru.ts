@@ -13862,7 +13862,7 @@ const voicePresenceTranslations = { ru: {
         mute: "Выкл. микрофон",
         unmute: "Вкл. микрофон",
         end: "Завершить",
-        captions: { connecting: "Открываю аудиоканал", listening: "Говорите", transcribing: "Превращаю в текст", thinking: "Готовлю ответ", speaking: "Можно перебить в любой момент", interrupted: "Говорите", muted: "Включите микрофон, чтобы говорить · Голос всё ещё может говорить", reconnecting: "Соединение потеряно · пробую снова", blocked: "Разрешите доступ к микрофону, чтобы говорить", failed: "Попробуйте снова или проверьте настройки Голоса", needsYou: "Ждёт вашего решения" },
+        captions: { thinkingInputUnavailable: "Дождитесь ответа, прежде чем отправлять новые сообщения.", connecting: "Открываю аудиоканал", listening: "Говорите", transcribing: "Превращаю в текст", thinking: "Готовлю ответ", speaking: "Можно перебить в любой момент", interrupted: "Говорите", muted: "Включите микрофон, чтобы говорить · Голос всё ещё может говорить", reconnecting: "Соединение потеряно · пробую снова", blocked: "Разрешите доступ к микрофону, чтобы говорить", failed: "Попробуйте снова или проверьте настройки Голоса", needsYou: "Ждёт вашего решения" },
         recovery: { allow: "Разрешить", setUp: "Настроить" },
         readAloud: { preparing: "Подготовка к чтению", speaking: "Читает вслух", stop: "Остановить чтение" },
         containerA11y: ({ status }) => `Голос, ${status}`,
@@ -13912,6 +13912,8 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
     ready: 'Голосовой режим готов.',
     permissionAnnouncement: ({ summary }) => `Сеансу разработки требуется разрешение для ${summary}.`,
+    permissionQuestion: ({ approve, deny }) => `Разрешить? Скажите «${approve}» или «${deny}».`,
+    permissionTapRequired: "Чтобы продолжить, воспользуйтесь карточкой подтверждения.",
     userActionAnnouncement: ({ question }) => `Сеансу разработки нужен ваш ответ. ${question}`,
     userActionFallback: 'Сеансу разработки нужен ваш ответ. Ответьте на вопрос, чтобы я мог продолжить.',
     requestedTool: 'запрошенный инструмент',

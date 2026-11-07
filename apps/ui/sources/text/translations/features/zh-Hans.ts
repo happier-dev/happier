@@ -13814,7 +13814,7 @@ const voicePresenceTranslations = { 'zh-Hans': {
         mute: "静音",
         unmute: "取消静音",
         end: "结束",
-        captions: { connecting: "正在打开音频通道", listening: "请说", transcribing: "正在转成文字", thinking: "正在思考回答", speaking: "你可以随时打断", interrupted: "请说", muted: "取消静音即可说话 · 语音仍可说话", reconnecting: "连接中断 · 正在重试", blocked: "允许访问麦克风即可说话", failed: "请重试，或检查语音设置", needsYou: "等待你的决定" },
+        captions: { thinkingInputUnavailable: "请等待回复后再发送消息。", connecting: "正在打开音频通道", listening: "请说", transcribing: "正在转成文字", thinking: "正在思考回答", speaking: "你可以随时打断", interrupted: "请说", muted: "取消静音即可说话 · 语音仍可说话", reconnecting: "连接中断 · 正在重试", blocked: "允许访问麦克风即可说话", failed: "请重试，或检查语音设置", needsYou: "等待你的决定" },
         recovery: { allow: "允许", setUp: "设置" },
         readAloud: { preparing: "正在准备朗读", speaking: "正在朗读", stop: "停止朗读" },
         containerA11y: ({ status }) => `语音，${status}`,
@@ -13864,6 +13864,8 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation({
     ready: '语音功能已就绪。',
     permissionAnnouncement: ({ summary }) => `编码会话需要获得以下权限：${summary}。`,
+    permissionQuestion: ({ approve, deny }) => `是否允许？请说“${approve}”或“${deny}”。`,
+    permissionTapRequired: "请使用审批卡片继续。",
     userActionAnnouncement: ({ question }) => `编码会话需要你的回答。${question}`,
     userActionFallback: '编码会话需要你的回答。请回答问题，以便我继续。',
     requestedTool: '请求的工具',

@@ -1529,6 +1529,61 @@ describe('useVoiceAttemptControl idle targeting', () => {
         return { ...runtime, start: sdk.startSession, stop: sdk.endSession };
     }
 
+  it('surfaces a conversation approval while its bound coding Session has no request', async () => {
+    const target = { serverId: recoveryRuntime.serverId, sessionId: 'coding-target' };
+    const routing = await installRoutingLifecycle(target);
+    const hook = await renderControl({ kind: 'session', sessionAddress: target });
+    await act(async () => { await hook.getCurrent().onToggle(); });
+    expect(routing.controller.getSnapshot().status).toBe('connected');
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    const binding = voiceSessionBindingStore.getState().getByControlSessionId(target.sessionId);
+    if (!binding) throw new Error('Expected the admitted conversation binding');
+    const conversation = { serverId: target.serverId, sessionId: 'native-voice-conversation' };
+    // Native Agent conversations have a distinct hidden Session; the hosted
+    // fixture's default binding otherwise collapses conversation and target.
+    await act(async () => {
+      getStorage().setState((state) => ({ sessions: { ...state.sessions,
+        [conversation.sessionId]: createSessionFixture({ id: conversation.sessionId, serverId: conversation.serverId,
+          metadata: { ...createSessionFixture().metadata!, systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } }),
+      } }));
+      voiceSessionBindingStore.getState().bind({ ...binding, conversationSessionId: conversation.sessionId,
+        conversationSessionAddress: conversation, transcriptMode: 'native_session' });
+    });
+    try {
+      expect(hook.getCurrent().pendingRequestSessionAddress).toEqual(target);
+      await act(async () => getStorage().setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [conversation.sessionId]: {
+            ...state.sessions[conversation.sessionId]!,
+            active: true,
+            activeAt: Date.now(),
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: Date.now(),
+          },
+        },
+      })));
+      expect(hook.getCurrent()).toMatchObject({
+        statusCell: 'needs_you',
+        pendingRequestSessionAddress: conversation,
+      });
+      // Settlement is pushed through the same Session owner. A coding request
+      // remains reachable next; changing Voice's request focus decides neither.
+      await act(async () => getStorage().setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [conversation.sessionId]: { ...state.sessions[conversation.sessionId]!, pendingPermissionRequestCount: 0 },
+          [target.sessionId]: { ...state.sessions[target.sessionId]!, active: true, activeAt: Date.now(),
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: Date.now() },
+        },
+      })));
+      expect(hook.getCurrent()).toMatchObject({ statusCell: 'needs_you', pendingRequestSessionAddress: target });
+    } finally {
+      await act(async () => { await hook.getCurrent().onToggle(); });
+      await hook.unmount();
+    }
+  });
+
     it('starts Global when the caller states the global idle target', async () => {
         const routing = await installRoutingLifecycle();
         const hook = await renderControl({ kind: 'global' });

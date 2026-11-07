@@ -86,6 +86,9 @@ import {
   voiceHooks,
 } from '@/voice/context/voiceHooks';
 
+import { createNativeVoicePermissionInput, type NativeVoicePermissionInput } from './nativeVoicePermissionInput';
+
+let activeNativePermissionInput: NativeVoicePermissionInput | null = null;
 let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
@@ -645,16 +648,15 @@ function beginEndpointDrivenStopAndSend(
   captureAttempt: LocalVoiceCaptureAttempt,
   provider: EndpointDrivenCaptureProvider,
 ): void {
-  if (inFlight) {
-    return;
-  }
+  const precedingTurn = inFlight;
+  if (precedingTurn && !activeNativePermissionInput?.canAccept()) return;
 
   const operation = stopSttAndSend(admission, captureAttempt, provider).finally(() => {
     if (inFlight === operation) {
       inFlight = null;
     }
   });
-  inFlight = operation;
+  if (!precedingTurn) inFlight = operation;
   // Endpoints have no awaiting UI caller. The turn owner already publishes its
   // recoverable failure; observe the retained promise so it cannot escape to Expo.
   fireAndForget(operation, { tag: 'localVoiceEngine.endpointTurn' });
@@ -716,7 +718,7 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): void {
     handsFreeEnabled: captureAttempt.handsFree
       && isEndpointDrivenCaptureProvider(provider)
       && localVoiceCaptureOwner.isHandsFreeCaptureSession({ provider, sessionId: signal.sessionId }),
-    inFlight: inFlight !== null,
+    inFlight: inFlight !== null && !activeNativePermissionInput?.canAccept(),
     provider,
     signal,
   });
@@ -820,6 +822,52 @@ async function startLocalVoiceCapture(args: Readonly<{
   throw startError;
 }
 
+async function readNativePermission(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+  text: string,
+  listen: boolean,
+  isPromptCurrent: () => boolean,
+  onReady: () => void,
+): Promise<void> {
+  const sessionId = captureAttempt.controlSessionId;
+  const isCurrent = () => isPromptCurrent() && isCaptureAttemptCurrent(admission, captureAttempt);
+  if (!isCurrent()) return;
+  // Stop duplex recognition before the question, so its own speech cannot
+  // interrupt the still-waiting native model turn.
+  if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
+    await localVoiceCaptureOwner.stopSession(sessionId);
+    if (!isCurrent()) return;
+  }
+  const assistantEntryId = projectLocalVoiceAgentAssistantText(sessionId, text);
+  const { config } = resolveLocalVoiceAdapterSettings(captureAttempt.settings);
+  if (config?.tts?.autoSpeakReplies === false) return;
+  let spoken = false;
+  let failed = false;
+  try {
+    await speakAssistantText({
+      sessionId, text, settings: captureAttempt.settings,
+      networkTimeoutMs: resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000),
+      registerPlaybackStopper: playbackController.registerStopper,
+      onSpeaking: () => {
+        if (!isCurrent()) return;
+        spoken = true;
+        noteTtsStarted(text, assistantEntryId);
+        voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId: sessionId });
+      },
+      onTtsFailed: () => { failed = true; },
+    });
+  } finally { noteTtsStopped(); }
+  if (!isCurrent()) return;
+  voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
+  if (!listen || !spoken || failed) return;
+  onReady();
+  await voiceConversationRuntimeMachine.rearmListening({
+    controlSessionId: sessionId,
+    startListening: signal => startCaptureForAdmission(admission, captureAttempt, signal),
+  });
+}
+
 async function runVoiceTurnWithSendFailureHandling(
   sessionId: string,
   runner: (signal: AbortSignal) => Promise<void>,
@@ -827,6 +875,7 @@ async function runVoiceTurnWithSendFailureHandling(
   const admission = readCaptureAdmission(sessionId);
   const captureAttempt = admission?.captureAttempt;
   let startsPlaybackCapture = false;
+  let permissionInput: NativeVoicePermissionInput | null = null;
   try {
     const ttsSettings = admission
       ? parseLocalVoiceTtsSettings(resolveLocalVoiceAdapterSettings(admission.captureAttempt.settings).config?.tts)
@@ -838,6 +887,17 @@ async function runVoiceTurnWithSendFailureHandling(
     if (admission && captureAttempt && startsPlaybackCapture) {
       await startCaptureForAdmission(admission, captureAttempt, admission.captureAbortController.signal);
       if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+    }
+    const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: sessionId });
+    if (admission && captureAttempt && binding?.transcriptMode === 'native_session') {
+      permissionInput = createNativeVoicePermissionInput({
+        address: binding.conversationSessionAddress,
+        signal: admission.captureAbortController.signal,
+        readOut: (text, listen, isCurrent, onReady) => readNativePermission(admission, captureAttempt, text, listen, isCurrent, onReady),
+        commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),
+        onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
+      });
+      activeNativePermissionInput = permissionInput;
     }
     await runAbortableVoiceTurn(sessionId, runner);
     beginAutomaticCurrentUiContextUpdates(sessionId);
@@ -874,6 +934,9 @@ async function runVoiceTurnWithSendFailureHandling(
       cause: error,
     });
     throw error;
+  } finally {
+    permissionInput?.dispose();
+    if (activeNativePermissionInput === permissionInput) activeNativePermissionInput = null;
   }
 }
 
@@ -914,6 +977,7 @@ async function stopAndSendRecordedTurn(
   ) {
     return;
   }
+  const permissionResponse = activeNativePermissionInput?.captureResponse();
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
   let uri: string | null = null;
   let artifactCleanup: RecordedAudioArtifactCleanup | null = null;
@@ -974,11 +1038,14 @@ async function stopAndSendRecordedTurn(
     }
 
     if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+    if (permissionResponse) {
+      await permissionResponse(text ?? '');
+      return;
+    }
     if (!text) {
       transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
       return;
     }
-
     const currentUiContext = admission.currentUiContext;
     await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
       sendVoiceTextTurnImpl({
@@ -1019,6 +1086,7 @@ async function stopSttAndSend(
     });
     return;
   }
+  const permissionResponse = activeNativePermissionInput?.captureResponse();
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
 
   const endpointDecision = await localVoiceCaptureOwner.stopEndpointDrivenCapture({
@@ -1032,10 +1100,19 @@ async function stopSttAndSend(
     if (voiceConversationRuntimeMachine.getSnapshot().error) {
       return;
     }
+    if (permissionResponse) {
+      await permissionResponse('');
+      return;
+    }
     if (await maybeRearmHandsFreeCapture(admission, endpointDecision.followUp)) {
       return;
     }
     transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+    return;
+  }
+
+  if (permissionResponse) {
+    await permissionResponse(endpointDecision.transcript);
     return;
   }
 
@@ -1470,8 +1547,9 @@ export async function toggleLocalVoiceTurn(
 export async function commitLocalVoiceInput(sessionId: string): Promise<void> {
   const current = getCurrentLocalRuntimeCompatState();
   if (current.status !== 'recording' || current.sessionId !== sessionId) return;
-  if (inFlight) {
-    await inFlight;
+  const precedingTurn = inFlight;
+  if (precedingTurn && !activeNativePermissionInput?.canAccept()) {
+    await precedingTurn;
     return;
   }
   const admission = readCaptureAdmission(sessionId);
@@ -1486,7 +1564,7 @@ export async function commitLocalVoiceInput(sessionId: string): Promise<void> {
     : stopSttAndSend(admission, captureAttempt, provider)).finally(() => {
     if (inFlight === operation) inFlight = null;
   });
-  inFlight = operation;
+  if (!precedingTurn) inFlight = operation;
   await operation;
 }
 

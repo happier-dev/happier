@@ -13850,7 +13850,7 @@ const voicePresenceTranslations = { pl: {
         mute: "Wycisz",
         unmute: "Wyłącz wyciszenie",
         end: "Zakończ",
-        captions: { connecting: "Otwieranie kanału audio", listening: "Śmiało", transcribing: "Zamiana na tekst", thinking: "Przygotowuję odpowiedź", speaking: "Możesz przerwać w każdej chwili", interrupted: "Śmiało", muted: "Wyłącz wyciszenie, aby mówić · Głos nadal może mówić", reconnecting: "Utracono połączenie · ponawianie", blocked: "Zezwól na dostęp do mikrofonu, aby mówić", failed: "Spróbuj ponownie lub sprawdź ustawienia Głosu", needsYou: "Czeka na twoją decyzję" },
+        captions: { thinkingInputUnavailable: "Poczekaj na odpowiedź, zanim wyślesz kolejną wiadomość.", connecting: "Otwieranie kanału audio", listening: "Śmiało", transcribing: "Zamiana na tekst", thinking: "Przygotowuję odpowiedź", speaking: "Możesz przerwać w każdej chwili", interrupted: "Śmiało", muted: "Wyłącz wyciszenie, aby mówić · Głos nadal może mówić", reconnecting: "Utracono połączenie · ponawianie", blocked: "Zezwól na dostęp do mikrofonu, aby mówić", failed: "Spróbuj ponownie lub sprawdź ustawienia Głosu", needsYou: "Czeka na twoją decyzję" },
         recovery: { allow: "Zezwól", setUp: "Skonfiguruj" },
         readAloud: { preparing: "Przygotowywanie czytania", speaking: "Czytanie na głos", stop: "Zatrzymaj czytanie" },
         containerA11y: ({ status }) => `Głos, ${status}`,
@@ -13900,6 +13900,8 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { pl: defineVoiceReadinessTranslation({
     ready: 'Tryb głosowy jest gotowy.',
     permissionAnnouncement: ({ summary }) => `Sesja kodowania potrzebuje uprawnienia do ${summary}.`,
+    permissionQuestion: ({ approve, deny }) => `Czy mam na to zezwolić? Powiedz „${approve}” lub „${deny}”.`,
+    permissionTapRequired: "Użyj karty zatwierdzenia, aby kontynuować.",
     userActionAnnouncement: ({ question }) => `Sesja kodowania potrzebuje Twojej odpowiedzi. ${question}`,
     userActionFallback: 'Sesja kodowania potrzebuje Twojej odpowiedzi. Odpowiedz na pytanie, abym mógł kontynuować.',
     requestedTool: 'żądane narzędzie',
