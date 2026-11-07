@@ -12,9 +12,9 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 const routerPush = vi.hoisted(() => vi.fn());
 
-vi.mock('@/components/appShell/workspace/destinationRoute', () => ({
-    useRouter: () => ({ push: routerPush }),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    router: { push: routerPush, navigate: routerPush },
+}).module);
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
