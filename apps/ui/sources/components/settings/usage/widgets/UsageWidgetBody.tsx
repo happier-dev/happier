@@ -16,6 +16,8 @@ import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
 import { UsageDailyWidget, resolveUsageDailyChartShape } from './UsageDailyWidget';
 import { useDeviceType } from '@/utils/platform/responsive';
+import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageCostFactsWidget } from './UsageCostFactsWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
@@ -105,6 +107,28 @@ function UsageQueryWidgetBody(
     Readonly<{ id: Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'> }>,
 ) {
   const { model, query } = useUsageWidgetModel(props.input, props.id);
+  return <>
+    <UsageQueryWidgetActions {...props} query={model.slice?.shownQuery ?? query} slice={model.slice} />
+    <UsageQueryWidgetContent {...props} model={model} query={query} />
+  </>;
+}
+
+/** Command credential resolution updates the frame's actions, independently of its facts. */
+function UsageQueryWidgetActions(props: UsageWidgetBodyInput & Readonly<{
+  query: UsageQuery | null;
+  slice: UsageWidgetBodyModel['slice'];
+}>) {
+  const pricesAction = useUsageModelPricesAction(props.id === 'usage_cost_facts' || props.id === 'usage_unpriced' ? props.slice : null, props.serverId, props.testID);
+  useUsageQueryActions(props.id, props.query, pricesAction);
+  return null;
+}
+
+function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
+  id: Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>;
+  model: UsageWidgetBodyModel;
+  query: UsageQuery | null;
+}>) {
+  const { model, query } = props;
   const slice = model.slice;
   const retry = useUsageRetryCommand(model.refresh, !!query && !slice && !!model.error && !model.pending);
   // Dim only facts that are being replaced: a previous period held while the new one arrives. A
@@ -112,9 +136,6 @@ function UsageQueryWidgetBody(
   // slot; a source that is still outstanding is said by the body's own coverage line.
   const replacing = slice !== null && model.updatingPreviousPeriod;
   useWidgetFrameResourceActivity(replacing || model.refreshing);
-  // Ask and Copy act on the query the body is showing (the held one while a new period arrives).
-  const pricesAction = useUsageModelPricesAction(props.id === 'usage_cost_facts' || props.id === 'usage_unpriced' ? slice : null, props.serverId, props.testID);
-  useUsageQueryActions(props.id, slice?.shownQuery ?? query, pricesAction);
   const Body = USAGE_QUERY_BODIES[props.id];
   const style = props.input.style, colourBy = props.input.colourBy, day = props.input.day;
   // Keyed on the three scalars so an unrelated input change keeps the body's props stable.
