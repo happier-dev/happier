@@ -32,13 +32,13 @@ const readyFacts = {
 } as const;
 
 describe('resolveVoiceRoleReadiness', () => {
-  it('offers retry while the selected Machine is unobserved and preserves selection repair for a fresh negative', () => {
+  it('offers retry while the selected Machine is unobserved or a request failed', () => {
     const project = (executionMachine: 'unknown' | 'incompatible' | 'ready') => resolveVoiceRoleReadiness({
       registry, role: 'conversation_stt', providerId: 'cloud_stt', platform: 'web',
       facts: { ...readyFacts, executionMachine },
     });
     expect(project('unknown')).toMatchObject({ status: 'unavailable', code: 'execution_machine_unknown', recoveryAction: 'retry' });
-    expect(project('incompatible')).toMatchObject({ status: 'incompatible', recoveryAction: 'select_execution_machine' });
+    expect(project('incompatible')).toMatchObject({ status: 'unavailable', recoveryAction: 'retry' });
     expect(project('ready')).toMatchObject({ status: 'ready', recoveryAction: 'none' });
   });
 
@@ -53,7 +53,7 @@ describe('resolveVoiceRoleReadiness', () => {
       modeId: 'byo',
       facts: { ...readyFacts, executionMachine },
     });
-    expect(project('incompatible')).toMatchObject({ status: 'incompatible', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' });
+    expect(project('incompatible')).toMatchObject({ status: 'unavailable', code: 'execution_machine_incompatible', recoveryAction: 'retry' });
     expect(project('missing')).toMatchObject({ status: 'needs_setup', code: 'execution_machine_missing' });
     expect(project('ready')).toMatchObject({ status: 'ready', code: 'ready' });
   });

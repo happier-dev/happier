@@ -179,7 +179,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
   it.each([
     { name: 'missing Agent selection', agentId: ' ', enabled: true, selectionKind: 'resolved', code: 'settings_missing_required_setting', recoveryAction: 'open_provider_settings' },
     { name: 'Voice Agent feature disabled', agentId: 'claude', enabled: false, selectionKind: 'resolved', code: 'server_feature_disabled', recoveryAction: 'switch_provider' },
-    { name: 'selected computer offline', agentId: 'claude', enabled: true, selectionKind: 'selected_unreachable', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' },
+    { name: 'selected computer offline', agentId: 'claude', enabled: true, selectionKind: 'selected_unreachable', code: 'execution_machine_incompatible', recoveryAction: 'retry' },
     { name: 'all prerequisites ready', agentId: 'claude', enabled: true, selectionKind: 'resolved', code: 'ready', recoveryAction: 'none' },
   ] as const)('projects Think readiness and its recovery independently of speech: $name', (scenario) => {
     const settings = createLocalSettings('device', 'device');

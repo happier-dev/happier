@@ -705,8 +705,13 @@ describe('voice session lifecycle edge contracts', () => {
         const { storage } = await configureLocalProvider('local_conversation');
         const settings = storage.getState().settings;
         storage.__setState({ settings: { ...settings, voice: { ...settings.voice,
-            executionMachine: { mode: 'fixed', machineId: reachable ? 'machine-1' : 'absent-voice-machine' },
+            executionMachine: { mode: 'fixed', machineId: 'machine-1' },
         } } });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected active Voice Account');
+        if (!reachable) recordMachineRequestFailed({ ...lifetime.scope, machineId: 'machine-1' });
         const providerId = 'happier.voice.xai/realtime-grok';
         const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
         const { resolveVoiceRoleReadiness } = await import('@/voice/registry/readiness');
@@ -736,7 +741,7 @@ describe('voice session lifecycle edge contracts', () => {
                 status: 'error',
                 mode: 'idle',
                 canStop: false,
-                errorCode: reachable ? 'service_temporarily_unavailable' : 'execution_machine_unavailable',
+                errorCode: 'service_temporarily_unavailable',
                 errorMessage: reachable ? 'voice_provider_adapter_not_registered' : readiness.code,
                 errorRecoveryAction: reachable ? 'retry' : readiness.recoveryAction,
                 errorPresentation: 'error',
@@ -746,7 +751,7 @@ describe('voice session lifecycle edge contracts', () => {
                 const snapshot = controller.getSnapshot();
                 expect(snapshot.errorMessage).toBe('execution_machine_incompatible');
                 expect(resolveVoiceMachineErrorTranslationKey('execution_machine_unavailable', snapshot.errorMessage)).toBe(readiness.reasonKey);
-                expect(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction)?.labelKey).toBe('voice.readiness.actions.select_execution_machine');
+                expect(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction)?.labelKey).toBe('common.retry');
             }
             expect(published).toHaveBeenCalledTimes(1);
 
@@ -758,6 +763,15 @@ describe('voice session lifecycle edge contracts', () => {
             const dictationAdmission = captureAdmission.acquire('dictation');
             expect(dictationAdmission).toMatchObject({ status: 'acquired' });
             if (dictationAdmission.status === 'acquired') dictationAdmission.lease.release();
+
+            if (!reachable) {
+                const rpc = machineRpcWithServerScope.getMockImplementation()!;
+                machineRpcWithServerScope.mockImplementation(async request => request.method === RPC_METHODS.CAPABILITIES_DETECT
+                    ? { protocolVersion: 1, results: {} } : rpc(request));
+                await controller.retry('session-1');
+                expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState()).kind).toBe('resolved');
+                expect(controller.getSnapshot()).toMatchObject({ errorMessage: 'voice_provider_adapter_not_registered' });
+            }
 
             // The refusal belongs only to the selected provider/session. A
             // later selection must not inherit that stale error.

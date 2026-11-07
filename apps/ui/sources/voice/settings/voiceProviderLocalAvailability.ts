@@ -31,7 +31,7 @@ import {
     type DeviceSpeechRecognitionAvailability,
 } from '@/voice/input/deviceSpeechRecognitionAvailability';
 import { resolveDaemonSpeechPcmCaptureAvailability } from '@/voice/runtime/daemonInference/resolveDaemonSpeechPcmCaptureAvailability';
-import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
+import { projectVoiceReadinessRequirement, type VoiceReadinessFact, type VoiceRoleReadiness } from '@/voice/registry/readiness';
 
 import type {
     ResolveVoiceProviderAvailabilityInput,
@@ -46,7 +46,7 @@ import type {
     VoiceProviderUnavailableReason,
 } from './resolveVoiceProviderAvailability';
 import { getDefaultBrowserWebSpeechCapability, useBrowserWebSpeechCapability } from './browserWebSpeechCapability';
-import type { VoiceExecutionMachineSelection } from './executionMachine';
+import { projectVoiceExecutionMachineReadiness, type VoiceExecutionMachineSelection } from './executionMachine';
 
 export type VoiceProviderLocalAvailability = NonNullable<ResolveVoiceProviderAvailabilityInput['local']>;
 export type VoiceDaemonRouteDiagnosticReason = Extract<
@@ -94,37 +94,9 @@ export function resolveVoiceDaemonHeavyAudioReadiness(input: Readonly<{
             recoveryAction: 'switch_provider',
         });
     }
-    // The selected machine is offline or gone: its reason says it isn't reachable (the code name is historical).
-    if (input.executionMachineSelectionKind === 'selected_unreachable') {
-        return Object.freeze({
-            role: input.role,
-            providerId: input.providerId,
-            status: 'incompatible',
-            code: 'execution_machine_incompatible',
-            reasonKey: 'voice.readiness.execution_machine_incompatible',
-            recoveryAction: 'select_execution_machine',
-        });
-    }
-    if (input.executionMachineSelectionKind === 'selected_unknown') {
-        return Object.freeze({
-            role: input.role,
-            providerId: input.providerId,
-            status: 'unavailable',
-            code: 'execution_machine_unknown',
-            reasonKey: 'voice.readiness.execution_machine_unknown',
-            recoveryAction: 'retry',
-        });
-    }
-    if (!input.executionMachineId) {
-        return Object.freeze({
-            role: input.role,
-            providerId: input.providerId,
-            status: 'needs_setup',
-            code: 'execution_machine_missing',
-            reasonKey: 'voice.readiness.execution_machine_missing',
-            recoveryAction: 'select_execution_machine',
-        });
-    }
+    const machineReadiness = projectVoiceReadinessRequirement(input.role, input.providerId, 'execution_machine',
+        projectVoiceExecutionMachineReadiness(input.executionMachineSelectionKind, input.executionMachineId));
+    if (machineReadiness) return machineReadiness;
     const code = resolveVoiceDaemonRouteDiagnosticReason({ daemon: input.daemon });
     if (!code) {
         return null;

@@ -27,6 +27,7 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
 import { resolveVoiceConversationAdapterMachineReadiness } from '@/voice/registry/readiness';
 import { projectVoiceExecutionMachineReadiness, resolveVoiceExecutionMachineSelectionFromState } from '@/voice/settings/executionMachine';
+import { recoverVoiceExecutionMachine } from '@/voice/runtime/execution/recoverVoiceExecutionMachine';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { playWaitingCue } from '@/voice/output/playWaitingCue';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
@@ -1399,9 +1400,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 && publishedSnapshot.errorMessage === 'agent_signed_out';
             const providerAuthRepaired = options?.providerCredentialAuthorityChanged !== false
                 && isTerminalProviderAuthFailure(publishedSnapshot);
-            const previousAccountFailure = options?.exactSessionAccountScopeChanged === true
-                && canDismissVoiceSessionFailedAttempt(publishedSnapshot);
-            if (!providerAuthRepaired && !fixedAgentAuthRepaired && !previousAccountFailure) return;
+            if (!providerAuthRepaired && !fixedAgentAuthRepaired) return;
             suppressedTerminalFailureAdapterId = publishedSnapshot.adapterId;
             publishSnapshot();
         },
@@ -1586,6 +1585,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             }
             const binding = recoveryBinding;
             if (!binding || binding.providerId !== configuredProviderId) return;
+            // Only Machine admission failures populate this binding's failure;
+            // provider/adapter retries keep their own recovery path.
+            if (binding.failure?.recoveryAction === 'retry') {
+                await recoverVoiceExecutionMachine();
+                if (disposed || recoveryBinding !== binding) return;
+            }
             // The recovery surface's session id is a navigation hint, not
             // authority to retarget the failed attempt or change its Home.
             await toggle(binding.requestedTargetSessionAddress, binding.conversationSelection);

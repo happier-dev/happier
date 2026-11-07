@@ -24,7 +24,7 @@ const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settin
 const { requireOneShotAccountSettingsMutationApplied } = await import('@/sync/engine/settings/syncSettings');
 const { sync } = await import('@/sync/sync');
 const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
-const { withdrawMachinePresenceForScope, captureMachinePresenceObservation, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
+const { recordMachineRequestFailed, recordMachineRequestSucceeded, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { persistVoiceAutoTargetMachineId } = await import('@/voice/persistence/voiceAutoTargetMachineSettings');
 const { t } = await import('@/text');
 const { resolveMachineDisplayNames } = await import('@/utils/sessions/machineDisplayNames');
@@ -69,14 +69,14 @@ describe('useVoiceExecutionMachinePresentation', () => {
     webLocks?.restore();
   });
 
-  it('updates on withdrawal and fresh presence without an Account write or a Machine identity change', async () => {
+  it('updates on a failed request and a later reply without an Account write or a Machine identity change', async () => {
     publishMachines(createMachineFixture({ id: 'machine-a', metadata: { ...createMachineFixture().metadata!, displayName: 'Studio' } }));
     await selectMachine('machine-a');
     const hook = await renderHook(() => useVoiceExecutionMachinePresentation());
     const settings = storage.getState().settings;
-    await act(async () => { withdrawMachinePresenceForScope(account.scope); });
-    expect(hook.getCurrent()).toEqual({ selectedMachineId: 'machine-a', machineId: null, machineLabel: 'Studio', selectionKind: 'selected_unknown' });
-    await act(async () => { captureMachinePresenceObservation(account.scope)(['machine-a']); });
+    await act(async () => { recordMachineRequestFailed({ ...account.scope, machineId: 'machine-a' }); });
+    expect(hook.getCurrent()).toEqual({ selectedMachineId: 'machine-a', machineId: null, machineLabel: 'Studio', selectionKind: 'selected_unreachable' });
+    await act(async () => { recordMachineRequestSucceeded({ ...account.scope, machineId: 'machine-a' }); });
     expect(hook.getCurrent()).toEqual({ selectedMachineId: 'machine-a', machineId: 'machine-a', machineLabel: 'Studio', selectionKind: 'resolved' });
     expect(storage.getState().settings).toBe(settings);
   });

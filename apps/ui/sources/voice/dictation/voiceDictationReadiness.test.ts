@@ -719,8 +719,9 @@ describe('resolveVoiceDictationReadiness', () => {
       },
     })).toMatchObject({
       providerId: 'local_neural',
-      status: 'incompatible',
+      status: 'unavailable',
       code: 'execution_machine_incompatible',
+      recoveryAction: 'retry',
     });
   });
 

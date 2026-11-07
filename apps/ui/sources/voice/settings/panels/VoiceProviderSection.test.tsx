@@ -3,7 +3,12 @@ import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/ma
 import type { z } from 'zod/mini';
 import { act, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import 'fake-indexeddb/auto';
-import { PluginContributesV2Schema, PluginProjectionV2Schema, buildQualifiedPluginContributionKey, createPluginContributionIdentity, createRecipientContractDigestV1, type PluginProjectionV2, type VoiceProviderContribution } from '@happier-dev/protocol';
+import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginProjectionV2Schema, type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { createPluginContributionIdentity} from '@happier-dev/protocol/plugins/contribution-identity';
+import { createRecipientContractDigestV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import { type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import type {
@@ -137,13 +142,19 @@ const passiveSetupBoundary = {
     get machineTarget() { return machineTarget; },
     set machineTarget(value: typeof machineTarget) {
         machineTarget = value;
+        const scope = captureActiveServerAccountScopeLifetime()?.scope ?? accountFixture.scope;
         storage.getState().applyMachines([
             ...['machine-1', 'machine-2', 'machine-online'].map(id => createMachineFixture({
                 id, active: value.isOnline, activeAt: Date.now(), daemonStateVersion: value.daemonStateVersion,
+                storageMode: 'plain',
+                access: createPlainMachineRowFixture({ id, accountId: scope.accountId }).access,
             })),
-            ...(descriptorAvailable ? [createMachineFixture({ id: 'descriptor-machine', active: true, activeAt: Date.now() })] : []),
-        ], true, { sourceServerId: accountFixture.scope.serverId });
-        observeMachinePresenceForTest(accountFixture.scope,
+            ...(descriptorAvailable ? [createMachineFixture({ id: 'descriptor-machine', active: true, activeAt: Date.now(),
+                storageMode: 'plain',
+                access: createPlainMachineRowFixture({ id: 'descriptor-machine', accountId: scope.accountId }).access,
+            })] : []),
+        ], true, { sourceServerId: scope.serverId });
+        observeMachinePresenceForTest(scope,
             ['machine-1', 'machine-2', 'machine-online', ...(descriptorAvailable ? ['descriptor-machine'] : [])]);
     },
     get state() { return capabilityState; },
@@ -174,7 +185,7 @@ installSessionActionRpcBoundary(async request => {
         return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1,
             projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
-                agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {},
+                agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {},
                 familiesById: { connectedAccounts: { family: 'connectedAccounts',
                     entriesById: descriptorAvailable ? { [CODEX_CONNECTED_SERVICE_KEY]: codexDescriptorResponse } : {} },
                     voiceProviders: { family: 'voiceProviders', entriesById: voiceProjectionEntries } } }),
@@ -196,7 +207,7 @@ installSessionActionRpcBoundary(async request => {
         for (const notify of rawReadinessListeners) notify();
         return DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema.parse({ ok: true,
             authorization: { pluginId: contribution.pluginId, capability: 'credentials.materialize.raw',
-                targetScope: { kind: 'account' }, subject: { kind: 'credential_access_disclosure', contribution,
+                targetScope: { kind: 'account' }, grantRequirement: 'linked', subject: { kind: 'credential_access_disclosure', contribution,
                     credentialSlotId: 'api_key', purpose: 'voice.speech', accessDeclarationDigest: 'b'.repeat(64),
                     selectedAuthorityDigest: 'c'.repeat(64), selectedRawAccessDigest: 'd'.repeat(64) },
                 authoritySource: { kind: 'machine_installation', machineId, installationId: 'installation-a' },
@@ -217,7 +228,9 @@ async function createActiveAccountLifetime(accountId: string, requestedServerUrl
     const serverUrl = requestedServerUrl ?? (await import('@/sync/domains/server/serverRuntime')).getActiveServerSnapshot().serverUrl;
     // A second Account is a logout/restore, not a second cold bootstrap of
     // the still-running Sync owner and its Account A requests.
-    await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
+    await act(async () => {
+        await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
+    });
     const connection = await restoreServerAccountForTest({
         serverUrl,
         accountId, request: async (url, init) => new URL(String(url)).pathname === '/v1/account/profile'
@@ -401,10 +414,14 @@ await import('./VoiceProviderSection');
 await import('./BundledConversationSettingsSection');
 
 describe('VoiceProviderSection', () => {
-    it.each([true, false])('retries withdrawn Machine presence through a fresh Home read (online=%s)', async (online) => {
+    it.each([
+        { online: true, retire: false },
+        { online: false, retire: false },
+        { online: true, retire: true },
+    ])('retries a failed selected Machine through a fresh Home read and Machine request (online=$online, retired=$retire)', async ({ online, retire }) => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const { useVoiceExecutionMachinePresentation } = await import('@/voice/credentials/useExecutionMachinePresentation');
-        const { withdrawMachinePresenceForScope, captureMachinePresenceObservation } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const { recordMachineRequestFailed, recordMachineRequestSucceeded } = await import('@/sync/domains/machines/reachability/machineReachability');
         const { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
         passiveSetupBoundary.machineTarget = { daemonStateVersion: 1, isOnline: true };
         const defaults = readLocalConversationVoiceSettings(accountFixture.settings.voice);
@@ -429,11 +446,9 @@ describe('VoiceProviderSection', () => {
         const screen = await renderScreen(<MountedPresenceReadiness />);
         const response = createDeferred<Response>();
         const request = accountFixture.request.getMockImplementation()!;
-        const { readMachineOnlineGraceMsFromEnv } = await import('@/utils/sessions/machineUtils');
-        const presenceGraceMs = readMachineOnlineGraceMsFromEnv();
         const freshMachine = (id: string) => ({
             ...createPlainMachineRowFixture({ id, accountId: accountFixture.scope.accountId }),
-            active: online, activeAt: online ? Date.now() : Date.now() - presenceGraceMs - 1, daemonStateVersion: 1,
+            active: online, activeAt: Date.now(), daemonStateVersion: 1,
         });
         let freshRead = false;
         const freshReadEntered = createDeferred<void>();
@@ -453,11 +468,13 @@ describe('VoiceProviderSection', () => {
             }
             return request(url, init);
         });
-        await act(async () => { withdrawMachinePresenceForScope(accountFixture.scope); });
+        await act(async () => { recordMachineRequestFailed({ ...accountFixture.scope, machineId: 'machine-1' }); });
         expect(selectionKind, JSON.stringify({ current: storage.getState().settings.voice.executionMachine,
-            persisted: accountFixture.persistedSettings.voice.executionMachine, initial: voice.executionMachine })).toBe('selected_unknown');
-        expect(screen.getTextContent()).toContain(tLoose('voice.readiness.execution_machine_unknown'));
+            persisted: accountFixture.persistedSettings.voice.executionMachine, initial: voice.executionMachine })).toBe('selected_unreachable');
+        expect(screen.getTextContent()).toContain(tLoose('voice.readiness.execution_machine_incompatible'));
         expect(screen.getTextContent()).toContain(t('common.retry'));
+        passiveSetupBoundary.refresh.mockClear();
+        capabilityState = online ? { status: 'idle' } : { status: 'error' };
         const retry = findAllHostTestInstances(screen.tree.root, node => typeof node.props.testID === 'string'
             && node.props.testID.startsWith('settings.voice.conversations.pipeline')
             && node.props.testID.endsWith('.recover') && typeof node.props.onPress === 'function')[0];
@@ -467,21 +484,16 @@ describe('VoiceProviderSection', () => {
         expect(freshRead).toBe(true);
         await act(async () => {
             const otherScope = { ...accountFixture.scope, accountId: 'another-account' };
-            withdrawMachinePresenceForScope(otherScope);
-            captureMachinePresenceObservation(otherScope)(['machine-1']);
+            recordMachineRequestSucceeded({ ...otherScope, machineId: 'machine-1' });
         });
-        expect(selectionKind).toBe('selected_unknown');
-        if (!online) {
-            // A fresh negative follows the existing heartbeat's grace; it does not
-            // falsify the Machine owner's monotonic presence preservation.
-            vi.useFakeTimers({ toFake: ['Date'] });
-            onTestFinished(() => { vi.useRealTimers(); });
-            vi.setSystemTime(Date.now() + presenceGraceMs * 2 + 2);
-        }
+        expect(selectionKind).toBe('selected_unreachable');
+        if (retire) retireActiveServerAccountScopeLifetime();
         await act(async () => { response.resolve(Response.json([freshMachine('machine-1')])); });
         await waitForTestEvent(screen.subscribe, () => selectionKind,
-            kind => kind === (online ? 'resolved' : 'selected_unreachable'));
-        expect(selectionKind).toBe(online ? 'resolved' : 'selected_unreachable');
+            kind => kind === (online && !retire ? 'resolved' : 'selected_unreachable'));
+        expect(selectionKind).toBe(online && !retire ? 'resolved' : 'selected_unreachable');
+        expect(passiveSetupBoundary.refresh.mock.calls.filter(([request]) => request.requests.length === 0))
+            .toEqual(retire ? [] : [[{ requests: [], bypassCache: true }]]);
         if (!online) expect(screen.getTextContent()).toContain(tLoose('voice.readiness.execution_machine_incompatible'));
         expect(navigate).not.toHaveBeenCalled();
         expect(setVoice).not.toHaveBeenCalled();
@@ -553,6 +565,27 @@ describe('VoiceProviderSection', () => {
         await screen.unmount();
     });
 
+    it('projects only the selected service for a closed setup tile, with the same readiness as the full gallery', async () => {
+        const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
+        accountFixture.replaceVoice({ ...accountFixture.settings.voice, providerId: 'local_conversation' });
+        const voice = accountFixture.settings.voice;
+        const frames: Record<'all' | 'selected', { tiles: readonly string[]; rows: number; readiness: unknown } | null> = { all: null, selected: null };
+        function Probe(props: Readonly<{ rowScope: 'all' | 'selected' }>) {
+            const model = useVoiceConversationsReadinessModel({ voice, setVoice: accountFixture.replaceVoice,
+                happierVoiceSupported: true, platformOs: 'web', rowScope: props.rowScope });
+            frames[props.rowScope] = { tiles: model.serviceTiles.map((tile) => tile.id), rows: model.visibleRows.length,
+                readiness: model.selectedProviderReadiness };
+            return null;
+        }
+        const screen = await renderScreen(<><Probe rowScope="all" /><Probe rowScope="selected" /></>);
+        // Home's closed tile reads the selected service's readiness and title only (the gallery opens with the panel).
+        expect(frames.all!.tiles.length).toBeGreaterThan(1);
+        expect(frames.selected!.tiles).toEqual(['local_conversation']);
+        expect(frames.selected!.rows).toBeLessThan(frames.all!.rows);
+        expect(frames.selected!.readiness).toEqual(frames.all!.readiness);
+        await screen.unmount();
+    });
+
     it('carries the declared service description through the registry and gallery independently of billing', async () => {
         const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-elevenlabs/manifest');
         const { VoiceProviderContributionSchema } = await import('@happier-dev/plugin-sdk/voice');
@@ -619,9 +652,18 @@ describe('VoiceProviderSection', () => {
         expect(currentAccount()).toBe('account-navigation-other-home');
         // Remounting re-observes catalogs after a gap; their owners withdraw
         // mutation authority and revalidate before the consumers become idle.
-        const { getSavedSecretCatalogSnapshot } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
-        const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
-        await waitForTestEvent(screen.subscribe, () => {
+        const { beginSavedSecretCatalogLoad, getSavedSecretCatalogSnapshot, subscribeSavedSecretCatalogSnapshots } =
+            await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+        const { getConnectedAccountCatalogValue, subscribeConnectedAccountCatalogSnapshots } =
+            await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        // Settlement is the catalog owners' publication, not a consumer commit:
+        // readers that do not present catalog lifecycle correctly stay idle.
+        const catalogPublications = (notify: () => void) => {
+            const unsubscribeSavedSecrets = subscribeSavedSecretCatalogSnapshots(notify);
+            const unsubscribeConnectedAccounts = subscribeConnectedAccountCatalogSnapshots(notify);
+            return () => { unsubscribeSavedSecrets(); unsubscribeConnectedAccounts(); };
+        };
+        await waitForTestEvent(catalogPublications, () => {
             const scope = storage.getState().settingsScope;
             if (!scope) return false;
             const savedSecrets = getSavedSecretCatalogSnapshot(scope);
@@ -634,6 +676,11 @@ describe('VoiceProviderSection', () => {
         await act(async () => {});
         expect(observedAccounts.slice(settledRenders).every(accountId => accountId === 'account-navigation-other-home')).toBe(true);
         expect(screen.root.findByType('CredentialNavigationProbe').props.signInAvailable).toBe(machineId !== null);
+        // A Saved Secret lifecycle publication no row reads must not re-render the readiness consumer.
+        const idleRenders = observedAccounts.length;
+        await act(async () => { beginSavedSecretCatalogLoad(storage.getState().settingsScope!); });
+        expect(getSavedSecretCatalogSnapshot(storage.getState().settingsScope)?.status).toBe('refreshing');
+        expect(observedAccounts.length - idleRenders).toBe(0);
     });
 
     it('does not render a second declarative settings writer for a provider-owned settings section', async () => {
@@ -1460,7 +1507,7 @@ describe('VoiceProviderSection', () => {
         })[0]?.props.transitionKey).not.toBe(terminalTransitionKey);
     }, 120_000);
 
-    it('reports a persisted but unreachable Codex execution target as incompatible', async () => {
+    it('reports a persisted but unreachable Codex execution target as unavailable', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const screen = await renderScreen(React.createElement(VoiceProviderSection, {
             voice: settingsParse({ voice: {
@@ -1595,11 +1642,10 @@ describe('VoiceProviderSection', () => {
             projectedCredential: { status: 'missing' },
             hasAccountCredentialSlot: true,
             hasAccountCredentialReference: false,
-            accountCredentialApprovalRequired: true,
         }), providerId).toBe('missing');
     }, 120_000);
 
-    it('keeps a stale recipient-contract review requirement for an external provider', async () => {
+    it('keeps the canonical missing credential projection for an external provider', async () => {
         const { resolveVoiceProviderCredentialFact: resolveCredentialFact } = await import('./VoiceProviderSection');
 
         expect(resolveCredentialFact({
@@ -1607,8 +1653,7 @@ describe('VoiceProviderSection', () => {
             projectedCredential: { status: 'missing' },
             hasAccountCredentialSlot: true,
             hasAccountCredentialReference: false,
-            accountCredentialApprovalRequired: true,
-        })).toBe('approval_required');
+        })).toBe('missing');
     }, 120_000);
 
     it.each([
@@ -1902,7 +1947,6 @@ describe('VoiceProviderSection', () => {
             projectedCredential: { status: 'unknown' },
             hasAccountCredentialSlot: true,
             hasAccountCredentialReference: false,
-            accountCredentialApprovalRequired: true,
         })).toBe('unknown');
         // A projection that was never produced still falls back, because the
         // external account-credential slot is then the only evidence there is.
@@ -1922,7 +1966,6 @@ describe('VoiceProviderSection', () => {
             projectedCredential: { status: 'unknown' },
             hasAccountCredentialSlot: true,
             hasAccountCredentialReference: false,
-            accountCredentialApprovalRequired: true,
         })).toBe('unknown');
     }, 120_000);
 
@@ -2061,7 +2104,7 @@ describe('VoiceProviderSection', () => {
         };
         const settings = await withVoiceSettingsCredentialResource(accountFixture, {
             settings: settingsParse({ voice }), declaration: entry.declaration, pluginId: entry.pluginId,
-            resourceId: 'elevenlabs-secret', recipientContractDigest: slot.recipientContractDigest,
+            resourceId: 'elevenlabs-secret',
         });
         storageBoundary.settings = settings;
         onTestFinished(() => {
@@ -2948,13 +2991,13 @@ describe('VoiceProviderSection', () => {
         const sttReady = await withVoiceSettingsCredentialResource(accountFixture, {
             settings: settingsParse({ voice }),
             pluginId: 'happier.voice.google', declaration: sttDeclaration,
-            resourceId: 'google-stt-secret', recipientContractDigest: sttEntry?.accountCredentialSlot?.recipientContractDigest,
+            resourceId: 'google-stt-secret',
             machineId: 'machine-online',
         });
         const ready = await withVoiceSettingsCredentialResource(accountFixture, {
             settings: sttReady,
             pluginId: 'happier.voice.google', declaration: ttsDeclaration,
-            resourceId: 'google-tts-secret', recipientContractDigest: ttsEntry?.accountCredentialSlot?.recipientContractDigest,
+            resourceId: 'google-tts-secret',
             machineId: 'machine-online',
         });
         rawCredentialReadiness.mockClear();
@@ -3115,7 +3158,7 @@ describe('VoiceProviderSection', () => {
             settings = await withVoiceSettingsCredentialResource(accountFixture, {
                 settings,
                 pluginId: 'happier.voice.google', declaration,
-                resourceId: `${localId}-secret`, recipientContractDigest: entry?.accountCredentialSlot?.recipientContractDigest,
+                resourceId: `${localId}-secret`,
                 machineId: 'machine-online',
             });
         }

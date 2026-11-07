@@ -26,14 +26,14 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
     clearMachineRequestReachabilityForTest();
     storage.setState({ profileScope: fixtureScope });
   });
-  it('preserves a selected unobserved target without admitting it or declaring it offline', () => {
+  it('retains a selected online target across socket withdrawal, then rejects expired presence', () => {
     const state = { profileScope: fixtureScope, machines: { selected: machine('selected', true, { activeAt: Date.now() }) },
       settings: { voice: { executionMachine: { mode: 'fixed', machineId: 'selected' } } } };
     withdrawMachinePresenceForScope(fixtureScope);
     const selection = resolveVoiceExecutionMachineSelectionFromState(state);
-    expect(selection).toEqual({ kind: 'selected_unknown', machineId: 'selected' });
-    expect(resolveVoiceExecutionMachineIdFromState(state)).toBeNull();
-    expect(projectVoiceExecutionMachineReadiness(selection.kind, null)).toBe('unknown');
+    expect(selection).toEqual({ kind: 'resolved', machineId: 'selected' });
+    expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('selected');
+    expect(projectVoiceExecutionMachineReadiness(selection.kind, 'selected')).toBe('ready');
     captureMachinePresenceObservation(fixtureScope)(['selected']);
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('selected');
     const offline = { ...state, machines: { selected: machine('selected', false, { activeAt: Date.now() - 97_000 }) } };

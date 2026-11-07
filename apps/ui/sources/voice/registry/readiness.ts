@@ -122,7 +122,7 @@ const RECOVERY_BY_REQUIREMENT = {
   model: 'install_model',
 } as const satisfies Record<VoiceReadinessRequirement, VoiceRoleReadiness['recoveryAction']>;
 
-function projectRequirement(
+export function projectVoiceReadinessRequirement(
   role: VoiceReadinessRole,
   providerId: string,
   requirement: VoiceReadinessRequirement,
@@ -134,6 +134,10 @@ function projectRequirement(
   }
   if (requirement === 'credential' && fact === 'approval_required') {
     return result(role, providerId, 'needs_setup', 'credential_approval_required', 'review_credential_access');
+  }
+  // This historical Machine fact means unreachable, not incompatible software.
+  if (requirement === 'execution_machine' && fact === 'incompatible') {
+    return result(role, providerId, 'unavailable', 'execution_machine_incompatible', 'retry');
   }
   if (fact === 'installing') {
     return result(role, providerId, 'installing', `${requirement}_installing`, RECOVERY_BY_REQUIREMENT[requirement]);
@@ -157,7 +161,7 @@ export function resolveVoiceConversationAdapterMachineReadiness(input: Readonly<
   executionMachine: VoiceReadinessFact | undefined;
 }>): VoiceRoleReadiness | null {
   if (input.entry?.kind !== 'voice.conversation-provider.v1' || input.entry.source.kind === 'built_in') return null;
-  return projectRequirement(input.role, input.entry.providerId, 'execution_machine', input.executionMachine);
+  return projectVoiceReadinessRequirement(input.role, input.entry.providerId, 'execution_machine', input.executionMachine);
 }
 
 /** Sole owner for descriptor and selected-mode requirement projection. */
@@ -235,7 +239,7 @@ function resolveVoiceRoleReadinessInternal(
       ])))
     : declaredRequirements;
   for (const requirement of requirements) {
-    const projected = projectRequirement(
+    const projected = projectVoiceReadinessRequirement(
       input.role,
       input.providerId,
       requirement,
