@@ -1,4 +1,4 @@
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, projectDeploymentControllerAvailabilityV1,
     type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1,
     type DeploymentEnvironmentGetInputV1, type DeploymentReceiptGetInputV1,
     type DeploymentEnvironmentListInputV1, type DeploymentReceiptListInputV1, DeploymentStateV1Schema } from '@happier-dev/protocol';
@@ -21,12 +21,17 @@ import { readDeploymentPendingContent } from './deploymentPendingService';
 import type { MachineDeploymentReferencesInputV1, MachineDeploymentReferencesPageV1, MachineReferenceV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
+import { serializeMachinePresence } from '@/app/machines/machineSerialization';
 import type { Prisma } from '@prisma/client';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentDomainEnvironmentIdsForMachineInTx, projectDeploymentDomainMachineReferences } from './deploymentDomainService';
 import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
+import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { readSavedSecretResourcesForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
 
@@ -153,6 +158,11 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     ]);
     const contentFailure = failures.find(failure => failure !== null);
     if (contentFailure) return contentFailure;
+    const controllerMachine = await tx.machine.findUnique({ where: { id: loaded.row.controllerMachineId },
+        select: { active: true, lastActiveAt: true, revokedAt: true } });
+    const controller = projectDeploymentControllerAvailabilityV1(loaded.row.controllerMachineId, controllerMachine
+        ? { ...serializeMachinePresence(controllerMachine), revokedAt: controllerMachine.revokedAt?.getTime() ?? null }
+        : null);
     const retainedTargetLinkCleanupCompleteIds: string[] = [];
     if (input.includeRetainedTargetLinkCleanup) {
         for (const link of targetRows) {
@@ -162,8 +172,21 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
             }
         }
     }
+    const captures = readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions);
+    const resourceIds = captures?.map(capture => capture.resourceId);
+    const resources = resourceIds?.length ? await readSavedSecretResourcesForAccountInTx(tx, actorAccountId,
+        authentication.authenticationAuthority
+            ? { ...authentication, authenticationAuthority: authentication.authenticationAuthority } : undefined,
+        resourceIds) : [];
+    const current = new Map(resources.flatMap(resource => 'ref' in resource && resource.capabilities.use && resource.revision !== null
+        ? [[resource.ref, resource.revision] as const] : []));
+    const savedSecretRevisions = captures?.flatMap(capture => {
+        const revision = current.get(formatSharedSavedSecretRefV1(capture.resourceId));
+        return revision === undefined ? [] : [{ resourceId: capture.resourceId, revision }];
+    });
     return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-        environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission), targetLinks,
+        environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission), targetLinks, controller,
+        ...(savedSecretRevisions === undefined ? {} : { savedSecretRevisions }),
         ...(input.includeRetainedTargetLinkCleanup ? { retainedTargetLinkCleanupCompleteIds } : {}),
         ...(pending.pendingDeploy ? { pendingDeploy: pending.pendingDeploy } : {}),
         ...('pendingAdmission' in pending && pending.pendingAdmission ? { pendingAdmission: pending.pendingAdmission } : {}) });
@@ -236,8 +259,9 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     }
     // Deployment content uses the incumbent Artifact-backed structural page budget.
     const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
+    // Newly generated Environment ids lead the finite inventory; continuation visits older ids.
     const readRows = (where: Prisma.DeploymentEnvironmentWhereInput) => tx.deploymentEnvironment.findMany({
-        where, orderBy: { id: 'asc' }, take: limit + 1,
+        where, orderBy: { id: 'desc' }, take: limit + 1,
         include: { deployers: { select: { principalKind: true, principalId: true } },
             // Exact visible groups consume Environment headers, not latest-attempt
             // history. Ordinary inventory retains its incumbent receipt projection.
@@ -251,8 +275,9 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         + 2 // List take/offset.
         + (input.environmentIds === undefined ? 1 : 0) // Latest receipt take.
         + (input.projectSourceId ? 1 : 0)
-        + (input.previewRepositoryId === undefined ? 0 : 2) // Repository and purpose.
-        + (input.previewTemplateEnvironmentId === undefined ? 0 : 1 + (input.previewRepositoryId === undefined ? 1 : 0))
+        + (input.previewRepositoryId === undefined ? 0 : 1)
+        + (input.previewPullRequestIds === undefined && input.previewTemplateEnvironmentId === undefined ? 0 : 1) // Preview purpose.
+        + (input.previewTemplateEnvironmentId === undefined ? 0 : 1)
         + (cursor ? 1 : 0)
         + (input.machineId ? 7 + deploymentInProgressStates().length : 0);
     const bindingsPerValue = input.environmentIds !== undefined && input.previewPullRequestIds !== undefined ? 2 : 1;
@@ -266,13 +291,14 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             const where: Prisma.DeploymentEnvironmentWhereInput = {
                 ...(input.includeDeleted ? {} : { deletedAt: null }),
                 ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}),
-                ...(input.previewRepositoryId === undefined ? {} : { purpose: 'preview', previewRepositoryId: input.previewRepositoryId,
+                ...(input.previewPullRequestIds === undefined ? {} : { purpose: 'preview',
                     previewPullRequestId: { in: previewPullRequestIds ? [...previewPullRequestIds] : undefined } }),
+                ...(input.previewRepositoryId === undefined ? {} : { previewRepositoryId: input.previewRepositoryId }),
                 ...(input.previewTemplateEnvironmentId === undefined ? {} : { purpose: 'preview',
                     previewTemplateEnvironmentId: input.previewTemplateEnvironmentId }),
                 ...(cursor || environmentIds !== undefined ? { id: {
                     ...(environmentIds === undefined ? {} : { in: [...environmentIds] }),
-                    ...(cursor ? { gt: cursor } : {}),
+                    ...(cursor ? { lt: cursor } : {}),
                 } } : {}),
                 ...(input.machineId ? deploymentMachineReferenceWhere(input.machineId) : {}),
             };
@@ -286,6 +312,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     const currentDeployments: ReturnType<typeof projectDeploymentReceiptHeader>[] = [];
     const runtimeTargetLinks: ReturnType<typeof projectDeploymentTargetHeader>[] = [];
     let coverage: 'complete' | 'partial' = 'complete';
+    const selectedRepository = input.previewRepository ? normalizeScmHostingRepositoryIdentity(input.previewRepository) : null;
     for (const row of selected) {
         let source = sources.get(row.projectSourceId);
         if (!source) {
@@ -294,6 +321,12 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             sources.set(row.projectSourceId, source);
         }
         if (!source.ok) { coverage = 'partial'; continue; }
+        if (input.previewRepository) {
+            const selector = source.admission.source.repository;
+            const repository = selector && normalizeScmHostingRepositoryIdentity({ kind: selector.provider.kind,
+                deployment: selector.provider.baseUrl, repository: selector.repository.nameWithOwner });
+            if (!repository || !selectedRepository || !sameScmHostingRepositoryIdentity(repository, selectedRepository)) continue;
+        }
         if (row.runtimeTargetLink && row.runtimeTargetLink.environmentId !== row.id) { coverage = 'partial'; continue; }
         const environment = projectDeploymentListRow(() => projectDeploymentEnvironmentHeader(row, input.serverId, source.admission));
         if (!environment) { coverage = 'partial'; continue; }
@@ -329,11 +362,15 @@ export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string,
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
         acceptedEnvironmentRead(acceptedRead, input.environmentId));
     if (!loaded.ok) return loaded;
+    const filters: Prisma.DeploymentWhereInput = { environmentId: input.environmentId,
+        ...(input.state ? { state: input.state } : {}),
+        ...(input.actorAccountId ? { requestedByAccountId: input.actorAccountId } : {}),
+        ...(input.operation ? { operation: input.operation } : {}) };
     if (input.inProgressOnly) {
         // The Environment lock admits one in-progress receipt, so observing
         // that fact never needs to page settled history or fetch content.
-        const busy = await tx.deployment.findFirst({ where: { environmentId: input.environmentId,
-            state: { in: deploymentInProgressStates() } } });
+        const busy = await tx.deployment.findFirst({ where: { ...filters,
+            AND: { state: { in: deploymentInProgressStates() } } } });
         return { ok: true as const, items: busy ? [projectDeploymentReceiptHeader(busy)] : [], nextCursor: null };
     }
     const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
@@ -341,7 +378,7 @@ export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string,
         where: { id: input.cursor, environmentId: input.environmentId }, select: { id: true, requestedAt: true },
     }) : null;
     if (input.cursor && !cursor) return deploymentFailure('deployment_invalid');
-    const rows = await tx.deployment.findMany({ where: { environmentId: input.environmentId,
+    const rows = await tx.deployment.findMany({ where: { ...filters,
         ...(cursor ? { OR: [{ requestedAt: { lt: cursor.requestedAt } },
             { requestedAt: cursor.requestedAt, id: { lt: cursor.id } }] } : {}) },
     orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: limit + 1 });

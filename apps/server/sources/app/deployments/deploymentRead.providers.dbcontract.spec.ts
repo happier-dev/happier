@@ -93,7 +93,9 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
     it('pages exact preview-template children before the native list limit without inventory fan-out', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
-            { serverId, requestKey: randomUUID(), name: 'Template previews', audience: [] }));
+            { serverId, requestKey: randomUUID(), name: 'Template previews', audience: [], repository: {
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'acme/preview' }, protocol: 'https' } }));
         if (!source.ok) throw new Error(source.error);
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: '{}', installationId: randomUUID() } });
@@ -123,7 +125,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         try {
             const input = { serverId, previewTemplateEnvironmentId: templates[1]!.id, limit: 1 };
             const page = await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id, input));
-            expect(page).toMatchObject({ ok: true, items: [{ id: children[1]![0] }], nextCursor: children[1]![0] });
+            expect(page).toMatchObject({ ok: true, items: [{ id: children[1]![1] }], nextCursor: children[1]![1] });
             if (!page.ok) throw new Error(page.error);
             const reads = requests.filter(row => row.model === 'DeploymentEnvironment' && row.action === 'findMany');
             expect(reads).toHaveLength(1);
@@ -132,7 +134,23 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                 || (row.model === 'ProjectSource' || row.model === 'Machine') && row.action === 'findMany')).toEqual([]);
             const next = await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
                 { ...input, cursor: page.nextCursor ?? undefined }));
-            expect(next).toMatchObject({ ok: true, items: [{ id: children[1]![1] }], nextCursor: null });
+            expect(next).toMatchObject({ ok: true, items: [{ id: children[1]![0] }], nextCursor: null });
+            const exact = await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id, { serverId,
+                previewRepository: { kind: 'github', deployment: 'https://github.com', repository: 'Acme/Preview' },
+                previewPullRequestIds: ['pr:1-0'] }));
+            expect(exact).toMatchObject({ ok: true, items: [{ id: children[1]![0] }], nextCursor: null });
+            if (provider === 'postgres') {
+                // This tiny fixture proves index usability, rather than scale timing.
+                const plan = await client.$transaction(async tx => {
+                    await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+                    return tx.$queryRawUnsafe<unknown[]>(
+                        'EXPLAIN (FORMAT JSON) SELECT "id" FROM "DeploymentEnvironment" WHERE "previewPullRequestId" = $1 AND "purpose" = $2 AND "deletedAt" IS NULL ORDER BY "id"',
+                        'pr:1-0', 'preview');
+                });
+                const indexedPlan = JSON.stringify(plan);
+                expect(indexedPlan).toMatch(/"Index Cond":"(?:\\.|[^"\\])*previewPullRequestId/);
+                expect(indexedPlan).not.toContain('"Node Type":"Seq Scan"');
+            }
         } finally { stop(); await client.$disconnect(); }
     });
 
@@ -171,7 +189,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         // The provider owns collation; concatenating chunk results and sorting
         // in JavaScript must not change the existing page/cursor contract.
         const ordered = await db.deploymentEnvironment.findMany({ where: { id: { in: children.map(row => row.id) } },
-            orderBy: { id: 'asc' }, select: { id: true } });
+            orderBy: { id: 'desc' }, select: { id: true } });
         let cursor: string | undefined;
         for (const [index, expected] of ordered.entries()) {
             const admissions: string[] = [];
@@ -489,7 +507,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ private: 'unopened' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
         const prefix = `zz-inventory-${randomUUID()}`;
-        const ids = [0, 1, 2].map(index => `${prefix}-${index}`);
+        const ids = [2, 1, 0].map(index => `${prefix}-${index}`);
         await db.deploymentEnvironment.createMany({ data: ids.map((id, index) => ({ id,
             projectSourceId: index === 0 ? hidden.source.id : visible.source.id, createdByAccountId: owner.id,
             controllerMachineId: machine.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
@@ -508,7 +526,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                     };
                 } });
             } }), actor, { serverId, cursor, limit: 1, ...(projectSourceId ? { projectSourceId } : {}) }));
-        const first = await read(prefix);
+        const first = await read(`${prefix}-3`);
         expect(first).toMatchObject({ ok: true, items: [], coverage: 'partial' });
         if (!first.ok || !first.nextCursor) throw new Error('Empty partial page must continue');
         expect(JSON.stringify(first)).not.toContain(ids[0]);
@@ -518,8 +536,34 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         const second = await read(first.nextCursor);
         expect(second).toMatchObject({ ok: true, items: [{ id: ids[1] }], coverage: 'complete' });
         if (!second.ok || !second.nextCursor) throw new Error('Visible page must continue');
-        expect(await read(second.nextCursor)).toMatchObject({ ok: true, items: [{ id: ids[2] }], nextCursor: null });
+        expect(await read(second.nextCursor)).toMatchObject({ ok: true, items: [{ id: ids[2] }] });
         expect(sourceCrawls).toBe(0);
+    });
+
+    it('projects only the recorded Environment controller availability on the native provider', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Controller availability', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: randomUUID(), active: false } });
+        const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
+            kind: 'v1:other:deployment-environment.v1', headerVersion: 1, bodyVersion: 1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Controller' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ private: 'unopened' })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+            createdByAccountId: owner.id, controllerMachineId: machine.id, protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', contentArtifactId: artifact.id,
+            contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        const readController = () => inReadSnapshot(tx => readDeploymentEnvironmentInTx(tx, owner.id,
+            { serverId, environmentId: environment.id }));
+        expect(await readController()).toMatchObject({ ok: true, controller: { machineId: machine.id, state: 'paused' } });
+        await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}',
+            installationId: randomUUID(), active: true, lastActiveAt: new Date() } });
+        expect(await readController()).toMatchObject({ ok: true, controller: { machineId: machine.id, state: 'paused' } });
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date() } });
+        expect(await readController()).toMatchObject({ ok: true, controller: { machineId: machine.id, state: 'available' } });
     });
 
     it('pages receipt history newest first by request time and id with Environment-bound cursors', async () => {
@@ -562,6 +606,47 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         expect(history).toEqual([receiptIds[2], receiptIds[1], receiptIds[0]]);
         expect(await readHistory(`missing-${randomUUID()}`)).toEqual({ ok: false, error: 'deployment_invalid' });
         expect(await readHistory(receiptIds[0], environments[1]!.id)).toEqual({ ok: false, error: 'deployment_invalid' });
+        const otherActor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const filteredIds = ['filtered-newer', 'filtered-older'].map(id => `${id}-${randomUUID()}`);
+        const receiptData = { environmentId, targetLinkId: link.id, state: 'failed', operation: 'rollback',
+            requestedByAccountId: owner.id, contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        await db.deployment.createMany({ data: [
+            ...filteredIds.map((id, index) => ({ ...receiptData, id, requestKey: randomUUID(), actionOperationId: randomUUID(),
+                requestedAt: new Date(4000 - index * 1000) })),
+            ...Array.from({ length: 24 }, (_, index) => ({ ...receiptData, id: randomUUID(),
+                requestKey: randomUUID(), actionOperationId: randomUUID(), requestedAt: new Date(5000 + index),
+                ...(index % 3 === 0 ? { state: 'succeeded' } : index % 3 === 1 ? { operation: 'deploy' }
+                    : { requestedByAccountId: otherActor.id }) })),
+        ] });
+        const requests: { action: string; model?: string; args: unknown }[] = [];
+        const returnedPages: unknown[] = [];
+        const stop = observePrismaRequests(db, { before: request => requests.push(request),
+            after: (request, result) => {
+                if (request.model === 'Deployment' && request.action === 'findMany') returnedPages.push(result);
+            } });
+        try {
+            const filter = { serverId, environmentId, state: 'failed' as const, actorAccountId: owner.id,
+                operation: 'rollback' as const, limit: 1 };
+            const readFiltered = (cursor?: string) => inReadSnapshot(tx => listDeploymentReceiptsInTx(tx, owner.id, { ...filter, cursor }));
+            expect(await readFiltered()).toMatchObject({ ok: true, items: [{ id: filteredIds[0] }], nextCursor: filteredIds[0] });
+            expect(await readFiltered(filteredIds[0])).toMatchObject({ ok: true, items: [{ id: filteredIds[1] }], nextCursor: null });
+            expect(await inReadSnapshot(tx => listDeploymentReceiptsInTx(tx, owner.id,
+                { ...filter, actorAccountId: `missing-${randomUUID()}` })))
+                .toMatchObject({ ok: true, items: [], nextCursor: null });
+            const pages = requests.filter(row => row.model === 'Deployment' && row.action === 'findMany');
+            expect(pages, 'one narrow matching query per page, never a history crawl').toHaveLength(3);
+            for (const page of pages) expect(page.args).toMatchObject({ where: { environmentId,
+                state: 'failed', operation: 'rollback', requestedByAccountId: expect.any(String) }, take: 2 });
+            expect(returnedPages.map(page => Array.isArray(page) ? page.length : -1),
+                'only matching page rows plus the existing next-page sentinel leave PostgreSQL').toEqual([2, 1, 0]);
+            expect(returnedPages).toMatchObject([[{ id: filteredIds[0] }, { id: filteredIds[1] }], [{ id: filteredIds[1] }], []]);
+            expect(requests.filter(row => row.model === 'Artifact'), 'history filtering never opens content').toEqual([]);
+        } finally { stop(); }
+        // Receipt cursors are Environment-owned chronological boundaries, so
+        // changing a filter continues below that receipt even when it no longer matches.
+        expect(await inReadSnapshot(tx => listDeploymentReceiptsInTx(tx, owner.id,
+            { serverId, environmentId, cursor: filteredIds[0], state: 'failed', operation: 'deploy', limit: 1 })))
+            .toMatchObject({ ok: true, items: [{ id: receiptIds[2] }] });
         const busyInput = { serverId, environmentId, inProgressOnly: true as const };
         const readBusy = () => inReadSnapshot(tx => listDeploymentReceiptsInTx(tx, owner.id, busyInput));
         expect(await readBusy()).toMatchObject({ ok: true, items: [], nextCursor: null });
@@ -570,6 +655,21 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         expect(busy).toMatchObject({ ok: true, items: [{ id: receiptIds[0], state: 'running' }], nextCursor: null });
         if (!busy.ok) throw new Error(busy.error);
         expect(busy.items).toHaveLength(1);
+        const busyFiltered = { ...busyInput, state: 'running' as const, actorAccountId: owner.id, operation: 'deploy' as const };
+        expect(await inReadSnapshot(tx => listDeploymentReceiptsInTx(tx, owner.id, busyFiltered)))
+            .toMatchObject({ ok: true, items: [{ id: receiptIds[0] }], nextCursor: null });
+        expect(await inReadSnapshot(tx => listDeploymentReceiptsInTx(tx, owner.id, { ...busyFiltered, state: 'failed' })))
+            .toMatchObject({ ok: true, items: [], nextCursor: null });
+        const app = createAuthenticatedTestApp();
+        registerDeploymentRoutes(app);
+        try {
+            const query = new URLSearchParams({ serverId, state: 'failed', actorAccountId: owner.id, operation: 'rollback', limit: '1' });
+            const response = await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments/${environmentId}/deployments?${query}`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, items: [{ id: filteredIds[0] }], nextCursor: filteredIds[0] });
+        } finally { await app.close(); }
     });
 
     it('filters membership before paging and preserves current Source admission without opening content', async () => {
@@ -609,12 +709,12 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         // Installed All enters this same native owner once, without listing Project sources.
         // Native collation and earlier tests can put unrelated rows before this
         // fixture; select its preceding position through that same DB ordering.
-        const predecessor = await db.deploymentEnvironment.findFirst({ where: { deletedAt: null, id: { lt: visible.id } },
-            orderBy: { id: 'desc' }, select: { id: true } });
+        const predecessor = await db.deploymentEnvironment.findFirst({ where: { deletedAt: null, id: { gt: visible.id } },
+            orderBy: { id: 'asc' }, select: { id: true } });
         const all = await inReadSnapshot(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
             { serverId, limit: 1, ...(predecessor ? { cursor: predecessor.id } : {}) }));
         expect(all).toMatchObject({ ok: true, items: [{ id: visible.id, projectSourceId: visibleSource.source.id }],
-            runtimeTargetLinks: [], nextCursor: visible.id, coverage: 'complete' });
+            runtimeTargetLinks: [], coverage: 'complete' });
         const linkArtifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
             kind: 'v1:other:deployment-target-link.v1', headerVersion: 1, bodyVersion: 1,
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-target-link.v1', title: 'Unopened custody' })),
@@ -667,7 +767,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         } while (retainedCursor);
         // Cursor ordering belongs to the provider's native collation, not JavaScript's UTF-16 sort.
         const retainedOrder = await db.deploymentEnvironment.findMany({
-            where: { id: { in: [visible.id, tombstone.id] } }, orderBy: { id: 'asc' }, select: { id: true },
+            where: { id: { in: [visible.id, tombstone.id] } }, orderBy: { id: 'desc' }, select: { id: true },
         });
         expect(retainedIds).toEqual(retainedOrder.map(row => row.id));
         expect(await inReadSnapshot(tx => listDeploymentEnvironmentsInTx(tx, owner.id,

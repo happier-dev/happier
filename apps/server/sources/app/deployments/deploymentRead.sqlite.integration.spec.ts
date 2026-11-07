@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -8,7 +13,7 @@ import { createProjectSourceInTx, updateProjectSourceInTx } from '@/app/projects
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
-import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { listDeploymentEnvironmentsInTx } from './deploymentReadService';
 import { sealDeploymentReadCursor } from './deploymentReadCursor';
@@ -21,6 +26,58 @@ describe('deployment detail admission cost', () => {
             env: { HAPPIER_SERVER_IDENTITY_ID: serverId } });
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('shows a created Environment in the first Account inventory page without extra inventory reads', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Hub inventory', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'Hub inventory', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/tmp', happyHomeDir: '/tmp/happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: randomUUID() } });
+        const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+            kind: 'v1:other:deployment-environment.v1',
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'jop83-env' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const base = { projectSourceId: source.source.id, createdByAccountId: owner.id,
+            protection: 'nonProduction' as const, purpose: 'standard' as const, deployerMode: 'managers' as const,
+            controllerMachineId: machine.id, contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        // The live hub spent its entire 500-row window on older ids; its Project had 12 rows.
+        const olderIds = Array.from({ length: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 }, (_, index) =>
+            `a-hub-${source.source.id}-${String(index).padStart(4, '0')}`);
+        await db.deploymentEnvironment.createMany({ data: olderIds.map(id => ({ ...base, id })) });
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id,
+            { ...base, serverId, requestKey: randomUUID() }));
+        if (!created.ok) throw new Error(created.error);
+        const app = createAuthenticatedTestApp();
+        registerDeploymentRoutes(app);
+        const inventoryReads: unknown[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model === 'DeploymentEnvironment' && request.action === 'findMany') inventoryReads.push(request.args);
+        } });
+        const read = async (cursor?: string) => {
+            const query = new URLSearchParams({ serverId, ...(cursor ? { cursor } : {}) });
+            const response = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${query}`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(response.statusCode, response.body).toBe(200);
+            return DeploymentEnvironmentListResultV1Schema.parse(response.json());
+        };
+        try {
+            const page = await read();
+            if (!page.ok) throw new Error(page.error);
+            expect(page.items[0]?.id).toBe(created.environmentId);
+            expect(page.items).toHaveLength(ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
+            expect(inventoryReads, 'one bounded page, no inventory drain to find the created row').toHaveLength(1);
+            const next = await read(page.nextCursor ?? undefined);
+            if (!next.ok) throw new Error(next.error);
+            expect(next.items.map(row => row.id)).toEqual([olderIds[0]]);
+            expect(next.nextCursor).toBeNull();
+            expect(new Set([...page.items, ...next.items].map(row => row.id)).size).toBe(olderIds.length + 1);
+        } finally { stop(); await app.close(); }
+    });
 
     it('preserves valid deployment list rows and continuation when stored siblings are malformed', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -67,13 +124,13 @@ describe('deployment detail admission cost', () => {
             const query = new URLSearchParams({ serverId, projectSourceId: source.source.id, limit: '2' });
             const first = await read(`/v1/deployments/environments?${query}`);
             expect(first.statusCode, first.body).toBe(200);
-            expect(first.json()).toMatchObject({ ok: true, items: [{ id: valid.id }], currentDeployments: [],
+            expect(first.json()).toMatchObject({ ok: true, items: [{ id: later.id }], currentDeployments: [],
                 runtimeTargetLinks: [], coverage: 'partial' });
             expect(first.json().items).toHaveLength(1);
             expect(first.json().nextCursor).toBeTruthy();
             expect(first.body).not.toContain(invalid.id);
             query.set('cursor', first.json().nextCursor);
-            expect((await read(`/v1/deployments/environments?${query}`)).json()).toMatchObject({ items: [{ id: later.id }], nextCursor: null });
+            expect((await read(`/v1/deployments/environments?${query}`)).json()).toMatchObject({ items: [{ id: valid.id }], nextCursor: null });
             const history = await read(`/v1/deployments/environments/${valid.id}/deployments?serverId=${serverId}&limit=1`);
             expect(history.statusCode, history.body).toBe(200);
             expect(history.json()).toMatchObject({ ok: true, items: [] });
@@ -105,7 +162,9 @@ describe('deployment detail admission cost', () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
-            { serverId, requestKey: randomUUID(), name: 'Preview list', audience: [] }));
+            { serverId, requestKey: randomUUID(), name: 'Preview list', audience: [], repository: {
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'acme/preview' }, protocol: 'https' } }));
         if (!source.ok) throw new Error(source.error);
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: '{}', installationId: randomUUID() } });
@@ -132,24 +191,27 @@ describe('deployment detail admission cost', () => {
             previewRepositoryId: source.source.id, previewPullRequestId: 'pr:sibling', previewTargetLinkId: peerLink.id } });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const templateQuery = new URLSearchParams({ serverId, previewTemplateEnvironmentId: template.id, limit: '1' });
-            const templateRequests: { model?: string; action: string }[] = [];
+            const templateRequests: { model?: string; action: string; args?: unknown }[] = [];
             const stopTemplate = observeSqliteRequests({ before: request => { templateRequests.push(request); } });
             const templatePage = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${templateQuery}`,
                 headers: { 'x-test-user-id': owner.id } }).finally(stopTemplate);
             expect(templatePage.statusCode, templatePage.body).toBe(200);
-            expect(templatePage.json().items.map((row: { id: string }) => row.id)).toEqual([children.map(row => row.id).sort()[0]]);
+            expect(templateRequests.filter(row => row.model === 'DeploymentEnvironment' && row.action === 'findMany'))
+                .toEqual([expect.objectContaining({ args: expect.objectContaining({ where: expect.objectContaining({
+                    purpose: 'preview', previewTemplateEnvironmentId: template.id,
+                }) }) })]);
+            expect(templatePage.json().items.map((row: { id: string }) => row.id)).toEqual([children.map(row => row.id).sort().reverse()[0]]);
             expect(templatePage.json().nextCursor).toBeTruthy();
-            expect(templateRequests.filter(row => row.model === 'DeploymentEnvironment' && row.action === 'findMany')).toHaveLength(1);
             expect(templateRequests.filter(row => row.model === 'Artifact')).toEqual([]);
             templateQuery.set('cursor', templatePage.json().nextCursor);
             const templateNext = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${templateQuery}`,
                 headers: { 'x-test-user-id': owner.id } });
-            expect(templateNext.json().items.map((row: { id: string }) => row.id)).toEqual([children.map(row => row.id).sort()[1]]);
+            expect(templateNext.json().items.map((row: { id: string }) => row.id)).toEqual([children.map(row => row.id).sort().reverse()[1]]);
             const sealedCursor = sealDeploymentReadCursor(owner.id, { serverId, previewTemplateEnvironmentId: template.id },
-                children.map(row => row.id).sort()[0]!);
+                children.map(row => row.id).sort().reverse()[0]!);
             expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
                 { serverId, previewTemplateEnvironmentId: template.id, cursor: sealedCursor, limit: 1 })))
-                .toMatchObject({ ok: true, items: [{ id: children.map(row => row.id).sort()[1] }] });
+                .toMatchObject({ ok: true, items: [{ id: children.map(row => row.id).sort().reverse()[1] }] });
             expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
                 { serverId, previewTemplateEnvironmentId: peerTemplate.id, cursor: sealedCursor, limit: 1 })))
                 .toEqual({ ok: false, error: 'deployment_invalid' });
@@ -164,6 +226,26 @@ describe('deployment detail admission cost', () => {
             expect(response.json().items.map((row: { id: string }) => row.id).sort())
                 .toEqual(children.slice(0, 2).map(row => row.id).sort());
             expect(response.json().projectSources).toEqual([{ id: source.source.id, name: source.source.name }]);
+            const identityQuery = new URLSearchParams({ serverId, previewRepository: JSON.stringify({
+                kind: 'github', deployment: 'https://github.com', repository: 'Acme/Preview' }), previewPullRequestIds: 'pr:17' });
+            const predicates: unknown[] = [];
+            const stopIdentity = observeSqliteRequests({ before: request => {
+                if (request.model === 'DeploymentEnvironment' && request.action === 'findMany') predicates.push(request.args);
+            } });
+            const identityRead = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${identityQuery}`,
+                headers: { 'x-test-user-id': owner.id } }).finally(stopIdentity);
+            expect(identityRead.statusCode, identityRead.body).toBe(200);
+            expect(identityRead.json().items.map((row: { id: string }) => row.id)).toEqual([children[0]!.id]);
+            const plan = await db.$queryRawUnsafe<{ detail: string }[]>(
+                'EXPLAIN QUERY PLAN SELECT "id" FROM "DeploymentEnvironment" WHERE "previewPullRequestId" = ? AND "purpose" = ? AND "deletedAt" IS NULL ORDER BY "id"',
+                'pr:17', 'preview');
+            expect(plan.map(row => row.detail).join('\n')).toContain('DeploymentEnvironment_preview_scope_idx');
+            expect(predicates).toEqual([expect.objectContaining({ where: expect.objectContaining({
+                purpose: 'preview', previewPullRequestId: { in: ['pr:17'] } }) })]);
+            identityQuery.set('previewRepository', JSON.stringify({ kind: 'github', deployment: 'https://github.com', repository: 'acme/other' }));
+            const otherRepository = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${identityQuery}`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(otherRepository.json()).toMatchObject({ ok: true, items: [] });
             expect(queries.filter(row => row.model === 'DeploymentEnvironment' && row.action === 'findMany')).toHaveLength(1);
             expect(queries.filter(row => row.model === 'ProjectSource' && row.action === 'findUnique')).toHaveLength(1);
             expect(queries.filter(row => (row.model === 'ProjectSource' || row.model === 'Machine') && row.action === 'findMany')).toEqual([]);
@@ -255,7 +337,7 @@ describe('deployment detail admission cost', () => {
                 found.push(...result.items.map((item: { id: string }) => item.id));
                 cursor = result.nextCursor;
             } while (cursor);
-            expect(found).toEqual(ids);
+            expect(found).toEqual([...ids].reverse());
             const hidden = await read(`${base}&includeDeleted=true`, outsider.id);
             expect(hidden.statusCode).toBe(404);
             expect(hidden.json()).toMatchObject({ ok: false, error: 'deployment_unavailable' });
@@ -282,7 +364,7 @@ describe('deployment detail admission cost', () => {
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
         const prefix = `inventory-${randomUUID()}`;
-        const ids = [0, 1, 2].map(index => `${prefix}-${index}`);
+        const ids = [2, 1, 0].map(index => `${prefix}-${index}`);
         await db.deploymentEnvironment.createMany({ data: ids.map((id, index) => ({ id,
             projectSourceId: index === 0 ? hidden.source.id : visible.source.id,
             createdByAccountId: owner.id, controllerMachineId: machine.id,
@@ -290,7 +372,7 @@ describe('deployment detail admission cost', () => {
             contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
         })) });
         // Start at this fixture's range: existing unrelated fixture rows are not this demand.
-        let cursor: string | undefined = prefix;
+        let cursor: string | undefined = `${prefix}-3`;
         const found: string[] = [];
         for (let index = 0; index < ids.length; index++) {
             const queries: { model?: string; action: string }[] = [];
