@@ -1,14 +1,16 @@
-import { describeManagedNativeFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 import * as React from 'react';
+import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
+import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { View, type ViewStyle } from 'react-native';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
@@ -20,6 +22,8 @@ import { describeManagedLifecycleState, type ManagedLifecycleState } from './man
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { describeManagedNativeFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
+import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
@@ -33,7 +37,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     operation?: ActionOperationProjection | null;
     /** D53: a failed Set up recovers on this same machine, or is skipped; never re-acquired. */
     setupRecovery?: Readonly<{ retry?: () => void; skip?: () => void }>;
-    /** Answers the installer task's open sign-in consent; Continue lets it sign the guest in, Cancel ends the attempt. */
+    /** Answers the installer task's current trust, sign-in or service-replacement question. */
     answerPrompt?: (approved: boolean) => void;
     /** The page's name for this resource (its enrolled Machine's name); the launch name is only what Create was given. */
     title?: string;
@@ -46,20 +50,33 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
         providerAvailable: props.providerAvailable, operation: props.operation, enrolledMachine: props.enrolledMachine });
     const lifecycle = describeManagedLifecycleState(state);
+    const nothingCreated = state.kind === 'notCreated';
+    const checkNow = nothingCreated ? undefined : props.handlers?.checkNow;
     const showStateRow = isManagedCreationStateRowVisible(machine, state);
     const operation = currentManagedCreationOperation(machine, props.operation, props);
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
     const canRetryInstallation = canRetryManagedInstallation(machine, props.operation, props);
     const prompt = readManagedInstallationPrompt(operation);
+    const trustPrompt = prompt?.kind === 'ssh.trustHost' || prompt?.kind === 'ssh.replaceHostKey' ? prompt : null;
+    // A host key is asked in the one trust sheet (lab af-ssh Kp), never inline: the row names the question and opens it.
+    const promptMessage = trustPrompt ? trustPrompt.kind === 'ssh.replaceHostKey'
+        ? t('addFlows.hostKeyChangedTitle', { host: trustPrompt.host }) : t('addFlows.hostKeyTitle')
+        : prompt?.kind === 'daemon.replaceRemoteBackgroundServices' ? t('machine.backgroundServicePrompt.replaceTitle') : prompt?.message;
+    const reviewHostKey = trustPrompt && props.answerPrompt ? () => {
+        const answer = props.answerPrompt!;
+        void confirmSshHostKey({ host: trustPrompt.host, keyType: trustPrompt.keyType, fingerprint: trustPrompt.fingerprint,
+            existingFingerprint: trustPrompt.kind === 'ssh.replaceHostKey' ? trustPrompt.existingFingerprint : null }).then(answer);
+    } : null;
     const progress = operation?.snapshot.progress;
     // A held Ask is the user's step, not a stage to wait on: say so and open it (QB76 projection).
     const heldAsk = operation?.snapshot.state === 'running' && progress?.kind === 'phase' ? progress.approval ?? null : null;
     const setup = managedCreationSetup(machine);
     // A local machine runs on its controller and never bills; "may bill" would contradict its receipt.
-    const mayBill = machine.reviewedFacts?.billing?.location !== 'local';
+    const mayBill = resolveManagedConfigurationCost({ ...machine.reviewedFacts, provider: props.provider ?? null }).kind !== 'local';
     // Native identity is for finding a resource Happier may have lost; a healthy one is already named by its size and image.
     const needsRecovery = Boolean(machine.recovery) || machine.creationState !== 'active' || machine.allocation === 'may-exist' || Boolean(machine.cleanup);
     const installationRetryOnly = !(operation && status) && canRetryInstallation && Boolean(props.handlers?.reinstall);
+    // A Keep wait the operation reports (busy, draining, activity unknown) is the machine's state: its row says it once.
     const observation = machine.observation;
     const bootstrapRunning = operation?.snapshot.state === 'running' && observation?.reason === 'bootstrap.incomplete';
     // Bootstrap evidence is written during the attempt, before its operation settles.
@@ -74,21 +91,27 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         title: machine.allocation === 'confirmed-absent' ? t('managedMachines.inspect.notCreated') : t('managedMachines.inspect.checkFailed'),
         detail: describeManagedNativeFailureDiagnostic(observationDiagnostic.reason ?? 'provider_unavailable', observationDiagnostic.nativeCause),
     } : error ? {
-        title: describeManagedInstallationFailure(error, operation?.snapshot.progress) ?? t('managedMachines.creation.installFailedTitle', { name }),
+        title: nothingCreated ? lifecycle.line
+            : describeManagedInstallationFailure(error, operation?.snapshot.progress) ?? t('managedMachines.creation.installFailedTitle', { name }),
         detail: describeManagedOperationDiagnostic(error),
     } : null;
-    const operationCard = Boolean(observationDiagnostic) || Boolean(operation && status && status.tone !== 'success' && !(newerObservation && operation.snapshot.error)) || installationRetryOnly && !(showStateRow && !lifecycle.banner);
+    // A failed install is evidence Investigate can hand to Triage; a newer check's diagnostic has no operation to hand.
+    const failedOperation = error && operation?.snapshot.state === 'failed' ? operation : null;
+    const operationIsState = STATE_FROM_OPERATION.has(state.kind);
+    const operationCard = Boolean(observationDiagnostic) || !operationIsState
+        && Boolean(operation && status && status.tone !== 'success' && !(newerObservation && operation.snapshot.error))
+        || installationRetryOnly && !(showStateRow && !lifecycle.banner);
     // While the install task tells the story, a quiet creation state would be a second, contradicting card:
     // the task's stage is the state, and the resource's freshness joins its card.
     const operationTells = operationCard && !lifecycle.banner && (QUIET_UNDER_OPERATION.has(state.kind)
         || bootstrapRunning && state.kind === 'observationUnavailable');
     const stateRow = showStateRow && !operationTells;
-    const stateRowChecks = stateRow && lifecycle.actions.includes('checkNow') && Boolean(props.handlers?.checkNow);
+    const stateRowChecks = stateRow && lifecycle.actions.includes('checkNow') && Boolean(checkNow);
     // Freshness qualifies the state it dates: on the state row's own sheet, or standing alone with Check now.
     // A failed re-read is said here too, not in a second "As of" line above the page: one freshness per page.
     const staleRead = props.staleRead;
     // A failure that can't be retried yet carries Check now itself; the freshness row must not offer it twice.
-    const failureChecks = Boolean(failure && !(!observationDiagnostic && canRetryInstallation && props.handlers?.reinstall) && props.handlers?.checkNow);
+    const failureChecks = Boolean(failure && !stateRowChecks && !(!observationDiagnostic && canRetryInstallation && props.handlers?.reinstall) && checkNow);
     const observationRow = machine.observation || staleRead ? <Item testID="managed-machine.observation" mode="info" showChevron={false}
         title={machine.observation ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) })
             : t('managedMachines.detail.loadFailed')}
@@ -97,12 +120,16 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         accessoryLayout={staleRead ? 'adaptive' : undefined}
         rightElement={staleRead ? <RoundButton title={t('common.retry')} display="inverted" size="small"
                 testID="managed-machine.observation-retry" onPress={staleRead.retry} />
-            : stateRowChecks || failureChecks || !props.handlers?.checkNow ? undefined
+            : stateRowChecks || failureChecks || !checkNow ? undefined
             : <RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
-                testID="managed-machine.observation-check" onPress={props.handlers.checkNow} />} /> : null;
+                testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
         <RoundButton title={t('managedMachines.creation.retryInstall')} display="secondary" size="small"
             testID="managed-machine.installation-retry" onPress={props.handlers.reinstall} /> : undefined;
+    const failureAction = !observationDiagnostic && canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
+        onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
+        : checkNow && !stateRowChecks ? { label: t('managedMachines.inspect.checkNow'), onPress: checkNow,
+            testID: 'managed-machine.installation-check' } : undefined;
     return <>
         {setup?.state === 'failed' ? <ItemGroup>
             <Item title={t('managedMachines.creation.setupFailed', { name: machine.launch.name })} titleLines={0}
@@ -119,14 +146,10 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
             {/* The task waits on the user here: its own question replaces the stage, with its answer beside it. */}
             {failure ? <SectionContentRow>
                 {/* One story: the short cause in the app's words with its recovery; the installer's own message waits behind Details. */}
-                <SurfaceStateCard kind="error" size="details" layout="inline" title={failure.title}
-                    diagnosticCode={failure.detail} testID="managed-machine.installation-error"
-                    // Retry when the failed install is confirmed; while its history can't be read, Check now re-reads it.
-                    action={!observationDiagnostic && canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
-                        onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
-                        : props.handlers?.checkNow ? { label: t('managedMachines.inspect.checkNow'), onPress: props.handlers.checkNow,
-                            testID: 'managed-machine.installation-check' } : undefined} />
-            </SectionContentRow> : <Item title={name} subtitle={prompt ? prompt.message : heldAsk ? t('approvals.waitingForYou')
+                {failedOperation ? <FailedInstallationCard operation={failedOperation} title={failure.title} detail={failure.detail}
+                    action={failureAction} /> : <SurfaceStateCard kind="error" size="details" layout="inline" title={failure.title}
+                    diagnosticCode={failure.detail} testID="managed-machine.installation-error" action={failureAction} />}
+            </SectionContentRow> : <Item title={name} subtitle={prompt ? promptMessage : heldAsk ? t('approvals.waitingForYou')
                 : status ? describeActionOperationStatusLabel(status.label) : lifecycle.line}
                 mode="info" showChevron={false} testID="managed-machine.installation" subtitleLines={prompt ? 0 : undefined}
                 accessoryLayout={prompt && props.answerPrompt ? 'adaptive' : undefined}
@@ -134,6 +157,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                     accessibilityElementsHidden importantForAccessibility="no" /> : undefined}
                 rightElement={heldAsk && props.reviewApproval ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
                     testID="managed-machine.installation-review" onPress={() => props.reviewApproval?.(heldAsk.artifactId)} />
+                : reviewHostKey ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
+                    testID="managed-machine.installation-prompt-review" onPress={reviewHostKey} />
                 : prompt && props.answerPrompt ? <View style={setupActions}>
                     <RoundButton title={t('common.cancel')} display="inverted" size="small"
                         testID="managed-machine.installation-prompt-decline" onPress={() => props.answerPrompt?.(false)} />
@@ -146,7 +171,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         {stateRow && lifecycle.banner ? <ManagedMachineStateRow name={name} mark={null}
             state={state} provider={props.provider} handlers={props.handlers ?? {}} testID="managed-machine.progress" /> : null}
         {stateRow && !lifecycle.banner ? <ItemGroup>
-            <ManagedMachineStateRow name={name}
+            {/* The page header already names the machine: an ended or canceled one's row leads with its state word. */}
+            <ManagedMachineStateRow name={lifecycle.word ?? name}
                 mark={props.mark ?? <Icon name="desktop" />}
                 state={state} provider={props.provider} handlers={props.handlers ?? {}}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
@@ -157,11 +183,15 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
             {observationRow}
         </ItemGroup> : observationRow && !operationTells ? <ItemGroup>{observationRow}</ItemGroup> : null}
-        {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')}>
-            <Item title={t('managedMachines.detail.nativeIdentity')} mode="info" showChevron={false}
-                testID="managed-machine.recovery" accessoryLayout="stacked" rightElement={
-                    <Text selectable style={styles.identity}>{machine.recovery?.reference ?? describeNativeIdentity(machine.resource?.value)}</Text>
-                } />
+        {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')} testID="managed-machine.recovery">
+            {machine.resource ? <Item title={t('managedMachines.detail.nativeIdentity')} mode="info" showChevron={false}
+                testID="managed-machine.recovery-native" accessoryLayout="stacked" rightElement={
+                    <Text selectable style={styles.identity}>{describeNativeIdentity(machine.resource.value)}</Text>
+                } /> : null}
+            {machine.recovery ? <Item title={t(machine.recovery.reference === machine.id ? 'managedMachines.detail.happierTag' : 'managedMachines.detail.recoveryReference')} mode="info" showChevron={false}
+                testID="managed-machine.recovery-tag" accessoryLayout="stacked" rightElement={
+                    <Text selectable style={styles.identity}>{machine.recovery.reference}</Text>
+                } /> : null}
             {machine.allocation !== 'confirmed-absent' && (machine.cleanup || machine.allocation === 'may-exist')
                 && !machine.recovery?.consoleUrl ? <Item title={t('managedCleanup.consoleHelp')} mode="info" showChevron={false}
                     titleLines={0} testID="managed-machine.recovery-manual" /> : null}
@@ -169,8 +199,35 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     </>;
 }
 
+/**
+ * A failed install, in the app's words with its recovery (Retry, else Check now), and Investigate beside it (D5): it
+ * hands this exact operation to configured Triage through the Account's one investigation owner.
+ */
+function FailedInstallationCard(props: Readonly<{
+    operation: ActionOperationProjection;
+    title: string;
+    detail: string | null;
+    action: SurfaceStateAction | undefined;
+}>) {
+    const { serverId, snapshot } = props.operation;
+    const subject = React.useMemo(() => ({ kind: 'managedMachineOperation' as const,
+        operation: { serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId } }),
+    [serverId, snapshot.scope.machineId, snapshot.operationId]);
+    const investigation = useInvestigateFailure(subject);
+    return <>
+        {/* Retry when the failed install is confirmed; while its history can't be read, Check now re-reads it. */}
+        <SurfaceStateCard kind="error" size="details" layout="inline" title={props.title}
+            diagnosticCode={props.detail} testID="managed-machine.installation-error" action={props.action}
+            secondaryAction={{ label: t('inbox.work.healthNotice.investigate'), onPress: investigation.investigate,
+                testID: 'managed-machine.installation-investigate', disabled: investigation.pending, busy: investigation.pending }} />
+        {investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={serverId}
+            testID="managed-machine.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
+    </>;
+}
+
 /** Creation states an install task's own stage already says; anything that blocks or may bill still speaks. */
-const QUIET_UNDER_OPERATION: ReadonlySet<ManagedLifecycleState['kind']> = new Set(['resourceReady', 'creating', 'creationWaiting']);
+const QUIET_UNDER_OPERATION: ReadonlySet<ManagedLifecycleState['kind']> = new Set(['resourceReady', 'creating', 'creationWaiting', 'notCreated']);
+const STATE_FROM_OPERATION: ReadonlySet<ManagedLifecycleState['kind']> = new Set(['busy', 'draining', 'activityUnknown']);
 
 /** A flat native value reads as one fact per line; anything nested keeps its JSON on that line. */
 function describeNativeIdentity(value: unknown): string {

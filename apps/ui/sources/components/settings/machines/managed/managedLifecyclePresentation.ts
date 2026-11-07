@@ -1,5 +1,6 @@
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import type { ManagedCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 /**
  * Every state a created machine can be in that needs words (plans 50/52, lab `m-life`): its cause in
@@ -22,6 +23,10 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'resourceReady' }>
   | Readonly<{ kind: 'observationUnavailable' }>
   | Readonly<{ kind: 'creationCanceledCleanup' }>
+  /** Canceled before any resource was made: nothing exists, so nothing "no longer exists". */
+  | Readonly<{ kind: 'creationCanceled' }>
+  /** Creation settled without a bound native resource. */
+  | Readonly<{ kind: 'notCreated' }>
   | Readonly<{ kind: 'stopPending' }>
   | Readonly<{ kind: 'powerPending'; provider: string; state: string }>
   | Readonly<{ kind: 'stoppedStorage' }>
@@ -34,7 +39,7 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'busy' }>
   | Readonly<{ kind: 'activityUnknown' }>
   | Readonly<{ kind: 'draining' }>
-  | Readonly<{ kind: 'cleanupPending'; reason?: string }>
+  | Readonly<{ kind: 'cleanupPending'; reason?: string; cost?: ManagedCost }>
   | Readonly<{ kind: 'cleanupUnknown' }>
   | Readonly<{ kind: 'providerRemoved'; provider: string }>
   | Readonly<{
@@ -184,6 +189,13 @@ export function describeManagedLifecycleState(
       return present('warning', { cause: t('managedPower.storageUnknown') }, [
         'checkNow',
       ]);
+    case 'creationCanceled':
+      return { ...present('neutral', { detail: t('managedMachines.creation.canceledBeforeCreate') }, [
+        'remove',
+      ]), word: t('managedMachines.creation.canceledShort') };
+    case 'notCreated':
+      return { ...present('neutral', { detail: t('managedMachines.inspect.notCreated') }, ['remove']),
+        word: t('managedMachines.inspect.notCreated') };
     case 'absent':
       return { ...present('neutral', { detail: t('managedPower.resourceAbsent') }, [
         'remove',
@@ -233,7 +245,7 @@ export function describeManagedLifecycleState(
         'danger',
         {
           // The banner's title names the state; its body says what it means for the bill.
-          detail: [t('managedCleanup.pendingDetail'), state.reason]
+          detail: [state.cost?.kind === 'local' ? undefined : t('managedCleanup.pendingDetail'), state.reason]
             .filter(Boolean)
             .join(' '),
         },
@@ -247,7 +259,7 @@ export function describeManagedLifecycleState(
           cause: t('managedMachines.cleanup.unknownCause'),
           detail: t('managedMachines.cleanup.unknownDetail'),
         },
-        ['checkNow', 'openProvider'],
+        ['checkNow', 'remove', 'openProvider'],
       );
     case 'providerRemoved':
       return present(

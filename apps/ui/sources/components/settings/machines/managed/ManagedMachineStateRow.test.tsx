@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createExpoRouterMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 const routerBoundary = createExpoRouterMock();
@@ -19,6 +19,9 @@ installSettingsViewCommonModuleMocks({
 afterEach(() => standardCleanup());
 
 const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
+// Pages render under the app shell, which owns the Account's one Investigate owner (D5).
+const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
+const renderScreen: typeof renderTestScreen = (element, options = {}) => renderTestScreen(element, { ...options, wrapper: AccountNoticeInvestigationBoundary });
 
 describe('managed lifecycle presentation', () => {
   it.each(['newer-unknown', 'no-observation', 'older-observation', 'same-time-observation', 'confirmed-absent', 'absent-without-operation', 'newer-clear'] as const)(
@@ -71,7 +74,6 @@ describe('managed lifecycle presentation', () => {
       }
     },
   );
-
 
   it('keeps confirmed-absent recovery enabled inside a noninteractive historical resource row', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
@@ -227,7 +229,7 @@ describe('created machine resource rows (UIR5)', () => {
       launch: { provider, schemaVersion: 1, name: 'Lima', choices: {} },
       controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest', allocation: 'bound', creationState: 'active',
       resource: { contributionRef: provider, schemaVersion: 1, value: { instance: 'happier-studio', cpus: 2 } },
-      observation: { observedAt: 5, availability: 'present', power: 'stopped', storage: 'unknown', daemon: 'disconnected' },
+      observation: { observedAt: 5, availability: 'present', power: 'stopped', storage: 'unknown' },
       desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, ...overrides });
   }
   const testIds = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
@@ -289,7 +291,7 @@ describe('created machine resource rows (UIR5)', () => {
     expect(testIds(screen, 'managed-machine.observation-check')).toHaveLength(0);
     expect(testIds(screen, 'managed-machine.progress:checkNow')).toHaveLength(1);
     const healthy = await renderScreen(<ManagedCreationProgress machine={await boundMachine({
-      observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained', daemon: 'connected' } })}
+      observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } })}
       handlers={{ checkNow }} />);
     expect(testIds(healthy, 'managed-machine.observation-check')).toHaveLength(1);
   });
@@ -307,6 +309,34 @@ describe('created machine resource rows (UIR5)', () => {
     expect(testIds(screen, 'managed-machine.observation-check')).toHaveLength(0);
   });
 
+  it.each([
+    ['Lume', 'happier.machine.lume', false],
+    ['Lima', 'happier.machine.lima', false],
+    ['Hetzner', 'happier.machine.hetzner', true],
+  ] as const)('uses %s billing facts for an unconfirmed Delete and cleanup', async (name, pluginId, billed) => {
+    const { BUNDLED_MACHINE_PROVISIONER_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
+    const declaration = Object.values(BUNDLED_MACHINE_PROVISIONER_DECLARATIONS)
+      .find(entry => entry.contribution.pluginId === pluginId);
+    if (!declaration) throw new Error(`Missing provisioner: ${pluginId}`);
+    const { t } = await import('@/text');
+    const machine = await boundMachine({
+      enrolledMachineId: undefined,
+      desired: 'delete',
+      submittedNativeEffect: { intentRevision: 1, requestId: 'delete-request', intent: 'delete',
+        controller: { machineId: 'controller', installationId: 'installation' } },
+    });
+    const facts = { ...machine, launch: { ...machine.launch, provider: declaration.contribution },
+      reviewedFacts: { launch: { ...machine.launch, provider: declaration.contribution }, controller: machine.controller,
+        optionStatus: 'current' as const, billing: declaration.descriptor.billing, prerequisites: [],
+        retentionCapabilities: declaration.descriptor.retention, retention: machine.retention, wakeOnAcceptedMessage: false } };
+    const screen = await renderScreen(<ManagedCreationProgress machine={facts} provider={name} />);
+    expect(screen.getTextContent()).toContain(t('managedCleanup.pendingTitle'));
+    expect(screen.getTextContent().includes(t('managedCleanup.pendingDetail'))).toBe(billed);
+    await screen.update(<ManagedCreationProgress machine={{ ...facts,
+      cleanup: { disposition: 'unavailable', reason: 'native_records_missing' } }} provider={name} />);
+    expect(screen.getTextContent().includes(t('managedMachines.creation.mayBill'))).toBe(billed);
+  });
+
   it('never says a local machine may bill', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const machine = await boundMachine({ enrolledMachineId: undefined, cleanup: { disposition: 'unavailable', reason: 'native_records_missing' } });
@@ -319,7 +349,7 @@ describe('created machine resource rows (UIR5)', () => {
 
   it('shows a held approval wait as needing the user, with its exact Ask one press away', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
-    const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained', daemon: 'connected' } });
+    const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } });
     const nativeController = machine.controller;
     if (!nativeController) throw new Error('The native fixture requires its installed controller.');
     const reviewApproval = vi.fn();
@@ -333,5 +363,26 @@ describe('created machine resource rows (UIR5)', () => {
     expect(screen.getTextContent()).toContain('Waiting for your approval');
     await act(async () => { screen.pressByTestId('managed-machine.installation-review'); });
     expect(reviewApproval).toHaveBeenCalledWith('ask-1');
+  });
+
+  it.each([
+    ['managed.intent.busy', 'Waiting for guest work', 'managedRetention.busy'],
+    ['managed.intent.draining', 'Finishing work', 'managedRetention.draining'],
+  ] as const)('tells a Keep wait the operation reports (%s) once, as the machine\'s state with its freshness', async (phase, label, stateKey) => {
+    const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
+    const { t } = await import('@/text');
+    const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } });
+    const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
+      snapshot: { version: 1 as const, operationId: 'policy-stop', revision: 3, actionId: 'machines.managed.power.set', state: 'running' as const,
+        scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Stop', createdAt: 1, startedAt: 2,
+        domainRef: { kind: 'managedMachine' as const, id: machine.id, resource: machine.resource, controller: machine.controller },
+        cancellation: 'supported' as const, progress: { kind: 'phase' as const, phase, label } } };
+    const screen = await renderScreen(<ManagedCreationProgress machine={machine} operation={operation as never} handlers={{ checkNow: vi.fn() }} />);
+    // One card: the state row says the wait in the app's words; the producer's stage label is not a second copy of it.
+    expect(testIds(screen, 'managed-machine.installation')).toHaveLength(0);
+    expect(testIds(screen, 'managed-machine.progress')).toHaveLength(1);
+    expect(screen.getTextContent()).toContain(t(stateKey));
+    expect(screen.getTextContent()).not.toContain(label);
+    expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
   });
 });

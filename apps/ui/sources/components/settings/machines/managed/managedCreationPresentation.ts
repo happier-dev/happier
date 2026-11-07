@@ -1,4 +1,5 @@
 import { classifyManagedMachineAllocationV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { t } from '@/text';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
@@ -89,7 +90,8 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
             case 'managed.intent.draining': return { kind: 'draining' };
         }
     }
-    if (machine.submittedNativeEffect?.intent === 'delete') return { kind: 'cleanupPending' };
+    if (machine.submittedNativeEffect?.intent === 'delete') return { kind: 'cleanupPending',
+        cost: resolveManagedConfigurationCost({ ...machine.reviewedFacts, provider: context.provider ?? null }) };
     if (machine.submittedNativeEffect?.intent === 'stop' && machine.observation?.power !== 'stopped') return { kind: 'stopPending' };
     // A committed Start whose native submission is unconfirmed has no submitted effect yet (QB118), but the
     // guest is still observed asleep: the request stands, so the page must not read as a machine at rest.
