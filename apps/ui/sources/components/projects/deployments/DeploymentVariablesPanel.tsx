@@ -1,0 +1,1251 @@
+import * as React from 'react';
+import { Pressable, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import {
+  Collection,
+  useHappierCollection,
+  type CollectionAnatomy,
+} from '@happier-dev/plugin-ui';
+import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
+
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import {
+  DropdownMenu,
+  type DropdownMenuItem,
+} from '@/components/ui/forms/dropdown/DropdownMenu';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { Item } from '@/components/ui/lists/Item';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
+import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
+
+import {
+  readDeploymentActionError,
+  type DeploymentActionOutcome,
+} from './deploymentActionOutcome';
+import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
+import type { useEnvironmentSecretBindingsDraft } from './useEnvironmentSecretBindingsDraft';
+import { useEnvironmentSavedSecretBindings, type EnvironmentSavedSecretBindingResult } from './useEnvironmentSavedSecretBindings';
+import type { EnvironmentBulkSourceLabel } from './useEnvironmentSecretBindingsEditor';
+import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
+import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
+
+type VariableBinding = EnvironmentVariableBindingV1;
+type Phase = 'build' | 'runtime' | 'both';
+type VariableRow = Readonly<{
+  key: string;
+  name: string;
+  phase: Phase;
+  binding: VariableBinding;
+  /** The binding identities this row stands for: one, or the build+runtime pair a "Both" row reads as. */
+  identities: readonly string[];
+}>;
+type BindingsDraft = ReturnType<typeof useEnvironmentSecretBindingsDraft>;
+type SavedSecretBindings = ReturnType<typeof useEnvironmentSavedSecretBindings>;
+type SecretSources = EnvironmentSavedSecretBindingResult['sources'];
+type PanelMode = 'table' | 'bulk';
+type Adding = 'plain' | 'secret' | 'saved';
+type SecretSource = Extract<VariableBinding['source'], { kind: 'secret' }>;
+
+const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
+/** A pasted secret's value never shows again: a fixed run of dots stands for it. */
+const MASK = '••••••••••••••••••••••••';
+const TABLE_MIN_WIDTH_PX = 520;
+const keyOf = (row: VariableRow) => row.key;
+const noop = () => {};
+
+/**
+ * Environment → Variables (lab r3 `variables/rows`, round 9 `variables/phase`): a table of names with where each
+ * is used and where its value comes from. Rows read metadata only. They come from Plan 42's binding
+ * projection (K1) through the page's draft owner. Only the shared Reveal leaf reads a value after confirmation.
+ * Identities stay stable across echoes; every change is local
+ * until Save, which is one `deployments.bindings.set` write (a "Both" change is the build+runtime pair at once).
+ */
+export const DeploymentVariablesPanel = React.memo(
+  function DeploymentVariablesPanel(
+    props: Readonly<{
+      draft: BindingsDraft;
+      phone: boolean;
+      environmentName: (environmentId: string) => string | null;
+      /** The Machine the release starts on, which alone opens the sealed secrets. */
+      sealedOn: string | null;
+      review: DeploymentReviewHandle;
+      /** The Environment the draft edits: a new secret binds only into this one. */
+      environmentId: string;
+      /** The Home/Account a new secret is saved under (Settings → Secrets); null while it is not current. */
+      scope: AccountSettingsScope | null;
+      /** The same Home/Account's lifetime: "Use a saved secret…" picks only while it is current. */
+      lifetime: ServerAccountScopeLifetime | null;
+      /** Only a single runtime Machine has an unambiguous Services destination. */
+      machineId?: string | null;
+    }>,
+  ) {
+    const { theme } = useUnistyles();
+    const router = useRouter();
+    const { draft } = props;
+    const editor = draft.editor;
+    // A Saved Secret row names its secret from the Account's one catalog (no material is read).
+    const catalog = useSavedSecretCatalogEntries({ scope: props.scope });
+    const secretName = React.useCallback(
+      (ref: string) => catalog.find((entry) => entry.ref === ref)?.name ?? null,
+      [catalog],
+    );
+    const rows = React.useMemo(() => variableRows(editor.rows), [editor.rows]);
+    const [disclosedKey, setDisclosedKey] = React.useState<string | null>(null);
+    const disclosedRow = rows.find(row => JSON.stringify([props.environmentId, row.key]) === disclosedKey);
+    const disclosedRef = disclosedRow?.binding.source.kind === 'secret' ? disclosedRow.binding.source.ref : null;
+    const disclosedEntry = catalog.find(entry => entry.ref === disclosedRef);
+    const machineServicesHref = props.machineId && props.scope ? machinePageHref({ door: 'rail', target: {
+      machineId: props.machineId, serverId: props.scope.serverId }, tab: { id: 'services' } }) : null;
+    const manageSecret = React.useCallback((ref: string) => {
+      router.push({ pathname: SETTINGS_ROUTES.secrets, params: { secret: ref } });
+    }, [router]);
+    const editable = draft.canEdit && !draft.saving;
+    const [adding, setAdding] = React.useState<Adding | null>(null);
+    // "Use a saved secret…" (lab d2 `pick`): the shared reference-only picker, then a name for it here.
+    const [picked, setPicked] = React.useState<SecretSource | null>(null);
+    const pickSaved = React.useCallback(async () => {
+      const lifetime = props.lifetime;
+      if (!lifetime) return;
+      const controller = new AbortController();
+      const selection = await presentSavedSecretReferencePicker({
+        accountLifetime: lifetime, signal: controller.signal, isCurrent: () => lifetime.isCurrent(),
+      });
+      if (!selection) return;
+      setPicked({ kind: 'secret', ref: selection.ref, resourceRevision: selection.resourceRevision });
+      setAdding('saved');
+    }, [props.lifetime]);
+    const [mode, setMode] = React.useState<PanelMode>(() => editor.bulkInput === null ? 'table' : 'bulk');
+    // Saved Secrets own creation; the editor only takes their references into this draft, saved below.
+    const saved = useEnvironmentSavedSecretBindings({
+      scope: props.scope,
+      scopeKey: props.environmentId,
+      editor,
+      readOnly: !editable,
+    });
+    const [outcome, setOutcome] =
+      React.useState<DeploymentActionOutcome | null>(null);
+    const model = useHappierCollection<VariableRow>({
+      items: rows,
+      keyOf,
+      openKey: null,
+      onOpenChange: noop,
+    });
+
+    const setPhase = React.useCallback(
+      (row: VariableRow, phase: Phase) => {
+        if (phase === row.phase) return;
+        const phases =
+          phase === 'both' ? (['build', 'runtime'] as const) : [phase];
+        editor.putMany(
+          phases.map((p) => ({ ...row.binding, phase: p })),
+          row.identities,
+        );
+      },
+      [editor],
+    );
+    const remove = React.useCallback(
+      (row: VariableRow) => {
+        editor.putMany([], row.identities);
+      },
+      [editor],
+    );
+
+    const anatomy = React.useMemo<CollectionAnatomy<VariableRow>>(() => {
+      const phaseControl = (row: VariableRow) => (
+        <PhaseMenu
+          row={row}
+          disabled={!editable}
+          onSelect={(phase) => setPhase(row, phase)}
+        />
+      );
+      // The resting list (a phone, a narrow pane) has no phase column, so its ⋯ holds "Used at" too.
+      const rowMenu = (withPhase: boolean) => (row: VariableRow) => {
+        const source = row.binding.source;
+        const entry = source.kind === 'secret' ? catalog.find(entry => entry.ref === source.ref) : undefined;
+        return (
+        <VariableRowMenu
+          row={row}
+          disabled={!editable}
+          withPhase={withPhase}
+          onPhase={(phase) => setPhase(row, phase)}
+          onRemove={() => remove(row)}
+          onReveal={entry && props.scope
+            ? () => setDisclosedKey(JSON.stringify([props.environmentId, row.key])) : undefined}
+          onRotate={source.kind === 'secret' && entry?.capabilities.rotate
+            ? () => manageSecret(source.ref) : undefined}
+        />
+        );
+      };
+      const source = (row: VariableRow) => (
+        <ValueSource
+          binding={row.binding}
+          environmentName={props.environmentName}
+          secretName={secretName}
+        />
+      );
+      return {
+        glyph: (row) => (
+          <Icon
+            name={sourceIcon(row.binding.source.kind)}
+            size={16}
+            color={theme.colors.text.secondary}
+          />
+        ),
+        title: (row) => row.name,
+        // The list reads one row as the lab's `rowsp`: the name, then where it is used and its value.
+        byline: (row: VariableRow) => (
+                <Text
+                  variant="meta"
+                  numberOfLines={2}
+                  style={{ color: theme.colors.text.secondary }}
+                >
+                  {`${phaseLabel(row.phase)} · ${sourceTitle(row.binding, props.environmentName, secretName)}`}
+                </Text>
+              ),
+        action: rowMenu(true),
+        fields: [
+                {
+                  key: 'usedAt',
+                  title: t('projects.deployments.columnUsedAt'),
+                  render: phaseControl,
+                  // The phase is the row's one decision: it stays after the name; Value from gives way first.
+                  minWidth: 104,
+                  priority: 5,
+                  leading: true,
+                  control: true,
+                },
+                {
+                  key: 'valueFrom',
+                  title: t('projects.deployments.columnValueFrom'),
+                  render: source,
+                  minWidth: 180,
+                  priority: 4,
+                },
+                {
+                  key: 'menu',
+                  title: '',
+                  render: rowMenu(false),
+                  minWidth: 32,
+                  priority: 6,
+                  align: 'end' as const,
+                  control: true,
+                },
+              ],
+        accessibilityLabel: (row) =>
+          `${row.name}, ${phaseLabel(row.phase)}, ${sourceTitle(row.binding, props.environmentName, secretName)}`,
+        testID: (row) => `project-deployments.environment.variable.${row.name}`,
+        columnTitles: { title: t('projects.deployments.columnName') },
+      };
+    }, [
+      editable,
+      props.environmentName,
+      secretName,
+      remove,
+      setPhase,
+      catalog,
+      props.scope,
+      props.environmentId,
+      manageSecret,
+      theme.colors.text.secondary,
+    ]);
+
+    const save = async (): Promise<boolean> => {
+      setOutcome(null);
+      try {
+        const result = await draft.save();
+        if (result && !result.ok) {
+          setOutcome({ kind: 'refused', reason: 'other', code: result.error });
+          return false;
+        }
+        return true;
+      } catch (error) {
+        const next = readDeploymentActionError(error);
+        if (next.kind === 'approval') props.review.request(next.artifactId);
+        setOutcome(next);
+        return false;
+      }
+    };
+    // Bulk edit's one "Save N changes": its diff lands in the draft first, then this one write follows.
+    const [saveQueued, setSaveQueued] = React.useState(false);
+    React.useEffect(() => {
+      if (!saveQueued || !draft.canSave) return;
+      setSaveQueued(false);
+      void save().then((ok) => {
+        if (ok) setMode('table');
+      });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [saveQueued, draft.canSave]);
+    // How a kept source reads in the file: a Saved Secret by its name, a reference by its Environment.
+    const environmentName = props.environmentName;
+    const label = React.useMemo<EnvironmentBulkSourceLabel>(() => (source) => {
+      if (source.kind === 'secret') {
+        const name = catalog.find((entry) => entry.ref === source.ref)?.name;
+        return name ? `saved: ${name}` : `saved secret · revision ${source.resourceRevision}`;
+      }
+      if (source.kind === 'reference') {
+        return `${source.export} from ${environmentName(source.environmentId) ?? t('projects.deployments.sourceAnotherEnvironment')}`;
+      }
+      return sourceTitle({ purpose: 'variable', name: '', phase: 'runtime', source }, environmentName).toLowerCase();
+    }, [catalog, environmentName]);
+    const savedName = (source: SecretSource) =>
+      catalog.find((entry) => entry.ref === source.ref)?.name ?? t('projects.deployments.sourceSavedSecret');
+    const secrets = rows.filter(
+      (row) => row.binding.source.kind === 'secret',
+    ).length;
+    // K-P42: a secret linked into a Team Environment reaches whoever controls its Machines. Linking is the
+    // approval, so this is one quiet line beside the secrets (shown as soon as one is added, before Save).
+    const teamDisclosure = editor.rows.some(
+      (row) => row.secretDisclosure?.kind === 'teamEnvironmentMachines',
+    );
+    const saveActions = draft.dirty && mode === 'table' ? (
+      <>
+        <SectionActionButton
+          testID="project-deployments.environment.variables.discard"
+          title={t('common.discard')}
+          icon="x"
+          disabled={draft.saving}
+          onPress={() => {
+            setOutcome(null);
+            draft.cancel();
+          }}
+        />
+        <RoundButton
+          testID="project-deployments.environment.variables.save"
+          size="small"
+          title={t('common.save')}
+          loading={draft.saving}
+          disabled={!draft.canSave}
+          onPress={() => {
+            void save();
+          }}
+        />
+      </>
+    ) : null;
+    // Table | Bulk edit, then Add (lab d2 `variables`): editing a list of names and pasting a .env are two
+    // views of the same draft; Save stays the one write.
+    const actions = draft.canEdit ? (
+      <View style={styles.actions}>
+        <SegmentedTabBar<PanelMode>
+          testIDPrefix="project-deployments.environment.variables.mode"
+          accessibilityLabel={t('projects.deployments.variablesTitle')}
+          compact
+          segmentSizing="content"
+          role="radiogroup"
+          activeTabId={mode}
+          onSelectTab={(next) => {
+            setAdding(null);
+            if (next === 'table') editor.cancelBulk();
+            setMode(next);
+          }}
+          tabs={[
+            { id: 'table', label: t('projects.deployments.variablesModeTable') },
+            { id: 'bulk', label: t('projects.deployments.variablesModeBulk') },
+          ]}
+        />
+        {saveActions ?? (mode === 'table' ? (
+          <AddMenu
+            disabled={adding !== null}
+            secretsAvailable={props.scope !== null}
+            savedAvailable={props.lifetime !== null}
+            onSelect={(choice) => {
+              if (choice === 'paste') setMode('bulk');
+              else if (choice === 'saved') void pickSaved();
+              else setAdding(choice);
+            }}
+          />
+        ) : null)}
+      </View>
+    ) : undefined;
+
+    return (
+      <ItemGroup
+        testID="project-deployments.environment.variables"
+        title={t('projects.deployments.variablesTitle')}
+        titleAccessory={
+          rows.length > 0 ? (
+            <ManagedSectionCount count={rows.length} />
+          ) : undefined
+        }
+        description={t('projects.deployments.variablesDescription')}
+        action={actions}
+        surface="none"
+      >
+        {outcome ? (
+          <SaveOutcome
+            outcome={outcome}
+            pending={
+              outcome.kind === 'approval' &&
+              props.review.pendingId === outcome.artifactId
+            }
+            onOpenReview={props.review.open}
+          />
+        ) : null}
+        {draft.conflict ? (
+          <AttentionBanner
+            testID="project-deployments.environment.variables.conflict"
+            tone="neutral"
+            title={t('projects.deployments.variablesConflictTitle')}
+            description={t('projects.deployments.variablesConflictBody')}
+            action={{ label: t('common.discard'), onPress: draft.cancel }}
+          />
+        ) : null}
+        {mode === 'bulk' ? (
+          <BulkEditor
+            editor={editor}
+            saved={saved}
+            label={label}
+            environmentName={props.environmentName(props.environmentId) ?? ''}
+            saving={draft.saving || saveQueued}
+            onSave={() => setSaveQueued(true)}
+            onCancel={() => {
+              editor.cancelBulk();
+              setMode('table');
+            }}
+          />
+        ) : null}
+        {mode === 'table' && adding ? (
+          <AddValueVariable
+            taken={rows}
+            secret={adding === 'secret'}
+            bound={adding === 'saved' && picked ? savedName(picked) : null}
+            status={saved.status}
+            onCancel={() => setAdding(null)}
+            onAdd={async (name, value) => {
+              if (adding === 'saved') {
+                const result = picked ? editor.setVariable({ name, phase: 'runtime', source: picked }) : { ok: false };
+                if (result.ok) setAdding(null);
+                return result.ok;
+              }
+              if (adding === 'secret') {
+                const result = await saved.createAndBind({ name, value, phase: 'runtime' });
+                if (result.ok) setAdding(null);
+                return result.ok;
+              }
+              const result = editor.setVariable({
+                name,
+                phase: 'runtime',
+                source: { kind: 'value', value },
+              });
+              if (result.ok) setAdding(null);
+              return result.ok;
+            }}
+          />
+        ) : null}
+        {mode === 'bulk' ? null : rows.length === 0 ? (
+          adding ? null : (
+            // An empty file invites the three ways in (lab d2 `addvar`), not a bare line.
+            <SurfaceStateCard
+              testID="project-deployments.environment.variables.empty"
+              kind="empty"
+              size="details"
+              layout="inline"
+              title={t('projects.deployments.variablesEmpty')}
+              reason={t('projects.deployments.variablesEmptyBody')}
+              {...(draft.canEdit ? {
+                action: props.lifetime
+                  ? { label: t('projects.deployments.addSaved'), onPress: () => { void pickSaved(); } }
+                  : { label: t('projects.deployments.addPlain'), onPress: () => setAdding('plain') },
+                secondaryAction: { label: t('projects.deployments.addPaste'), onPress: () => setMode('bulk') },
+              } : {})}
+            />
+          )
+        ) : (
+          <CoreCollectionScope>
+            <Collection<VariableRow>
+              testID="project-deployments.environment.variables.table"
+              model={model}
+              anatomy={anatomy}
+              accessibilityLabel={t('projects.deployments.variablesTitle')}
+              presentation={props.phone ? 'list' : 'table'}
+              detail="none"
+              scroll="page"
+              minListWidth={TABLE_MIN_WIDTH_PX}
+              minDetailWidth={TABLE_MIN_WIDTH_PX}
+              preferredListRatio={1}
+            />
+          </CoreCollectionScope>
+        )}
+        {mode === 'table' ? <DeploymentSecretBindingsNotice
+          bindings={editor.rows.map(row => row.binding)} scope={props.scope} /> : null}
+        {mode === 'table' && disclosedRow && disclosedEntry && props.scope ? (
+          <ItemGroup title={disclosedRow.name} action={<SectionActionButton
+            testID={`project-deployments.environment.variable.${disclosedRow.name}.value.close`}
+            title={t('common.close')} icon="x" onPress={() => setDisclosedKey(null)} />}>
+            <SharedSavedSecretValueItem
+              key={JSON.stringify([props.environmentId, props.scope.serverId, props.scope.accountId, disclosedEntry.ref])}
+              testID={`project-deployments.environment.variable.${disclosedRow.name}.value`}
+              scope={props.scope} entry={disclosedEntry} active />
+          </ItemGroup>
+        ) : null}
+        {machineServicesHref ? <Item
+          testID="project-deployments.environment.variables.services"
+          title={t('projects.deployments.openMachineServices')}
+          subtitle={`${t('machineServices.control.stop')} · ${t('machineServices.control.start')}`}
+          onPress={() => router.push(machineServicesHref)} /> : null}
+        <Item testID="project-deployments.environment.variables.ci"
+          title={t('settingsApiTokens.title')} subtitle={t('settingsApiTokens.entrySubtitle')}
+          onPress={() => router.push(SETTINGS_ROUTES.apiTokens)} />
+        {mode === 'table' && secrets > 0 && (props.sealedOn || teamDisclosure) ? (
+          <View
+            testID="project-deployments.environment.variables.sealed"
+            style={styles.sealed}
+          >
+            <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
+            <Text
+              variant="meta"
+              style={[
+                styles.sealedText,
+                { color: theme.colors.text.secondary },
+              ]}
+            >
+              {teamDisclosure
+                ? props.sealedOn
+                  ? t('projects.deployments.secretsSealedTeam', { count: secrets, machine: props.sealedOn })
+                  : t('projects.deployments.secretsTeamDisclosure', { count: secrets })
+                : t('projects.deployments.secretsSealed', {
+                  count: secrets,
+                  machine: props.sealedOn ?? '',
+                })}
+            </Text>
+          </View>
+        ) : null}
+      </ItemGroup>
+    );
+  },
+);
+
+/** "Runtime ⌄": the row's one phase control (lab round 9 K12); each choice says what it means. */
+function PhaseMenu(
+  props: Readonly<{
+    row: VariableRow;
+    disabled: boolean;
+    onSelect: (phase: Phase) => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const [open, setOpen] = React.useState(false);
+  const id = `project-deployments.environment.variable.${props.row.name}.phase`;
+  const items = React.useMemo(() => phaseItems(props.row, id), [id, props.row]);
+  if (props.disabled)
+    return (
+      <Text style={styles.phase} numberOfLines={1}>
+        {phaseLabel(props.row.phase)}
+      </Text>
+    );
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      selectedId={props.row.phase}
+      matchTriggerWidth={false}
+      maxWidthCap={320}
+      popoverAccessibilityLabel={t('projects.deployments.columnUsedAt')}
+      popoverPhonePresentation="sheet"
+      onSelect={(itemId) => props.onSelect(itemId as Phase)}
+      trigger={({ toggle }) => (
+        <Pressable
+          testID={id}
+          accessibilityRole="button"
+          accessibilityLabel={`${t('projects.deployments.columnUsedAt')}: ${phaseLabel(props.row.phase)}`}
+          aria-expanded={open}
+          onPress={toggle}
+          style={({ pressed }) => [
+            styles.phaseTrigger,
+            (pressed || open) && {
+              backgroundColor: theme.colors.surface.pressed,
+            },
+          ]}
+        >
+          <Text style={styles.phase} numberOfLines={1}>
+            {phaseLabel(props.row.phase)}
+          </Text>
+          <Icon
+            name="caret-down"
+            size={12}
+            color={theme.colors.text.tertiary}
+          />
+        </Pressable>
+      )}
+    />
+  );
+}
+
+/** The row's ⋯: its rare operations. On a phone, where the table's phase column is gone, it also holds "Used at". */
+function VariableRowMenu(
+  props: Readonly<{
+    row: VariableRow;
+    disabled: boolean;
+    withPhase: boolean;
+    onPhase: (phase: Phase) => void;
+    onRemove: () => void;
+    onReveal?: () => void;
+    onRotate?: () => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const [open, setOpen] = React.useState(false);
+  const id = `project-deployments.environment.variable.${props.row.name}.menu`;
+  const items = React.useMemo(
+    (): readonly DropdownMenuItem[] => [
+      // The three phases lead the menu as its first group, each saying what it means.
+      ...(props.withPhase && !props.disabled
+        ? phaseItems(props.row, `${id}.phase`).map((item) => ({ ...item, category: 'phase' }))
+        : []),
+      ...(props.onReveal ? [{ id: 'reveal', category: 'operations', testID: `${id}.reveal`,
+        title: t('secretsSettings.revealValue') }] : []),
+      ...(props.onRotate ? [{ id: 'rotate', category: 'operations', testID: `${id}.rotate`,
+        title: t('secrets.actions.replaceValue') }] : []),
+      ...(!props.disabled ? [{
+        id: 'remove',
+        category: 'operations',
+        testID: `${id}.remove`,
+        title: t('projects.deployments.removeVariable'),
+        destructive: true,
+        icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
+      }] : []),
+    ],
+    [id, props.row, props.withPhase, props.disabled, props.onReveal, props.onRotate, theme.colors.text.secondary],
+  );
+  if (items.length === 0) return null;
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      matchTriggerWidth={false}
+      placement="bottom"
+      popoverPhonePresentation="sheet"
+      popoverAccessibilityLabel={props.row.name}
+      separateCategories
+      onSelect={(itemId) => {
+        if (itemId === 'remove') props.onRemove();
+        else if (itemId === 'reveal') props.onReveal?.();
+        else if (itemId === 'rotate') props.onRotate?.();
+        else if (PHASES.includes(itemId as Phase))
+          props.onPhase(itemId as Phase);
+      }}
+      trigger={({ toggle }) => (
+        <IconButton
+          testID={id}
+          iconName="dots-three"
+          variant="plain"
+          accessibilityLabel={t('common.more')}
+          onPress={toggle}
+        />
+      )}
+    />
+  );
+}
+
+function phaseItems(row: VariableRow, idPrefix: string): DropdownMenuItem[] {
+  return PHASES.map((phase) => ({
+    id: phase,
+    testID: `${idPrefix}.${phase}`,
+    title: phaseLabel(phase),
+    subtitle: phaseHint(phase),
+    checked: row.phase === phase,
+  }));
+}
+
+/** Add → Value: a name and its plain value, used at Runtime until the row's own control says otherwise. */
+function AddValueVariable(
+  props: Readonly<{
+    taken: readonly VariableRow[];
+    /** New secret: the value is saved under Settings → Secrets (masked here) and the row binds to it. */
+    secret: boolean;
+    /** A saved secret already picked: only its name here is asked for. */
+    bound?: string | null;
+    status: SavedSecretBindings['status'];
+    onCancel: () => void;
+    onAdd: (name: string, value: string) => boolean | Promise<boolean>;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  // A picked saved secret proposes its own name as the variable's ("Stripe live key" → STRIPE_LIVE_KEY).
+  const [name, setName] = React.useState(() => props.bound
+    ? props.bound.toUpperCase().replace(/[^A-Z0-9_]+/gu, '_').replace(/^_+|_+$/gu, '').replace(/^(?=\d)/u, '_')
+    : '');
+  const [value, setValue] = React.useState('');
+  const [failed, setFailed] = React.useState(false);
+  const busy = props.status !== 'idle';
+  const trimmed = name.trim();
+  const duplicate = props.taken.some((row) => row.name === trimmed);
+  return (
+    <InlineAddExpander
+      isOpen
+      onOpenChange={(next) => {
+        if (!next) props.onCancel();
+      }}
+      title={props.bound ? t('projects.deployments.addSavedTitle') : props.secret ? t('projects.deployments.addSecretTitle') : t('projects.deployments.addVariable')}
+      trigger={null}
+      onCancel={props.onCancel}
+      onSave={() => {
+        void Promise.resolve(props.onAdd(trimmed, value)).then((ok) => setFailed(!ok));
+      }}
+      saveDisabled={trimmed.length === 0 || duplicate || busy || (props.secret && !props.bound && value.length === 0)}
+      cancelLabel={t('common.cancel')}
+      saveLabel={t('common.add')}
+      saveTestID="project-deployments.environment.variables.add.save"
+      cancelTestID="project-deployments.environment.variables.add.cancel"
+    >
+      <View style={styles.addFields}>
+        <FieldTextInput
+          testID="project-deployments.environment.variables.add.name"
+          value={name}
+          onChangeText={(next) => {
+            setFailed(false);
+            setName(next.toUpperCase());
+          }}
+          monospace
+          autoCapitalize="characters"
+          accessibilityLabel={t('projects.deployments.columnName')}
+          placeholder={props.secret || props.bound ? 'STRIPE_SECRET_KEY' : 'LOG_LEVEL'}
+          error={
+            duplicate
+              ? t('projects.deployments.variableExists')
+              : failed
+                ? t('projects.deployments.variableInvalid')
+                : null
+          }
+        />
+        {props.bound ? (
+          <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+            {t('projects.deployments.addSavedBound', { name: props.bound })}
+          </Text>
+        ) : null}
+        {props.bound ? null : <FieldTextInput
+          testID="project-deployments.environment.variables.add.value"
+          value={value}
+          onChangeText={setValue}
+          monospace
+          accessibilityLabel={t('projects.deployments.sourceValue')}
+          placeholder={props.secret ? '' : 'info'}
+          secureTextEntry={props.secret}
+        />}
+        {props.secret ? (
+          <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+            {props.status === 'waitingApproval'
+              ? t('projects.deployments.secretWaitingApproval')
+              : props.status !== 'idle'
+                ? t('projects.deployments.secretSaving')
+                : t('projects.deployments.addSecretHint')}
+          </Text>
+        ) : null}
+      </View>
+    </InlineAddExpander>
+  );
+}
+
+/** "+ Add" (lab d2 `addvar`): a new secret, a plain variable, or a pasted .env. */
+function AddMenu(
+  props: Readonly<{
+    disabled: boolean;
+    secretsAvailable: boolean;
+    savedAvailable: boolean;
+    onSelect: (choice: Adding | 'paste') => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const [open, setOpen] = React.useState(false);
+  const id = 'project-deployments.environment.variables.add';
+  const items = React.useMemo(
+    (): readonly DropdownMenuItem[] => [
+      // Binding one already saved leads (lab d2 `addvar`): it is the usual way a secret arrives.
+      ...(props.savedAvailable
+        ? [{
+            id: 'saved',
+            testID: `${id}.saved`,
+            title: t('projects.deployments.addSaved'),
+            subtitle: t('projects.deployments.addSavedHint'),
+            icon: <Icon name="key" size={16} color={theme.colors.text.secondary} />,
+          }]
+        : []),
+      ...(props.secretsAvailable
+        ? [{
+            id: 'secret',
+            subtitle: t('projects.deployments.addSecretHint'),
+            testID: `${id}.secret`,
+            title: t('projects.deployments.addSecret'),
+            icon: <Icon name="lock" size={16} color={theme.colors.text.secondary} />,
+          }]
+        : []),
+      {
+        id: 'plain',
+        testID: `${id}.plain`,
+        title: t('projects.deployments.addPlain'),
+        icon: <Icon name="code" size={16} color={theme.colors.text.secondary} />,
+      },
+      {
+        id: 'paste',
+        category: 'paste',
+        testID: `${id}.paste`,
+        title: t('projects.deployments.addPaste'),
+        icon: <Icon name="file-text" size={16} color={theme.colors.text.secondary} />,
+      },
+    ],
+    [props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
+  );
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      matchTriggerWidth={false}
+      placement="bottom"
+      popoverPhonePresentation="sheet"
+      popoverAccessibilityLabel={t('projects.deployments.addVariable')}
+      separateCategories
+      onSelect={(choice) => props.onSelect(choice as Adding | 'paste')}
+      trigger={({ toggle }) => (
+        <SectionActionButton
+          testID={id}
+          title={t('projects.deployments.addVariable')}
+          icon="plus"
+          expanded={open}
+          disabled={props.disabled}
+          onPress={toggle}
+        />
+      )}
+    />
+  );
+}
+
+/**
+ * Bulk edit (lab d2 `bulk`): the whole Variables file as text. Every current entry is there, secrets and other
+ * sources as ‹references›, never values. Edits, new lines and deleted lines read back as one diff (“+1 secret ·
+ * 1 changed · nothing removed”) and one “Save N changes”: new secret values are saved under Settings → Secrets
+ * first, then the section's one `deployments.bindings.set` writes the file. References created before a failure
+ * are kept and reused on the next Save, never created twice or deleted.
+ */
+function BulkEditor(
+  props: Readonly<{
+    editor: BindingsDraft['editor'];
+    saved: SavedSecretBindings;
+    label: EnvironmentBulkSourceLabel;
+    environmentName: string;
+    saving: boolean;
+    onSave: () => void;
+    onCancel: () => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const { editor, saved, label } = props;
+  const [initialInput] = React.useState<NonNullable<BindingsDraft['editor']['bulkInput']>>(() => ({
+    text: `${t('projects.deployments.bulkHeader', { name: props.environmentName })}\n${editor.bulkText(label)}\n`,
+    kinds: {},
+    sources: {},
+  }));
+  const input = editor.bulkInput ?? initialInput;
+  const { text, kinds, sources: created } = input;
+  const [error, setError] = React.useState<string | null>(null);
+  const [failure, setFailure] = React.useState<string | null>(null);
+  const { stageBulk, classifyBulk } = editor;
+  React.useEffect(() => {
+    editor.setBulkInput(input);
+    const result = stageBulk(text, 'runtime', label);
+    setError(result.ok ? null : result.error);
+    setFailure(null);
+    if (result.ok) for (const [name, kind] of Object.entries(kinds)) classifyBulk(name, kind);
+    // Re-read only when the text or a choice changes, not on the editor's own echo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, kinds]);
+  const rows = editor.bulk ?? [];
+  const removed = editor.bulkRemoved ?? [];
+  const added = rows.filter((row) => row.change === 'added');
+  const addedSecrets = added.filter((row) => row.classification === 'secret');
+  const addedPlain = added.filter((row) => row.classification === 'plain');
+  const changed = rows.filter((row) => row.change === 'changed');
+  // Only a new name asks how its value is kept; an edited value keeps its kind.
+  const literals = added.filter((row) => row.source === null);
+  const count = rows.length + removed.length;
+  const reused = Object.keys(created).length;
+  const busy = saved.busy || props.saving;
+  const apply = async () => {
+    setFailure(null);
+    // Saved Secrets are reached only when a new secret value must be saved first.
+    const creates = rows.some((row) => row.source === null && row.classification === 'secret' && !Object.hasOwn(created, row.name));
+    const result = creates ? await saved.applyBulk(created) : { ...editor.applyBulk(created), sources: created };
+    if (result.ok) {
+      props.onSave();
+      return;
+    }
+    // Keep every Secret already created: the next Save binds them instead of creating them again.
+    editor.setBulkInput({ ...input, sources: result.sources });
+    setFailure(result.error);
+  };
+  const part = (key: string, lead: string, names: readonly string[]) => (
+    <Text key={key} variant="meta" style={{ color: theme.colors.text.secondary }}>
+      <Text variant="meta" emphasis="medium" style={{ color: theme.colors.text.primary }}>{lead}</Text>
+      {names.length > 0 ? ` ${names.join(', ')}` : ''}
+    </Text>
+  );
+  return (
+    <View testID="project-deployments.environment.variables.bulk" style={styles.bulk}>
+      <FieldTextInput
+        testID="project-deployments.environment.variables.bulk.text"
+        value={text}
+        onChangeText={(next) => {
+          editor.setBulkInput({ ...input, text: next });
+        }}
+        multiline
+        growWithText
+        minLines={8}
+        monospace
+        autoCapitalize="none"
+        editable={!busy && reused === 0}
+        accessibilityLabel={t('projects.deployments.variablesModeBulk')}
+        placeholder={t('projects.deployments.bulkPlaceholder')}
+      />
+      {literals.length > 0 ? (
+        <ListPresentationProvider value="page" pageInsets="contained">
+          <ItemGroup
+            testID="project-deployments.environment.variables.bulk.rows"
+            title={t('projects.deployments.bulkDecide')}
+          >
+            {literals.map((row) => (
+              <Item
+                key={`${row.name}:${row.phase}`}
+                testID={`project-deployments.environment.variables.bulk.${row.name}`}
+                title={row.name}
+                titleStyle={styles.mono}
+                subtitle={Object.hasOwn(created, row.name)
+                  ? t('projects.deployments.bulkSecretSaved')
+                  : row.classification === 'plain' ? row.value : MASK.slice(0, Math.max(8, Math.min(MASK.length, row.value.length)))}
+                subtitleStyle={styles.mono}
+                mode="info"
+                rightElement={(
+                  <SegmentedTabBar<'secret' | 'plain'>
+                    testIDPrefix={`project-deployments.environment.variables.bulk.${row.name}.kind`}
+                    accessibilityLabel={row.name}
+                    compact
+                    segmentSizing="content"
+                    role="radiogroup"
+                    disabled={busy || Object.hasOwn(created, row.name)}
+                    activeTabId={row.classification}
+                    onSelectTab={(next) => editor.setBulkInput({ ...input, kinds: { ...kinds, [row.name]: next } })}
+                    tabs={[
+                      { id: 'secret', label: t('projects.deployments.bulkSecret') },
+                      { id: 'plain', label: t('projects.deployments.bulkPlain') },
+                    ]}
+                  />
+                )}
+              />
+            ))}
+          </ItemGroup>
+        </ListPresentationProvider>
+      ) : null}
+      <View testID="project-deployments.environment.variables.bulk.diff" style={styles.bulkFooter}>
+        <View style={styles.bulkSummary}>
+          {error ?? failure ? (
+            <Text variant="meta" style={{ color: theme.colors.state.danger.foreground }}>
+              {/* The two parse refusals say what to fix; a save refusal says nothing changed. */}
+              {(error ?? failure) === 'unknown_reference'
+                ? t('projects.deployments.bulkUnknownReference')
+                : (error ?? failure) === 'invalid_binding'
+                  ? t('projects.deployments.bulkInvalidLine')
+                  : t('projects.deployments.bulkFailed')}
+            </Text>
+          ) : saved.status === 'waitingApproval' ? (
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+              {t('projects.deployments.secretWaitingApproval')}
+            </Text>
+          ) : reused > 0 ? (
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+              {t('projects.deployments.bulkReused', { count: reused })}
+            </Text>
+          ) : count === 0 ? (
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+              {t('projects.deployments.bulkNoChanges')}
+            </Text>
+          ) : (
+            <View style={styles.diffParts}>
+              {addedSecrets.length > 0
+                ? part('secrets', t('projects.deployments.bulkAddedSecrets', { count: addedSecrets.length }), addedSecrets.map((row) => row.name))
+                : null}
+              {addedPlain.length > 0
+                ? part('plain', t('projects.deployments.bulkAddedPlain', { count: addedPlain.length }), addedPlain.map((row) => row.name))
+                : null}
+              {changed.length > 0
+                ? part('changed', t('projects.deployments.bulkChanged', { count: changed.length }), changed.map((row) => row.name))
+                : null}
+              {removed.length > 0
+                ? part('removed', t('projects.deployments.bulkRemoved', { count: removed.length }), removed)
+                : (
+                  <Text key="removed" variant="meta" style={{ color: theme.colors.text.secondary }}>
+                    {t('projects.deployments.bulkNothingRemoved')}
+                  </Text>
+                )}
+            </View>
+          )}
+        </View>
+        <View style={styles.bulkActions}>
+        <SectionActionButton
+          testID="project-deployments.environment.variables.bulk.cancel"
+          title={t('common.cancel')}
+          icon="x"
+          disabled={busy}
+          onPress={props.onCancel}
+        />
+        <RoundButton
+          testID="project-deployments.environment.variables.bulk.save"
+          size="small"
+          title={count === 0 ? t('common.save') : t('projects.deployments.bulkSave', { count })}
+          loading={busy}
+          disabled={busy || error !== null || count === 0}
+          onPress={() => {
+            void apply();
+          }}
+        />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function SaveOutcome(
+  props: Readonly<{
+    outcome: DeploymentActionOutcome;
+    pending: boolean;
+    onOpenReview: () => void;
+  }>,
+) {
+  const { outcome } = props;
+  if (outcome.kind === 'approval') {
+    if (!props.pending) return null;
+    return (
+      <AttentionBanner
+        testID="project-deployments.environment.variables.review"
+        tone="neutral"
+        title={t('projects.deployments.reviewWaitingTitle')}
+        description={t('projects.deployments.variablesReviewBody')}
+        action={{
+          label: t('projects.deployments.openReview'),
+          onPress: props.onOpenReview,
+        }}
+      />
+    );
+  }
+  if (outcome.kind !== 'refused') return null;
+  return (
+    <AttentionBanner
+      testID={`project-deployments.environment.variables.refused.${outcome.reason}`}
+      tone="danger"
+      title={t('projects.deployments.variablesSaveFailedTitle')}
+      description={
+        outcome.reason === 'permission'
+          ? t('projects.deployments.managersOnly')
+          : t('projects.deployments.nothingChanged')
+      }
+      details={[outcome.code]}
+    />
+  );
+}
+
+/** "Saved secret · revision 2" over its provenance, or a value, or a reference: what the row's value comes from. */
+function ValueSource(
+  props: Readonly<{
+    binding: VariableBinding;
+    environmentName: (id: string) => string | null;
+    secretName: (ref: string) => string | null;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const title = sourceTitle(props.binding, props.environmentName, props.secretName);
+  const detail = sourceDetail(props.binding);
+  const value =
+    props.binding.source.kind === 'value' &&
+    props.binding.source.value.length > 0;
+  return (
+    <View style={styles.source}>
+      <Text
+        numberOfLines={1}
+        style={[styles.sourceTitle, value && styles.mono]}
+      >
+        {title}
+      </Text>
+      {detail ? (
+        <Text
+          variant="meta"
+          numberOfLines={1}
+          style={{ color: theme.colors.text.secondary }}
+        >
+          {detail}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** A name bound identically for build and runtime reads as one row used at both. */
+function variableRows(
+  projection: readonly EnvironmentSecretBindingProjectionV1[],
+): readonly VariableRow[] {
+  const byName = new Map<string, number>();
+  const out: VariableRow[] = [];
+  for (const { identity, binding } of projection) {
+    if (binding.purpose !== 'variable') continue;
+    const index = byName.get(binding.name);
+    const sibling = index === undefined ? undefined : out[index];
+    if (
+      sibling &&
+      index !== undefined &&
+      sibling.phase !== binding.phase &&
+      sibling.phase !== 'both' &&
+      JSON.stringify(sibling.binding.source) === JSON.stringify(binding.source)
+    ) {
+      out[index] = {
+        ...sibling,
+        phase: 'both',
+        identities: [...sibling.identities, identity],
+      };
+      continue;
+    }
+    byName.set(binding.name, out.length);
+    out.push({
+      key: identity,
+      name: binding.name,
+      phase: binding.phase,
+      binding,
+      identities: [identity],
+    });
+  }
+  return out;
+}
+
+function phaseLabel(phase: Phase): string {
+  if (phase === 'build') return t('projects.deployments.phaseBuild');
+  if (phase === 'runtime') return t('projects.deployments.phaseRuntime');
+  return t('projects.deployments.phaseBoth');
+}
+
+function phaseHint(phase: Phase): string {
+  if (phase === 'build') return t('projects.deployments.phaseBuildHint');
+  if (phase === 'runtime') return t('projects.deployments.phaseRuntimeHint');
+  return t('projects.deployments.phaseBothHint');
+}
+
+function sourceIcon(kind: VariableBinding['source']['kind']) {
+  switch (kind) {
+    case 'secret':
+      return 'key' as const;
+    case 'reference':
+      return 'link' as const;
+    default:
+      return 'code' as const;
+  }
+}
+
+function sourceTitle(
+  binding: VariableBinding,
+  environmentName: (id: string) => string | null,
+  secretName?: (ref: string) => string | null,
+): string {
+  const source = binding.source;
+  switch (source.kind) {
+    case 'secret':
+      return secretName?.(source.ref) ?? t('projects.deployments.sourceSavedSecret');
+    case 'value':
+      return source.value.length > 0
+        ? source.value
+        : t('projects.deployments.sourceValue');
+    case 'reference':
+      return t('projects.deployments.sourceReference', {
+        output: source.export,
+        environment:
+          environmentName(source.environmentId) ??
+          t('projects.deployments.sourceAnotherEnvironment'),
+      });
+    case 'deploymentFact':
+      switch (source.fact) {
+        case 'primaryUrl':
+          return t('projects.deployments.factPrimaryUrl');
+        case 'commitSha':
+          return t('projects.deployments.factCommitSha');
+        case 'deploymentId':
+          return t('projects.deployments.factDeploymentId');
+        case 'environmentName':
+          return t('projects.deployments.factEnvironmentName');
+        case 'domainUrl':
+          return t('projects.deployments.factDomainUrl');
+      }
+  }
+}
+
+/** The provenance line under the source (lab's second line): which revision, or what kind of value. */
+function sourceDetail(binding: VariableBinding): string | null {
+  const source = binding.source;
+  switch (source.kind) {
+    case 'secret':
+      return t('projects.deployments.sourceSecretRevision', {
+        revision: source.resourceRevision,
+      });
+    case 'value':
+      return t('projects.deployments.sourceValue');
+    case 'reference':
+      return t('projects.deployments.sourceReferenceDetail');
+    case 'deploymentFact':
+      return t('projects.deployments.sourceFactDetail');
+  }
+}
+
+const styles = StyleSheet.create((theme) => ({
+  actions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  phaseTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: theme.space.s4,
+    paddingHorizontal: theme.space.s6,
+    paddingVertical: theme.space.s2,
+    marginLeft: -theme.space.s6,
+    borderRadius: 6,
+  },
+  phase: { ...Typography.variant('body'), color: theme.colors.text.secondary },
+  source: { minWidth: 0, gap: theme.space.s2 },
+  sourceTitle: {
+    ...Typography.variant('body'),
+    color: theme.colors.text.primary,
+  },
+  mono: { ...Typography.mono() },
+  addFields: { gap: theme.space.s8 },
+  sealed: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.space.s8,
+    paddingHorizontal: theme.space.s16,
+    paddingTop: theme.space.s12,
+  },
+  sealedText: { flex: 1 },
+  bulk: { gap: theme.space.s12 },
+  bulkFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: theme.space.s8,
+  },
+  bulkSummary: { flex: 1, minWidth: 200 },
+  // Cancel and Save stay together, at the end of the line, when the summary wraps.
+  bulkActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, marginLeft: 'auto' },
+  diffParts: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
+}));
