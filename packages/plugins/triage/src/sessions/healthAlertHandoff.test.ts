@@ -144,3 +144,29 @@ describe('typed failure subjects through the existing investigation owner', () =
         expect(reads.some(read => /spawn|send|restart|rollback|exec$/.test(read.id))).toBe(false);
     });
 });
+
+describe('a failed receipt names itself the way its page does (D4c)', () => {
+    it('labels a stored Compose source with the same short revision the receipt page shows', async () => {
+        const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'environment', deploymentId: 'deployment-s' };
+        const host = {
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            executeAction: async (id: string) => {
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'deployments.receipts.get') return { ok: true, deployment: {
+                    id: 'deployment-s', environmentId: 'environment', operation: 'deploy', state: 'failed',
+                    actionOperationId: 'op', revision: 1, requestedAtMs: 1,
+                    acceptedExecution: { controller: { machineId: 'machine-a', installationId: 'installation' } },
+                }, content: { sourceIntent: { kind: 'stored', contentRevision: 2,
+                    composeDigest: `sha256:302cf72${'0'.repeat(57)}`, document: 'services: {}' } } };
+                if (id === 'deployments.environments.get') return { ok: true, environment: { id: 'environment',
+                    serverId: 'server-a', projectSourceId: 'project', runtimeTargetLinkId: 'link', controllerMachineId: 'machine-a' }, targetLinks: [] };
+                throw new Error(`Unexpected read ${id}`);
+            },
+        };
+        const handoff = TriageSessionHandoffInputV1Schema.parse({ task: 'investigate', configuredActionId: 'investigate',
+            context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
+        const result = await readTriageHealthAlertHandoffV1(host, handoff, new AbortController().signal);
+        expect(result?.kind === 'ready' && result.evidence.source.label).toBe('Deploy of 302cf72 failed');
+    });
+});

@@ -4,6 +4,7 @@ import type { TriageProjectCandidateV1 } from './launchPlacement.js';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import {
     ProtocolArtifactGetOutputV1Schema,
     ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema,
@@ -142,7 +143,7 @@ async function readFailureSubject(
             if (!selected && !await environmentPlacement(subject.environmentId)) return null;
             const receipt = result.deployment;
             const source = result.content?.sourceIntent;
-            receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source?.kind === 'repository' ? source.sha : undefined);
+            receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source ? deploymentRevisionShortLabelV1(source) : undefined);
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
                 state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
                 requestedAtMs: receipt.requestedAtMs, startedAtMs: receipt.startedAtMs, settledAtMs: receipt.settledAtMs,
@@ -207,10 +208,9 @@ async function readFailureSubject(
  * A failed receipt's title in the receipt page's words ("Deploy of 302cf72 failed"). Investigation only starts from a
  * failed receipt, so only that state is named; anything else keeps the generic reference label.
  */
-function failedReceiptTitle(operation: string | undefined, state: string, sha: string | undefined): string | undefined {
-    if (state !== 'failed' || !sha) return undefined;
-    const short = sha.slice(0, 7);
-    return operation === 'rollback' ? `Rollback to ${short} failed` : operation === 'deploy' ? `Deploy of ${short} failed` : undefined;
+function failedReceiptTitle(operation: string | undefined, state: string, revision: string | undefined): string | undefined {
+    if (state !== 'failed' || !revision) return undefined;
+    return operation === 'rollback' ? `Rollback to ${revision} failed` : operation === 'deploy' ? `Deploy of ${revision} failed` : undefined;
 }
 
 /** Subject identity chooses the controller and its accepted Source folders once.

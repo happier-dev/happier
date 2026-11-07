@@ -78,6 +78,15 @@ export const DeploymentSourceIntentV1Schema = lazyZodSchema(() => z.discriminate
 ]));
 export type DeploymentSourceIntentV1 = z.infer<typeof DeploymentSourceIntentV1Schema>;
 export const DeploymentSourceIntentV1ProtocolSchema = projectZodProtocolSchema(DeploymentSourceIntentV1Schema);
+/**
+ * A deployed revision's short name, the one every surface says (the receipt page, History, an investigation's
+ * evidence): a commit's short id, or a stored definition's Compose digest.
+ */
+export function deploymentRevisionShortLabelV1(
+    revision: Readonly<{ kind: 'repository'; sha: string }> | Readonly<{ kind: 'stored'; composeDigest: string }>,
+): string {
+    return revision.kind === 'repository' ? revision.sha.slice(0, 7) : revision.composeDigest.replace(/^sha256:/, '').slice(0, 7);
+}
 export const DeploymentSourceMethodV1Schema = lazyZodSchema(() => z.enum(['gitIntegration', 'upload']));
 export type DeploymentSourceMethodV1 = z.infer<typeof DeploymentSourceMethodV1Schema>;
 export const DeploymentOnFailureV1Schema = lazyZodSchema(() => z.enum(['rollbackAll', 'keepPartial']));

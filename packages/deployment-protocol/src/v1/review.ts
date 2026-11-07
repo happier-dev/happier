@@ -7,6 +7,7 @@ import { DeploymentOnFailureV1Schema, EnvironmentVariableBindingV1Schema, type D
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { EnvVarRequirementSchema } from '@happier-dev/protocol/profiles/environmentVariables';
 export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
+export { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentDigestV1Schema as digest } from './ids.js';
 import { OwnServerEnvironmentConfigurationV1Schema } from './environment.js';

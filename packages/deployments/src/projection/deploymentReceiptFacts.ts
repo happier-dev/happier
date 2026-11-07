@@ -2,12 +2,12 @@ import type {
     DeploymentReceiptDetailV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentStepV1,
     DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentReceiptHistoryV1,
 } from '@happier-dev/deployment-protocol/v1';
-import { getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
+import { deploymentRevisionShortLabelV1, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
     projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
 
 type Version = Readonly<{ deploymentId: string; revision: DeploymentReviewRevisionV1 }>;
 export function deploymentRevisionLabelV1(revision: DeploymentReviewRevisionV1): string {
-    return revision.kind === 'repository' ? revision.sha.slice(0, 7) : revision.composeDigest.replace(/^sha256:/, '').slice(0, 7);
+    return deploymentRevisionShortLabelV1(revision);
 }
 /** Shared with native release retention: eligible settled receipts, newest first, within the authored policy. */
 export function selectDeploymentRetainedPreviousV1<T extends DeploymentReceiptHeaderV1>(receipts: readonly T[],
