@@ -3,7 +3,9 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
-import { isDeploymentDomainChildActionIdV1 } from './deploymentActionIdsV1.js';
+import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
+import { DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
+  DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
   DeploymentDomainVerifyInputV1Schema } from './deploymentDomainV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -32,11 +34,24 @@ export const DeploymentRestoreNativeAdmissionV1Schema = lazyZodSchema(() => z.di
   z.extend(z.omit(DeploymentBackupRestoreConfirmInputV1Schema, { serverId: true }), restoreAdmission()),
 ]));
 export type DeploymentRestoreNativeAdmissionV1 = z.infer<typeof DeploymentRestoreNativeAdmissionV1Schema>;
+const backupAdmission = () => ({ kind: z.literal('backup'), inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) });
+export const DeploymentBackupNativeAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  z.extend(z.omit(DeploymentBackupInventoryInputV1Schema, { serverId: true }),
+    { ...backupAdmission(), actionId: z.literal('deployments.backups.inventory') }),
+  z.extend(z.omit(DeploymentBackupRunInputV1Schema, { serverId: true }),
+    { ...backupAdmission(), actionId: z.literal('deployments.backups.run') }),
+  z.extend(z.omit(DeploymentBackupVerifyInputV1Schema, { serverId: true }),
+    { ...backupAdmission(), actionId: z.literal('deployments.backups.verify') }),
+  z.extend(z.omit(DeploymentBackupPruneInputV1Schema, { serverId: true }),
+    { ...backupAdmission(), actionId: z.literal('deployments.backups.prune') }),
+]));
+export type DeploymentBackupNativeAdmissionV1 = z.infer<typeof DeploymentBackupNativeAdmissionV1Schema>;
 export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ environmentId: id }),
   z.strictObject({ environmentId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
     authoredMetadataDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) }),
   DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
+  DeploymentBackupNativeAdmissionV1Schema,
 ]));
 // Signed authority stays closed in stored approvals. A tolerant Environment-only
 // arm would consume typed native facts and change the original envelope digest.
@@ -49,6 +64,9 @@ export function isDeploymentEnvironmentUpdateNativeAdmissionV1(value: Deployment
 export function isDeploymentDomainNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentDomainNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'domain';
 }
+export function isDeploymentBackupNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentBackupNativeAdmissionV1 {
+  return value !== undefined && 'kind' in value && value.kind === 'backup';
+}
 export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown) {
   if (actionId === 'deployments.environments.update') {
     const value = readRecord(input);
@@ -56,6 +74,13 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
     return DeploymentNativeAdmissionV1Schema.parse({ environmentId: value.environmentId,
       inputDigest: computeDeploymentEnvironmentUpdateInputDigestV1(value),
       authoredMetadataDigest: computeDeploymentEnvironmentUpdateMetadataDigestV1(value) });
+  }
+  if (isDeploymentBackupActionIdV1(actionId)) {
+    const value = DeploymentBackupActionInputSchemasV1[actionId].parse(input);
+    const { serverId: _serverId, ...admitted } = value;
+    return DeploymentBackupNativeAdmissionV1Schema.parse({ ...admitted, kind: 'backup', actionId,
+      inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-backup-input-v1',
+        [createCanonicalJsonSigningInput(value)]) });
   }
   if (actionId === 'deployments.backups.restore') {
     const value = DeploymentBackupRestoreInputV1Schema.parse(input);
@@ -130,10 +155,36 @@ export function computeDeploymentDomainAuthoredMetadataDigestV1(input: Readonly<
 export function createDeploymentDomainContentArtifactIdV1(input: Readonly<{
   accountId: string; serverIdentityId: string; actionId: string; requestId: string;
   requestEnvelopeDigest: string; deploymentNativeAdmission: DeploymentDomainNativeAdmissionV1;
+  reviewedChild?: Readonly<{ inputDigest: string }>;
 }>): string {
   return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-domain-publication-v1',
     [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
-      input.deploymentNativeAdmission.inputDigest]));
+      input.deploymentNativeAdmission.inputDigest, ...(input.reviewedChild ? [input.reviewedChild.inputDigest] : [])]));
+}
+
+/** The private rewrite preserves the issuer's exact Domain operand and routing metadata. */
+export function matchesDeploymentDomainPreparedInputV1(input: Readonly<Record<string, unknown>>,
+  publication: Parameters<typeof createDeploymentDomainContentArtifactIdV1>[0]): boolean {
+  const native = publication.deploymentNativeAdmission;
+  if (native.authoredMetadataDigest === undefined || input.serverId !== publication.serverIdentityId
+    || input.environmentId !== native.environmentId || input.domainId !== native.domainId
+    || input.contentArtifactId !== createDeploymentDomainContentArtifactIdV1(publication)
+    || input.contentHeaderVersion !== 1 || input.contentBodyVersion !== 1) return false;
+  const { actionOperationId: _operation, requestId: _request, ...original } = input;
+  if (computeDeploymentDomainAuthoredMetadataDigestV1(original) === native.authoredMetadataDigest) return true;
+  if (!('placements' in original)) return false;
+  const { placements: _derivedPlacements, ...withoutPlacements } = original;
+  return computeDeploymentDomainAuthoredMetadataDigestV1(withoutPlacements) === native.authoredMetadataDigest;
+}
+
+/** One create-only Artifact belongs to this admitted Link invocation. */
+export function createDeploymentLinkContentArtifactIdV1(input: Readonly<{
+  accountId: string; serverIdentityId: string; actionId: string; requestId: string;
+  requestEnvelopeDigest: string; deploymentLinkAdmission: Readonly<{ environmentId: string }>;
+}>): string {
+  return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-target-link-publication-v1',
+    [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
+      input.deploymentLinkAdmission.environmentId]));
 }
 
 /** Reminting the same invocation retains its pre-receipt candidate, including pending wake. */

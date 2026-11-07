@@ -9,3 +9,16 @@ export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
 export const ApprovalRequestV2StatusSchema = lazyZodSchema(() => z.enum([
   'open', 'approved', 'executing', 'rejected', 'executed', 'failed', 'canceled', 'outcome_unknown',
 ]));
+
+const IN_FLIGHT_V2_STATUSES: ReadonlySet<string> = new Set(['open', 'approved', 'executing']);
+
+/** The request can still change: awaiting a decision or an effect settlement. Every other V2 status is terminal. */
+export function isApprovalRequestV2InFlightStatus(status: unknown): boolean {
+  return typeof status === 'string' && IN_FLIGHT_V2_STATUSES.has(status);
+}
+
+export function isApprovalRequestV2TerminalStatus(status: unknown): boolean {
+  return typeof status === 'string'
+    && ApprovalRequestV2StatusSchema.safeParse(status).success
+    && !IN_FLIGHT_V2_STATUSES.has(status);
+}

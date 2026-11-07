@@ -1,14 +1,16 @@
-import { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import type { StoredCredentials } from '@/persistence';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { MANAGED_MACHINE_ACTION_IDS_V1, ManagedAcquireInputV1Schema, ManagedMachineActionInputSchemasV1, isManagedRetainedControlInvocation, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { SessionSpawnNewAgentAuthoringInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewActionAgentAuthoringInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1, ActionId } from '@happier-dev/protocol/actions';
 import { readActionSessionTargetField } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { PluginSettingsAdministrationActionIdV1Schema, resolvePluginSettingsAdministrationTargetV1 } from '@happier-dev/protocol/plugins/settingsAdministration';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import type { StoredCredentials } from '@/persistence';
 
 /**
  * The external ingress has one deliberately bounded selector vocabulary. It
@@ -48,7 +50,6 @@ export function requiresManagedMachineDaemonIngress(actionId: ActionId,
 // Only declared execution targets participate. Other nested Machine ids can
 // describe SOURCE data, reviewed evidence, or a resource on another Machine.
 const NESTED_MACHINE_SELECTOR_FIELDS: Readonly<Partial<Record<ActionId, string>>> = {
-  'session.spawn_new': 'executionTarget',
   'projects.worker.status': 'destination',
   'daemon.filesystem.copy': 'destination',
   'projects.inspect': 'workspace',
@@ -75,7 +76,7 @@ function parseActionTargetInput(actionId: ActionId, input: unknown) {
   // Target selection precedes Session inheritance and creation admission. Read
   // the same strict authoring shape without resolving either launch choice here.
   const schema = actionId === 'session.spawn_new'
-    ? SessionSpawnNewAgentAuthoringInputV2Schema : getActionSpec(actionId).inputSchema;
+    ? SessionSpawnNewActionAgentAuthoringInputV2Schema : getActionSpec(actionId).inputSchema;
   return schema.safeParse(input);
 }
 
@@ -95,24 +96,45 @@ function readSessionSelectorIds(
 
 /** Reads semantic routing selectors from schema-admitted Action input only. */
 export function readMachineSelectorIds(actionId: ActionId, input: Readonly<Record<string, unknown>>): readonly string[] {
+  // The Action declaration owns runtime destinations, including nested input.
+  // Empty context reads authored selection without introducing ambient routing.
+  const runtimeDemand = getActionSpec(actionId).machineRuntimeDemandForInput?.(input, {});
   const acquire = actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.safeParse(input) : null;
-  const controllerMachineId = acquire?.success ? resolveManagedAcquireReviewV1(acquire.data).controller.machineId
-    : actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options'
+  const controllerMachineId = acquire?.success ? resolveManagedAcquireReviewV1(acquire.data).controller?.machineId ?? null
+    : actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options'
       ? readNonEmptyString(asRecord(input.controller)?.machineId) : null;
   const nestedField = NESTED_MACHINE_SELECTOR_FIELDS[actionId];
   const settingsActionId = PluginSettingsAdministrationActionIdV1Schema.safeParse(actionId);
   const settingsTarget = settingsActionId.success
     ? resolvePluginSettingsAdministrationTargetV1(settingsActionId.data, input) : null;
   const selectors = [
+    runtimeDemand?.target.kind === 'machine' ? runtimeDemand.target.machineId : null,
     controllerMachineId,
     // Key preparation executes on the explicitly selected trusted key holder.
     // Its qualified machineId addresses the managed Resource, not that holder.
-    actionId === 'machines.access.prepareKeys' ? null : readNonEmptyString(input.machineId),
+    // Template roots execute on their Environment controller; machineId names
+    // the runtime resource admitted through the normal own-server path.
+    actionId === 'machines.access.prepareKeys' || actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+      ? null : readNonEmptyString(input.machineId),
     nestedField ? readNonEmptyString(asRecord(input[nestedField])?.machineId) : null,
     settingsTarget?.kind === 'daemon' ? settingsTarget.machineId : null,
     readLocalServiceControlActionRequest(actionId, input)?.target.machineId ?? null,
   ];
   return selectors.filter((selector): selector is string => selector !== null);
+}
+
+/** Preserve an explicit semantic Machine before a caller considers automatic placement. */
+export function resolveSelectedExternalActionMachineTarget(input: Readonly<{
+  actionId: ActionId;
+  rawInput: unknown;
+  target: ExternalActionTargetV1 | undefined;
+  fallbackMachineId?: string;
+}>): ReturnType<typeof resolveExternalActionMachineTarget> | null {
+  const parsed = parseActionTargetInput(input.actionId, input.rawInput);
+  if (!parsed.success) return null;
+  if (readMachineSelectorIds(input.actionId, asRecord(parsed.data) ?? {}).length === 0
+    && !input.fallbackMachineId && !input.target) return null;
+  return resolveExternalActionMachineTarget({ ...input, rawInput: parsed.data });
 }
 
 function isTitleOnlySessionOpen(
@@ -142,6 +164,8 @@ export type ExternalActionTargetReconciliation =
         'defaultSessionId' | 'executionRunTargetMachineId'
       >;
       executionRunRequiresMachineTarget: boolean;
+      /** Present only after schema-admitted input has reached placement classification. */
+      executionPlacement?: ReturnType<typeof resolveActionExecutionPlacementForInput>;
     }>
   | Readonly<{ kind: 'rejected'; execution: ActionExecuteResult }>;
 
@@ -213,7 +237,12 @@ export function reconcileExternalActionTarget(input: Readonly<{
   // a routing selector, but an explicit envelope Session target is already
   // host-owned route metadata and may establish the invocation context.
   const isContributedActionInvocation = input.actionId === 'action.invoke';
-  const bindsEnvelopeSession = isContributedActionInvocation || executionPlacement === 'client' || input.actionId.startsWith('computer.');
+  // Approval reads and decisions address an Artifact, while the envelope Session
+  // constrains its visibility/subject at the canonical approval executor.
+  const isSessionBoundApproval = input.actionId === 'approval.request.list'
+    || input.actionId === 'approval.request.get' || input.actionId === 'approval.request.decide';
+  const bindsEnvelopeSession = isContributedActionInvocation || isSessionBoundApproval
+    || executionPlacement === 'client' || input.actionId.startsWith('computer.');
   const sessionSelectorId = distinctSessionSelectorIds[0] ?? null;
 
   if (executionPlacement === 'machine') {
@@ -261,6 +290,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
     target: input.target,
     context: {},
     executionRunRequiresMachineTarget: isExecutionRun,
+    executionPlacement,
   };
 }
 
@@ -281,7 +311,7 @@ export function resolveExternalActionMachineTarget(input: Readonly<{
       : execution,
   });
   const parsed = parseActionTargetInput(input.actionId, input.rawInput);
-  if (!parsed.success) return reject({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+  if (!parsed.success) return reject(actionInputValidationFailure(parsed.error));
   const machineIds = readMachineSelectorIds(input.actionId, asRecord(parsed.data) ?? {});
   const explicitMachineId = input.target?.kind === 'machine' ? input.target.machineId : null;
   const distinctMachineIds = new Set([...machineIds, ...(explicitMachineId ? [explicitMachineId] : [])]);

@@ -96,3 +96,7 @@ export function executionRunHostActionApprovalSubjectsEqual(left: ExecutionRunHo
   const { status: _rightStatus, updatedAtMs: _rightUpdated, decision: _rightDecision, ...rightSubject } = right;
   return sameStrictJsonValue(leftSubject, rightSubject);
 }
+
+export function executionRunHostActionApprovalRequestsEqual(left: ExecutionRunHostActionApprovalRequestV1, right: ExecutionRunHostActionApprovalRequestV1): boolean {
+  return sameStrictJsonValue(left, right);
+}

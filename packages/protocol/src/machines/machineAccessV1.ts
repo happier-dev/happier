@@ -19,8 +19,20 @@ export const MachineAccessRefusalCodeV1Schema = lazyZodSchema(() => z.enum([
   'access_denied', 'machine_unavailable', 'recipient_encryption_incompatible', 'recipient_key_pending',
   'encryption_material_unavailable', 'recipient_binding_changed', 'machine_key_changed',
   'invalid_recipient_envelope', 'principal_not_found', 'principal_ineligible', 'custodian_protected',
-  'data_key_not_required', 'unsupported_operation', 'custodian_only', 'daemon_upgrade_required',
+  'data_key_not_required', 'unsupported_operation', 'content_unpublished', 'custodian_only', 'daemon_upgrade_required',
 ]));
+/** Explicit purpose acknowledgement is required before a Machine profile lends credentials. */
+export const MachineNpmProfileAdmissionRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false), nativePurpose: z.literal('machine_npm_profile_acquisition'),
+  code: MachineAccessRefusalCodeV1Schema, requiredRole: z.literal('manage'),
+}));
+export type MachineNpmProfileAdmissionRefusalV1 = z.infer<typeof MachineNpmProfileAdmissionRefusalV1Schema>;
+export const MachineNpmProfileAdmissionResponseV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), nativePurpose: z.literal('machine_npm_profile_acquisition') }),
+  MachineNpmProfileAdmissionRefusalV1Schema,
+]));
+export type MachineNpmProfileAdmissionResponseV1 = z.infer<typeof MachineNpmProfileAdmissionResponseV1Schema>;
+
 export type MachineAccessRoleV1 = z.infer<typeof MachineAccessRoleV1Schema>;
 export type MachineAccessLevelV1 = z.infer<typeof MachineAccessLevelV1Schema>;
 export type MachineTargetV1 = z.infer<typeof MachineTargetV1Schema>;
@@ -31,6 +43,8 @@ export const MachineCustodianV1Schema = lazyZodSchema(() => z.strictObject({ acc
 export const AccessibleMachineAccessV1Schema = lazyZodSchema(() => z.strictObject({
   custodian: MachineCustodianV1Schema, role: MachineAccessRoleV1Schema,
   resourceMode: z.enum(['plain', 'e2ee']), accessState: MachineAccessReadinessV1Schema,
+  /** Safe presentation cause; accessState remains the readiness authority. */
+  reason: z.optional(MachineAccessRefusalCodeV1Schema),
 }));
 export const AccessibleMachineAccessStoredReadV1Schema = createStoredReadSchema(AccessibleMachineAccessV1Schema);
 export type AccessibleMachineAccessV1 = z.infer<typeof AccessibleMachineAccessV1Schema>;
@@ -100,6 +114,7 @@ export type MachineKeyPreparationResultV1 = z.infer<typeof MachineKeyPreparation
 
 /** Content-free availability facts decided by Machine admission, with matching recovery. */
 export const MachineAvailabilityDiagnosticV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ reason: z.literal('machine_setup_requires_manage'), requiredFact: z.literal('machine_manage_role'), remedy: z.literal('request_machine_manage_access') }),
   z.strictObject({ reason: z.literal('machine_offline'), requiredFact: z.literal('machine_online'), remedy: z.literal('reconnect_machine') }),
   z.strictObject({ reason: z.literal('machine_installation_missing'), requiredFact: z.literal('machine_installation'), remedy: z.literal('register_machine') }),
   z.strictObject({ reason: z.literal('machine_revoked'), requiredFact: z.literal('machine_registration'), remedy: z.literal('register_machine') }),

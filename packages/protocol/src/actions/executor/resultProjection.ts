@@ -1,22 +1,22 @@
-import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
-import { projectActionExecuteFailure } from '../actionExecutionResult.js';
-import { isRecord } from '../../inputs/inputRecords.js';
-import { getActionSpec } from '../actionSpecs.js';
-import { isPluginError } from '../../plugins/errors.js';
-import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { isRpcError } from '../../rpc/errors.js';
+import { isPluginError } from '../../plugins/errors.js';
+import { ApprovalRequestInvalid } from '../../approvals/creation.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
 import { MemoryDocFailureV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import { ArtifactOrganizationMutationFailureV1, ArtifactOrganizationMutationFailureDetailsV1Schema } from '../../prompts/library/promptFolderActionsV1.js';
 import { PromptStackPreparationError } from '../../prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
 import { SessionOrganizationContentUnavailableError } from '../../sessions/organization/content.js';
-import { readRecord, hasOwn } from '../../inputs/inputRecords.js';
-import { readSshCommandFailure, readRemoteEnrollmentCommandFailure } from '../../ssh/commandFailure.js';
+import { ActionCatalogUnavailableError } from '../actionCatalog.js';
+import { readRecord, hasOwn, isRecord } from '../../inputs/inputRecords.js';
+import { readSshCommandFailure, readRemoteEnrollmentCommandFailure, readHomeAuthorityMismatchFailure } from '../../ssh/commandFailure.js';
 import { ActionOperationFailureV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
-import { isActionOutcomeUnknownErrorCodeV1, ActionFailureCauseV1Schema,
+import { isActionOutcomeUnknownErrorCodeV1, projectActionExecuteFailure, ActionFailureCauseV1Schema,
   projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
+import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
+import { getActionSpec } from '../actionSpecs.js';
+import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema } from '../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult } from './types.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
@@ -26,17 +26,77 @@ import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadR
 import { ExecutionRunCancelTurnResponseSchema } from '../../execution/runs/cancelTurn.js';
 import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 
+export function isDeferredApprovalResult(result: ActionExecuteResult): boolean {
+  return result.ok && isRecord(result.result) && result.result.kind === 'approval_request_created';
+}
+
+/** A lost or unrepresentable Open receipt cannot authorize another materialization. */
+function completeUnknownProjectOpenResult(details?: unknown): ActionExecuteResult {
+  const operationId = readRecord(details).operationId;
+  const unknown = OpenProjectResultV1Schema.safeParse({ kind: 'outcomeUnknown',
+    ...(operationId === undefined ? {} : { operationId }) });
+  return { ok: true, result: unknown.success ? unknown.data : { kind: 'outcomeUnknown' } };
+}
+
+/**
+ * The one terminal Action boundary: public failures lose bridge-private
+ * metadata and successful built-in Actions project through their declared
+ * output schema. Approval admission is deliberately not an action output.
+ */
+export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult, requestId?: string): ActionExecuteResult {
+  const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => {
+    const carriedCause = settled.ok ? undefined : readCarriedActionFailureCause(settled);
+    const projected = settled.ok ? settled : projectActionExecuteFailure({ ...settled,
+      ...(carriedCause ? { failureCause: carriedCause } : {}) }, requestId);
+    return result.operationCredentialUses?.length ? { ...projected, operationCredentialUses: result.operationCredentialUses } : projected;
+  };
+  if (!result.ok) {
+    if (actionId === 'projects.open' && (result.errorCode === 'outcome_unknown'
+      || result.errorCode === 'invalid_action_output' || result.errorCode === 'result_too_large')) {
+      return withCredentialUses(completeUnknownProjectOpenResult(result.details));
+    }
+    return withCredentialUses(result);
+  }
+  if (isDeferredApprovalResult(result)) return result;
+  const outputSchema = getActionSpec(actionId).outputSchema;
+  if (!outputSchema) return result;
+  const invalidOutput = (): ActionExecuteResult => actionId === 'projects.open'
+    ? completeUnknownProjectOpenResult()
+    : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  try {
+    const output = outputSchema.safeParse(result.result);
+    return withCredentialUses(output.success ? { ok: true, result: output.data } : invalidOutput());
+  } catch {
+    return withCredentialUses(invalidOutput());
+  }
+}
+
+/** Read the existing typed carrier, including old daemons' actionException details. */
+function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | undefined {
+  try {
+    const record: Readonly<Record<string, unknown>> = isPluginError(error) ? error.data : readRecord(error);
+    const carried = ActionFailureCauseV1Schema.safeParse(record.failureCause);
+    if (carried.success) return carried.data;
+    // Observed on the loaded 0.2 daemon: details carries the same closed cause
+    // with an actionException discriminator. No exception text enters this projection.
+    const { kind, ...legacyCause } = readRecord(record.details);
+    if (kind === 'actionException') {
+      const legacy = ActionFailureCauseV1Schema.safeParse(legacyCause);
+      if (legacy.success) return legacy.data;
+    }
+  } catch { /* A diagnostic carrier accessor cannot replace the original Action failure. */ }
+  return undefined;
+}
+
 export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
   const failure = classifyActionExecutorThrownError(error);
-  let carriedCause: unknown;
-  try { carriedCause = isPluginError(error) ? error.data.failureCause : readRecord(error).failureCause; }
-  catch { /* A diagnostic carrier accessor cannot replace the original Action failure. */ }
-  const forwarded = ActionFailureCauseV1Schema.safeParse(carriedCause);
   return { ...failure, error: redactBugReportSensitiveText(failure.error),
-    failureCause: forwarded.success ? forwarded.data : projectActionFailureCauseV1(error, phase) };
+    failureCause: readCarriedActionFailureCause(error) ?? projectActionFailureCauseV1(error, phase) };
 }
 
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
+  if (error instanceof ActionCatalogUnavailableError) return { errorCode: error.code, error: error.code };
+  if (error instanceof ApprovalRequestInvalid) return { errorCode: error.code, error: error.code, details: error.details };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
     if (status.success && status.data.state !== 'ok') {
@@ -61,10 +121,14 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
   if (errorRecord.code === 'action_account_scope_changed') {
     return { errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
   }
+  const authorityFailure = readHomeAuthorityMismatchFailure(errorRecord.code, errorRecord.message);
+  if (authorityFailure) return { errorCode: authorityFailure.code, error: authorityFailure.message,
+    ...(authorityFailure.details ? { details: authorityFailure.details } : {}) };
   const sshFailure = readSshCommandFailure(errorRecord.code, errorRecord.message);
   if (sshFailure) return { errorCode: sshFailure.code, error: sshFailure.message };
   const enrollmentFailure = readRemoteEnrollmentCommandFailure(errorRecord.code, errorRecord.message);
-  if (enrollmentFailure) return { errorCode: enrollmentFailure.code, error: enrollmentFailure.message };
+  if (enrollmentFailure) return { errorCode: enrollmentFailure.code, error: enrollmentFailure.message,
+    ...(enrollmentFailure.details ? { details: enrollmentFailure.details } : {}) };
   const rawDetails = errorRecord.details;
   const details = rawDetails && typeof rawDetails === 'object'
     && Object.hasOwn(rawDetails, 'spawnResponse')
@@ -230,41 +294,4 @@ export function completeSpawnActionResult(result: unknown): ActionExecuteResult 
   const spawn = SessionSpawnNewResultV1Schema.safeParse(result);
   return completeActionResult(spawn.success ? projectSessionSpawnNewActionResultV1(spawn.data) : result,
     { treatReturnedErrorEnvelopeAsFailure: true });
-}
-
-export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult, requestId?: string): ActionExecuteResult {
-  const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => {
-    const projected = settled.ok ? settled : projectActionExecuteFailure(settled, requestId);
-    return result.operationCredentialUses?.length ? { ...projected, operationCredentialUses: result.operationCredentialUses } : projected;
-  };
-  if (!result.ok) {
-    if (actionId === 'projects.open' && (result.errorCode === 'outcome_unknown'
-      || result.errorCode === 'invalid_action_output' || result.errorCode === 'result_too_large')) {
-      return withCredentialUses(completeUnknownProjectOpenResult(result.details));
-    }
-    return withCredentialUses(result);
-  }
-  if (isDeferredApprovalResult(result)) return result;
-  const outputSchema = getActionSpec(actionId).outputSchema;
-  if (!outputSchema) return result;
-  const invalidOutput = (): ActionExecuteResult => actionId === 'projects.open'
-    ? completeUnknownProjectOpenResult()
-    : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
-  try {
-    const output = outputSchema.safeParse(result.result);
-    return withCredentialUses(output.success ? { ok: true, result: output.data } : invalidOutput());
-  } catch {
-    return withCredentialUses(invalidOutput());
-  }
-}
-
-function completeUnknownProjectOpenResult(details?: unknown): ActionExecuteResult {
-  const operationId = readRecord(details).operationId;
-  const unknown = OpenProjectResultV1Schema.safeParse({ kind: 'outcomeUnknown',
-    ...(operationId === undefined ? {} : { operationId }) });
-  return { ok: true, result: unknown.success ? unknown.data : { kind: 'outcomeUnknown' } };
-}
-
-export function isDeferredApprovalResult(result: ActionExecuteResult): boolean {
-  return result.ok && isRecord(result.result) && result.result.kind === 'approval_request_created';
 }

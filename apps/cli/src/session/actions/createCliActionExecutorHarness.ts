@@ -1,9 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ApprovalRequestGetResultV1Schema, type ApprovalRequestPublicRead } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
-import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { StoredApprovalRequestSchema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -14,6 +11,9 @@ import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/pro
 import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentTemplateInstantiateInputV1Schema, projectDeploymentTemplateInstantiationResultV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
@@ -21,12 +21,18 @@ import { createActionSettingsProvider, type RuntimeActionSettingsProvider } from
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createCliActionDeps } from './createCliActionDeps';
+import { readControllerDeploymentDispatch } from './controllerDeploymentDispatch';
 import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { consumeDeferredCliApprovalResult, subscribeCliApprovalChanges, type CliApprovalRequestedHandler } from './approvals/deferredResult';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { createLiveCliApprovalOrigin } from './approvals/liveOrigin';
+import { carriesNativeConfirmation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import type { ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
+import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
+import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 type MutableActionExecutorDeps = {
   -readonly [Key in keyof ActionExecutorDeps]: ActionExecutorDeps[Key];
@@ -48,12 +54,14 @@ export function isOriginalCliApprovalPreservedAtAccount(actionId: ActionSettings
     { surface: 'cli', authority: context.authority }, undefined, undefined, input));
 }
 
-/** Host-local requester custody; never an Action, SDK or transported field. */
+/** Extra host-local requester custody; never an Action, SDK or transported field. */
 export type RecordedApprovalExecutionObservationArgs = Readonly<{
   artifactId: string;
   expectedOrigin: Readonly<{ actionId: string; requestId: string; accountId: string; serverIdentityId: string; machineId: string }>;
   signal: AbortSignal;
-  isCurrent(): Promise<boolean>;
+  isCurrent?(): Promise<boolean>;
+  authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
+  accountEncryptionMode?: 'plain' | 'e2ee';
 }>;
 
 export function createCliActionExecutorHarness(
@@ -64,7 +72,7 @@ export function createCliActionExecutorHarness(
     sessionMemoryEnabled?: boolean;
     /** Machine owning an installed runtime override; remote children retain Machine transport. */
     runtimeActionMachineId?: string;
-    /** Host prompt/notification; decisions still use approval.request.decide. */
+    /** Host prompt/notification for an actual wait; decisions still use approval.request.decide. */
     onApprovalRequested?: CliApprovalRequestedHandler;
   }>,
   overrides?: Partial<ActionExecutorDeps>,
@@ -126,27 +134,23 @@ export function createCliActionExecutorHarness(
       && (!params.actionsSettingsProvider || params.actionsSettingsProvider.getAccountSettings)
       && ctx.surface === 'cli' && !ctx.externalActionCredential && !ctx.externalActionExecutionAuthorization
       && !ctx.rpcSessionAuthorization && (!ctx.actionCaller || ctx.actionCaller.kind === 'host');
-  const readApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input, defaultUiConfirmation?: boolean) =>
+  const readApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
     // A contained Workflow invitation retains its admitted restrictions; a
     // later provider waiver is not consent. Current restrictions still apply.
-    (hasAcceptedReservationPolicy(id, ctx) && isApprovalRequiredByActionsSettings(id, ctx.actionsSettings!, {
-      surface: ctx.surface ?? null, authority: ctx.authority, presentUserConfirmation: ctx.presentUserConfirmation,
-    }, undefined, undefined, input, defaultUiConfirmation)) || isApprovalRequiredByActionsSettings(
+    // Retain admitted caller provenance: the shared policy distinguishes a
+    // person's host UI intent from automation and unstamped invocations.
+    (hasAcceptedReservationPolicy(id, ctx) && isApprovalRequiredByActionsSettings(id, ctx.actionsSettings!, ctx, defaultSafety, undefined, input, defaultUiConfirmation, undefined, approvedOperation, approvalScope)) || isApprovalRequiredByActionsSettings(
       id,
       params.actionsSettingsProvider?.getActionsSettings()
         ?? ctx.actionsSettings
         ?? actionSettingsProvider.getActionsSettings(),
-      {
-        surface: ctx.surface ?? null,
-        authority: ctx.authority,
-        presentUserConfirmation: ctx.presentUserConfirmation,
-      },
-      undefined, undefined, input, defaultUiConfirmation,
+      ctx,
+      defaultSafety, undefined, input, defaultUiConfirmation, undefined, approvedOperation, approvalScope,
     );
-  const isActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input, defaultUiConfirmation) =>
+  const isActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
     // projectAction refuses a policy that cannot survive admission before it
     // sends anything. The receiver persists Ask with the signed Machine root.
-    requiresOriginalCliFiniteAdmission(id, ctx) ? false : readApprovalRequired(id, ctx, input, defaultUiConfirmation);
+    requiresOriginalCliFiniteAdmission(id, ctx) ? false : readApprovalRequired(id, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety);
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDepsForRuntime,
     projectAction: async args => {
@@ -287,9 +291,43 @@ export function createCliActionExecutorHarness(
   }
   const originalApprovalsUpdate = rawDeps.approvalsUpdate;
   const originalApprovalsCreate = rawDeps.approvalsCreate;
+  const signedApprovalStoreForRequest = (request: ApprovalCreateArgs['request'] | ApprovalUpdateArgs['request']) => {
+    const origin = request.v === 2 ? request.executionOriginV1 : null;
+    const authorization = origin?.externalActionExecutionAuthorization;
+    const binding = authorization?.binding;
+    const patBinding = binding && 'credentialId' in binding ? binding : null;
+    if (patBinding && (!params.credentials || patBinding.accountId !== readAccountIdFromToken(params.credentials.token))) {
+      throw Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
+    }
+    if (patBinding && (!patBinding.accountEncryptionMode || params.serverIdentityId !== patBinding.serverIdentityId
+      || !params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId)) {
+      throw Object.assign(new Error('approval_context_unavailable'), { code: 'approval_context_unavailable' });
+    }
+    return patBinding && params.credentials && authorization
+      ? createCliApprovalsArtifactStore({
+        credentials: params.credentials, serverId: params.serverId,
+        serverHttpBaseUrl: params.serverHttpBaseUrl,
+        getAccountEncryptionMode: async () => patBinding.accountEncryptionMode!,
+        approvalAuthorizationHeaders: async request => {
+          const signed = resolveExternalActionServerRequestHeaders({
+            context: { externalActionExecutionAuthorization: authorization,
+              externalActionTarget: patBinding.target },
+            effectActionId: patBinding.actionId, method: request.method, path: request.path,
+            ...(request.body === undefined ? {} : { body: request.body }),
+            daemonToken: params.credentials!.token, serverIdentityId: params.serverIdentityId,
+            privateKey: params.externalActionMachineRequestPrivateKey,
+            installationId: params.externalActionMachineInstallationId,
+          });
+          if (!signed.ok) throw Object.assign(new Error('approval_context_unavailable'), { code: 'approval_context_unavailable' });
+          return { ...signed.headers, [requesterAccountEncryptionMode]: patBinding.accountEncryptionMode! };
+        },
+      }) : null;
+  };
   if (originalApprovalsCreate) {
     rawDeps.approvalsCreate = async (args: ApprovalCreateArgs) => {
-      const result = await liveOrigin.publish(args, () => originalApprovalsCreate(args));
+      const signedApprovalStore = signedApprovalStoreForRequest(args.request);
+      const result = await liveOrigin.publish(args, () => signedApprovalStore
+        ? signedApprovalStore.approvalsCreate(args) : originalApprovalsCreate(args));
       const artifactId = typeof (result as { artifactId?: unknown }).artifactId === 'string'
         ? (result as { artifactId: string }).artifactId
         : null;
@@ -299,7 +337,8 @@ export function createCliActionExecutorHarness(
   }
   if (originalApprovalsUpdate) {
     rawDeps.approvalsUpdate = async (args: ApprovalUpdateArgs) => {
-      const result = await originalApprovalsUpdate(args);
+      const signedApprovalStore = signedApprovalStoreForRequest(args.request);
+      const result = await (signedApprovalStore?.approvalsUpdate ?? originalApprovalsUpdate)(args);
       if ((result as { ok?: false })?.ok !== false) {
         coordinator.notifyApprovalUpdated({
           artifactId: args.artifactId,
@@ -327,9 +366,12 @@ export function createCliActionExecutorHarness(
       ...(accountSettings ? { managedMachineCreationEnabled: accountSettings.managedMachineCreationEnabled } : {}),
       ...(params.serverId ? { serverId: params.serverId } : {}),
       ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-      ...(params.actionsSettingsProvider && !(actionId === 'discussion.invite' && context?.actionCaller?.kind === 'workflowRun'
-        && context.actionCaller.discussionModelReservation && context.actionsSettings)
-        ? { actionsSettings: params.actionsSettingsProvider.getActionsSettings() }
+      ...(params.actionsSettingsProvider
+        ? { actionsSettings: actionId && context && hasAcceptedReservationPolicy(actionId, context)
+          // Retain accepted invitation restrictions, but resolve references from
+          // the current Account collection at this new Action admission.
+          ? { ...context.actionsSettings!, approvalProfiles: params.actionsSettingsProvider.getActionsSettings().approvalProfiles }
+          : params.actionsSettingsProvider.getActionsSettings() }
         : {}),
       ...(params.getCurrentSessionMetadata ? {
         sessionRoleConfiguration: readSessionRolesV1(params.getCurrentSessionMetadata()) ?? undefined,
@@ -341,36 +383,89 @@ export function createCliActionExecutorHarness(
   const runOnCapturedHome = <T>(run: () => T): T => params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, run)
     : run();
-
   const consumeDeferredApproval = (result: ActionExecuteResult, context: ActionExecutorContext) =>
     consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
       token: params.credentials?.token ?? params.token,
       serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
       execute: (actionId, input, actionContext) => executor.execute(actionId, input, actionContext), context });
 
+  // The installed controller owns preparation and Ask under the signed root.
+  // An unsigned local Ask cannot later capture native custody.
+  // Preparation returns only a thunk: the coordinator admits it before run().
+  const prepareControllerDeploymentDispatch = (actionId: string, input: unknown, context: ActionExecutorContext) => {
+    const dispatch = readControllerDeploymentDispatch({ ...params,
+      deploymentAction: overrides?.deploymentAction ?? params.deploymentAction,
+      deploymentTemplateInstantiate: overrides?.deploymentTemplateInstantiate ?? params.deploymentTemplateInstantiate }, actionId, input, context);
+    if (!dispatch) return null;
+    let result: Promise<ActionExecuteResult> | undefined;
+    return { run: () => result ??= Promise.resolve().then(async (): Promise<ActionExecuteResult> => {
+      const parsed = dispatch.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+        ? { actionId: 'deployments.templates.instantiate' as const, result: DeploymentTemplateInstantiateInputV1Schema.safeParse(input) }
+        : { actionId: dispatch.actionId, result: DeploymentActionInputSchemasV1[dispatch.actionId].safeParse(input) };
+      if (!parsed.result.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      if (dispatch.caller === 'host') {
+        if (!isActionEnabled(dispatch.actionId, context)) return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+        if (readApprovalRequired(dispatch.actionId, context, parsed.result.data)
+          && !isOriginalCliApprovalPreservedAtAccount(dispatch.actionId, parsed.result.data, context, originationSettingsProvider))
+          return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      }
+      if (parsed.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
+        return projectDeploymentTemplateInstantiationResultV1(
+          await baseDepsForRuntime.deploymentTemplateInstantiate!(parsed.result.data, context));
+      }
+      const dispatched = await baseDepsForRuntime.deploymentAction!(parsed.actionId, parsed.result.data, context);
+      if ('errorCode' in dispatched) return dispatched;
+      if ('ok' in dispatched && !dispatched.ok) return { ok: false, errorCode: dispatched.error, error: dispatched.error };
+      return { ok: true, result: dispatched };
+    }) };
+  };
 
   return {
     deps,
     observeRecordedApprovalExecution: async args => {
       const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
-      const getApproval = deps.approvalsGet;
-      const waitForDecision = deps.approvalsWaitForDecision;
-      if (!params.credentials || !getApproval || !waitForDecision
-        || readAccountIdFromToken(params.credentials.token) !== args.expectedOrigin.accountId) return failure('approval_context_unavailable');
+      if (!params.credentials || !args.authorizationHeaders
+        && readAccountIdFromToken(params.credentials.token) !== args.expectedOrigin.accountId) return failure('approval_context_unavailable');
       const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+      const authorizedStore = args.authorizationHeaders ? createCliApprovalsArtifactStore({
+        credentials: params.credentials, serverId: params.serverId, serverHttpBaseUrl: serverUrl,
+        approvalAuthorizationHeaders: args.authorizationHeaders,
+        getAccountEncryptionMode: async () => args.accountEncryptionMode ?? 'unknown',
+      }) : null;
+      const getApproval = authorizedStore?.approvalsGet ?? deps.approvalsGet;
+      if (!getApproval) return failure('approval_context_unavailable');
       let observedRequest: ApprovalRequestV2 | undefined;
-      const current = async () => !args.signal.aborted && await args.isCurrent() && !args.signal.aborted;
+      const current = async () => !args.signal.aborted
+        && (!args.isCurrent || await args.isCurrent()) && !args.signal.aborted;
       const observe = async (): Promise<ActionExecuteResult> => {
+        let generation = 0;
+        let wake: (() => void) | undefined;
+        let feedFailed = false;
+        const invalidate = () => { generation++; wake?.(); wake = undefined; };
+        const local = coordinator.subscribeApprovalChanges(change => {
+          if (change.artifactId === args.artifactId) invalidate();
+        });
+        const abort = () => invalidate();
+        args.signal.addEventListener('abort', abort, { once: true });
+        let accountChanges: ReturnType<ReturnType<typeof subscribeCliApprovalChanges>> | undefined;
         try {
+          if (!args.authorizationHeaders) accountChanges = subscribeCliApprovalChanges({ token: params.credentials!.token,
+            serverHttpBaseUrl: serverUrl, artifactId: args.artifactId })(invalidate,
+            () => { feedFailed = true; invalidate(); });
           while (true) {
+            const readGeneration = generation;
+            if (args.signal.aborted) return failure('cancelled');
+            if (feedFailed) return failure('approval_context_unavailable');
             if (!args.signal.aborted && !await current() && !args.signal.aborted) return failure('approval_stale');
             // Cancellation before the first read still withdraws this exact child.
             const request = await runWithServerHttpBaseUrl(serverUrl, () => getApproval({ artifactId: args.artifactId, serverId: params.serverId ?? null }));
             if (!request) return failure(args.signal.aborted ? 'cancelled' : 'approval_not_found');
             if (request.v !== 2
               || Object.entries(args.expectedOrigin).some(([key, value]) => Reflect.get(request.executionOriginV1, key) !== value)
-              || request.executionOriginV1.target?.kind !== 'machine'
-              || request.executionOriginV1.target.machineId !== args.expectedOrigin.machineId) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
+              // Machine-hosted core Actions need no external target. The exact
+              // origin Machine above still binds their recorded execution.
+              || request.executionOriginV1.target !== undefined && (request.executionOriginV1.target.kind !== 'machine'
+                || request.executionOriginV1.target.machineId !== args.expectedOrigin.machineId)) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
             observedRequest = request;
             if (!await current()) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
             const result = buildActionExecuteResultFromRecordedApprovalExecution(request);
@@ -380,18 +475,29 @@ export function createCliActionExecutorHarness(
             // A returned approval id is the deferred flow. Its observer must not
             // claim another Machine's live blocking decision continuation.
             if (request.approval?.flow !== 'deferred') return failure('approval_context_unavailable');
-            // Approval is not execution. The same coordinator subscribes before
-            // rereading the durable body; no polling or competing replay begins.
-            await waitForDecision({ artifactId: args.artifactId, request, serverId: params.serverId ?? null, signal: args.signal });
+            // A receipt observer must not claim the authenticated decision's
+            // live waiter. Both local updates and Account socket changes only
+            // invalidate this durable read; approval alone is not execution.
+            if (generation === readGeneration && !args.signal.aborted) {
+              await new Promise<void>(resolve => {
+                wake = resolve;
+                if (generation !== readGeneration || args.signal.aborted) invalidate();
+              });
+            }
           }
         } catch {
           return failure(args.signal.aborted ? 'cancelled' : 'approval_context_unavailable');
+        } finally {
+          wake = undefined;
+          args.signal.removeEventListener('abort', abort);
+          local.dispose();
+          await accountChanges?.dispose();
         }
       };
       const result = await observe();
       const request = observedRequest;
       if (args.signal.aborted && request?.status === 'open' && request.approval?.flow === 'deferred') {
-        const updateApproval = deps.approvalsUpdate;
+        const updateApproval = authorizedStore?.approvalsUpdate ?? deps.approvalsUpdate;
         if (!updateApproval) return failure('approval_context_unavailable');
         try {
           const updated = await runWithServerHttpBaseUrl(serverUrl, () => updateApproval({
@@ -410,6 +516,9 @@ export function createCliActionExecutorHarness(
     executor: {
       prepare: (actionId, input, context) => runOnCapturedHome(() => {
         const resolved = resolveContext(context, actionId);
+        const dispatch = prepareControllerDeploymentDispatch(actionId, input, resolved);
+        if (dispatch) return Promise.resolve({ kind: 'ready' as const,
+          invocation: { run: async () => consumeDeferredApproval(await dispatch.run(), resolved) } });
         return liveOrigin.prepare(resolved, async () => {
           const prepared = await executor.prepare(actionId, input, resolved);
           return prepared.kind === 'ready' ? { ...prepared,
@@ -418,7 +527,20 @@ export function createCliActionExecutorHarness(
       }),
       execute: (actionId, input, context) => runOnCapturedHome(() => {
         const resolved = resolveContext(context, actionId);
-        return liveOrigin.run(resolved, async () => consumeDeferredApproval(await executor.execute(actionId, input, resolved), resolved));
+        const dispatch = prepareControllerDeploymentDispatch(actionId, input, resolved);
+        if (dispatch) return dispatch.run().then(result => consumeDeferredApproval(result, resolved));
+        return liveOrigin.run(resolved, async () => {
+          if (carriesNativeConfirmation(actionId, resolved)) {
+            const runActionOperation = resolved.runActionOperation ?? deps.runActionOperation;
+            if (!runActionOperation) return { ok: false,
+              errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+            // The existing request owner consumes or rejoins this invocation
+            // before the common owner can honour its carried confirmation.
+            return await consumeDeferredApproval(await runActionOperation({ actionId, input, context: resolved,
+              execute: owned => executor.execute(actionId, input, owned) }), resolved);
+          }
+          return await consumeDeferredApproval(await executor.execute(actionId, input, resolved), resolved);
+        });
       }),
       continueConfidentialApprovalRequest: (input, context) => runOnCapturedHome(() => executor.continueConfidentialApprovalRequest(input, resolveContext(context))),
       replayApprovedApprovalRequest: (args) => runOnCapturedHome(() => executor.replayApprovedApprovalRequest(args)),

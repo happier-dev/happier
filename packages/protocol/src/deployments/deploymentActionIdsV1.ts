@@ -1,5 +1,11 @@
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 
+/** Persisted approval history only; never part of the live Action catalog. */
+export const RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 = 'deployments.publish' as const;
+
+/** The reviewed observer setup consumes only its Link's admitted read scope. */
+export const PLATFORM_FAILURE_SETUP_ROLE = 'platform-failure.setup';
+
 export const DEPLOYMENT_BACKUP_ACTION_IDS_V1 = [
   'deployments.backups.inventory', 'deployments.backups.run', 'deployments.backups.verify', 'deployments.backups.prune',
 ] as const;
@@ -7,52 +13,94 @@ export type DeploymentBackupActionIdV1 = typeof DEPLOYMENT_BACKUP_ACTION_IDS_V1[
 export function isDeploymentBackupActionIdV1(value: string): value is DeploymentBackupActionIdV1 {
   return (DEPLOYMENT_BACKUP_ACTION_IDS_V1 as readonly string[]).includes(value);
 }
+/** Inventory follows Environment read authority; executing verification retains deploy admission. */
+export function isDeploymentBackupInventoryActionIdV1(value: string): value is 'deployments.backups.inventory' {
+  return value === 'deployments.backups.inventory';
+}
+
+export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
+export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
+export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
+
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
-  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, 'deployments.environments.update', 'deployments.targets.link', 'deployments.deploy', 'deployments.rollback',
+  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, 'deployments.environments.update', 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, 'deployments.rollback',
   'deployments.environments.controller.set',
   'deployments.targets.unlink', 'deployments.environments.delete',
   'deployments.promote',
   'deployments.restart', 'deployments.backups.restore',
+  ...DEPLOYMENT_BACKUP_ACTION_IDS_V1,
   'deployments.teardown',
   'deployments.cancel',
   'deployments.environments.get', 'deployments.receipts.get', 'deployments.bindings.set',
-  'deployments.environments.list', 'deployments.receipts.list', 'deployments.receipts.observe',
-  'deployments.publish', 'deployments.publish.prepare', 'deployments.prepare', 'deployments.templates.instantiate',
+  'deployments.environments.list', 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+  'deployments.observation.get',
+  'deployments.publish.prepare', 'deployments.prepare', DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',
 ] as const;
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
 /** Semantic composition/handoff have their own typed ports, never storage HTTP transports. */
-export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.publish' | 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.backups.restore'>;
+export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.backups.restore' | DeploymentBackupActionIdV1>;
 const ids: ReadonlySet<string> = new Set(DEPLOYMENT_ACTION_IDS_V1);
 export function isDeploymentActionIdV1(value: string): value is DeploymentActionIdV1 { return ids.has(value); }
+
+export function isDeploymentTargetLinkActionIdV1(value: string): value is 'deployments.targets.link' {
+  return value === 'deployments.targets.link';
+}
+
+/** Private observation identities require installed requester content custody. */
+export function isDeploymentObservationReadActionIdV1(value: string): value is 'deployments.observation.get' {
+  return value === 'deployments.observation.get';
+}
+
+/** These roots may reuse a Manage-approved definition; the receiving host admits its exact contents. */
+export function isStoredDeploymentExecutionActionIdV1(value: string): value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.restart' {
+  return value === 'deployments.deploy' || value === 'deployments.rollback' || value === 'deployments.restart';
+}
 
 export type DeploymentRootOperationV1 = 'deploy' | 'rollback' | 'promote' | 'teardown';
 export function isDeploymentPromoteActionIdV1(value: string): value is 'deployments.promote' {
   return value === 'deployments.promote';
 }
-export function isDeploymentDomainRemoveActionIdV1(value: string): value is 'deployments.domains.remove' {
-  return value === 'deployments.domains.remove';
-}
+/** Native deployment preparation reads use these existing canonical transports. */
+export const DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1 = [
+  'deployments.environments.get', 'deployments.receipts.list', 'deployments.receipts.get',
+] as const;
 export type DeploymentDomainChildActionIdV1 = 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
 export function isDeploymentDomainChildActionIdV1(value: string): value is DeploymentDomainChildActionIdV1 {
   return value === 'deployments.domains.add' || value === 'deployments.domains.remove' || value === 'deployments.domains.verify';
 }
+export function isDeploymentDomainAddActionIdV1(value: string): value is 'deployments.domains.add' {
+  return value === 'deployments.domains.add';
+}
+export function isDeploymentDomainRemoveActionIdV1(value: string): value is 'deployments.domains.remove' {
+  return value === 'deployments.domains.remove';
+}
+export type DeploymentDomainMetadataReadActionIdV1 = 'deployments.domains.get' | 'deployments.domains.list';
+export function isDeploymentDomainMetadataReadActionIdV1(value: string): value is DeploymentDomainMetadataReadActionIdV1 {
+  return value === 'deployments.domains.get' || value === 'deployments.domains.list';
+}
 /** Environment reads retain one Environment without admitting native child effects. */
 export function isDeploymentEnvironmentMetadataReadActionIdV1(value: string): value is
-  'deployments.domains.get' | 'deployments.domains.list' | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.observation.get' {
-  return value === 'deployments.domains.get' || value === 'deployments.domains.list'
+  DeploymentDomainMetadataReadActionIdV1 | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.observation.get' {
+  return isDeploymentDomainMetadataReadActionIdV1(value)
     || value === 'deployments.receipts.get' || value === 'deployments.receipts.list' || value === 'deployments.observation.get';
 }
-/** Domain effects retain their own root; they are never deployment receipt operations. */
-export function deploymentChildEffectActionIdForRootV1(value: string, admission?: DeploymentPreparationAdmissionV1):
-  DeploymentDomainChildActionIdV1 | 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | undefined {
+/** Map native child effects without changing the root's receipt operation. */
+export function deploymentChildEffectActionIdForRootV1(value: string, admission?: DeploymentPreparationAdmissionV1,
+  requestedEffectActionId?: string):
+  DeploymentDomainChildActionIdV1 | 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | undefined {
   if (isDeploymentDomainChildActionIdV1(value)) return value;
+  if (value === 'deployments.teardown' && requestedEffectActionId === 'deployments.domains.remove') return requestedEffectActionId;
+  if (value === 'deployments.templates.instantiate' && admission?.operation === 'template'
+    && admission.mode === 'apply' && admission.deploy !== undefined && requestedEffectActionId === 'deployments.domains.add')
+    return requestedEffectActionId;
   if (value === 'deployments.environments.create' && admission?.operation === 'create'
-    && admission.mode === 'apply' && admission.catalogApp) return 'deployments.domains.add';
+    && admission.mode === 'apply' && admission.catalogApp) return requestedEffectActionId === 'deployments.deploy'
+      ? 'deployments.deploy' : 'deployments.domains.add';
   const operation = deploymentOperationForRootActionV1(value, admission);
-  return operation && operation !== 'teardown' ? `deployments.${operation}` as const : undefined;
+  return operation ? `deployments.${operation}` as const : undefined;
 }
 /** A template retains its signed root while spending only its explicit apply/deploy intent. */
 export function deploymentOperationForRootActionV1(value: string,
@@ -61,15 +109,22 @@ export function deploymentOperationForRootActionV1(value: string,
   if (value === 'deployments.rollback') return 'rollback';
   if (value === 'deployments.promote') return 'promote';
   if (value === 'deployments.teardown') return 'teardown';
-  if (value === 'deployments.publish' && admission?.operation === 'publish') return 'deploy';
+  if (value === 'deployments.environments.create' && admission?.operation === 'create'
+    && admission.mode === 'apply' && admission.catalogApp) return 'deploy';
   return value === 'deployments.templates.instantiate' && admission?.operation === 'template'
     && admission.mode === 'apply' && admission.deploy !== undefined ? 'deploy' : undefined;
 }
 
+/** Intrinsic child Action category, for local operation metadata without a signed root. */
+export function isDeploymentChildEffectActionIdV1(value: string):
+  value is NonNullable<ReturnType<typeof deploymentChildEffectActionIdForRootV1>> {
+  return deploymentChildEffectActionIdForRootV1(value) === value;
+}
+
 /** Existing deployment roots whose installed controller may derive finite child work. */
-export function isDeploymentChildRootActionIdV1(value: string): value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | DeploymentDomainChildActionIdV1;
+export function isDeploymentChildRootActionIdV1(value: string): value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | DeploymentDomainChildActionIdV1;
 export function isDeploymentChildRootActionIdV1(value: string, admission: DeploymentPreparationAdmissionV1 | undefined):
-  value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.templates.instantiate' | 'deployments.publish' | 'deployments.environments.create' | DeploymentDomainChildActionIdV1;
+  value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | 'deployments.templates.instantiate' | 'deployments.environments.create' | DeploymentDomainChildActionIdV1;
 export function isDeploymentChildRootActionIdV1(value: string, admission?: DeploymentPreparationAdmissionV1): boolean {
   return deploymentChildEffectActionIdForRootV1(value, admission) !== undefined;
 }

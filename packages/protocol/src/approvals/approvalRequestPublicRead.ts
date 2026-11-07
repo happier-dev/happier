@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
+import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import {
   ApprovalDecisionV1Schema,
@@ -21,6 +22,11 @@ const ApprovalPublicExecutionOriginV1Schema = lazyZodSchema(() => {
     originalActionEnvelope: _envelope, ...shape } = ApprovalExecutionOriginV1Schema.shape;
   return z.strictObject(shape);
 });
+
+const HistoricalPublishPublicExecutionOriginV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ApprovalPublicExecutionOriginV1Schema.shape,
+  actionId: z.literal(RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1),
+}));
 
 const ApprovalPublicOriginV1Schema = lazyZodSchema(() => {
   const { toolInput: _input, ...shape } = ApprovalRequestOriginV1Schema.shape;
@@ -48,6 +54,16 @@ const ApprovalPublicTargetExecutionV1Schema = lazyZodSchema(() => {
   return z.strictObject(shape);
 });
 
+const ApprovalPublicRequestV2Schema = lazyZodSchema(() => z.strictObject({
+  ...ApprovalRequestV2Schema.shape,
+  actionArgs: StrictJsonValueSchema,
+  preview: z.optional(StrictJsonValueSchema),
+  origin: z.optional(ApprovalPublicOriginV1Schema),
+  executionOriginV1: ApprovalPublicExecutionOriginV1Schema,
+  decision: z.optional(ApprovalPublicDecisionV2Schema),
+  execution: z.optional(ApprovalPublicExecutionV2Schema),
+}));
+
 /** Read projection only: the private request schemas retain all replay/lifecycle validation. */
 export const ApprovalRequestPublicReadSchema = lazyZodSchema(() => z.union([
   z.strictObject({
@@ -58,14 +74,11 @@ export const ApprovalRequestPublicReadSchema = lazyZodSchema(() => z.union([
     decision: z.optional(ApprovalPublicDecisionV2Schema),
     execution: z.optional(ApprovalPublicExecutionV1Schema),
   }),
+  ApprovalPublicRequestV2Schema,
   z.strictObject({
-    ...ApprovalRequestV2Schema.shape,
-    actionArgs: StrictJsonValueSchema,
-    preview: z.optional(StrictJsonValueSchema),
-    origin: z.optional(ApprovalPublicOriginV1Schema),
-    executionOriginV1: ApprovalPublicExecutionOriginV1Schema,
-    decision: z.optional(ApprovalPublicDecisionV2Schema),
-    execution: z.optional(ApprovalPublicExecutionV2Schema),
+    ...ApprovalPublicRequestV2Schema.shape,
+    actionId: z.literal(RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1),
+    executionOriginV1: HistoricalPublishPublicExecutionOriginV1Schema,
   }),
   z.strictObject({
     ...TargetActionApprovalRequestV1Schema.shape,
@@ -80,10 +93,13 @@ export type ApprovalRequestPublicRead = z.infer<typeof ApprovalRequestPublicRead
 export const ApprovalQueueListItemV1Schema = lazyZodSchema(() => z.strictObject({
   artifactId: z.string(),
   status: ApprovalRequestV2StatusSchema,
-  actionId: ActionIdSchema,
+  actionId: z.union([ActionIdSchema, z.literal(RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1)]),
   summary: z.string(),
   sessionId: z.optional(z.string()),
   serverId: z.optional(z.string()),
+  /** The list facts the Inbox and Discussion lists group by (the header's `approvalListFacts`). */
+  automationId: z.optional(z.string()),
+  discussionId: z.optional(z.string()),
   updatedAtMs: z.number(),
 }));
 export type ApprovalQueueListItemV1 = Readonly<z.infer<typeof ApprovalQueueListItemV1Schema>>;

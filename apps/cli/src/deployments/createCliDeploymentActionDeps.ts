@@ -1,11 +1,14 @@
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
+import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { deploymentOutputValidationFailure } from './outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import {
   DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
-  DeploymentTargetLinkInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema,
+  DeploymentTargetLinkInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema, DeploymentPromoteInputV1Schema,
   DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
   createDeploymentApprovalScopeResolverV1,
   type ActionExecutorContext, type ActionExecutorDeps, type DeploymentTransportActionIdV1,
@@ -13,18 +16,20 @@ import {
   type DeploymentTeardownInputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1,
 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeploymentPromoteActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
   DeploymentEnvironmentAccessInputV1Schema, DeploymentEnvironmentAccessResultV1Schema,
   type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 import { bindHomeDomainHttpRequestV1, classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import type { DeploymentEnvironmentContentPreparation, DeploymentEnvironmentContentPreparationResult } from './prepareEnvironmentContentForHost';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { acquireRequesterAccountEncryptionCurrentness, type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 
 type ReceiptSuccess = Extract<DeploymentReceiptResultV1, { ok: true; deploymentId: string }>;
 type ReceiptAction = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
@@ -33,7 +38,7 @@ export type DeploymentReceiptDispatchV1 = { [TAction in ReceiptAction]: Readonly
   input: TAction extends 'deployments.deploy' ? ReturnType<typeof DeploymentDeployInputV1Schema.parse>
     : TAction extends 'deployments.rollback' ? ReturnType<typeof DeploymentRollbackInputV1Schema.parse>
     : TAction extends 'deployments.teardown' ? DeploymentTeardownInputV1
-    : ReturnType<(typeof DeploymentActionInputSchemasV1)[TAction]['parse']>;
+    : ReturnType<typeof DeploymentPromoteInputV1Schema.parse>;
   receipt: ReceiptSuccess;
   context: ActionExecutorContext;
 }> }[ReceiptAction];
@@ -47,11 +52,18 @@ export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironm
   & Readonly<{ environmentIds: readonly string[] }>, context: ActionExecutorContext, effectActionId: string
 ) => Promise<DeploymentEnvironmentAccessResultV1 | ActionExecuteFailure>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const domainOperationUnavailable = (requiredFact: 'operationAcceptance' | 'requestId'): ActionExecuteFailure => {
+  const phase = requiredFact === 'operationAcceptance'
+    ? 'deployment.domain.operation_acceptance_missing' : 'deployment.domain.request_id_missing';
+  return { ...failure('operation_unavailable'), error: `operation_unavailable (${phase})`,
+    details: { requiredFact }, cause: { phase, errorClass: 'Error', errorCode: null, httpStatus: null } };
+};
 const transportRefusal = (error: unknown): ActionExecuteFailure | null => readHttpStatus(error) === 431
   ? { ...failure('request_headers_too_large'), details: { httpStatus: 431 } } : null;
-const rejectedHomeAuthentication = (headers: Readonly<Record<string, string>>): ActionExecuteFailure =>
-  Object.entries(headers).some(([name, value]) => name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER
-    && value.length > 0) ? deploymentAuthorizationFailure('home_signed_authorization_rejected') : failure('action_home_signed_out');
+/** Admitted local or original-requester invalidations, not serialized operands or an ACL cache. */
+export type CliDeploymentEnvironmentAccessObserve = (input: Readonly<{ serverId: string }>, context: ActionExecutorContext,
+  listener: (event: RequesterEnvironmentAccessObservation) => void,
+) => Promise<Readonly<{ dispose(): Promise<void> }> | ActionExecuteFailure>;
 const localAdmissionFailure = (error: unknown): ActionExecuteFailure | null => error instanceof Error
   && 'code' in error && typeof error.code === 'string'
   && ['action_forbidden', 'authorityChanged', 'secret_use_client_required', 'secret_save_client_required'].includes(error.code)
@@ -73,7 +85,53 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure>;
 }>): Pick<ActionExecutorDeps, 'deploymentAction' | 'resolveEnvironmentApprovalScope'> & Readonly<{
   readEnvironmentAccess: CliDeploymentEnvironmentAccessRead;
+  observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
 }> {
+  const observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve = async (input, context, listener) => {
+    let release: (() => Promise<void>) | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let closed = false;
+    const dispose = async () => {
+      if (closed) return;
+      closed = true;
+      context.signal?.removeEventListener('abort', retire);
+      unsubscribe?.();
+      await release?.();
+    };
+    const retire = () => { listener({ kind: 'retired' }); void dispose(); };
+    try {
+      const denied = await params.admitAccount(input.serverId, context);
+      if (denied) return denied;
+      context.signal?.throwIfAborted();
+      if (context.externalActionExecutionAuthorization) {
+        const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
+        const binding = context.externalActionExecutionAuthorization.binding;
+        if (!requester || requester.authorization.binding.accountId !== binding.accountId
+          || requester.authorization.binding.serverIdentityId !== binding.serverIdentityId
+          || normalizeServerHttpBaseUrl(requester.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.serverHttpBaseUrl)) {
+          return failure('admission_unavailable');
+        }
+        if (!await requester.isCurrent()) return failure('action_forbidden');
+        context.signal?.throwIfAborted();
+        release = requester.retain();
+        unsubscribe = requester.subscribeEnvironmentAccess(listener);
+      } else {
+        if (!params.localAccount) return failure('admission_unavailable');
+        // Account admission above owns local authority; join its existing pooled Account/Home observation.
+        const own = acquireRequesterAccountEncryptionCurrentness({ ...params.localAccount, serverBaseUrl: params.serverHttpBaseUrl });
+        release = () => own.dispose();
+        await own.read(context.signal, { requireLiveObservation: true });
+        context.signal?.throwIfAborted();
+        unsubscribe = own.subscribeEnvironmentAccess(listener);
+      }
+      context.signal?.addEventListener('abort', retire, { once: true });
+      context.signal?.throwIfAborted();
+      return { dispose };
+    } catch {
+      await dispose();
+      return failure(context.signal?.aborted ? 'cancelled' : 'admission_unavailable');
+    }
+  };
   const readEnvironmentAccess: CliDeploymentEnvironmentAccessRead = async (input, context, effectActionId) => {
     try {
       const denied = await params.admitAccount(input.serverId, context);
@@ -99,8 +157,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (changed) return changed;
       context.signal?.throwIfAborted();
       const parsed = DeploymentEnvironmentAccessResultV1Schema.safeParse(response.data);
-      if (!parsed.success && response.status === 401) return rejectedHomeAuthentication(headers);
-      if (!parsed.success && response.status === 403) return deploymentAuthorizationFailure('home_deployment_http_forbidden');
+      if (!parsed.success && (response.status === 401 || response.status === 403)) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
       if (!parsed.success) return failure(response.status === 404 || response.status === 405 || response.status === 501
         ? 'unsupported_action' : 'invalid_action_output');
       if (!parsed.data.ok) return parsed.data;
@@ -132,11 +189,14 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (actionId === 'deployments.rollback' && !DeploymentRollbackInputV1Schema.safeParse(input).success) return failure('client_required');
       if (actionId === 'deployments.environments.create') {
         const prepared = DeploymentEnvironmentCreateInputV1Schema.safeParse(input);
-        if (!prepared.success) return failure('client_required');
+        if (!prepared.success) {
+          const { actionInputValidationFailure } = await import('@happier-dev/protocol/actions/executor/actionInputValidation');
+          return actionInputValidationFailure(prepared.error);
+        }
         input = prepared.data;
       }
       context.signal?.throwIfAborted();
-      if (actionId === 'deployments.teardown') {
+      if (actionId === 'deployments.teardown' && !('detachKeepRunning' in input)) {
         if (!params.admitTeardown) return failure('unsupported_action');
         const unsupported = await params.admitTeardown(DeploymentTeardownInputV1Schema.parse(input), context);
         if (unsupported) return unsupported;
@@ -203,7 +263,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         inputSchema: actionId === 'deployments.environments.create'
           ? DeploymentEnvironmentCreateStorageInputV1Schema : actionId === 'deployments.targets.link'
           ? DeploymentTargetLinkInputV1Schema : actionId === 'deployments.rollback'
-          ? DeploymentRollbackInputV1Schema : DeploymentActionInputSchemasV1[actionId], input: transportInput });
+          ? DeploymentRollbackInputV1Schema : isDeploymentPromoteActionIdV1(actionId)
+          ? DeploymentPromoteInputV1Schema : DeploymentActionInputSchemasV1[actionId], input: transportInput });
       method = bound.method;
       let body = bound.body;
       if (actionId === 'deployments.environments.update' && preparedUpdateBindings) {
@@ -214,7 +275,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           authoredInputDigest: authoredEnvironmentInputDigest };
       }
       if (actionId === 'deployments.cancel') body = { ...transportInput, kind: 'cancel' };
-      if (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote' || actionId === 'deployments.teardown') {
+      if (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote'
+        || actionId === 'deployments.teardown' && !('detachKeepRunning' in transportInput)) {
         const actionOperationId = context.operationAcceptance?.operationId;
         if (!actionOperationId) return failure('operation_unavailable');
         body = { ...transportInput, actionOperationId };
@@ -222,8 +284,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (actionId === 'deployments.domains.add' || actionId === 'deployments.domains.remove') {
         const actionOperationId = context.operationAcceptance?.operationId;
         const requestId = context.externalActionExecutionAuthorization?.binding.requestId ?? context.actionRequestId;
-        if (!actionOperationId || !requestId) return failure('operation_unavailable');
-        const native = context.externalActionExecutionAuthorization?.binding.deploymentNativeAdmission;
+        if (!actionOperationId) return domainOperationUnavailable('operationAcceptance');
+        if (!requestId) return domainOperationUnavailable('requestId');
+        const native = readHostAdmittedReviewedChildV1(context)?.deploymentNativeAdmission
+          ?? context.externalActionExecutionAuthorization?.binding.deploymentNativeAdmission;
         body = { ...transportInput, actionOperationId, requestId,
           ...(actionId === 'deployments.domains.add' && isDeploymentDomainNativeAdmissionV1(native)
             && native.authoredMetadataDigest ? { authoredInputDigest: native.inputDigest } : {}) };
@@ -248,11 +312,16 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         method, headers, ...(body === undefined ? {} : { data: body }),
         ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
       const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
-      if (rollback) return { ok: false, errorCode: rollback.code, error: rollback.code, details: rollback.details };
+      if (rollback) return { ok: false, errorCode: rollback.code, error: rollback.code, effectAttempted: false,
+        details: { ...rollback.details, requiredFact: 'transaction_commit',
+          remedy: 'Retry the action; the Home rolled back its database transaction.' },
+        failureCause: projectActionFailureCauseV1({ code: rollback.code, status: response.status }, 'home.database.transaction') };
       const parsed = (actionId === 'deployments.environments.create'
         ? DeploymentEnvironmentCreateResultV1Schema : DeploymentActionOutputSchemasV1[actionId]).safeParse(response.data);
-      if (!parsed.success && response.status === 401) return rejectedHomeAuthentication(headers);
-      if (!parsed.success && response.status === 403) return deploymentAuthorizationFailure('home_deployment_http_forbidden');
+      if (!parsed.success && (response.status === 401 || response.status === 403)) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
+      if (!parsed.success && method === 'GET' && ![404, 405, 501].includes(response.status)) {
+        return deploymentOutputValidationFailure(actionId, response.status, parsed.error);
+      }
       if (!parsed.success) return failure(response.status === 404 || response.status === 405 || response.status === 501
         ? 'unsupported_action' : method === 'GET' ? 'invalid_action_output' : 'outcome_unknown');
       if (method === 'GET') {
@@ -279,7 +348,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled' : 'home_unreachable');
     }
   }
-  return { readEnvironmentAccess, resolveEnvironmentApprovalScope: args => createDeploymentApprovalScopeResolverV1((actionId, input, context) =>
+  return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => createDeploymentApprovalScopeResolverV1((actionId, input, context) =>
     request(actionId, input, { ...context, onTransportIssued: undefined },
       args.actionId === 'deployments.environments.update' || args.actionId === 'deployments.bindings.set'
         ? args.actionId : actionId))(args),
@@ -287,35 +356,34 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     const result = await request(actionId, input, context, actionId, creationReview);
     if ('errorCode' in result || !('ok' in result) || !result.ok
       || (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback' && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown')) return result;
+    if (actionId === 'deployments.teardown' && 'detached' in result) return result;
     const receipt = DeploymentReceiptResultV1Schema.parse(result);
     if (!receipt.ok) return receipt;
     if (!('deploymentId' in receipt)) return receipt;
     context.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: input.serverId,
       environmentId: receipt.environmentId, deploymentId: receipt.deploymentId } });
     if (receipt.state === 'succeeded' || receipt.state === 'running_unverified') return receipt;
-    if (receipt.state === 'cancelled' || (actionId !== 'deployments.teardown' && (receipt.state === 'failed' || receipt.state === 'outcome_unknown'))) {
-      return { ok: false, errorCode: receipt.state === 'failed' ? 'deployment_failed'
-        : receipt.state === 'cancelled' ? 'cancelled' : 'outcome_unknown', error: receipt.state, details: receipt };
+    const receiptFailureCode = readDeploymentReceiptFailureCodeV1(receipt.state);
+    if (receiptFailureCode && (actionId !== 'deployments.teardown' || receipt.state === 'cancelled')) {
+      return { ok: false, errorCode: receiptFailureCode,
+        error: receipt.state, details: projectDeploymentFailureRecoveryV1(receipt) };
     }
     const settled = await (actionId === 'deployments.teardown'
       ? params.dispatchReceipt({ actionId, input: DeploymentTeardownInputV1Schema.parse(input), receipt, context })
       : actionId === 'deployments.promote'
-        ? params.dispatchReceipt({ actionId, input: DeploymentActionInputSchemasV1[actionId].parse(input), receipt, context })
+        ? params.dispatchReceipt({ actionId, input: DeploymentPromoteInputV1Schema.parse(input), receipt, context })
         : actionId === 'deployments.rollback'
           ? params.dispatchReceipt({ actionId, input: DeploymentRollbackInputV1Schema.parse(input), receipt, context })
           : params.dispatchReceipt({ actionId, input: DeploymentDeployInputV1Schema.parse(input), receipt, context }));
     if ('errorCode' in settled || !('ok' in settled) || !settled.ok) return settled;
     if (!('deploymentId' in settled)) return settled;
-    if (settled.state === 'failed' || settled.state === 'cancelled' || settled.state === 'outcome_unknown') {
-      return { ok: false, errorCode: settled.state === 'outcome_unknown' ? 'outcome_unknown' : settled.state === 'cancelled'
-        ? 'cancelled' : 'deployment_failed', error: settled.state, details: settled };
+    const settledFailureCode = readDeploymentReceiptFailureCodeV1(settled.state);
+    if (settledFailureCode) {
+      return { ok: false, errorCode: settledFailureCode,
+        error: settled.state, details: projectDeploymentFailureRecoveryV1(settled) };
     }
     // Provider builds can be accepted while queued/running. Their known receipt
     // remains observable; acceptance does not claim the build has completed.
     return settled;
   } };
 }
-
-export type CliDeploymentEnvironmentAccessObserve = (input: Readonly<{ serverId: string }>, context: ActionExecutorContext,
-  listener: (event: RequesterEnvironmentAccessObservation) => void,
-) => Promise<Readonly<{ dispose(): Promise<void> }> | ActionExecuteFailure>;

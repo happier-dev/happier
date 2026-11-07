@@ -1,5 +1,29 @@
-export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
+import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
+import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
+import { RPC_METHODS } from '../rpc/methods.js';
+export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
+
+export const MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 = 'machines.add.local.cancel' as const;
+export const SESSION_SPAWN_NEW_ACTION_ID_V1 = 'session.spawn_new' as const;
+export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
+export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
+
+/** Exact controller lifecycle effects that retain their original requester through Ask. */
+export const WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS = {
+  'workspace.sync.relationship.disable': RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE,
+  'workspace.sync.relationship.enable': RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME,
+  'workspace.sync.relationship.flush': RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH,
+  'workspace.sync.relationship.terminate': RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE,
+  'projects.worker.copy.retire': 'projects.worker.copy.retire',
+} as const;
+export function isWorkspaceSyncRelationshipControlActionId(actionId: string): actionId is keyof typeof WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS {
+  return Object.hasOwn(WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, actionId);
+}
+
+
+/** Actions that exercise the separately granted approval-decision authority. */
+export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
 export const BROWSER_EXTENSION_MUTATION_ACTION_IDS = [
   'browser.extensions.install', 'browser.extensions.update', 'browser.extensions.enable', 'browser.extensions.disable', 'browser.extensions.remove',
 ] as const;
@@ -14,16 +38,10 @@ export function isBrowserExtensionActionIdV1(actionId: string): actionId is Brow
 export function isBrowserExtensionMutationActionIdV1(actionId: string): boolean {
   return (BROWSER_EXTENSION_MUTATION_ACTION_IDS as readonly string[]).includes(actionId);
 }
-import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
-import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '../machines/adminAccessActionIdsV1.js';
-import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
-import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';
-import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
-import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '../machines/reachability/actionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from 'zod/mini';
-import { EXTERNAL_LINK_ACTION_IDS } from './externalLinkActionIdsV1.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './specs/machineConnectionActionIdsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActionIdsV1.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
@@ -32,7 +50,11 @@ import { MACHINE_VITALS_ACTION_IDS } from './specs/machineVitalsActionIdsV1.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './specs/machineProcessesActionIdsV1.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './specs/storageActionIdsV1.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './specs/machineResourcesActionIdsV1.js';
+import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';
 import { MACHINE_REBOOT_ACTION_IDS } from '../machines/rebootActionIdsV1.js';
+import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
+import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '../machines/adminAccessActionIdsV1.js';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '../machines/reachability/actionIdsV1.js';
 import { MACHINE_GUARD_ACTION_IDS } from '../machines/guard/actionIdsV1.js';
 import { MACHINE_TERMINAL_ACTION_IDS } from './specs/machineTerminalActionIdsV1.js';
 import { SCOPE_ACTION_IDS } from './scopeActionIdsV1.js';
@@ -62,7 +84,6 @@ import { TEAM_ACTION_IDS_V1 } from '../teams/actionIdsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubAppsActionIdsV1.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providersActionIdsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1 } from '../ephemeralRunner/idsV1.js';
-import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '../automations/occurrenceActionIds.js';
 import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/personalSavedSecretActionIdsV1.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from '../artifacts/artifactAccessActionIdsV1.js';
@@ -70,6 +91,7 @@ import { ARTIFACT_ACTION_IDS_V1 } from '../artifacts/artifactActionIdsV1.js';
 import { DOC_COLLABORATION_ACTION_IDS_V1 } from '../artifacts/artifactCollaborationActionIdsV1.js';
 import { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 import { PROJECT_ACTION_IDS_V1 } from './projectActionIdsV1.js';
+import { PROJECT_READINESS_ACTION_IDS_V1 } from './projectReadinessActionIdsV1.js';
 import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from '../connect/configurationActionIdsV1.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionIdsV1.js';
@@ -83,6 +105,7 @@ import { BUG_REPORT_SUBMISSION_ACTION_IDS } from './specs/bugReportActionIdsV1.j
 import { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
 import { CLIPBOARD_ACTION_IDS } from './clipboardActionIdsV1.js';
 import { SCREEN_CAPTURE_ACTION_IDS } from './screenCaptureActionIds.js';
+import { EXTERNAL_LINK_ACTION_IDS } from './externalLinkActionIdsV1.js';
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/instanceIdsV1.js';
 import { WIDGET_DEFINITION_ACTION_IDS_V1 } from '../widgets/definitionIdsV1.js';
 import { WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1 } from '../widgets/fragmentIdsV1.js';
@@ -102,9 +125,11 @@ import { USAGE_SOURCE_ACTION_IDS } from '../usage/usageSourcesActionIdsV1.js';
 import { WORKFLOW_AUTHORING_ACTION_IDS } from './workflowAuthoringActionIds.js';
 import { PROMPT_INVOCATION_ACTION_IDS } from './promptInvocationActionIds.js';
 import { PUBLIC_PROFILE_ACTION_IDS_V1 } from '../account/publicProfileActionIds.js';
+import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '../automations/occurrenceActionIds.js';
 
+export const WORKFLOW_RUN_START_ACTION_ID_V1 = 'workflow.run.start';
 export const WORKFLOW_ACTION_IDS_V1 = [
-  'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
+  'workflow.validate', WORKFLOW_RUN_START_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.read_state.set',
   'workflow.run.pause', 'workflow.run.resume', 'workflow.run.cancel', 'workflow.run.invocations.list',
   'workflow.run.invocations.get', 'workflow.run.invocations.retry', 'workflow.run.delete',
@@ -117,6 +142,10 @@ export const WORKFLOW_ACTION_IDS_V1 = [
   'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
 ] as const;
 export type WorkflowActionIdV1 = typeof WORKFLOW_ACTION_IDS_V1[number];
+/** This read does not compose or control a Run and is safe in an ordinary Action leaf. */
+export function isWorkflowRunSummaryActionIdV1(actionId: string): actionId is 'workflow.run.summaries' {
+  return actionId === 'workflow.run.summaries';
+}
 export const WorkflowActionIdV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_ACTION_IDS_V1));
 
 /**
@@ -168,17 +197,6 @@ export const ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1 = 'account.apiTokens.list' as 
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   deployments: DEPLOYMENT_ACTION_IDS_V1,
-  machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
-  machine_agent_isolation: MACHINE_AGENT_ISOLATION_ACTION_IDS,
-  session_message_pins: ['session.messages.pins'],
-
-  desktop_shell: ['desktop.displays.list', 'desktop.notch.set'],
-
-  desktop_windows: ['desktop.windows.open'],
-
-  media_annotation: ['media.annotation.read', 'media.annotation.apply'],
-  machine_reachability: MACHINE_REACHABILITY_ACTION_IDS_V1,
-
   registries: REGISTRY_ACTION_IDS_V1,
   personal_saved_secrets: PERSONAL_SAVED_SECRET_ACTION_IDS_V1,
   plugin_execution_origin: PLUGIN_EXECUTION_ORIGIN_ACTION_IDS,
@@ -187,6 +205,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   usage: [...USAGE_ACTION_IDS, ...USAGE_COACH_ACTION_IDS],
   project_sources: PROJECT_SOURCE_ACTION_IDS_V1,
   project_execution: PROJECT_ACTION_IDS_V1,
+  project_readiness: PROJECT_READINESS_ACTION_IDS_V1,
   project_definitions: PROJECT_DEFINITION_ACTION_IDS,
   observation: ['wait'],
   account_profile: ['account.profile.get', 'account.name.set', 'account.username.set', 'account.username.check', 'account.username.release', ...PUBLIC_PROFILE_ACTION_IDS_V1],
@@ -199,6 +218,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   workspace_layout: WORKSPACE_ACTION_IDS,
   session_organization_move: ['session.organization.move', SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1, ...SESSION_ORGANIZATION_APPEARANCE_ACTION_IDS],
   composer_ingress: ['composer.transaction.apply', 'composer.attachments.pick', 'repository.upload.pick'],
+  media_annotation: ['media.annotation.read', 'media.annotation.apply'],
   list_reorder: ['session.pending.reorder', 'tasks.internal.reorder'],
   todo_session_link: ['tasks.internal.session.link'],
   internal_tasks: INTERNAL_TASK_ACTION_IDS,
@@ -236,8 +256,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   workflow_diagnostics: ['workflow.trigger.test', 'workflow.starters.list', 'workflow.starters.resolve'],
   session_authoring: ['session.authoring.open'],
   artifact_access: ARTIFACT_ACCESS_ACTION_IDS_V1,
-  bot_templates: BOT_TEMPLATE_ACTION_IDS_V1,
   artifacts: ARTIFACT_ACTION_IDS_V1,
+  bot_templates: BOT_TEMPLATE_ACTION_IDS_V1,
   doc_collaboration: DOC_COLLABORATION_ACTION_IDS_V1,
   settings_declarations: [...SETTINGS_DECLARATION_ACTION_IDS_V1, ...ACTION_POLICY_ACTION_IDS],
   app_shell: APP_SHELL_ACTION_IDS,
@@ -247,6 +267,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   updates: UPDATES_ACTION_IDS,
   clipboard: CLIPBOARD_ACTION_IDS,
   client_files: ['files.save'],
+  desktop_windows: ['desktop.windows.open'],
+  desktop_shell: ['desktop.displays.list', 'desktop.notch.set'],
   screen_capture_delivery: SCREEN_CAPTURE_ACTION_IDS,
   external_links: EXTERNAL_LINK_ACTION_IDS,
   home_hub_layout: ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'],
@@ -257,7 +279,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'machines.agents.install.cancel',
   ],
   machine_agent_sign_in: ['machines.agents.signIn.start', 'machines.agents.signIn.status', 'machines.agents.signIn.cancel', 'machines.agents.signIn.restart'],
-  machine_connection: ['homes.connect', 'homes.reconnect', 'machines.add.command', 'machines.add.local.start', 'machines.add.local.cancel', 'machines.pairing.create', ...MACHINE_PAGE_ACTION_IDS, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS, ...MACHINE_MANAGED_INSTALLATION_ACTION_IDS],
+  machine_connection: ['homes.connect', 'homes.reconnect', 'machines.add.command', 'machines.add.local.start', MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1, 'machines.pairing.create', ...MACHINE_PAGE_ACTION_IDS, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS, ...MACHINE_MANAGED_INSTALLATION_ACTION_IDS],
   local_daemon_services: [...LOCAL_DAEMON_SERVICE_ACTION_IDS, ...MACHINE_SERVICE_ACTION_IDS],
   machine_access: MACHINE_ACCESS_ACTION_IDS,
   machine_work_summary: MACHINE_WORK_SUMMARY_ACTION_IDS,
@@ -265,6 +287,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   machine_processes: MACHINE_PROCESSES_ACTION_IDS,
   machine_storage: MACHINE_STORAGE_ACTION_IDS,
   machine_resources: MACHINE_RESOURCES_ACTION_IDS,
+  machine_agent_isolation: MACHINE_AGENT_ISOLATION_ACTION_IDS,
+  machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
+  machine_reachability: MACHINE_REACHABILITY_ACTION_IDS_V1,
   machine_reboot: MACHINE_REBOOT_ACTION_IDS,
   machine_guard: MACHINE_GUARD_ACTION_IDS,
   session_access: [
@@ -285,7 +310,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.public_link.remove',
   ],
   session_lifecycle: [
-    'session.open',
+    SESSION_OPEN_ACTION_ID_V1,
     'session.fork',
     'session.continue_with_replay',
     'session.rollback',
@@ -301,6 +326,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.handoff.status.get',
     'workspace.sync.conflict.resolve',
     'workspace.sync.relationship.create',
+    'workspace.sync.relationship.replace',
     'workspace.sync.relationship.disable',
     'workspace.sync.relationship.enable',
     'workspace.sync.relationship.flush',
@@ -308,7 +334,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'workspace.sync.relationships.list',
     'workspace.sync.conflicts.list',
     'workspace.sync.conflict.inspect',
-    'session.spawn_new',
+    SESSION_SPAWN_NEW_ACTION_ID_V1,
   ],
   inventory: [
     'machines.agents.list',
@@ -331,7 +357,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'agents.config_options.list',
     'agents.session_modes.list',
     'sessions.spawn.profiles.list',
-    'sessions.spawn.connected_services.list',
+    SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1,
     'sessions.spawn.mcp_servers.preview',
   ],
   messaging: [
@@ -340,6 +366,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.update.post',
   ],
   session_control: [
+    'session.pending.edit',
+    'session.pending.sendNow',
+    'session.pending.requeue',
     'session.pending.action.set',
     'session.pending.resetStart.set',
     'session.pending.resetStart.cancel',
@@ -363,6 +392,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.bot.set',
   'session.bot.face.set',
     'session.memory.set',
+    'session.approval_profile.set',
     'session.voice.preference.set',
     'session.context.update',
     'session.instructions.set',
@@ -398,6 +428,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   intent_start: [
     'review.start',
+    'review.apply',
     'review.walkthrough',
     'review.explain_findings',
     'subagents.plan.start',
@@ -542,7 +573,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   account_home_continuation: ['account.home_continuation.invoke'],
   command_palette: ['ui.command_palette.list', 'ui.command_palette.invoke'],
   find: ['ui.find'],
-  prompt_picker: ['ui.prompts.picker.open'],
+  prompt_picker: ['ui.prompts.picker.open', 'ui.prompts.picker.select', 'ui.prompts.picker.apply', 'ui.prompts.history'],
+  session_message_pins: ['session.messages.pins'],
   companion_controls: [
     'ui.pet.choose',
   ],
@@ -773,7 +805,6 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'account.encryption.historicalKey.forget',
     'account.encryption.automationTemplates.recover',
     'account.security.get',
-    'account.security.terminalPresentUser.set',
     'account.password.enroll',
     'account.password.change',
     'account.password.remove',
@@ -814,6 +845,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.change.include',
     'scm.change.exclude',
     'scm.change.discard',
+    'scm.suggestion.apply',
     'scm.commit.create',
     'scm.commit.backout',
     'scm.commit.undoLast',
@@ -896,7 +928,6 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   home_identity: HOME_IDENTITY_ACTION_IDS_V1,
   teams: TEAM_ACTION_IDS_V1,
   saved_secret_sharing: SHARED_SAVED_SECRET_ACTION_IDS_V1,
-
 } as const);
 
 type ActionFamilyId = (typeof ACTION_ID_FAMILIES_V1)[keyof typeof ACTION_ID_FAMILIES_V1][number];
@@ -962,7 +993,6 @@ export function isSessionAccessActionId(value: string): value is SessionAccessAc
 export function isSessionListActionId(value: unknown): value is 'session.list' {
   return value === 'session.list';
 }
-import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
 
 /** The closed Action family sharing relationship creation and destination approval. */
 export function isWorkspaceSyncRelationshipWriteActionId(value: unknown): value is 'workspace.sync.relationship.create' | 'workspace.sync.relationship.replace' {

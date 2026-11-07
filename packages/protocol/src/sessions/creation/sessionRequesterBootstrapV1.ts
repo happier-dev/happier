@@ -1,16 +1,8 @@
-import { ExternalActionRequestEnvelopeSchema, isExternalActionRequestVersionAllowedForAccountModeV1,
-  type ExternalActionManagedAdmissionV1, type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
-import { ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
-import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
-import { RPC_METHODS } from '../../rpc/methods.js';
-import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
-import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/managed/enrollmentIdentityV1.js';
-import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { getActionSpec } from '../../actions/actionSpecs.js';
-import { ActionIdSchema } from '../../actions/actionIds.js';
+import { deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
 import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -18,7 +10,13 @@ import { sealBoxBundle, openBoxBundleWithSecretKey } from '../../crypto/boxBundl
 import { isValidEd25519PublicKey, ED25519_SECRET_KEY_BYTES } from '../../crypto/ed25519.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SessionHandoffPrepareTargetPrivateRequestV1Schema, SessionHandoffExistingStateCheckRequestV3Schema } from '../control/handoff/handoffSchemas.js';
-import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../../actions/externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionManagedContinuationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionTargetV1Schema,
+  isExternalActionRequestVersionAllowedForAccountModeV1,
+  type ExternalActionExecutionAuthorizationV1, type ExternalActionManagedAdmissionV1,
+  type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
+import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/managed/enrollmentIdentityV1.js';
+import { ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '../../machines/managed/managedIntentV1.js';
 import type { AccessibleMachineAccessV1 } from '../../machines/machineAccessV1.js';
@@ -33,6 +31,13 @@ import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '../control/handoff/workspaceSyncSchemas.js';
 import { isDiscussionSecondOpinionModelRpcMethodV1 } from '../../discussions/secondOpinionActions.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/projectActionIdsV1.js';
+import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
+import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
+import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import { ActionIdSchema } from '../../actions/actionIds.js';
+import { getActionSpec } from '../../actions/actionSpecs.js';
+import { isPresentUserHostInvocation } from '../../actions/invocationAuthority.js';
 export { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
 
 /** Same serialized fields as the credential custodian's access.key owner, on a private carrier only. */
@@ -113,10 +118,23 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.s
   defaultSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Admitted host operation facts; the receiving issuer still matches the declared child plan. */
   reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
+  /** The designed host confirmation, bound before dispatch; the common review owner admits it once. */
+  presentUserConfirmation: z.optional(z.strictObject({
+    actionId: ActionIdSchema,
+    inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    requestId: z.string().check(z.minLength(1)),
+    accountId: z.string().check(z.minLength(1)),
+    serverId: z.string().check(z.minLength(1)),
+    target: z.nullable(ExternalActionTargetV1Schema),
+  })),
 }).check(z.refine(value => value.caller.kind !== 'plugin' || value.authority === 'account_automation', {
   message: 'A Plugin invocation cannot carry present-user authority.',
 }), z.refine(value => !value.reviewedParent || value.caller.kind === 'host', {
   message: 'A reviewed parent belongs to a host invocation.',
+}), z.refine(value => !value.presentUserConfirmation
+  || value.caller.kind === 'host' && isPresentUserHostInvocation({ surface: value.surface,
+    authority: value.authority, actionCaller: { kind: 'host' } }), {
+  message: 'An in-flow confirmation belongs to the present person in a host invocation.',
 })));
 export type ExternalActionRequesterInvocationV1 = z.infer<typeof ExternalActionRequesterInvocationV1Schema>;
 const installationContextRootShape = () => ({
@@ -134,10 +152,29 @@ const ManagedControllerCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObje
   codec: z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) }),
   invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
 }));
-
+const ManagedCreationCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObject({
+  ...installationContextRootShape(),
+  invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
+  /** Existing parent facts; meaningful only after the source-signed domain continuation is admitted. */
+  reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
+  purpose: z.strictObject({ kind: z.literal('managed_creation_codec'),
+    actionId: z.enum(MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1),
+    continuation: ExternalActionManagedContinuationV1Schema,
+    recipient: z.strictObject({ machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) }),
+    requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  }),
+  codec: z.optional(z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) })),
+}));
+const InstallationContextPlaintextV1Schema = lazyZodSchema(() => z.union([
+  RequesterAccountContextPlaintextV1Schema, ManagedControllerCodecPlaintextV1Schema, ManagedCreationCodecPlaintextV1Schema,
+]));
 
 /** Nested purpose discriminants select an already parsed closed context arm. */
-
+function hasManagedCodecPurpose<Kind extends 'managed_creation_codec' | 'managed_controller_codec'>(
+  value: z.infer<typeof InstallationContextPlaintextV1Schema>, kind: Kind,
+): value is Extract<z.infer<typeof InstallationContextPlaintextV1Schema>, { purpose: { kind: Kind } }> {
+  return value.purpose.kind === kind;
+}
 
 type SealManagedCreationActionCodecInput = Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -247,8 +284,29 @@ function openInstallationSealedContext(sealed: z.infer<typeof SessionRequesterIn
   return plaintext.success ? plaintext.data : null;
 }
 
-/** These Actions execute with controller custody; the box may carry only invocation codec material. */
+/** A Home-admitted finite Setup leaf needs only its existing invocation codec. */
+export function isReviewedMachineSetupCodecV1(binding: Readonly<{
+  actionId: string; workflowActionOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'];
+}>): boolean {
+  return binding.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+    && binding.workflowActionOrigin !== undefined;
+}
 
+export function isManagedControllerCodecActionV1(binding: Readonly<{
+  actionId: string;
+  managedAdmission?: Pick<ExternalActionManagedAdmissionV1, 'actionId'>;
+  workflowActionOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'];
+}>): boolean {
+  const actionId = ActionIdSchema.safeParse(binding.actionId);
+  return isReviewedMachineSetupCodecV1(binding)
+    || actionId.success && getActionSpec(actionId.data).originalExecution?.requesterCredentials === 'none'
+    || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
+    || binding.actionId === 'machines.managed.bootstrap.retry'
+    || binding.actionId === 'machines.managed.credentials.install'
+      && binding.managedAdmission?.actionId === binding.actionId
+    || (binding.actionId === 'action.operations.list' || binding.actionId === 'action.operations.get')
+      && binding.managedAdmission?.actionId === binding.actionId;
+}
 
 export function sealManagedControllerActionCodecV1(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -258,7 +316,8 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
-  if (!isManagedControllerCodecActionV1(authorization.binding) || !('authentication' in authorization.binding)
+  if (!isManagedControllerCodecActionV1(authorization.binding)
+    || !('authentication' in authorization.binding) && !isReviewedMachineSetupCodecV1(authorization.binding)
     || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== authorization.binding.machineId)
     throw new Error('managed_controller_codec_root_mismatch');
   const plaintext = ManagedControllerCodecPlaintextV1Schema.parse({ v: 1,
@@ -327,11 +386,9 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
   if (mode === 'plain' && (plaintext.credentials.secret || plaintext.credentials.encryption)
     || mode === 'e2ee' && !plaintext.credentials.secret && !plaintext.credentials.encryption
     || mode === undefined) throw new Error('requester_account_mode_mismatch');
-  const ciphertext = sealBoxBundle({ plaintext: new TextEncoder().encode(JSON.stringify(plaintext)),
-    recipientPublicKey: ed25519.utils.toMontgomery(input.installationPublicKey), randomBytes: input.randomBytes });
-  const sealed = { kind: 'installation_sealed_v1' as const,
+  const sealed = sealInstallationContext({ ...input, plaintext,
     installationId: moveRecipient?.installationId ?? preparation?.controller.installationId ?? wake?.target.controller?.installationId ?? authorization.binding.installationId,
-    ciphertext: encodeBase64(ciphertext, 'base64url') };
+  });
   return wake ? { ...authorization, managedFiniteWake: { ...wake, requesterAccountContext: sealed } }
     : { ...authorization, requesterAccountContext: sealed };
 }
@@ -355,10 +412,6 @@ export function openExternalActionRequesterAccountContextV1(input: OpenRequester
     ...(plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : plaintext.credentials;
 }
 
-
-
-
-
 /** No Account credentials or requester execution context can be recovered from this purpose. */
 type ManagedControllerCodecMaterial = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{ includeInvocation: true }>):
@@ -367,7 +420,8 @@ export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAcco
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{ includeInvocation?: boolean }>) {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
   if (!parsed.success || !isManagedControllerCodecActionV1(parsed.data.binding)
-    || !('authentication' in parsed.data.binding) || parsed.data.binding.target.kind !== 'machine'
+    || !('authentication' in parsed.data.binding) && !isReviewedMachineSetupCodecV1(parsed.data.binding)
+    || parsed.data.binding.target.kind !== 'machine'
     || parsed.data.binding.target.machineId !== input.machineId) return null;
   const plaintext = openInstallationContext({ ...input, purpose: { kind: 'managed_controller_codec' } });
   if (!plaintext || !hasManagedCodecPurpose(plaintext, 'managed_controller_codec')) return null;
@@ -375,10 +429,6 @@ export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAcco
   return input.includeInvocation ? { material,
     ...('invocation' in plaintext && plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : material;
 }
-
-
-
-
 
 function openInstallationContext(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{
   purpose: ExternalActionRequesterAccountContextPurposeV1 | Readonly<{ kind: 'managed_controller_codec' }>;
@@ -414,6 +464,22 @@ function openInstallationContext(input: Omit<OpenRequesterAccountContextInput, '
 
 function isReviewedChildRecipientPurpose(authorization: ExternalActionExecutionAuthorizationV1,
   purpose: ExternalActionRequesterAccountContextPurposeV1): boolean {
+  if (purpose.kind === 'machine_rpc') {
+    if (isMachineSetupPlanRpcChildV1({ rootActionId: authorization.binding.actionId,
+      effectActionId: 'machines.setup.plan', method: purpose.method })) {
+      const input = MachineSetupPlanInputV1Schema.safeParse(purpose.params);
+      return input.success && input.data.homeId === authorization.binding.serverIdentityId
+        && purpose.recipient?.machineId === input.data.machineId;
+    }
+    const requestedChild = DeploymentChildRpcV1Schema.safeParse(purpose.params);
+    const child = readDeploymentChildRpcV1({ deploymentChildRoot: authorization.binding.deploymentChildRoot, rootActionId: authorization.binding.actionId,
+      rootPreparationAdmission: authorization.binding.deploymentPreparationAdmission,
+      effectActionId: deploymentChildEffectActionIdForRootV1(authorization.binding.actionId,
+        authorization.binding.deploymentPreparationAdmission, requestedChild.success ? requestedChild.data.actionId : undefined) ?? '',
+      method: purpose.method, params: purpose.params });
+    if (child) return purpose.recipient?.machineId === child.machineId
+      && purpose.recipient.installationId === child.installationId;
+  }
   return authorization.binding.actionId === 'projects.service.relocate'
     || authorization.binding.actionId === 'discussion.second_opinion.start'
       && purpose.kind === 'machine_rpc' && isDiscussionSecondOpinionModelRpcMethodV1(purpose.method)
@@ -427,16 +493,39 @@ function isWorkspaceSyncPreparationRoot(authorization: ExternalActionExecutionAu
   return isProjectWorkspaceSyncPreparationActionV1(binding.actionId)
     && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId;
 }
-export const SessionRequesterBootstrapRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
+const SessionRequesterSessionBootstrapRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('requester_session_bootstrap_v1'),
+  scope: z.optional(z.literal('session')),
   input: SessionSpawnNewInputV2Schema,
   requesterBootstrap: z.union([SessionRequesterBootstrapV1Schema, SessionRequesterInstallationSealedBootstrapV1Schema]),
 }));
+const SessionRequesterWorkflowBootstrapRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('requester_session_bootstrap_v1'),
+  scope: z.literal('workflow_trigger'),
+  input: z.strictObject({
+    executionTarget: z.strictObject({ serverId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)) }),
+    scopeId: z.string().check(z.minLength(1)),
+    automationId: z.optional(z.string().check(z.minLength(1))),
+    operation: z.enum(['retain', 'retire']),
+  }),
+  requesterBootstrap: z.union([SessionRequesterCreationContextV1Schema, SessionRequesterInstallationSealedBootstrapV1Schema]),
+}));
+/** Existing private delivery, with an explicit finite/trigger custody scope instead of Session birth. */
+export const SessionRequesterBootstrapRpcRequestV1Schema = lazyZodSchema(() => z.union([
+  SessionRequesterSessionBootstrapRpcRequestV1Schema, SessionRequesterWorkflowBootstrapRpcRequestV1Schema,
+]));
 export type SessionRequesterBootstrapRpcRequestV1 = Readonly<z.infer<typeof SessionRequesterBootstrapRpcRequestV1Schema>>;
 
-const SessionRequesterBootstrapOpenedRequestV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionRequesterBootstrapRpcRequestV1Schema, {
+const SessionRequesterSessionBootstrapOpenedRequestV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionRequesterSessionBootstrapRpcRequestV1Schema, {
   requesterBootstrap: SessionRequesterBootstrapV1Schema,
 })));
+const SessionRequesterWorkflowBootstrapOpenedRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  ...SessionRequesterWorkflowBootstrapRpcRequestV1Schema.shape,
+  requesterBootstrap: SessionRequesterCreationContextV1Schema,
+}));
+const SessionRequesterBootstrapOpenedRequestV1Schema = lazyZodSchema(() => z.union([
+  SessionRequesterSessionBootstrapOpenedRequestV1Schema, SessionRequesterWorkflowBootstrapOpenedRequestV1Schema,
+]));
 type OpenedRequest = Readonly<z.infer<typeof SessionRequesterBootstrapOpenedRequestV1Schema>>;
 export const SessionRequesterHandoffBootstrapRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('requester_session_handoff_bootstrap_v1'),
@@ -471,14 +560,14 @@ function readInstalledRequestMachineId(request: InstalledRequest): string {
 
 function sealInstalledRequest<T extends InstalledRequest>(input: Readonly<{
   request: T; installationId: string; installationPublicKey: Uint8Array; randomBytes(length: number): Uint8Array;
-}>): Readonly<{ kind: T['kind']; input: T['input'];
-  requesterBootstrap: z.infer<typeof SessionRequesterInstallationSealedBootstrapV1Schema> }> {
+}>) {
   if (!isValidEd25519PublicKey(input.installationPublicKey)) throw new Error('invalid_installation_public_key');
   const plaintext = InstallationPlaintextV1Schema.parse({ v: 1, machineId: readInstalledRequestMachineId(input.request),
     installationId: input.installationId, request: input.request });
   const ciphertext = sealBoxBundle({ plaintext: new TextEncoder().encode(JSON.stringify(plaintext)),
     recipientPublicKey: ed25519.utils.toMontgomery(input.installationPublicKey), randomBytes: input.randomBytes });
-  return { kind: input.request.kind, input: input.request.input,
+  const { requesterBootstrap: _requesterBootstrap, ...request } = input.request;
+  return { ...request,
     requesterBootstrap: { kind: 'installation_sealed_v1' as const, installationId: plaintext.installationId,
       ciphertext: encodeBase64(ciphertext, 'base64url') } };
 }
@@ -546,52 +635,10 @@ function openInstalledRequest(input: Readonly<{
     if (!plaintext.success || plaintext.data.machineId !== input.machineId
       || plaintext.data.installationId !== input.installationId
       || plaintext.data.request.kind !== parsed.data.kind
+      || (plaintext.data.request.kind === 'requester_session_bootstrap_v1' && parsed.data.kind === 'requester_session_bootstrap_v1'
+        && plaintext.data.request.scope !== parsed.data.scope)
       || readInstalledRequestMachineId(plaintext.data.request) !== input.machineId
       || createCanonicalJsonSigningInput(plaintext.data.request.input) !== createCanonicalJsonSigningInput(parsed.data.input)) return null;
     return plaintext.data.request;
   } catch { return null; }
-}
-
-export function isManagedControllerCodecActionV1(binding: Readonly<{
-  actionId: string;
-  managedAdmission?: Pick<ExternalActionManagedAdmissionV1, 'actionId'>;
-}>): boolean {
-  const actionId = ActionIdSchema.safeParse(binding.actionId);
-  return actionId.success && getActionSpec(actionId.data).originalExecution?.requesterCredentials === 'none'
-    || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
-    || binding.actionId === 'machines.managed.bootstrap.retry';
-}
-
-
-
-
-
-
-
-const InstallationContextPlaintextV1Schema = lazyZodSchema(() => z.union([
-  RequesterAccountContextPlaintextV1Schema, ManagedControllerCodecPlaintextV1Schema, ManagedCreationCodecPlaintextV1Schema,
-]));
-
-
-
-
-
-const ManagedCreationCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObject({
-  ...installationContextRootShape(),
-  invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
-  /** Existing parent facts; meaningful only after the source-signed domain continuation is admitted. */
-  reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
-  purpose: z.strictObject({ kind: z.literal('managed_creation_codec'),
-    actionId: z.enum(MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1),
-    continuation: ExternalActionManagedContinuationV1Schema,
-    recipient: z.strictObject({ machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) }),
-    requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-  }),
-  codec: z.optional(z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) })),
-}));
-
-function hasManagedCodecPurpose<Kind extends 'managed_creation_codec' | 'managed_controller_codec'>(
-  value: z.infer<typeof InstallationContextPlaintextV1Schema>, kind: Kind,
-): value is Extract<z.infer<typeof InstallationContextPlaintextV1Schema>, { purpose: { kind: Kind } }> {
-  return value.purpose.kind === kind;
 }

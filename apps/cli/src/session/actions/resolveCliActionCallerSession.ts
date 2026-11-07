@@ -1,9 +1,14 @@
-import type { ActionExecutorContext, BackendTargetRefV2, ExternalActionTargetV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ExternalActionTargetV1, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import type { ResolveSessionTransportContextResult } from '@/session/services/resolveSessionTransportContext';
 import { readSessionLegacyMetadata } from './cliActionDeps/sessionStateReaders';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionStoredContentEncryptionMode, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionAgentStartSelectionResponseV1Schema } from './agentStartSelectionRpc';
+import type { ExecutionRunAppliedParentSelection } from '../../agent/runtime/bridges/executionRun/runtime/openInputs';
+import type { CliSessionActionTransport } from '../transport/cliActionTransport';
 
 type SessionMetadataReaderInput = Parameters<typeof readSessionLegacyMetadata>[0];
 
@@ -56,9 +61,10 @@ export function createCliBoundSessionMetadataReader(params: SessionMetadataReade
 type CallerSessionFacts = Readonly<{
   metadata: Readonly<Record<string, unknown>> | null;
   workDepth: unknown;
-  backendTarget: BackendTargetRefV2 | null | undefined;
+  backendTarget: PersistedBackendTargetRefV2 | null | undefined;
   machineId: string | null;
   directory: string | null;
+  readAppliedChildSelection?: () => Promise<ExecutionRunAppliedParentSelection>;
 }>;
 
 /** One caller-identity owner shared by Agent admission and Workflow ingress. */
@@ -67,6 +73,7 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   credentials?: StoredCredentials;
   boundSessionId?: string;
   readBoundSession?: () => Promise<CallerSessionFacts>;
+  callSessionRpcForTransport?: CliSessionActionTransport['callSessionRpcForTransport'];
   resolveTransportForSession: (sessionId: string, signal?: AbortSignal) => Promise<Extract<ResolveSessionTransportContextResult, { ok: true }> | Readonly<{ ok: false }>>;
 }>): Promise<(CallerSessionFacts & Readonly<{ sessionId: string }>) | null> {
   const callerSessionId = params.context.actionCaller?.kind === 'session'
@@ -74,10 +81,10 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   const sessionId = typeof callerSessionId === 'string' ? callerSessionId.trim() : '';
   if (!sessionId || (params.context.actionCaller?.kind === 'session'
     && params.context.defaultSessionId !== sessionId)) return null;
-  if (sessionId === params.boundSessionId) return params.readBoundSession
-    ? { sessionId, ...await params.readBoundSession() } : null;
+  const isBoundSession = sessionId === params.boundSessionId;
+  if (isBoundSession && params.readBoundSession) return { sessionId, ...await params.readBoundSession() };
   // A selector is not authenticated Session identity.
-  if (params.context.actionCaller?.kind !== 'session') return null;
+  if (params.context.actionCaller?.kind !== 'session' && !isBoundSession) return null;
   const transport = await params.resolveTransportForSession(sessionId, params.context.signal);
   if (!transport.ok || transport.sessionId !== sessionId || transport.rawSession.id !== sessionId || !params.credentials) return null;
   const metadata = tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
@@ -85,8 +92,28 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   if (!metadata) return null;
   const readString = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null;
   const { resolveBackendTargetFromSessionMetadata } = await import('@/session/backendTargets/resolveBackendTargetFromSessionMetadata');
+  const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
+  const source = params.context.sessionInputSource;
+  const turnId = source && typeof source === 'object' && 'sourceTurnId' in source
+    && typeof source.sourceTurnId === 'string' ? source.sourceTurnId : undefined;
+  const readAppliedChildSelection = async (): Promise<ExecutionRunAppliedParentSelection> => {
+    params.context.signal?.throwIfAborted();
+    if (!turnId || !backendTarget || !params.callSessionRpcForTransport) return { status: 'unavailable' };
+    try {
+      const response = await params.callSessionRpcForTransport(transport,
+        SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1, { turnId }, params.context.signal, null);
+      params.context.signal?.throwIfAborted();
+      const parsed = SessionAgentStartSelectionResponseV1Schema.safeParse(response);
+      if (!parsed.success || parsed.data.sessionId !== sessionId || parsed.data.turnId !== turnId
+        || parsed.data.selection.status !== 'applied'
+        || buildBackendTargetKeyV2(parsed.data.selection.backendTarget) !== buildBackendTargetKeyV2(backendTarget)) {
+        return { status: 'unavailable' };
+      }
+      return parsed.data.selection;
+    } catch { params.context.signal?.throwIfAborted(); return { status: 'unavailable' }; }
+  };
   return { sessionId, metadata, workDepth: transport.rawSession.workDepth,
-    backendTarget: resolveBackendTargetFromSessionMetadata(metadata),
+    backendTarget, ...(!isBoundSession && params.context.actionCaller?.kind === 'session' ? { readAppliedChildSelection } : {}),
     machineId: readString(transport.rawSession.machineId) ?? readString(metadata?.machineId),
     directory: readString(metadata?.path) ?? readString(transport.rawSession.path) };
 }

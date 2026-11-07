@@ -1,28 +1,16 @@
-import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
-import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import { createCliBotTemplateActionDeps } from './cliActionDeps/botTemplates';
-import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
-import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
+import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
+import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
+import { prepareDeploymentTargetEnablementRetention } from '@/deployments/targetEnablementRetention';
+import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
-import { createPublishProjectActionDeps } from '@/workspaces/publishProject';
-import { createCombinedMachineSetupActionDeps } from '@/machines/setup/composeMachineSetup';
+import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher } from '@/machines/setup/composeMachineSetup';
+import { readApiTokenAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
+import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
 import { createCliSessionActionTransport } from '@/session/transport/cliActionTransport';
 import { createCliAgentStartContext } from './cliActionDeps/agentStart';
 import { createCliSessionStatusActionDeps } from '@/session/services/cliStatusActionDeps';
@@ -36,6 +24,8 @@ import { createCliMetadataActionDeps } from '@/session/services/cliMetadataActio
 import { createCliTasksActionDeps } from './cliActionDeps/tasks';
 import { createCliPendingActionDeps } from '@/session/services/cliPendingActionDeps';
 import { createCliLocalServiceActionDeps } from './cliActionDeps/localServices';
+import { prepareProjectServiceMoveChildren } from '@/daemon/local/services/actions/projectServiceMoveChildren';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { createCliControlActionDeps } from '@/session/services/cliControlActionDeps';
 import { createCliPluginAdministrationActionDeps } from './cliActionDeps/pluginAdministration';
 import { createCliManagedMachineReferences, createCliMachineRebootReferenceReader } from './cliActionDeps/machineReferences';
@@ -43,6 +33,7 @@ import { createCliSessionCatalogActionDeps } from '@/session/catalogControls/cli
 import { createCliPromptsActionDeps } from './cliActionDeps/prompts';
 import { createCliUsageLimitRecoveryActionDeps } from '@/session/usageLimitRecoveryControls/cliActionDeps';
 import { createCliRolesActionDeps } from './cliActionDeps/roles';
+import { RoleActionRefusalV1, type RawRoleSettingsMutationV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { createCliAdmittedProjectRowsReader } from './cliActionDeps/projectAdmission';
 import { createCliWidgetActionDeps } from './cliActionDeps/widgets';
 import { createCliExecutionRunActionDeps } from './cliActionDeps/executionRuns';
@@ -55,9 +46,11 @@ import { createCliMachineActionDeps } from './cliActionDeps/machine';
 import { createCliSettingsActionDeps } from './cliActionDeps/settings';
 import { createCliMessageActionDeps } from '@/session/services/cliMessageActionDeps';
 import { createCliArtifactsActionDeps } from './cliActionDeps/artifacts';
+import { createCliBotTemplateActionDeps } from './cliActionDeps/botTemplates';
 import { createCliMachineInventoryActionDeps } from './cliActionDeps/machineInventory';
 import { createCliWorkflowRunStorage } from './workflowRunStorage';
 import { createCliWorkflowFamily } from './workflowFamily';
+import { hasStoredSessionCredentialProvenance } from '@/persistence';
 import { createCliSpawnActionDeps } from '@/session/creation/cliActionDeps';
 import { createCliAwarenessActionDeps } from './cliActionDeps/awareness';
 import { createCliFilesystemActionDeps } from './cliActionDeps/filesystem';
@@ -106,8 +99,9 @@ import { createCliProjectSourceActionDeps } from './projectSourceActionDeps';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
-import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
-import { isDeploymentNativeReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
+import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
 import { createCliConnectedServiceAction } from './connectedServiceActionDeps';
@@ -120,15 +114,15 @@ import { randomUUID } from 'node:crypto';
 
 import type { SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol';
+import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 
 
 
-import { hasReceivedWorkflowSessionRoleAuthority } from './sessionRoleRpcOrigin';
 
 import { createWorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import type { SessionFollowSourceKeyPreparationResultV1, SpawnConfigOptionValue, ActionExecutorDeps, ActionExecutorContext, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { SessionFollowSourceKeyPreparationResultV1, SpawnConfigOptionValue, ActionExecutorDeps, ActionExecutorContext, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 
 
 
@@ -149,7 +143,8 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore,
+  type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { createCliInboxReadAction } from './inboxActions';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -158,8 +153,9 @@ import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { readSettings } from '@/persistence';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { createSessionListActionDeps } from './sessionListActionDependency';
-import { createCliBoundSessionMetadataReader, resolveCliActionCallerSession } from './resolveCliActionCallerSession';
-import { dispatchOriginalAccountAction, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { createCliBoundSessionMetadataReader, readCliActionBoundSessionId, resolveCliActionCallerSession } from './resolveCliActionCallerSession';
+import { dispatchOriginalAccountAction, readAdmittedBotTemplateParentActionIdV1,
+  resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 
 import type { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 
@@ -186,10 +182,10 @@ import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings
 
 
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { getActiveAccountSettingsSnapshotLifetimeToken, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
 import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
-import type { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
@@ -245,7 +241,25 @@ function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOpti
   return Object.fromEntries(entries) as Record<string, SpawnConfigOptionValue>;
 }
 
+export type ControllerDeploymentMutationActionId =
+  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
+
+export function isControllerDeploymentMutationAction(actionId: string): actionId is ControllerDeploymentMutationActionId {
+  return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
+    || actionId === 'deployments.promote' || actionId === 'deployments.teardown';
+}
+
 export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>>;
+
+export function projectCliAccountCallerContext(context: ActionExecutorContext, homeAccountId: string | null): ActionExecutorContext {
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  const credential = context.externalActionCredential;
+  const admittedPatAccountId = binding && 'credentialId' in binding && credential
+    && binding.accountId === credential.accountId && binding.principalId === credential.principalId
+    && binding.credentialId === credential.credentialId ? binding.accountId : null;
+  const accountId = admittedPatAccountId ?? homeAccountId;
+  return { ...context, ...(accountId ? { runtimeAccountId: accountId } : {}) };
+}
 
 export function createCliActionDeps(params: CliActionDepsParams,
   readEffectiveDeps?: () => ActionExecutorDeps,
@@ -266,8 +280,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   };
   const prepareAccountRoleOverrides = async (signal?: AbortSignal): Promise<void> => {
     const sessionRoles = params.getSessionRoleContext?.();
-    const { runWithoutRequesterSessionCurrentnessCheckpoint } = await import("@/daemon/sessionEncryption/requesterCurrentness");
-    if (sessionRoles) { await runWithoutRequesterSessionCurrentnessCheckpoint(() => sessionRoles.prepare(signal, true)); return; }
+    if (sessionRoles) { await sessionRoles.prepare(signal, true); return; }
     const credentials = params.credentials;
     if (!credentials) return;
     const { prepareActiveAccountRoleOverrides } = await import("@/settings/prompts/hydratePromptLibraryCatalog");
@@ -372,8 +385,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const homeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
   // Widget surfaces are shared Home addresses, not this device's credential profile.
   const widgetHomeId = params.serverIdentityId ?? params.serverId ?? configuration.activeServerId;
-  const accountCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
-    ...(homeAccountId ? { runtimeAccountId: homeAccountId } : {}) });
+  const accountCallerContext = (context: ActionExecutorContext): ActionExecutorContext =>
+    projectCliAccountCallerContext(context, homeAccountId);
   const artifactCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...accountCallerContext(context),
     ...(!context.defaultSessionId && params.sessionId ? { defaultSessionId: params.sessionId } : {}) });
   const todoHomeServerId = params.serverId ?? configuration.activeServerId;
@@ -401,6 +414,24 @@ export function createCliActionDeps(params: CliActionDepsParams,
     }
     return current.rawSettings;
   } : undefined;
+  const mutateRawAccountSettings: RawRoleSettingsMutationV1 | undefined = params.credentials ? async (mutate, signal) => {
+    if (params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent(signal)) {
+      throw new RoleActionRefusalV1('scope-retired');
+    }
+    const { updateAccountSettingsV2OnceAgainstLatest } = await import('@/settings/accountSettings/updateAccountSettingsV2WithRetry');
+    const shouldSubmit = () => params.savedSecretOperationContext
+      ? params.savedSecretOperationContext.readSnapshot() !== null
+      : isActiveAccountSettingsSnapshotLifetimeCurrent({ scopeKey: roleAccountScopeKey, lifetimeToken: roleAccountLifetimeToken });
+    const update = () => updateAccountSettingsV2OnceAgainstLatest({ credentials: params.credentials!, mutate, signal, shouldSubmit });
+    const result = await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, update) : update());
+    if (result.status === 'applied' || result.status === 'unchanged' || result.status === 'satisfied') return;
+    const code = result.status === 'conflict' ? 'currentness_conflict'
+      : result.status === 'outcomeUnknown' ? 'outcome_unknown'
+      : result.status === 'cancelled' ? 'cancelled'
+      : result.status === 'unavailable' ? result.reason ?? 'account_settings_content_unavailable'
+      : 'account_settings_content_unavailable';
+    throw new RoleActionRefusalV1(code);
+  } : undefined;
   const machineReferenceServerUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const managedMachineReferences = createCliManagedMachineReferences(params, { machineReferenceServerUrl, projectAccountAdmission, projectHomeId, readRawRoleSettings, roleArtifactStore });
   const machineRebootReferences = createCliMachineRebootReferenceReader(params, { machineReferenceServerUrl, projectAccountAdmission, projectHomeId });
@@ -412,12 +443,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const readRoleSources: RoleSourceReader = async (signal, options) => {
     const read = () => params.serverHttpBaseUrl
       ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => sourceReader(signal, options)) : sourceReader(signal, options);
-    // The built-in reader only lists/reads artifacts and, for this private
-    // Account, reads captured Settings. Injected readers retain their own scope.
-    const { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } = await import("@/daemon/sessionEncryption/requesterCurrentness");
-    const sources = await (params.savedSecretOperationContext && !params.readRoleSources
-      ? runWithRequesterSessionCurrentnessCheckpoint(read, { readOnly: true })
-      : runWithoutRequesterSessionCurrentnessCheckpoint(read));
+    const sources = await read();
     signal?.throwIfAborted();
     if (params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
       throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
@@ -425,7 +451,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     return sources;
   };
   const callerSessionResolution = (context: ActionExecutorContext): Parameters<typeof resolveCliActionCallerSession>[0] => ({
-    context, credentials: params.credentials, boundSessionId: params.sessionId, resolveTransportForSession,
+    context, credentials: params.credentials, boundSessionId: params.sessionId, resolveTransportForSession, callSessionRpcForTransport,
     readBoundSession: async () => {
       const metadata = await readCurrentSessionMetadata(context.signal);
       const { resolveBackendTargetFromSessionMetadata } = await import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata");
@@ -435,36 +461,38 @@ export function createCliActionDeps(params: CliActionDepsParams,
     },
   });
   const resolveActionCallerSession = async (context: ActionExecutorContext) => await resolveCliActionCallerSession(callerSessionResolution(context));
-  let workflowAuthorityReader: typeof params.workflowAcceptedAuthorizationCurrentness;
-  const isWorkflowAuthorizationCurrent = async (context: ActionExecutorContext): Promise<boolean> => {
-    if (context.actionCaller?.kind !== 'workflowRun') return true;
-    if (context.externalActionExecutionAuthorization?.binding.workflowActionOrigin) {
-      const accountId = readAccountIdFromToken(params.token);
-      return !!accountId && hasReceivedWorkflowSessionRoleAuthority({ context, accountId, sessionId: params.sessionId });
-    }
-    workflowAuthorityReader ??= params.workflowAcceptedAuthorizationCurrentness;
-    if (!workflowAuthorityReader && params.credentials) {
-      const accountId = readAccountIdFromToken(params.token);
-      if (!accountId) return false;
-      const { createCredentialedWorkflowAcceptedAuthorizationCurrentness } = await import('@/daemon/workflows/daemonRuntime');
-      workflowAuthorityReader = createCredentialedWorkflowAcceptedAuthorizationCurrentness({
-        credentials: params.credentials, accountId, serverId: params.serverId,
-        serverHttpBaseUrl: params.serverHttpBaseUrl });
-    }
-    return workflowAuthorityReader ? await workflowAuthorityReader({ authorization: context.actionCaller.authorization,
-      ...(context.signal ? { signal: context.signal } : {}) }) : false;
-  };
   const resolveAgentStartContext = createCliAgentStartContext(params, { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession }, () => readEffectiveDeps?.() ?? actionDeps);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials,
     serverId: params.serverId ?? configuration.activeServerId, serverHttpBaseUrl: params.serverHttpBaseUrl,
     operationContext: params.savedSecretOperationContext,
     ...(params.admittedAccountEncryptionMode !== undefined
       ? { getAccountEncryptionMode: async () => params.admittedAccountEncryptionMode! } : {}) }) : null;
-  const resolveSessionAgentIdentity = async (metadata: Record<string, unknown> | null | undefined, backendTarget?: BackendTargetRefV2 | null) => {
+  const artifactAuthorizationForContext = (context: ActionExecutorContext | undefined, effectActionId: string) => {
+    const root = context?.externalActionExecutionAuthorization;
+    if (!context?.externalActionCredential && (!root || root.binding.accountId === homeAccountId)) return null;
+    return async (request: Parameters<ArtifactRequestAuthorizationHeaders>[0]) => {
+      const headers = resolveServerRequestHeaders(context, root?.binding.actionId ?? effectActionId, request);
+      if (!headers) throw Object.assign(new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
+      return { ...headers };
+    };
+  };
+  const promptLibraryStoreForContext = (context: ActionExecutorContext | undefined, effectActionId: string) => {
+    if (!approvalsStore) return null;
+    const authorization = artifactAuthorizationForContext(context, effectActionId);
+    return authorization ? approvalsStore.promptLibraryStoreForAuthorization(authorization) : approvalsStore.promptLibraryStore;
+  };
+  const skillRulesForContext = (context: ActionExecutorContext, effectActionId: string) => {
+    if (!approvalsStore) return null;
+    const authorization = artifactAuthorizationForContext(context, effectActionId);
+    return authorization ? approvalsStore.skillRulesForAuthorization(authorization) : approvalsStore.skillRules;
+  };
+  const resolveSessionAgentIdentity = async (metadata: Record<string, unknown> | null | undefined, backendTarget?: PersistedBackendTargetRefV2 | null) => {
+    // The admitted Agent target already carries its identity; only routing refs need the catalog.
+    if (backendTarget?.kind === 'agent' && backendTarget.definitionId === undefined) return backendTarget.identity;
     const [{ resolveAgentIdFromSessionMetadata, isBundledAgentId }, { readAgentCatalogSnapshot }, { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES }] = await Promise.all([import("@happier-dev/agents"), import("@/agent/catalog/snapshot"), import('@happier-dev/agents/agent-ids')]);
-    const agentId = backendTarget?.sourceKind === 'built_in'
-      ? backendTarget.backendId : resolveAgentIdFromSessionMetadata(metadata);
-    return agentId ? (backendTarget?.sourceKind === 'built_in' && isBundledAgentId(agentId) ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId]
+    const builtInAgentId = backendTarget?.kind === 'backend' && backendTarget.sourceKind === 'built_in' ? backendTarget.backendId : null;
+    const agentId = builtInAgentId ?? resolveAgentIdFromSessionMetadata(metadata);
+    return agentId ? (builtInAgentId && isBundledAgentId(agentId) ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId]
       : readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.identity) : undefined;
   };
   const invokeSessionPullRequestBinding = async (input: SessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => {
@@ -506,7 +534,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     }
     return parsed.data;
   };
-  const { sessionList, sessionFollowPreview } = params.credentials
+  const { sessionList, sessionRead, sessionFollowPreview } = params.credentials
     ? createSessionListActionDeps({
         ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
         readWorkspaceRefs: async input => {
@@ -531,7 +559,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
           ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
           : {}),
       })
-    : { sessionList: async () => ({ ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' }),
+    : { sessionList: async () => ({ ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' }), sessionRead: undefined,
       sessionFollowPreview: async () => ({ ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' }) };
   const automationConversationAction = params.credentials
     ? createAutomationConversationActionExecutor({
@@ -562,6 +590,39 @@ export function createCliActionDeps(params: CliActionDepsParams,
           },
         })(observation);
         if (health.kind === 'consumed') return;
+        if (!params.acquireAutomationEventObservationRegistry) return;
+        const { createPlatformFailureNotices } = await import('@/deployments/platformFailureNotices');
+        const consume = createPlatformFailureNotices({ credentials: params.credentials!, serverId: projectHomeId,
+          serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
+          acquirePluginRuntimeRegistryLease: params.acquireAutomationEventObservationRegistry!,
+          readReceipt: async ({ environmentId, deploymentId, context }) => {
+            const { DeploymentReceiptGetResultV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+            const { readDeploymentReceiptForHost } = await import('@/deployments/readReceiptForHost');
+            return readDeploymentReceiptForHost({ environmentId, deploymentId, context }, {
+              readMetadata: async request => {
+                const result = DeploymentReceiptGetResultV1Schema.parse(await deploymentStorage('deployments.receipts.get', {
+                  serverId: projectHomeId, environmentId: request.environmentId, deploymentId: request.deploymentId,
+                }, request.context));
+                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.error });
+                return result;
+              },
+              open: openDeploymentArtifact, assertCurrent: assertDeploymentReadCurrent,
+            });
+          },
+          readEnvironment: async ({ environmentId, context }) => {
+            const detail = await readOpenedDeploymentEnvironment(environmentId, context);
+            const { readDeploymentTargetLinkArtifactV1 } = await import('@happier-dev/deployment-protocol');
+            const targetLinks = await Promise.all(detail.targetLinks.map(async targetLink => {
+              if (targetLink.id !== detail.environment.runtimeTargetLinkId) return { targetLink };
+              const opened = readDeploymentTargetLinkArtifactV1(targetLink,
+                await openDeploymentArtifact(targetLink.contentArtifactId, context));
+              if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+              return { targetLink, content: opened.content };
+            }));
+            return { ...detail, targetLinks };
+          },
+        });
+        await consume(observation);
       },
       ...(params.revalidatePluginActionCallerMaterialization
         ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
@@ -576,7 +637,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     : null;
   const { callMachineAction, isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
-    localMachineId: params.machineActionDirectTargetTransport?.machineId,
+    localMachineId,
     authorizeConnectedAccountRequest: (context, request) => resolveServerRequestHeaders(context,
       context?.externalActionExecutionAuthorization?.binding.actionId ?? 'sessions.spawn.connected_services.list', request),
     readCurrentSessionMetadata: () => readCurrentSessionMetadata(),
@@ -602,10 +663,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
   };
   const pluginAdministrationDeps = createCliPluginAdministrationActionDeps(params, { approvalsStore, notSupported, readRecord, resolveCurrentSessionValue });
 
-  const { pluginChangeServices, pluginInstallApprovalChangeServices, resolvePluginInstallWorkspaceRoot } = pluginAdministrationDeps;
-  const approvalActionDeps = createCliApprovalActionDeps(params, { approvalsStore, managedMachineReferences, normalizeStringValue, pluginChangeServices, pluginInstallApprovalChangeServices, readRecord, resolvePluginInstallWorkspaceRoot });
+  const { pluginInstallApprovalChangeServices, resolvePluginInstallWorkspaceRoot, resolvePluginInstallRegistry } = pluginAdministrationDeps;
+  const approvalActionDeps = createCliApprovalActionDeps(params, { approvalsStore, managedMachineReferences, normalizeStringValue, pluginInstallApprovalChangeServices, readRecord, resolvePluginInstallWorkspaceRoot, resolvePluginInstallRegistry });
   const artifactApprovalStore = approvalActionDeps.artifactApprovalStore;
-  const { readTransportSessionOwnerMetadata, readCurrentMachineControlIdentity, resolveTransportForSession, resumeInactiveSessionTransport, callSessionRpcForTransport, readSessionActionRpcOrigin, callSessionActionRpc, dispatchSessionLifecycleHookEvent, callResolvedSessionRpc } = createCliSessionActionTransport(params, { callMachineAction, isWorkflowAuthorizationCurrent, normalizeStringValue, readCurrentSessionMetadata, readServerFeaturesSnapshot, resolveCurrentSessionValue, resolveServerRequestHeaders, withProjectHome });
+  const { readTransportSessionOwnerMetadata, readCurrentMachineControlIdentity, resolveTransportForSession, resumeInactiveSessionTransport, callSessionRpcForTransport, readSessionActionRpcOrigin, callSessionActionRpc, dispatchSessionLifecycleHookEvent, callResolvedSessionRpc } = createCliSessionActionTransport(params, { callMachineAction, normalizeStringValue, readCurrentSessionMetadata, readServerFeaturesSnapshot, resolveCurrentSessionValue, resolveServerRequestHeaders, withProjectHome });
 
 
   const resolveSessionSpawnAgentInventorySelection: NonNullable<
@@ -657,6 +718,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   }) : undefined;
   const deploymentStorageDeps = createCliDeploymentActionDeps({
     serverHttpBaseUrl: todoHomeBaseUrl, admitAccount: admitAccountStorage,
+    ...(homeAccountId && params.credentials ? { localAccount: { accountId: homeAccountId, token: params.credentials.token } } : {}),
     resolveRequestHeaders: resolveAccountStorageHeaders,
     prepareEnvironment: async request => {
       if (!params.credentials) return executionRunActionFailure('client_required');
@@ -670,7 +732,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         ?? params.machineActionDirectTargetTransport?.machineId ?? (await readSettings()).machineId;
       if (!machineId) return executionRunActionFailure('machine_not_found');
       return createPrepareDeploymentBindingsForHost({ credentials: params.credentials,
-        serverId: request.input.serverId, serverHttpBaseUrl: todoHomeBaseUrl, machineId,
+        serverId: request.input.serverId, serverHttpBaseUrl: todoHomeBaseUrl, machineId, resolveRequestHeaders: resolveAccountStorageHeaders,
         ...(params.savedSecretOperationContext ? { savedSecretOperationContext: params.savedSecretOperationContext } : {}),
       })(request);
     },
@@ -684,75 +746,59 @@ export function createCliActionDeps(params: CliActionDepsParams,
     resolveTransportForSession, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resumeInactiveSessionTransport, callMachineAction, isMachineActionServerScopeCurrent, normalizeStringValue, isExecutionRunActionAbort, executionRunActionFailure,
   });
 
-  const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext) => {
-      const [{ readDeploymentEnvironmentForHost }, { DeploymentEnvironmentGetResultV1Schema }] = await Promise.all([
-        import('@/deployments/readEnvironmentForHost'), import('@happier-dev/protocol'),
-      ]);
-      const assertCurrent = async (caller: ActionExecutorContext) => {
-        caller.signal?.throwIfAborted();
-        const denied = await admitAccountStorage(projectHomeId, caller);
-        if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
-        await assertProjectRequesterCurrent(caller);
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-          throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-        }
-      };
-      await assertCurrent(context);
-      return readDeploymentEnvironmentForHost({ environmentId, context }, {
-        readMetadata: async request => {
-          const loaded = await deploymentStorage('deployments.environments.get', {
-            serverId: projectHomeId, environmentId: request.environmentId,
-          }, request.context);
-          const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
-          if (!parsed.success || !parsed.data.ok) {
-            const code = 'errorCode' in loaded ? loaded.errorCode : parsed.success && !parsed.data.ok ? parsed.data.error : 'invalid_action_output';
-            throw Object.assign(new Error(code), { code });
-          }
-          return parsed.data;
-        },
-        open: async (artifactId, caller) => {
-          await assertCurrent(caller);
-          if (caller.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact({
-            kind: 'doc', serverId: projectHomeId, artifactId,
-          }, { signal: caller.signal }, caller))?.document ?? null;
-          if (!roleArtifactStore) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-          return withProjectHome(() => roleArtifactStore.read(artifactId, { signal: caller.signal,
-            prepareRecipients: false, includeSharedAudience: false }));
-        },
-        assertCurrent,
-      });
+  const assertDeploymentReadCurrent = async (context: ActionExecutorContext) => {
+    context.signal?.throwIfAborted();
+    const denied = await admitAccountStorage(projectHomeId, context);
+    if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
+    await assertProjectRequesterCurrent(context);
+    if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
+      throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+    }
   };
-
+  const openDeploymentArtifact = async (artifactId: string, context: ActionExecutorContext) => {
+    await assertDeploymentReadCurrent(context);
+    if (context.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact({
+      kind: 'doc', serverId: projectHomeId, artifactId,
+    }, { signal: context.signal }, context))?.document ?? null;
+    if (!roleArtifactStore) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+    return withProjectHome(() => roleArtifactStore.read(artifactId, { signal: context.signal,
+      prepareRecipients: false, includeSharedAudience: false }));
+  };
+  const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext) => {
+    const { readDeploymentEnvironmentForHost } = await import('@/deployments/readEnvironmentForHost');
+    await assertDeploymentReadCurrent(context);
+    return readDeploymentEnvironmentForHost({ environmentId, context }, {
+      readMetadata: async request => {
+        const loaded = await deploymentStorage('deployments.environments.get', {
+          serverId: projectHomeId, environmentId: request.environmentId,
+        }, request.context);
+        const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
+        if (!parsed.success || !parsed.data.ok) {
+          const code = 'errorCode' in loaded ? loaded.errorCode : parsed.success && !parsed.data.ok ? parsed.data.error : 'invalid_action_output';
+          throw Object.assign(new Error(code), { code });
+        }
+        return parsed.data;
+      },
+      open: openDeploymentArtifact,
+      assertCurrent: assertDeploymentReadCurrent,
+    });
+  };
+  const nativeAccount = homeAccountId && hasStoredSessionCredentialProvenance(params.credentials)
+    ? { accountId: homeAccountId, serverId: projectHomeId,
+      isCurrent: async () => Boolean(params.isCredentialCurrent && await params.isCredentialCurrent()
+        && roleAccountLifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()) }
+    : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
   const { workflowTriggers, readWorkflowApprovedOperation, workflowAction, workflowActionPort,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = createCliWorkflowFamily(params, {
-    roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
+    ...(nativeAccount ? { nativeAccount } : {}), deploymentAction: (...args) => actionDeps.deploymentAction!(...args),
+    roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
   }, workflowRunStorageHost);
-  const publishDeps = createPublishProjectActionDeps({
-    prepareDeploymentAction: request => {
-      const prepare = (readEffectiveDeps?.() ?? actionDeps).prepareDeploymentAction;
-      return prepare ? prepare(request) : Promise.resolve(executionRunActionFailure('deployment_unavailable'));
-    },
-    orchestrationDirectory: configuration.happyHomeDir,
-    startCombined: startCombinedWorkflow,
-    waitForRun: request => waitForCombinedWorkflow(request, request.start.runId),
-    readInvocations: readCombinedWorkflowInvocations,
-    readHostFacts: async (context, selectedMachineId) => {
-      const [{ listCurrentAccountMachines }, { isMachineReachableV1 }] = await Promise.all([
-        import('@/api/machine/resolveCurrentAccountMachineTarget'), import('@happier-dev/protocol/machines/machineReachabilityV1'),
-      ]);
-      const machines = await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
-        projection: 'hostFacts', ...(selectedMachineId ? { machineIds: [selectedMachineId] } : {}),
-        authorization: context.externalActionExecutionAuthorization, effectActionId: 'deployments.publish',
-        serverHttpBaseUrl: todoHomeBaseUrl, signal: context.signal });
-      return { machines: machines.map(machine => ({ machineId: machine.id,
-        online: !machine.replacedByMachineId && (!machine.access || machine.access.accessState === 'ready')
-          && isMachineReachableV1({ machine, nowMs: Date.now() }) })) };
-    },
-  });
   const spawnActionDeps = createCliSpawnActionDeps(params, { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, workflowTriggers });
   const machineInventoryDeps = createCliMachineInventoryActionDeps(params, { callMachineAction, inventoryDeps });
-  const artifactsDeps = createCliArtifactsActionDeps(params, { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore });
+  const artifactsDeps = createCliArtifactsActionDeps(params, { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, mutateRawAccountSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore,
+    readWidgetTitles: (...args) => widgetDeps.readWidgetTitles(...args), widgetAccountScope: () => widgetDeps.widgetAccountScope?.() ?? null,
+    isWidgetScopeCurrent: () => widgetDeps.isWidgetScopeCurrent() });
   const messageActionDeps = createCliMessageActionDeps(params, { assertProjectRequesterCurrent, callSessionActionRpc, callSessionRpcForTransport, dispatchSessionLifecycleHookEvent, projectAccountAdmission, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const settingsDeps = createCliSettingsActionDeps(params, { callMachineAction });
   const machineDeps = createCliMachineActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent });
@@ -764,6 +810,23 @@ export function createCliActionDeps(params: CliActionDepsParams,
     waitForRun: request => waitForCombinedWorkflow(request, request.start.runId),
     readInvocations: readCombinedWorkflowInvocations,
     readHostFacts: async (context, selectedMachineId, requestedTargetMachineIds) => {
+      const authorization = context.externalActionExecutionAuthorization;
+      const binding = authorization?.binding;
+      // A new combined Run persists Account content. Its ordinary preparation
+      // consumes the token owner's material availability before asking for consent.
+      // Accepted native leaves already receive their opened Run content.
+      if (binding && 'credentialId' in binding && binding.accountEncryptionMode === 'e2ee'
+        && binding.actionId !== SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action
+        && !binding.workflowActionOrigin && !binding.managedContinuation
+        && context.actionCaller?.kind !== 'workflowRun'
+        && !readApiTokenAccountEncryptionMaterialSnapshot(authorization)) {
+        throw Object.assign(new Error('api_token_encryption_access_unavailable'), { code: 'content_unavailable' });
+      }
+      const directMachineId = params.machineActionDirectTargetTransport?.machineId;
+      if (directMachineId && selectedMachineId === directMachineId
+        && requestedTargetMachineIds?.every(machineId => machineId === directMachineId) !== false) {
+        return { machines: [{ machineId: directMachineId, online: true }], offlineMachineIds: [] };
+      }
       const [{ listCurrentAccountMachines }, { isMachineReachableV1 }] = await Promise.all([
         import('@/api/machine/resolveCurrentAccountMachineTarget'), import('@happier-dev/protocol/machines/machineReachabilityV1'),
       ]);
@@ -792,19 +855,23 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const readAdmittedProjectRows = createCliAdmittedProjectRowsReader({ widgetHomeId, projectAccountAdmission, readProjectRows, assertProjectRequesterCurrent });
 
   const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, assertProjectRequesterCurrent, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
-  const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, deploymentStorage, executionRunActionFailure, machineRebootReferences });
-  const connectionsDeps = createCliConnectionsActionDeps(params, { callMachineAction, connectedServiceAction, projectHomeId, registryActionExecute: request => { if (!actionDeps.registryActionExecute) throw new Error('registry_unavailable'); return actionDeps.registryActionExecute(request); } });
+  const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
+    readEnvironmentAccess: deploymentStorageDeps.readEnvironmentAccess,
+    observeEnvironmentAccessChanges: deploymentStorageDeps.observeEnvironmentAccessChanges, executionRunActionFailure });
+  const connectionsDeps = createCliConnectionsActionDeps(params, { callMachineAction, connectedServiceAction, projectHomeId,
+    resolveAuthorizationHeaders: (actionId, context, request) => resolveServerRequestHeaders(context, actionId, request),
+    registryActionExecute: request => { if (!actionDeps.registryActionExecute) throw new Error('registry_unavailable'); return actionDeps.registryActionExecute(request); } });
 
   const widgetDeps = createCliWidgetActionDeps(params, { callMachineAction, exactHome, homeAccountId, isSameActionHomeId, normalizeStringValue, readTransportSessionOwnerMetadata, requireLocalPromptActionMachine, resolveCurrentSessionValue, resolveProjectHomeIdentity, readAdmittedProjectRows, resolveServerRequestHeaders, resolveTransportForSession, resolveWorkspacePublishCaller, roleArtifactStore, sessionContentCredentials, todoHomeBaseUrl, todoHomeServerId, widgetHomeId },
     () => readEffectiveDeps?.() ?? actionDeps, () => actionDeps);
   const readHomeWidgets = widgetDeps.readHomeWidgets;
-  const rolesDeps = createCliRolesActionDeps(params, { artifactCallerContext, callSessionActionRpc, isWorkflowAuthorizationCurrent, prepareAccountRoleOverrides, readRawRoleSettings, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, resolveAgentStartContext, resolveServerRequestHeaders, resolveTransportForSession, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, sessionList, readAccountRoleOverrides }, () => readEffectiveDeps?.() ?? actionDeps);
+  const rolesDeps = createCliRolesActionDeps(params, { artifactCallerContext, callSessionActionRpc, prepareAccountRoleOverrides, readRawRoleSettings, mutateRawAccountSettings, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, resolveAgentStartContext, resolveServerRequestHeaders, resolveTransportForSession, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, sessionList, sessionRead, readAccountRoleOverrides }, () => readEffectiveDeps?.() ?? actionDeps);
   const { sessionUsageLimitWaitResumeEnable, sessionUsageLimitWaitResumeCancel, sessionUsageLimitCheckNow, sessionUsageLimitSwitchAccountNow, sessionUsageLimitConsumeResetCredit } = createCliUsageLimitRecoveryActionDeps(params, { callSessionRpcForTransport, normalizeStringValue, readTransportSessionOwnerMetadata, resolveTransportForSession });
-  const promptsDeps = createCliPromptsActionDeps(params, { approvalsStore, callMachineAction, callSessionActionRpc, notSupported, projectHomeId, readCurrentMachineControlIdentity, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveTransportForSession,
+  const promptsDeps = createCliPromptsActionDeps(params, { approvalsStore, callMachineAction, callSessionActionRpc, notSupported, projectHomeId, promptLibraryStoreForContext, skillRulesForContext, readCurrentMachineControlIdentity, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveTransportForSession,
     readRegistryAppEnvironment: readOpenedDeploymentEnvironment,
   });
   const { sessionVendorPluginCatalogList, sessionSkillCatalogList } = createCliSessionCatalogActionDeps(params, { callSessionRpcForTransport, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveTransportForSession });
-  const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionCompact, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
+  const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionCompact, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet, sessionConnectedServicesAuthSet } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const { homeRuntimeTaskRpc, prepareLocalServiceStartApproval, runtimeActionExecute } = createCliLocalServiceActionDeps(params, {
     callMachineAction, projectHomeId, projectHomeAdmission, withProjectHome, executionRunActionFailure,
   });
@@ -850,20 +917,77 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
 
   const actionDeps: CliActionDeps = {
+    readActionApprovalProfileId: async context => {
+      const callerSessionId = context.actionCaller?.kind === 'session'
+        ? context.actionCaller.sessionId : context.defaultSessionId;
+      const applies = context.actionCaller?.kind === 'session'
+        || (typeof callerSessionId === 'string' && callerSessionId === params.sessionId
+          && readCliActionBoundSessionId(callerSessionId) !== null);
+      if (!applies) return undefined;
+      const caller = await resolveActionCallerSession(context).catch(() => {
+        context.signal?.throwIfAborted();
+        return null;
+      });
+      if (!caller?.metadata) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const { readSessionStateFieldFromMetadata } = await import('@happier-dev/agents');
+      return readSessionStateFieldFromMetadata(caller.metadata, 'intent.approvalProfileId') ?? null;
+    },
     resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope ?? deploymentStorageDeps.resolveEnvironmentApprovalScope,
     ...(params.prepareDeploymentAction ? { prepareDeploymentAction: params.prepareDeploymentAction } : {}),
+    ...(params.prepareDeploymentTeardown ? { prepareDeploymentTeardown: params.prepareDeploymentTeardown } : {}),
+    ...(params.prepareDeploymentEnvironmentCreate ? { prepareDeploymentEnvironmentCreate: params.prepareDeploymentEnvironmentCreate } : {}),
+    prepareHostReviewedChildren: async request => {
+      const refusal = await prepareCliManagedProvisionerAdmission(request, {
+        credentials: params.credentials, serverUrl: todoHomeBaseUrl,
+        managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
+      });
+      if (refusal) return refusal;
+      const wake = await prepareCliManagedMachineWake(request, {
+        localMachineId,
+        provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
+        managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
+        readSessionMachineId: async (target, context) => {
+          const transport = await resolveTransportForSession(target.sessionId, context.signal,
+            { actionId: request.actionId, context }, context.expectedSessionAddress);
+          if (!transport.ok) return executionRunActionFailure(transport.code);
+          return resolveSessionInputTargetMachineId({ rawSession: transport.rawSession,
+            decryptedMetadata: readTransportSessionOwnerMetadata(transport) });
+        },
+      });
+      if (wake) return wake;
+      const prepared = request.actionId === 'projects.service.relocate'
+        ? await prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
+            context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl })
+        : await params.prepareHostReviewedChildren?.(request) ?? null;
+      if (prepared && 'ok' in prepared) return prepared;
+      return prepareDeploymentTargetEnablementRetention(request, { homeId: actionHomeId,
+        managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction }, prepared);
+    },
     ...(params.prepareDeploymentTemplateInstantiation ? { prepareDeploymentTemplateInstantiation: params.prepareDeploymentTemplateInstantiation } : {}),
     deploymentTemplateInstantiate: params.deploymentTemplateInstantiate ?? (async (input, context) => {
+      const workflow = context.actionCaller?.kind === 'workflowRun';
       if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
-        || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host')
+        || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow)
         return executionRunActionFailure('deployment_executor_unavailable');
       if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
         return executionRunActionFailure('admission_unavailable');
+      const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
+      const installedWorkflow = workflow && publisherMachineId && params.serverIdentityId
+        && params.externalActionMachineRequestPrivateKey && params.externalActionMachineInstallationId
+        ? { context, machineId: publisherMachineId, installationId: params.externalActionMachineInstallationId,
+            privateKey: params.externalActionMachineRequestPrivateKey } : undefined;
+      if (workflow && !installedWorkflow) return executionRunActionFailure('admission_unavailable');
+      const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input, async request => {
+        const loaded = await deploymentStorage('deployments.environments.get', request, context);
+        return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
+      });
+      if (!selected.ok) return selected;
       const actionId = 'deployments.templates.instantiate';
       const execution = await dispatchOriginalAccountAction({ actionId, input, requestId: context.actionRequestId,
-        target: { kind: 'machine', machineId: input.machineId }, credentials: params.credentials,
-        authority: context.authority,
-        invocation: { caller: { kind: 'host' }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' },
+        target: { kind: 'machine', machineId: selected.machineId }, credentials: params.credentials,
+        ...(installedWorkflow ? { authority: 'account_automation' as const, installedWorkflow }
+          : { authority: context.authority,
+            invocation: { caller: { kind: 'host' as const }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' } }),
         serverHttpBaseUrl: todoHomeBaseUrl,
         ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
         ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
@@ -875,19 +999,48 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const output = DeploymentTemplateInstantiateResultV1Schema.safeParse(execution.result);
       return output.success ? output.data : executionRunActionFailure('invalid_action_output');
     }),
-    prepareDeploymentPublish: params.prepareDeploymentPublish ?? publishDeps.prepareDeploymentPublish,
-    deploymentPublish: params.deploymentPublish ?? publishDeps.deploymentPublish,
     deploymentPrepare: params.deploymentPrepare ?? createPrepareDeployment({ serverId: projectHomeId,
       serverIdentityId: params.serverIdentityId, serverHttpBaseUrl: todoHomeBaseUrl,
-      machineId: params.machineActionDirectTargetTransport?.machineId ?? params.sessionSpawnDirectTargetTransport?.machineId,
+      machineId: localMachineId,
       credentials: params.credentials, isCredentialCurrent: params.isCredentialCurrent,
       readWorkspaceRows: readAdmittedProjectRows,
       readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context) }),
-    deploymentAction: async (actionId, input, context) => {
-      if (params.deploymentAction) return params.deploymentAction(actionId, input, context);
-      const nativeRead = isDeploymentNativeReadActionIdV1(actionId);
-      if (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback'
-        && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown' && !nativeRead) return deploymentStorage(actionId, input, context);
+    deploymentAction: async (actionId, input, context, hostChild) => {
+      if (params.deploymentAction) return params.deploymentAction(actionId, input, context, hostChild);
+      const authorization = context.externalActionExecutionAuthorization;
+      if (isDeploymentObservationReadActionIdV1(actionId) && authorization && isDeploymentTargetLinkActionIdV1(authorization.binding.actionId)
+        && authorization.requesterAccountExecutor) {
+        // Link's Machine ingress supplies this native executor. Its explicit
+        // deploymentAction above ends delegation; Session RPC cannot admit a
+        // Link machine root into its Session-scoped requester executor.
+        const execution = await authorization.requesterAccountExecutor.execute(actionId, input, context);
+        return execution.ok ? DeploymentActionOutputSchemasV1[actionId].parse(execution.result) : execution;
+      }
+      if (actionId === 'deployments.publish.prepare') {
+        const selected = DeploymentActionInputSchemasV1[actionId].parse(input);
+        if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
+          || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host')
+          return executionRunActionFailure('deployment_executor_unavailable');
+        if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
+          return executionRunActionFailure('admission_unavailable');
+        const execution = await dispatchOriginalAccountAction({ actionId, input: selected, requestId: context.actionRequestId,
+          target: { kind: 'machine', machineId: selected.machineId }, credentials: params.credentials,
+          authority: context.authority,
+          invocation: { caller: { kind: 'host' }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' },
+          serverHttpBaseUrl: todoHomeBaseUrl,
+          ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
+          ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+          ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
+          ...(context.signal ? { signal: context.signal } : {}) });
+        if (!execution.ok) return execution;
+        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+        if (approval.success && approval.data.actionId === actionId) return approval.data;
+        const output = DeploymentActionOutputSchemasV1[actionId].safeParse(execution.result);
+        return output.success ? output.data : executionRunActionFailure('invalid_action_output');
+      }
+      const nativeRead = isDeploymentReadActionIdV1(actionId);
+      const linkPreparation = actionId === 'deployments.targets.link' && !('contentArtifactId' in input);
+      if (!isControllerDeploymentMutationAction(actionId) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
       if (!('environmentId' in input)) return executionRunActionFailure('invalid_parameters');
       const loaded = await deploymentStorage('deployments.environments.get', {
         serverId: input.serverId, environmentId: input.environmentId,
@@ -895,8 +1048,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if ('errorCode' in loaded || 'kind' in loaded) return loaded;
       const opened = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
       if (!opened.ok) return opened;
-      // Route the original intent before receipt admission. Only the reached
-      // installed controller may bind the receipt to its real operation id.
+      // Route the original intent to the installed controller that owns
+      // native preparation and receipt admission.
       const workflow = context.actionCaller?.kind === 'workflowRun';
       if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
         || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow) {
@@ -949,7 +1102,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(approvalsStore ? { memoryLibrary: {
       serverId: actionHomeId,
       isSameServerId: isSameActionHomeId,
-      store: approvalsStore.promptLibraryStore, randomId: randomUUID,
+      store: approvalsStore.promptLibraryStore,
+      storeForContext: context => promptLibraryStoreForContext(context,
+        context.externalActionExecutionAuthorization?.binding.actionId ?? 'memory.remember') ?? approvalsStore.promptLibraryStore,
+      randomId: randomUUID,
       readExposure: async (artifactId, context) => {
         if (!roleArtifactStore) throw Object.assign(new Error('memory_exposure_unavailable'), { code: 'memory_exposure_unavailable' });
         return withProjectHome(() => roleArtifactStore.readExposure(artifactId, { signal: context.signal,
@@ -961,8 +1117,11 @@ export function createCliActionDeps(params: CliActionDepsParams,
       },
       readSession: async (ref, context) => {
         if (!params.credentials) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-        if (!homeAccountId || await projectAccountAdmission(ref.serverId, context)
-          || context.externalActionExecutionAuthorization && context.externalActionExecutionAuthorization.binding.accountId !== homeAccountId) {
+        const templateParentActionId = readAdmittedBotTemplateParentActionIdV1(context);
+        const requesterAccountId = templateParentActionId
+          && context.externalActionExecutionAuthorization && 'credentialId' in context.externalActionExecutionAuthorization.binding
+          ? context.externalActionExecutionAuthorization.binding.accountId : homeAccountId;
+        if (!homeAccountId || await (templateParentActionId ? projectHomeAdmission : projectAccountAdmission)(ref.serverId, context)) {
           throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
         }
         const read = async () => {
@@ -975,7 +1134,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
           const raw = target.rawSession;
           if (raw.effectiveAccess === undefined && raw.share === undefined
             || readSessionAccessProjectionRoleV1(raw) !== 'owner'
-            || raw.ownerAccountId !== undefined && raw.ownerAccountId !== homeAccountId) {
+            || raw.ownerAccountId !== undefined && raw.ownerAccountId !== requesterAccountId) {
             throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
           }
           const metadata = readTransportSessionOwnerMetadata(target);
@@ -1063,14 +1222,16 @@ export function createCliActionDeps(params: CliActionDepsParams,
     widgetCatalog: widgetDeps.widgetCatalog,
     ...(roleArtifactStore && homeAccountId ? { appShellAction: createCliInboxReadAction({
       store: { list: options => withProjectHome(() => roleArtifactStore.list(options)),
-        readBodies: (items, signal) => withProjectHome(() => roleArtifactStore.readBodies(items, signal)) },
+        readBodies: (items, signal) => withProjectHome(() => roleArtifactStore.readBodies(items, signal)),
+        read: (artifactId, options) => withProjectHome(() => roleArtifactStore.read(artifactId, options)),
+        update: request => withProjectHome(() => roleArtifactStore.update(request)) },
       accountId: homeAccountId, serverId: todoHomeServerId,
       isCurrent: async () => !await projectHomeAdmission() && (!params.isCredentialCurrent || await params.isCredentialCurrent()),
     }) } : {}),
     artifactAction: artifactsDeps.artifactAction,
     artifactAccessAction: artifactsDeps.artifactAccessAction,
     ...createCliBotTemplateActionDeps(params, { artifactCallerContext, homeAccountId, isSameActionHomeId,
-      content: { ...promptsDeps, get machineSetupPlan() { return (readEffectiveDeps?.() ?? actionDeps).machineSetupPlan; } },
+      content: promptsDeps,
       registryPort: approvalsStore?.promptLibraryStore.organization,
       roleArtifactStore, resolveServerRequestHeaders, resolveTransportForSession, readTransportSessionOwnerMetadata }),
     connectedServiceAction,
@@ -1170,11 +1331,12 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...inventoryDeps,
     ...(params.credentials && approvalsStore ? createCliSessionCapabilitiesActionDeps({ credentials: params.credentials,
       serverId: params.serverId ?? configuration.activeServerId, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-      operationContext: params.savedSecretOperationContext, skillRules: approvalsStore.skillRules,
+      operationContext: params.savedSecretOperationContext,
+      skillRulesForContext: context => skillRulesForContext(context, 'session.capabilities.set') ?? approvalsStore.skillRules,
       callMachineAction,
       resolveAuthorizationHeaders: (actionId, context, request) => resolveServerRequestHeaders(context, actionId, request),
     }) : {}),
-
+    projectsOrganizationUpdate: projectDeps.projectsOrganizationUpdate,
     projectsVisibilitySet: projectDeps.projectsVisibilitySet,
     projectsList: projectDeps.projectsList,
     projectWorkspaceRefs: projectDeps.projectWorkspaceRefs,
@@ -1184,12 +1346,14 @@ export function createCliActionDeps(params: CliActionDepsParams,
     machineStorageAction: machineResourceDeps.machineStorageAction,
     machineProcessesAction: machineResourceDeps.machineProcessesAction,
     machineVitalsAction: machineResourceDeps.machineVitalsAction,
-
+    machineAgentIsolationAction: machineResourceDeps.machineAgentIsolationAction,
     machineServiceAction: machineResourceDeps.machineServiceAction,
     machineServiceScope: machineResourceDeps.machineServiceScope,
     machineServiceControl: machineResourceDeps.machineServiceControl,
+    machineServiceExec: machineResourceDeps.machineServiceExec,
     machineServiceLogsRead: machineResourceDeps.machineServiceLogsRead,
     machineAdminAccessAction: machineResourceDeps.machineAdminAccessAction,
+    machineReachabilityAction: machineResourceDeps.machineReachabilityAction,
     machineReboot: machineResourceDeps.machineReboot,
     machineRebootReferences,
     machineResourcesPolicyAction: machineResourceDeps.machineResourcesPolicyAction,
@@ -1270,6 +1434,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...permissionActionDeps,
     sessionControlSwitch,
     sessionModeSet,
+    sessionConnectedServicesAuthSet,
     sessionBoardAction: widgetDeps.sessionBoardAction,
     ...(widgetDeps.sessionBoardPrepareItem ? { sessionBoardPrepareItem: widgetDeps.sessionBoardPrepareItem } : {}),
     readAgentHtmlNetworkPolicy: async () => params.actionsSettingsProvider?.getAccountSettings?.()?.agentHtmlNetworkPolicy ?? 'ask',
@@ -1295,6 +1460,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       : async () => ({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' }),
 
     sessionList,
+    sessionRead,
     sessionFollowPreview,
 
     resolveSessionReference: async ({ sessionId, context, actionId, signal }) => {
@@ -1350,7 +1516,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
       automationEventAction: async (args) => await automationEventAction(args),
     } : {}),
 
-    ...(readWorkflowApprovedOperation ? { readWorkflowApprovedOperation } : {}),
+    ...(readWorkflowApprovedOperation || params.readApprovedOperation ? { readApprovedOperation: async request => {
+      if (request.runId && readWorkflowApprovedOperation) return readWorkflowApprovedOperation({ ...request, runId: request.runId });
+      return await params.readApprovedOperation?.(request) ?? null;
+    } } : {}),
     workflowAction: workflowActionPort,
     automationOccurrenceAction: createCliOccurrenceAction(params, {
       serverId: projectHomeId, serverHttpBaseUrl: todoHomeBaseUrl, accountId: homeAccountId,
@@ -1389,38 +1558,14 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
     managedMachineReferences,
     machineSetupPlan: setupDeps.machineSetupPlan,
-    prepareMachineSetupApply: setupDeps.prepareMachineSetupApply,
     machineSetupRemove: machineDeps.machineSetupRemove,
     machineSetupUpdatesApply: machineDeps.machineSetupUpdatesApply,
-    machineSetupApply: request => request.context.actionCaller?.kind === 'workflowRun'
-      || request.context.externalActionExecutionAuthorization?.binding.workflowActionOrigin
-      || request.context.externalActionExecutionAuthorization?.binding.managedContinuation
-      ? machineDeps.machineSetupApply!(request) : setupDeps.machineSetupApply!(request),
-    prepareHostReviewedChildren: async request => {
-      const wake = await prepareCliManagedMachineWake(request, {
-        localMachineId,
-        provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
-        managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
-        readSessionMachineId: async (target, context) => {
-          const transport = await resolveTransportForSession(target.sessionId, context.signal,
-            { actionId: request.actionId, context }, context.expectedSessionAddress);
-          if (!transport.ok) return executionRunActionFailure(transport.code);
-          return resolveSessionInputTargetMachineId({ rawSession: transport.rawSession,
-            decryptedMetadata: readTransportSessionOwnerMetadata(transport) });
-        },
-      });
-      if (wake) return wake;
-      return await params.prepareHostReviewedChildren?.(request) ?? null;
-    },
+    prepareMachineSetupApply: setupDeps.prepareMachineSetupApply,
+    machineSetupApply: createMachineSetupApplyDispatcher({ readDeps: () => readEffectiveDeps?.() ?? actionDeps,
+      native: machineDeps.machineSetupApply!, compose: setupDeps.machineSetupApply! }),
     buildApprovalPreview: approvalActionDeps.buildApprovalPreview,
     settingsDeclarationAction: settingsDeps.settingsDeclarationAction,
     resetGlobalVoiceAgent: () => {},
   };
   return actionDeps;
-}
-
-export function isControllerDeploymentMutationAction(actionId: string): actionId is
-  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' {
-  return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
-    || actionId === 'deployments.promote' || actionId === 'deployments.teardown';
 }

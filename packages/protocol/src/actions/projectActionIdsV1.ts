@@ -15,6 +15,11 @@ export function isProjectActionIdV1(value: string): value is ProjectActionIdV1 {
   return (PROJECT_ACTION_IDS_V1 as readonly string[]).includes(value);
 }
 
+/** The Open root's Sync purpose is distinct from finite preparation roots. */
+export function isProjectWorkspaceSyncOpenActionV1(value: string | undefined): value is 'projects.open' {
+  return value === 'projects.open';
+}
+
 /** Invocation roots allowed to prepare their Project's linked worker copy.
  * This classifies the purpose only; each receiver still verifies its signed
  * root, requester custody, original input and current source/target refs.

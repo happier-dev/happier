@@ -11,6 +11,10 @@ import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifact
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
+import type { ActionApprovalRequestCreatedResult, ActionExecuteFailure, ActionExecuteResult } from '../actions/actionExecutionResult.js';
+import { DeploymentBindingsPatchInputV1Schema } from './deploymentBindingPatchV1.js';
+import { DeploymentEnvironmentCreateInputV1Schema } from './deploymentEnvironmentCreateV1.js';
+import type { DeploymentEnvironmentGetResultV1Schema } from './deploymentActionsV1.js';
 
 const existingEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }));
 const createEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('create'), name: StoredAppPresetInputV1Schema.shape.name, requestKey: id,
@@ -54,6 +58,17 @@ export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.
 })));
 export type DeploymentTemplateInstantiateInputV1 = z.infer<typeof DeploymentTemplateInstantiateInputV1Schema>;
 
+/** The original template root belongs to the Environment controller; machineId selects its runtime resource. */
+export async function resolveDeploymentTemplateExecutionMachineIdV1(
+  input: DeploymentTemplateInstantiateInputV1,
+  readEnvironment: (request: Readonly<{ serverId: string; environmentId: string }>) => Promise<z.infer<typeof DeploymentEnvironmentGetResultV1Schema> | ActionExecuteFailure>,
+): Promise<Readonly<{ ok: true; machineId: string }> | ActionExecuteFailure> {
+  if (input.environment.kind === 'create') return { ok: true, machineId: input.environment.controllerMachineId };
+  const loaded = await readEnvironment({ serverId: input.serverId, environmentId: input.environment.environmentId });
+  if (!loaded.ok) return 'errorCode' in loaded ? loaded : { ok: false, errorCode: loaded.error, error: loaded.error };
+  return { ok: true, machineId: loaded.environment.controllerMachineId };
+}
+
 export const DeploymentTemplateCapacityReviewV1Schema = lazyZodSchema(() => z.array(z.strictObject({
   resource: z.enum(['memoryBytes', 'freeDiskBytes']), minimumBytes: z.number().check(z.minimum(0)),
   observedBytes: z.nullable(z.number().check(z.minimum(0))), observedAt: z.nullable(z.number().check(z.minimum(0))),
@@ -95,6 +110,10 @@ export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() =
   targetLinkId: z.optional(id), definition: z.optional(storedPin), savedSecrets,
   phase: z.enum(['generation', 'environment', 'target', 'bindings', 'metadata', 'domains', 'deploy']), errorCode: id,
   deployment: z.optional(DeploymentReceiptAcceptedResultV1Schema),
+  continuation: z.optional(z.discriminatedUnion('actionId', [
+    z.strictObject({ actionId: z.literal('deployments.environments.create'), input: DeploymentEnvironmentCreateInputV1Schema }),
+    z.strictObject({ actionId: z.literal('deployments.bindings.set'), input: DeploymentBindingsPatchInputV1Schema }),
+  ])),
   unknownSecret: z.optional(z.strictObject({ name: id, phase: z.enum(['build', 'runtime']), ref: DeploymentSecretBindingSourceV1Schema.shape.ref })),
 }));
 /** Acknowledged effects survive later failure; ambiguous create refs never masquerade as saved credentials. */
@@ -108,3 +127,14 @@ export const DeploymentTemplateInstantiateResultV1Schema = lazyZodSchema(() => z
   DeploymentTemplateInstantiationPartialV1Schema,
 ]));
 export type DeploymentTemplateInstantiateResultV1 = z.infer<typeof DeploymentTemplateInstantiateResultV1Schema>;
+
+/** Preserve the producer's failure evidence while exposing partial progress as a failure. */
+export function projectDeploymentTemplateInstantiationResultV1(
+  result: DeploymentTemplateInstantiateResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure,
+): ActionExecuteResult {
+  if ('ok' in result) return result;
+  if (result.kind === 'partial') {
+    return { ok: false, errorCode: result.errorCode, error: result.errorCode, details: result };
+  }
+  return { ok: true, result };
+}

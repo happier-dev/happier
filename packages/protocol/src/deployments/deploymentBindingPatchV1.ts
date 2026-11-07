@@ -3,7 +3,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
-import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
+import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema,
+    environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
     type EnvironmentSecretBindingV1 } from './storedAppInputV1.js';
 
 /** Server-visible routing only; binding names, origins and service selectors stay private. */
@@ -103,3 +104,14 @@ export function applyEnvironmentSecretBindingsPatchV1(bindings: readonly Environ
     result.push(...replacements.values());
     return result;
 }
+
+/** Authored binding intent is a leaf: Copy continuations must not import the Action catalog. */
+export const DeploymentBindingsPatchInputV1Schema = lazyZodSchema(() => z.strictObject({
+    serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
+    expectedRevision: DeploymentRevisionV1Schema,
+    set: z.array(EnvironmentSecretBindingInputV1Schema), remove: z.array(EnvironmentSecretBindingIdentityV1Schema),
+}).check(z.refine(input => {
+    const identities = [...input.set, ...input.remove].map(environmentSecretBindingIdentityV1);
+    return new Set(identities).size === identities.length;
+}, { message: 'Each binding identity may occur once in a patch.' })));
+export type DeploymentBindingsPatchInputV1 = z.infer<typeof DeploymentBindingsPatchInputV1Schema>;

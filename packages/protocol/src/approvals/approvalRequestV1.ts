@@ -1,15 +1,19 @@
+import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
-export { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema, type ApprovalRequestStatus } from './approvalRequestStatus.js';
+export { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema, isApprovalRequestV2InFlightStatus, isApprovalRequestV2TerminalStatus, type ApprovalRequestStatus } from './approvalRequestStatus.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { ActionApprovalSchema, resolveActionApprovalFlow } from '../actions/actionApprovalMetadata.js';
-import { ActionIdSchema } from '../actions/actionIds.js';
-import { ActionResolvedSessionTargetsV1Schema } from '../actions/sessionTargetV1.js';
+import { ActionIdSchema, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../actions/actionIds.js';
+import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
+import { ActionResolvedSessionTargetsV1Schema, normalizeSessionTargetV1 } from '../actions/sessionTargetV1.js';
+import { InputPathSchema } from '../inputs/inputPredicates.js';
+import { bindActionSessionTargetOperands, readActionSessionTargetOperands } from '../actions/executor/sessionTargets.js';
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import {
@@ -20,6 +24,7 @@ import { ActionRequiredAuthoritySchema, ActionSurfaceSchema } from '../actions/m
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
+import { ActionCallerSurfaceV1Schema } from '../actions/actionSettings.js';
 import { ActionRequestAttributionV1Schema, isSharedRequesterActionV1 } from '../actions/actionRequestAttributionV1.js';
 import { ActionFailureCauseV1Schema, ActionOperationCredentialUseV1Schema } from '../actions/actionExecutionResult.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
@@ -32,24 +37,27 @@ import {
   ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionRequestEnvelopeSchema,
   isExternalActionResolvedTargetAllowedV1,
+  isExternalActionMachineWorkflowActionIdV1,
 } from '../actions/externalActionApi.js';
 import { isExternalActionAuthorizationBoundToEnvelope } from '../actions/externalActionExecutionAuthorization.js';
+export { resolveApprovalExecutor, type ApprovalExecutor } from './resolveApprovalExecutor.js';
+export { liveCliApprovalOriginScope, readLiveCliApprovalOriginScope, LIVE_CLI_APPROVAL_DECIDE_METHOD, isLiveCliApprovalOriginMethod } from './liveCliOrigin.js';
 import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
 import { AgentPermissionIntentV1Schema } from '../runtime/permissionIntentV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../account/settings/sessionAgentSpawnPolicyV1.js';
+import { SessionWorkDepthV1Schema } from '../sessions/creation/sessionCreateOriginV1.js';
 import {
   SessionInputCausalPermissionAuthorityV1Schema,
   SessionInputSourceSessionV1Schema,
 } from '../sessions/messages/sessionInputAdmission.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
-import { WorkflowAcceptedAuthorizationV1Schema, WorkflowRunStartedByV1Schema } from '../workflows/workflowDefinitionV1.js';
+import { WorkflowAcceptedAuthorizationV1Schema, WorkflowAcceptedOriginV1Schema, WorkflowRunStartedByV1Schema } from '../workflows/workflowDefinitionV1.js';
 import { AgentStartSessionCallerV1Schema } from '../account/settings/admitAgentStartV1.js';
-import { ComputerSecretFillRequestV1Schema, SecretFillSettlementV1Schema } from '../computer/v1.js';
-import { BrowserAutomationSecretFillRequestV1Schema } from '../browser/automation/v1.js';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { validateConfidentialApprovalRequest } from './confidential.js';
 import { MachineStorageTrashMoveInputV1Schema, PileApplyResultStoredV1Schema, PileApplyResultV1Schema } from '../storage/storageV1.js';
 import { prepareDocDiscussionMutationV1 } from '../artifacts/artifactCollaborationActionsV1.js';
-import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
+import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
 
 const ApprovalRequestedSurfaceSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
@@ -62,6 +70,7 @@ const ApprovalRequestedSurfaceSchema = lazyZodSchema(() => z.string().check(z.mi
 const ApprovalRequestV1HistoricalActionIdSchema = lazyZodSchema(() => z.union([
   ActionIdSchema,
   z.literal('session.spawn_picker'),
+  z.literal(RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1),
 ]));
 
 export const ApprovalRequestOriginV1Schema = lazyZodSchema(() => z.strictObject({
@@ -204,12 +213,13 @@ export const ApprovalExecutionOriginCallerV1Schema = lazyZodSchema(() => z.discr
   /**
    * Host-stamped provenance for an admitted Workflow Run, carrying the exact
    * accepted authorization the live Workflow admission already owns. Replay
-   * currentness rechecks that principal; the Run identity is immutable.
+   * currentness resolves the admitted Run and invocation; the Run identity is immutable.
    */
   z.strictObject({
     kind: z.literal('workflowRun'),
     runId: z.string().check(z.trim(), z.minLength(1)),
     authorization: WorkflowAcceptedAuthorizationV1Schema,
+    authenticatedStarterV1: WorkflowAcceptedOriginV1Schema.shape.authenticatedStarterV1,
     discussionModelReservation: z.optional(z.strictObject({
       discussionId: DiscussionIdSchema, participantSlotId: DiscussionIdSchema,
       policySurface: z.optional(z.keyof(ActionSurfaceSchema)),
@@ -228,6 +238,12 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   v: z.literal(1),
   authority: ActionRequiredAuthoritySchema,
   surface: ApprovalExecutionOriginSurfaceV1Schema,
+  /** Host-observed originating policy audience, not an execution grant. */
+  callerSurface: z.optional(ActionCallerSurfaceV1Schema),
+  /** Original admitted preference reference; replay must not inherit the deciding caller's selection. */
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+  /** Host-admitted native Workflow leaf depth, retained through its approval. */
+  agentStartWorkDepth: z.optional(SessionWorkDepthV1Schema),
   caller: ApprovalExecutionOriginCallerV1Schema,
   /** Local profile identifier used to route the replay to its configured Home. */
   serverId: z.string().check(z.trim(), z.minLength(1)),
@@ -260,6 +276,12 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   actionId: ActionIdSchema,
   requestId: z.string().check(z.trim(), z.minLength(1)),
 }).check(z.superRefine((value, ctx) => {
+  const starter = !value.actionRequestAttributionV1 && value.caller.kind === 'workflowRun'
+    ? value.caller.authenticatedStarterV1 : undefined;
+  if (starter && (starter.requester.accountId !== value.accountId
+    || starter.requester.serverId !== (value.serverIdentityId ?? value.serverId))) {
+    ctx.addIssue({ code: 'custom', path: ['caller', 'authenticatedStarterV1'], message: 'Workflow starter must match its admitted Account and Home' });
+  }
   if (value.caller.kind === 'workflowRun' && value.caller.discussionModelReservation
     && value.actionId !== 'discussion.invite') {
     ctx.addIssue({ code: 'custom', path: ['caller', 'discussionModelReservation'], message: 'Reservation scope requires an invitation' });
@@ -284,8 +306,16 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   if (value.sessionTargetsV1) {
     const declaration = getActionSpec(value.actionId).sessionTarget;
     const targets = value.sessionTargetsV1;
-    if (!declaration || targets.actionId !== value.actionId || targets.field !== declaration.field
-      || declaration.cardinality === 'one' && (targets.targets.length !== 1 || targets.selector)) {
+    // The wrapper's declaration is supplied by the current contributed Action,
+    // not a second static entry in the host catalog. Its request schema binds
+    // this canonical input-prefixed snapshot to the parsed invocation below.
+    const contributedOperand = value.actionId === 'action.invoke' && targets.field.startsWith('input.')
+      && InputPathSchema.safeParse(targets.field.slice('input.'.length)).success;
+    if (targets.actionId !== value.actionId || (!contributedOperand && (!declaration
+      || targets.field !== declaration.field
+      // Collection operands each select one Session; their union can contain many.
+      || declaration.cardinality === 'one' && (targets.selector
+        || !declaration.field.includes('*') && targets.targets.length !== 1)))) {
       ctx.addIssue({ code: 'custom', path: ['sessionTargetsV1'], message: 'Resolved targets must match the declared Action operand and cardinality' });
     }
   }
@@ -318,6 +348,11 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   }
   if (authorization) {
     const binding = authorization.binding;
+    // A Workflow leaf has its own correlation ID while retaining the exact
+    // Home-admitted Run root. The active Run/invocation reader owns admission.
+    const retainedWorkflowRoot = value.caller.kind === 'workflowRun'
+      && binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
+      && sameStrictJsonValue(value.caller.authorization.externalActionExecutionAuthorization, authorization);
     const admittedTarget = value.target !== undefined
       && isExternalActionResolvedTargetAllowedV1({
         authorizedTarget: binding.target,
@@ -326,7 +361,9 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
       });
     const principalMatches = 'authentication' in binding
       ? value.principalId === undefined && value.credentialId === undefined
-        && (binding.sessionActionOrigin
+        && (retainedWorkflowRoot
+          ? value.authority === 'account_automation' && value.surface === 'agent'
+          : binding.sessionActionOrigin
           ? value.authority === 'account_automation'
             && (value.surface === 'agent' && sameStrictJsonValue(value.caller, binding.sessionActionOrigin.caller)
               // A nested plugin remains the immediate caller; the original
@@ -337,7 +374,13 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
             && value.sessionInputSource?.sourceSessionId === binding.sessionActionOrigin.caller.sessionId
             && value.sessionInputSource.sourceTurnId === binding.sessionActionOrigin.sourceTurnId
             && value.sessionInputSource.via === 'action'
-          : ((value.surface === 'ui' || value.surface === 'cli') && value.caller.kind === 'host'
+          : binding.workflowActionOrigin
+            ? value.authority === 'account_automation' && value.surface === 'agent' && value.caller.kind === 'host'
+              && binding.target.kind === 'machine' && isExternalActionMachineWorkflowActionIdV1(binding.actionId)
+              && value.sessionId === undefined && value.sessionInputSource == null
+            : ((value.surface === 'ui' || value.surface === 'cli'
+                || value.surface === 'voice' && value.authority === 'present_user' && binding.authentication.kind === 'account')
+                && value.caller.kind === 'host'
               || value.surface === 'plugin' && value.caller.kind === 'plugin')
             && (value.authority === 'present_user'
               // A Home-admitted paired terminal can propose an approval while
@@ -347,7 +390,8 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
         && value.principalId === binding.principalId && value.credentialId === binding.credentialId;
     if (!principalMatches || value.serverIdentityId !== binding.serverIdentityId
       || value.accountId !== binding.accountId
-      || value.requestId !== binding.requestId || value.machineId !== binding.machineId || !admittedTarget) {
+      || (!retainedWorkflowRoot && value.requestId !== binding.requestId)
+      || value.machineId !== binding.machineId || !admittedTarget) {
       ctx.addIssue({ code: "custom", path: ['externalActionExecutionAuthorization'],
         message: 'Execution authorization must match the exact originating invocation' });
     }
@@ -417,6 +461,26 @@ export function resolveApprovalRequesterConfirmationV1(params: Readonly<{
   context?: ActionExecutorContext; actionId: ActionId; input: unknown; required: boolean;
 }>): Readonly<{ ok: true; requesterConfirmation: ApprovalRequesterConfirmationV1 | null }>
   | Readonly<{ ok: false; errorCode: 'approval_requester_unavailable'; error: typeof APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 }> {
+  let caller = params.context?.actionCaller;
+  while (caller?.kind === 'plugin' && caller.initiatingCaller) caller = caller.initiatingCaller;
+  // An origin Session and daemon custody do not identify a Workflow's person.
+  // Refuse before artifact creation, including explicit and nested requests.
+  const context = params.context;
+  const starter = caller?.kind === 'workflowRun' && !context?.actionRequestAttributionV1
+    ? caller.authenticatedStarterV1 : undefined;
+  const starterBound = starter && starter.requester.accountId === context?.runtimeAccountId
+    && starter.requester.serverId === (context?.serverIdentityId ?? context?.serverId);
+  if (caller?.kind === 'workflowRun' && !context?.actionRequestAttributionV1?.requester && !starterBound) {
+    return { ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 };
+  }
+  // A detached Workflow Agent has no Session persona to bind requester
+  // confirmation. This owner runs only when an approval is being prepared.
+  if (params.context?.executionRunWorkflowRunId && !params.context.defaultSessionId) {
+    // A detached Agent's root is its native contribution.
+    if (caller?.kind === 'plugin') {
+      return { ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 };
+    }
+  }
   if (!params.required) return { ok: true, requesterConfirmation: null };
   const requesterConfirmation = params.context
     ? buildApprovalRequesterConfirmationV1({ ...params, context: params.context }) : null;
@@ -448,7 +512,7 @@ export function isApprovalRequesterConfirmationBoundToOriginV1(
 /** Admission only: execution still rechecks its existing signed origin/currentness owner. */
 export async function admitApprovalRequesterDecisionV1(params: Readonly<{
   request: Readonly<{ requesterConfirmation?: ApprovalRequesterConfirmationV1;
-    executionOriginV1?: ApprovalExecutionOriginV1; actionId: ApprovalRequestV1['actionId']; actionArgs: unknown; status: string }>;
+    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; actionId: ApprovalRequestV1['actionId']; actionArgs: unknown; status: string }>;
   context: ActionExecutorContext;
 }>): Promise<Readonly<{ ok: true }> | Readonly<{
   ok: false; errorCode: 'present_user_required' | 'approval_stale' | 'approval_requester_unavailable';
@@ -458,6 +522,17 @@ export async function admitApprovalRequesterDecisionV1(params: Readonly<{
   const subject = request.requesterConfirmation;
   if (!subject) {
     const origin = request.executionOriginV1;
+    const starter = !origin?.actionRequestAttributionV1 && origin?.caller.kind === 'workflowRun'
+      ? origin.caller.authenticatedStarterV1 : undefined;
+    if (!['executed', 'failed', 'rejected', 'canceled'].includes(request.status)
+      && origin?.caller.kind === 'workflowRun' && !origin.actionRequestAttributionV1?.requester && !starter) {
+      return { ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 };
+    }
+    if (starter && (context.authority !== 'present_user'
+      || context.runtimeAccountId !== starter.requester.accountId
+      || (context.serverIdentityId ?? context.serverId) !== starter.requester.serverId)) {
+      return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+    }
     // Session-only proof cannot authorize an ordinary Account-owned request.
     // Retained shared/unknown requests cannot infer a replacement approver;
     // attribution-absent history and settled observation retain their custody.
@@ -477,7 +552,9 @@ export async function admitApprovalRequesterDecisionV1(params: Readonly<{
     return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
   }
   const actionId = ActionIdSchema.safeParse(request.actionId);
-  if (!request.executionOriginV1 || !isApprovalRequesterConfirmationBoundToOriginV1(subject, request.executionOriginV1)
+  const origin = request.executionOriginV1;
+  if (!origin || origin.actionId === RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1
+    || !isApprovalRequesterConfirmationBoundToOriginV1(subject, origin)
     || !actionId.success
     || context.runtimeAccountId !== undefined && context.runtimeAccountId !== subject.executionAccountId
     || !['executed', 'failed', 'rejected', 'canceled'].includes(request.status)
@@ -529,7 +606,7 @@ function validateApprovalRequestLifecycle(
   }
   if (value.handoffTargetReplacementApproval !== undefined
     && value.actionId !== 'session.handoff'
-    && !(value.v === 2 && value.actionId === 'workspace.sync.relationship.create')) {
+    && !(value.v === 2 && isWorkspaceSyncRelationshipWriteActionId(value.actionId))) {
     ctx.addIssue({ code: "custom", path: ['handoffTargetReplacementApproval'], message: 'Workspace target approval evidence belongs only to destination-choosing Actions.' });
   }
   validateConfidentialApprovalRequest(value, ctx);
@@ -566,54 +643,6 @@ function validateStorageRetryResults(value: Readonly<Record<string, unknown>>, c
       if (entries.has(entryId)) { issue(); return; }
       entries.add(entryId);
     }
-  }
-}
-
-const ConfidentialApprovalFailureCodeSchema = lazyZodSchema(() => z.enum([
-  'approval_stale', 'approval_context_unavailable', 'approval_execution_outcome_unknown',
-  'confidential_choice_required', 'unsupported_action', 'invalid_parameters', 'present_user_required',
-  'approval_not_found', 'approval_invalid', 'approval_not_open', 'action_disabled', 'credential_scope_denied',
-]));
-
-/** The durable request never becomes a carrier for the live human credential choice or native echoes. */
-function validateConfidentialApprovalRequest(value: Readonly<Record<string, unknown>>, ctx: z.core.$RefinementCtx): void {
-  const actionId = value.actionId;
-  if (actionId !== 'computer.secret.fill' && actionId !== 'browser.automation.secret.fill') return;
-  const issue = (path: (string | number)[]) => ctx.addIssue({
-    code: "custom", path, message: 'Confidential approval requires exact value-free custody',
-  });
-  if (value.v !== 2) { issue(['v']); return; }
-  const inputSchema = actionId === 'computer.secret.fill'
-    ? ComputerSecretFillRequestV1Schema : BrowserAutomationSecretFillRequestV1Schema;
-  const args = inputSchema.safeParse(value.actionArgs);
-  if (!args.success) issue(['actionArgs']);
-  const origin = ApprovalExecutionOriginV1Schema.safeParse(value.executionOriginV1);
-  if (args.success && origin.success) {
-    for (const field of ['serverId', 'sessionId', 'machineId'] as const) {
-      if (args.data[field] !== origin.data[field]) issue(['actionArgs', field]);
-    }
-  }
-  if (value.preview !== undefined) {
-    const preview = z.strictObject({ actionId: z.literal(actionId), actionArgs: inputSchema }).safeParse(value.preview);
-    if (!preview.success || !args.success || !sameStrictJsonValue(preview.data.actionArgs, args.data)) issue(['preview']);
-  }
-  const transcriptOrigin = ApprovalRequestOriginV1Schema.safeParse(value.origin);
-  if (transcriptOrigin.success && transcriptOrigin.data.toolInput !== undefined) {
-    const toolInput = transcriptOrigin.data.toolInput;
-    const direct = inputSchema.safeParse(toolInput);
-    const wrapped = z.strictObject({ actionId: z.literal(actionId), input: inputSchema }).safeParse(toolInput);
-    const parsedInput = direct.success ? direct.data : wrapped.success ? wrapped.data.input : undefined;
-    if (!args.success || parsedInput === undefined || !sameStrictJsonValue(parsedInput, args.data)) issue(['origin', 'toolInput']);
-  }
-  const execution = ApprovalExecutionV2Schema.safeParse(value.execution);
-  if (execution.success) {
-    const record = execution.data;
-    if (record.result !== undefined && !SecretFillSettlementV1Schema.safeParse(record.result).success) issue(['execution', 'result']);
-    if (record.ok && record.result === undefined) issue(['execution', 'result']);
-    if (record.details !== undefined && (record.ok || record.errorCode !== 'approval_stale'
-      || !ApprovalStaleFailureDetailsSchema.safeParse(record.details).success)) issue(['execution', 'details']);
-    if (!record.ok && (!ConfidentialApprovalFailureCodeSchema.safeParse(record.errorCode).success || record.error !== record.errorCode)) issue(['execution', 'error']);
-    if (record.ok && (record.error !== undefined || record.errorCode !== undefined)) issue(['execution', 'error']);
   }
 }
 
@@ -683,12 +712,40 @@ export const ApprovalRequestV2Schema = lazyZodSchema(() => z.strictObject({
   if (value.executionOriginV1.actionId !== value.actionId) {
     ctx.addIssue({ code: "custom", path: ['executionOriginV1', 'actionId'], message: 'execution origin Action must match the approved Action' });
   }
-  // A Home-signed external invocation is persisted as an `api` origin even when
-  // the caller reached it through another surface, so the descriptive requested
-  // surface records that nested caller without contradicting the authority. Any
-  // other surface pair repeats one fact twice and must agree exactly.
-  const nestedExternalInvocation = value.executionOriginV1.surface === 'api'
-    && value.executionOriginV1.externalActionExecutionAuthorization !== undefined;
+  const targets = value.executionOriginV1.sessionTargetsV1;
+  if (value.actionId === 'action.invoke' && targets) {
+    const invocation = getActionSpec('action.invoke').inputSchema.safeParse(value.actionArgs);
+    let matches = false;
+    if (invocation.success && invocation.data && typeof invocation.data === 'object' && !Array.isArray(invocation.data)) {
+      const input = invocation.data as Readonly<Record<string, unknown>>;
+      if (targets.operands) matches = bindActionSessionTargetOperands(input, targets,
+        { field: targets.field, cardinality: 'one' }, true) !== null;
+      else {
+        const operands = readActionSessionTargetOperands(input, targets.field);
+        if (operands.length === 1) {
+          try {
+            const operand = normalizeSessionTargetV1(operands[0]!.value);
+            matches = typeof operand === 'string'
+              ? targets.targets.length === 1 && operand === targets.targets[0]!.sessionId
+              : targets.selector;
+          } catch { /* The canonical operand schema refuses malformed retained input. */ }
+        }
+      }
+    }
+    if (!matches) ctx.addIssue({ code: 'custom', path: ['actionArgs'],
+      message: 'Contributed Session approval targets must match the original invocation operand' });
+  }
+  // A signed external invocation retains its nested descriptive caller surface.
+  // PAT origins stay `api`; ordinary Account host automation stays `ui`/`cli`.
+  // The strict origin above owns principal, proof, target and replay authority;
+  // a descriptive surface cannot turn automation into a present-user gesture.
+  const approvalOrigin = value.executionOriginV1;
+  const externalBinding = approvalOrigin.externalActionExecutionAuthorization?.binding;
+  const nestedExternalInvocation = externalBinding !== undefined
+    && (approvalOrigin.surface === 'api'
+      || 'authentication' in externalBinding && !externalBinding.sessionActionOrigin && !externalBinding.workflowActionOrigin
+        && approvalOrigin.authority === 'account_automation' && approvalOrigin.caller.kind === 'host'
+        && (approvalOrigin.surface === 'ui' || approvalOrigin.surface === 'cli'));
   if (
     value.requestedSurface !== undefined
     && value.requestedSurface !== value.executionOriginV1.surface
@@ -717,8 +774,33 @@ export const ApprovalRequestSchema = lazyZodSchema(() => z.discriminatedUnion('v
   ApprovalRequestV1Schema,
   ApprovalRequestV2Schema,
 ]));
-export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
-export const StoredApprovalRequestSchema = createStoredReadSchema(ApprovalRequestSchema);
+export type CurrentApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+/** Retired combined Publish approvals retain their exact private history, never replay authority. */
+export const HistoricalPublishApprovalRequestV2Schema = lazyZodSchema(() => z.strictObject({
+  ...ApprovalRequestV2Schema.shape,
+  actionId: z.literal(RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1),
+  executionOriginV1: z.strictObject({
+    ...ApprovalExecutionOriginV1Schema.shape,
+    actionId: z.literal(RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1),
+    externalActionExecutionAuthorization: z.optional(StrictJsonValueSchema),
+    originalActionEnvelope: z.optional(StrictJsonValueSchema),
+  }),
+}).check(z.superRefine((value, ctx) => {
+  validateApprovalRequestLifecycle(value, ctx);
+})));
+/** Update candidates retain strict validation before the stored subject/transition admission. */
+export const ApprovalRequestUpdateSchema = lazyZodSchema(() => z.union([
+  ApprovalRequestSchema,
+  HistoricalPublishApprovalRequestV2Schema,
+]));
+export const StoredApprovalRequestSchema = createStoredReadSchema(ApprovalRequestUpdateSchema);
+export type ApprovalRequest = z.infer<typeof StoredApprovalRequestSchema>;
+export type StoredApprovalRequestV2 = Extract<ApprovalRequest, { v: 2 }>;
+export type HistoricalPublishApprovalRequestV2 = z.infer<typeof HistoricalPublishApprovalRequestV2Schema>;
+
+export function isHistoricalPublishApprovalRequestV2(request: ApprovalRequest): request is HistoricalPublishApprovalRequestV2 {
+  return request.v === 2 && request.actionId === RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1;
+}
 
 export function resolveApprovalRequestAppExecutionPlacement(approval: ApprovalRequest): 'account' | 'client' | null {
   const actionId = ActionIdSchema.safeParse(approval.actionId);
@@ -750,6 +832,15 @@ export function isMountedPluginBlockingApprovalEligibleForLiveClient(approval: A
     && (origin.target === undefined || origin.target.kind === 'machine' && origin.target.machineId === origin.machineId);
 }
 
+/** Compatibility projection; execution custody is decided by the canonical resolver. */
+export function requiresExactDaemonApprovalReplay(approval: ApprovalRequest): boolean {
+  const executor = resolveApprovalExecutor(approval);
+  return executor.kind === 'daemon'
+    || executor.kind === 'live_invocation' && Boolean(executor.daemonMachineId)
+    || executor.kind === 'unavailable' && executor.reason !== 'legacy_request';
+}
+
+
 /** Session and accepted Workflow publication custody share this replay classification. */
 export function isSessionDiscussionApprovalPublicationV1(approval: ApprovalRequest): boolean {
   if (approval.v !== 2) return false;
@@ -770,15 +861,3 @@ export function isSessionDiscussionApprovalPublicationV1(approval: ApprovalReque
   return publicationActionId === 'discussion.create' || publicationActionId === 'discussion.post' || publicationActionId === 'discussion.reply'
     || publicationActionId === 'discussion.second_opinion.start';
 }
-
-/** Compatibility projection; execution custody is decided by the canonical resolver. */
-export function requiresExactDaemonApprovalReplay(approval: ApprovalRequest): boolean {
-  const executor = resolveApprovalExecutor(approval);
-  return executor.kind === 'daemon'
-    || executor.kind === 'live_invocation' && Boolean(executor.daemonMachineId)
-    || executor.kind === 'unavailable' && executor.reason !== 'legacy_request';
-}
-
-export { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
-
-export { liveCliApprovalOriginScope, readLiveCliApprovalOriginScope, LIVE_CLI_APPROVAL_DECIDE_METHOD, isLiveCliApprovalOriginMethod } from './liveCliOrigin.js';
