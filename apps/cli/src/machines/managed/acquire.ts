@@ -1,20 +1,14 @@
-import { executeManagedProvisionerDiscovery, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
-import { createManagedNativeInvocation } from './reconcile';
-import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
-import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { composeManagedNativeCredentials, applyManagedNativeCredentialPolicy } from './nativeCredentialComposer';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1 } from '@happier-dev/protocol';
-import { resolveManagedMachineEnrollmentAdminAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachineEnrollmentAdminAccessV1, redactManagedMachineCredentialReferences } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess } from '@/api/externalActionExecutionAuthorization';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { initializeManagedMachineEnrollmentIsolation } from './enrollmentIsolation';
-import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecuteResult, ActionExecutorContext, JsonValue, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { executeManagedProvisionerDiscovery, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { ManagedMachineV1Schema, type ManagedControllerV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, type ManagedAcceptedV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAdmissionInputV1Schema, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -31,12 +25,26 @@ import { retryHomeOperation, isRetryableHomeOperationError, type HomeOperationRe
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { AcquireResultV1Schema, type AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { reconcileManagedMachine, resolveManagedRoleCredentialAuthorizations } from './reconcile';
+import type { AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdentity, readManagedIssuedNativeFact,
+    type CapturedManagedNativeIdentity } from '@happier-dev/cli-common/machines/managed/reconcile';
+import { createManagedNativeInvocation, reconcileManagedMachine, resolveManagedRoleCredentialAuthorizations, resolveManagedRoleRuntime } from './reconcile';
+import { composeManagedNativeCredentials, applyManagedNativeCredentialPolicy } from './nativeCredentialComposer';
+import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reconcileManagedIntent, prepareManagedRetentionPolicy, type ManagedGuestActivityTransport } from './managedIntentReconciler';
 import { logger } from '@/ui/logger';
+import { initializeManagedMachineEnrollmentIsolation } from './enrollmentIsolation';
+import { readManagedGuestHomeWarning } from './homeQualification';
+import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
+import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
+import { executeManagedMachineAcquire, readManagedGuestDiagnostics, createManagedNativeBootstrapIO } from '@happier-dev/cli-common/machines/managed';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
+import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
+import { MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { createManagedNativeObservationWait } from './nativeObservationWait';
 
-import { ManagedMachineControllerError, ManagedMachineNativeRefusal } from './controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeObservationFailure, readManagedNativeFailureDetails } from './controllerErrors';
 export { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 
 export type ManagedMachineAcquisitionDriverInput = Readonly<{
@@ -47,13 +55,16 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
     credentials: StoredCredentials;
     managedProviderOperationAuthority: ManagedProviderOperationAuthority;
+    /** The native controller borrows the canonical Account host for portable roles. */
+    resolveAccountRuntime?: () => Promise<Pick<ManagedMachineAcquisitionDriverInput, 'runtimeRegistry' | 'managedProviderOperationAuthority'>>;
     homeTarget: ResolvedHomeTarget;
     externalActionMachineRequestPrivateKey?: ExternalActionMachineRequestSigningKey;
     observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
     managedGuestActivity?: ManagedGuestActivityTransport;
-    readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
+    managedGuestLocalStop?: ManagedGuestLocalStop;
     /** Classified changes from the controller's existing Account-feed owner. */
     subscribeManagedMachineChanges?: import('@/api/apiMachine').ApiMachineClient['onManagedMachinePolicyInvalidated'];
+    readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
 }>;
 export type ManagedMachineExecutionOptions = Readonly<{
@@ -62,6 +73,8 @@ export type ManagedMachineExecutionOptions = Readonly<{
     signal?: AbortSignal;
     policyPurpose?: ManagedPolicyPurposeV1;
     policyMachine?: ManagedMachineV1;
+    /** Exact pending request projected from Home's current retention admission. */
+    retentionContinuationRequestId?: string;
     /** Original admitted finite request; distinct from the controller's native policy authority. */
     actionOrigin?: ExternalActionExecutionAuthorizationV1;
     /** The installed Action owner evaluates current policy/Ask at effect time. */
@@ -77,9 +90,7 @@ export type ManagedMachineExecutionOptions = Readonly<{
 export function createManagedMachineControllerClient(input: ManagedMachineAcquisitionDriverInput, options: ManagedMachineExecutionOptions, action: ManagedMachineActionIdV1) {
     let policyMachine = options.policyMachine;
     let homeRetry: HomeOperationRetry | undefined;
-    type CapturedIdentity = Readonly<{ kind: 'acquire' | 'rebuild' | 'pending-acquire'; machine: ManagedMachineV1;
-        validateResource: ReturnType<typeof compilePluginJsonSchema>; validateNativeOperation?: ReturnType<typeof compilePluginJsonSchema> }>;
-    let submittedIdentity: CapturedIdentity | undefined;
+    let submittedIdentity: CapturedManagedNativeIdentity | undefined;
     function assertConnection(machine: ManagedMachineV1): void {
         if (machine.homeId !== input.homeId || machine.controller && (machine.controller.machineId !== input.controller.machineId
             || machine.controller.installationId !== input.controller.installationId)) throw new ManagedMachineControllerError('controller_unavailable');
@@ -94,6 +105,10 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             throw new ManagedMachineControllerError('admission_unavailable');
         }
         return projection;
+    }
+    async function isOriginCurrent(): Promise<boolean> {
+        const projection = originProjection();
+        return !projection || await projection.isCurrent();
     }
     function readManagedId(body: unknown): string | undefined {
         return body && typeof body === 'object' && 'managedId' in body && typeof body.managedId === 'string'
@@ -111,8 +126,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             category: details.category,
             httpStatus: details.status ?? null,
         });
-        return new ManagedMachineControllerError(details.code
-            ?? (status !== undefined && [404, 405, 501].includes(status) ? 'admission_unavailable' : 'managed_controller_request_failed'), status, details);
+        return new ManagedMachineControllerError(details.code ?? 'managed_controller_request_failed', status, details);
     }
     async function request<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: { parse(data: unknown): T }, signal?: AbortSignal | null): Promise<T> {
         const managedId = readManagedId(body);
@@ -148,10 +162,14 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
     }
     async function postOnce<T>(path: string, body: unknown, schema: { parse(data: unknown): T }, signal: AbortSignal | null | undefined): Promise<T> {
         try {
+            // A preparatory row read belongs to the admitted root. Home checks
+            // that root's exact managed row; `get` is not a second Action grant.
+            const effectActionId = action === 'machines.managed.get' && path === '/v1/machines/managed/actions/get'
+                ? options.context?.externalActionExecutionAuthorization?.binding.actionId ?? action : action;
             const projection = originProjection();
             if (projection && !(options.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin
                 && path === '/v1/machines/managed/controller/report-intent')) {
-                const headers = await projection.createRequestHeaders({ effectActionId: action, method: 'POST', path, body, signal: signal ?? undefined });
+                const headers = await projection.createRequestHeaders({ effectActionId, method: 'POST', path, body, signal: signal ?? undefined });
                 if (!headers) throw new ManagedMachineControllerError('admission_unavailable');
                 return await request(path, body, headers, schema, signal);
             }
@@ -171,7 +189,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                     })),
                 } };
             })() : resolveExternalActionServerRequestHeaders({
-                context: options.context, effectActionId: action, method: 'POST', path, body,
+                context: options.context, effectActionId, method: 'POST', path, body,
                 daemonToken: input.token, serverIdentityId: input.homeId,
                 privateKey: input.externalActionMachineRequestPrivateKey,
                 installationId: input.controller.installationId,
@@ -199,8 +217,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         if (options.signal?.aborted) return null;
         try {
             const current = await row('current', { ...correlation(machine), ...(nativeRole ? { nativeRole } : {}) });
-            const projection = originProjection();
-            if (projection && !await projection.isCurrent()) return null;
+            if (!await isOriginCurrent()) return null;
             const verified = current.id === machine.id && current.homeId === input.homeId
                 && current.intentRevision === machine.intentRevision
                 && pluginJsonValuesEqual(current.launch, machine.launch)
@@ -239,36 +256,17 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
             && candidate.definition.schemaVersion === machine.launch.schemaVersion);
         const path = kind === 'acquire' ? 'submit' : 'submit-intent';
-        const credentials = machine.launch.credentials;
-        const configurationBasis = kind === 'acquire' && credentials?.length ? await (async () => {
-            const read = input.managedProviderOperationAuthority.readCredentialConfigurationRevision;
-            if (!read) throw new ManagedMachineControllerError('credential_unavailable');
-            try { return { credentials: await Promise.all(credentials.map(async credential => ({ ...credential,
-                configurationRevision: await read(credential.account, options.signal ?? new AbortController().signal) }))) }; }
-            catch { throw new ManagedMachineControllerError('credential_unavailable'); }
-        })() : {};
-        const submitted = await post(`/v1/machines/managed/controller/${path}`, { ...correlation(machine), ...configurationBasis }, ManagedControllerSubmitOutputV1Schema);
-        if (submitted.submitted && provider) submittedIdentity = { kind, machine: ManagedMachineV1Schema.parse(submitted.machine),
-            validateResource: compilePluginJsonSchema(provider.definition.resourceSchema),
-            ...(provider.definition.reconciliation ? { validateNativeOperation: compilePluginJsonSchema(provider.definition.reconciliation.nativeOperationSchema) } : {}) };
+        const submitted = await post(`/v1/machines/managed/controller/${path}`, correlation(machine), ManagedControllerSubmitOutputV1Schema);
+        if (submitted.submitted && provider) submittedIdentity = captureManagedSubmittedNativeIdentity({ kind,
+            machine: submitted.machine, provisioner: provider.definition });
         return submitted;
     }
-    async function reportIssuedNativeFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, kind: CapturedIdentity['kind'], captured = submittedIdentity): Promise<ManagedMachineV1> {
-            const result = AcquireResultV1Schema.parse(fact);
-            const identity = result.kind === 'bound' ? result.resource : result.kind === 'pending' ? result.nativeOperationRef : undefined;
-            if (!captured || captured.kind !== kind || (kind === 'rebuild'
-                ? action !== 'machines.managed.rebuild' : action !== 'machines.managed.acquire' && action !== 'machines.managed.bootstrap.retry')
-                || !identity || (result.kind === 'pending' && kind !== 'acquire') || !isDeepStrictEqual(correlation(machine), correlation(captured.machine))
-                || !pluginJsonValuesEqual(machine.launch, captured.machine.launch)
-                || (kind === 'pending-acquire' && !pluginJsonValuesEqual(machine.nativeOperationRef ?? null, captured.machine.nativeOperationRef ?? null))
-                || identity.contributionRef.pluginId !== captured.machine.launch.provider.pluginId
-                || identity.contributionRef.localId !== captured.machine.launch.provider.localId
-                || identity.schemaVersion !== captured.machine.launch.schemaVersion
-                || !(result.kind === 'bound' ? captured.validateResource(identity.value)
-                    : captured.validateNativeOperation?.(identity.value))) throw new ManagedMachineControllerError('resource_mismatch');
+    async function reportIssuedNativeFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, kind: CapturedManagedNativeIdentity['kind'], identity = submittedIdentity, configurationFacts?: ManagedMachineV1['reviewedFacts']): Promise<ManagedMachineV1> {
+            const { result, captured } = readManagedIssuedNativeFact({ machine, fact, action, kind, captured: identity, correlation });
             assertConnection(captured.machine);
             const reportPath = kind === 'rebuild' ? 'report-intent' : 'report';
-            if (!originProjection()) return await row(reportPath, { ...correlation(captured.machine), result }, null);
+            const body = { ...correlation(captured.machine), result, ...(configurationFacts ? { configurationFacts } : {}) };
+            if (!originProjection()) return await row(reportPath, body, null);
             const authorization = options.context?.externalActionExecutionAuthorization;
             const target = options.context?.externalActionTarget;
             if (!authorization || !target || !input.externalActionMachineRequestPrivateKey
@@ -283,7 +281,6 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             // tuple. A generic origin-lifetime probe would incorrectly erase
             // this already-issued identity when new-effect authority retires.
             const path = `/v1/machines/managed/controller/${reportPath}`;
-            const body = { ...correlation(captured.machine), result };
             let headers: ReturnType<typeof resolveExternalActionServerRequestHeaders>;
             try {
                 headers = resolveExternalActionServerRequestHeaders({ context: options.context, effectActionId: action,
@@ -294,7 +291,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             return (await request(path, body, headers.headers, ManagedControllerMachineOutputV1Schema, null)).machine;
     }
     return {
-        post, row, correlation, readCurrent, isCurrent, assertConnection,
+        post, row, correlation, readCurrent, isCurrent, isOriginCurrent, assertConnection,
         setHomeOperationRetry(lifetime?: HomeOperationRetry) { homeRetry = lifetime; },
         async submit(machine: ManagedMachineV1) { return await submitIdentity(machine, 'acquire'); },
         async submitIntent(machine: ManagedMachineV1) { return await submitIdentity(machine, 'rebuild'); },
@@ -306,26 +303,15 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             const current = await readCurrent(machine);
             if (!current) throw new ManagedMachineControllerError('intent_changed');
             assertConnection(current);
-            const retained = current.nativeOperationRef;
             const provider = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
                 candidate.identity.pluginId === current.launch.provider.pluginId && candidate.identity.localId === current.launch.provider.localId
                 && candidate.definition.schemaVersion === current.launch.schemaVersion);
-            if (!provider?.definition.reconciliation) throw new ManagedMachineControllerError('provider_unavailable');
-            if (current.allocation !== 'may-exist' || current.resource
-                || current.custodianAccountId !== machine.custodianAccountId || !pluginJsonValuesEqual(current.launch, machine.launch)
-                || (retained && (retained.contributionRef.pluginId !== current.launch.provider.pluginId
-                    || retained.contributionRef.localId !== current.launch.provider.localId
-                    || retained.schemaVersion !== current.launch.schemaVersion
-                    || !compilePluginJsonSchema(provider.definition.reconciliation.nativeOperationSchema)(retained.value)))) {
-                throw new ManagedMachineControllerError('resource_mismatch');
-            }
-            const captured: CapturedIdentity = { kind: 'pending-acquire', machine: current,
-                validateResource: compilePluginJsonSchema(provider.definition.resourceSchema) };
+            const captured = captureManagedPendingNativeIdentity({ machine, current, provisioner: provider?.definition });
             return async (bound: Extract<AcquireResultV1, { kind: 'bound' }>) => await reportIssuedNativeFact(machine, bound, 'pending-acquire', captured);
         },
         /** Only a captured, actually issued native result can retain public identity after origin withdrawal. */
-        async reportIssuedAcquireFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>) {
-            return await reportIssuedNativeFact(machine, fact, 'acquire');
+        async reportIssuedAcquireFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedMachineV1['reviewedFacts']) {
+            return await reportIssuedNativeFact(machine, fact, 'acquire', submittedIdentity, configurationFacts);
         },
         async reportIssuedRebuildBound(machine: ManagedMachineV1, bound: Extract<AcquireResultV1, { kind: 'bound' }>) {
             return await reportIssuedNativeFact(machine, bound, 'rebuild');
@@ -391,7 +377,14 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             throw new ManagedMachineControllerError('administrator_policy_unconfirmed');
         }
     }
+    const nativeLifetimeRenewal = (machine: ManagedMachineV1) => input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+        candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
+        && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition.actions.renew;
     return {
+        supportsNativeLifetimeRenewal(machine: ManagedMachineV1): boolean {
+            return Boolean(nativeLifetimeRenewal(machine) && machine.observation?.availability === 'present'
+                && machine.observation.power === 'running' && machine.observation.nativeExpiry !== undefined);
+        },
         async reconcileNativeCredentials(machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
             const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
                 candidate.identity.pluginId === machine.launch.provider.pluginId
@@ -430,11 +423,36 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     throw new ManagedMachineControllerError('admission_unavailable');
                 }
             }
+            const nativeLifetime = purpose.kind === 'retention' && nativeLifetimeRenewal(machine)
+                ? createManagedNativeInvocation({ input, options, machine, action: 'machines.managed.power.set',
+                    client: createManagedMachineControllerClient(input, options, 'machines.managed.power.set'), nativePolicyAdmission: true }, () => machine) : undefined;
             const prepared = purpose.kind === 'retention'
-                ? await prepareManagedRetentionPolicy({ input, options, machine, purpose }) : { purpose, bridge: undefined };
+                ? await prepareManagedRetentionPolicy({ input, options, machine, purpose,
+                    ...(nativeLifetime ? { renew: async (deadlineAt?: number) => MachineProvisionerRenewResultV1Schema.parse(
+                        await nativeLifetime.invoke('renew', { resource: machine.resource!.value,
+                            ...(deadlineAt === undefined ? {} : { deadlineAt }) })) } : {}) })
+                : { purpose, bridge: undefined, nativeExpiry: undefined, onActivityChange: undefined };
             let ownerStarted = false;
             let failureClient: ManagedMachineControllerClient | undefined;
             try {
+                // A mandatory native timer effects Stop itself. Observe its
+                // normal provider fact; there is no new power intent to admit.
+                if (prepared.nativeExpiry !== undefined || purpose.kind === 'retention' && machine.retention.kind === 'until-delete') {
+                    const wait = createManagedNativeObservationWait(options.signal);
+                    const bridge = prepared.bridge;
+                    const changes = bridge && prepared.onActivityChange ? {
+                        waitForChange: async (signal: AbortSignal) => { await bridge.waitForChange(signal); },
+                        onChange: prepared.onActivityChange,
+                    } : undefined;
+                    for (;;) {
+                        if (options.signal?.aborted) throw new ManagedMachineControllerError('cancelled');
+                        const observed = await this.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, options);
+                        const row = ManagedControllerMachineOutputV1Schema.parse(observed).machine;
+                        if (prepared.nativeExpiry === undefined || row.observation?.availability === 'absent'
+                            || row.observation?.power === 'stopped' || row.observation?.power === 'suspended') return observed;
+                        await wait(changes);
+                    }
+                }
                 const admissionOptions = { ...options, policyPurpose: prepared.purpose, policyMachine: machine };
                 const admissionClient = createManagedMachineControllerClient(input, admissionOptions,
                     purpose.kind === 'creation-cleanup' ? 'machines.managed.delete' : 'machines.managed.power.set');
@@ -573,6 +591,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     // also explicitly retains unknown delivery. Keep both unconfirmed;
                     // definite native refusals keep their own settlement.
                     if (!(error instanceof ManagedMachineControllerError) || error instanceof ManagedMachineNativeRefusal
+                        || error instanceof ManagedMachineNativeObservationFailure
                         || (!error.details && error.code !== 'native_intent_unconfirmed')) throw error;
                     return unconfirmed(error, true);
                 }
@@ -675,18 +694,27 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             if (action === 'machines.provisioners.check' || action === 'machines.provisioners.options') {
                 const probe = ManagedMachineActionInputSchemasV1[action].parse(parsed);
-                const provider = (input.runtimeRegistry.contributes.machineProvisioners ?? []).find((candidate) => candidate.identity.pluginId === probe.contribution.pluginId && candidate.identity.localId === probe.contribution.localId);
-                const occurrenceId = provider ? input.runtimeRegistry.readPluginOccurrenceId?.(provider.pluginId) : null;
-                if (!provider || !occurrenceId) throw new ManagedMachineControllerError('provider_unavailable');
-                const role = action === 'machines.provisioners.check' ? 'check' : 'options';
-                const localId = provider.definition.actions[role];
-                if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
-                const authorizations = await resolveManagedRoleCredentialAuthorizations(input, provider.pluginId, localId, probe.credentials,
-                    { descriptor: provider.definition, launch: 'selectors' in probe ? probe.selectors : undefined });
+                const entries = (input.runtimeRegistry.contributes.machineProvisioners ?? []).flatMap(provider => {
+                    const occurrenceId = input.runtimeRegistry.readPluginOccurrenceId?.(provider.pluginId);
+                    return occurrenceId ? [{ contribution: provider.identity, occurrenceId, descriptor: provider.definition,
+                        acquireExecutionTarget: input.runtimeRegistry.contributes.actionsById!.get(buildQualifiedPluginContributionKey(
+                            { pluginId: provider.pluginId, localId: provider.definition.actions.acquire }))!.admittedTarget!
+                            .declaration.execution.target as ManagedProvisionerDiscoveryEntry['acquireExecutionTarget'],
+                    }] : [];
+                });
+                const result = await executeManagedProvisionerDiscovery({ actionId: action, value: probe, entries,
+                    invoke: async (provider, role, roleInput) => {
+                const pluginId = provider.contribution.pluginId;
+                const localId = provider.descriptor.actions[role]!;
+                const roleHost = await resolveManagedRoleRuntime(input, pluginId, localId);
+                const roleOccurrenceId = roleHost.runtimeRegistry.readPluginOccurrenceId?.(pluginId);
+                if (!roleOccurrenceId) throw new ManagedMachineControllerError('provider_unavailable');
+                const authorizations = await resolveManagedRoleCredentialAuthorizations(roleHost, pluginId, localId, probe.credentials,
+                    { descriptor: provider.descriptor, launch: 'selectors' in probe ? probe.selectors : undefined });
                 let current = true;
-                const isCurrent = () => current && !options.signal?.aborted && input.runtimeRegistry.readPluginOccurrenceId?.(provider.pluginId) === occurrenceId;
-                const activation = await input.managedProviderOperationAuthority.activate({
-                    identity: { pluginId: provider.pluginId, localId }, operationId: options.requestId,
+                const isCurrent = () => current && !options.signal?.aborted && roleHost.runtimeRegistry.readPluginOccurrenceId?.(pluginId) === roleOccurrenceId;
+                const activation = await roleHost.managedProviderOperationAuthority.activate({
+                    identity: { pluginId, localId }, operationId: options.requestId,
                     purposes: authorizations.map(authorization => authorization.purpose),
                     purposeBindings: { v: 1, bindings: authorizations.map(authorization => ({ purpose: authorization.purpose,
                         target: { kind: 'account' as const, account: authorization.credential.account } })) },
@@ -695,20 +723,23 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 try {
                     if (!activation.exactPurposeBindingSubjectId) throw new ManagedMachineControllerError('credential_unavailable');
                     const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
-                    const attempt = await executeContributedAction({ runtimeRegistry: input.runtimeRegistry,
-                        actionId: buildQualifiedPluginContributionKey({ pluginId: provider.pluginId, localId }),
-                        expectedContributorOccurrenceId: occurrenceId,
+                    const attempt = await executeContributedAction({ runtimeRegistry: roleHost.runtimeRegistry,
+                        actionId: buildQualifiedPluginContributionKey({ pluginId, localId }),
+                        expectedContributorOccurrenceId: roleOccurrenceId,
                         admittedConnectedAccountPurposeBinding: { exactPurposeBindingSubjectId: activation.exactPurposeBindingSubjectId, isCurrent: () => isCurrent() && activation.isCurrent() },
-                        input: role === 'check' ? {} : 'selectors' in probe ? probe.selectors ?? {} : {},
+                        input: roleInput,
                         ...(options.context?.recordOperationCredentialUse
                             ? { approvalContext: { recordOperationCredentialUse: options.context.recordOperationCredentialUse } } : {}),
                         context: { surface: 'plugin', invocationSurface: 'plugin', originSurface: 'cli', signal: options.signal, initiatingActionCaller: options.context?.actionCaller },
                     });
                     if (!attempt.matched) throw new ManagedMachineControllerError('provider_unavailable');
-                    if (!attempt.result.ok) throw new ManagedMachineControllerError(attempt.result.errorCode);
-                    if (action === 'machines.provisioners.check') {
-                        const facts = ManagedMachineActionOutputSchemasV1[action].parse(attempt.result.result);
-                        for (const prerequisite of facts.prerequisites ?? []) {
+                    if (!attempt.result.ok) throw new ManagedMachineControllerError(attempt.result.errorCode, undefined,
+                        readManagedNativeFailureDetails(attempt.result.data, attempt.result.errorCode));
+                    return attempt.result.result;
+                } finally { current = false; await activation.cleanup(); }
+                } });
+                if ('available' in result) {
+                        for (const prerequisite of result.prerequisites ?? []) {
                             const repair = prerequisite.repairAction;
                             if (!repair) continue;
                             const target = input.runtimeRegistry.contributes.actionsById?.get(buildQualifiedPluginContributionKey(repair.action));
@@ -721,31 +752,47 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                             catch { /* Invalid provider-generated repair facts are not usable discovery results. */ }
                             if (!valid) throw new ManagedMachineControllerError('provider_unavailable');
                         }
-                        return facts;
-                    }
-                    return ManagedMachineActionOutputSchemasV1[action].parse(attempt.result.result);
-                } finally { current = false; await activation.cleanup(); }
+                        // Native availability also serves retained-machine
+                        // operations. Warn about new-guest enrollment without
+                        // withdrawing that independent native capability.
+                        const homeWarning = result.available ? readManagedGuestHomeWarning(input.homeTarget) : null;
+                        return homeWarning ? { ...result, ...homeWarning } : result;
+                }
+                return result;
             }
             if (action === 'machines.managed.acquire') {
                 const acquisition = ManagedAcquireInputV1Schema.parse(parsed);
+                if (acquisition.enrollmentIdentity.kind === 'dedicatedDaemonUser'
+                    && acquisition.enrollmentIdentity.adminAccessAtCreation === 'ask'
+                    && (options.context?.surface === 'agent' || options.context?.surface === 'mcp'
+                        || options.context?.authority === 'account_automation' || options.context?.actionCaller?.kind === 'session')) {
+                    throw new ManagedMachineControllerError('enrollment_attendance_required');
+                }
                 const operationId = options.context?.operationAcceptance?.operationId;
                 if (!operationId || (acquisition.agentStart && !options.runAgentStart)) throw new ManagedMachineControllerError('admission_unavailable');
                 const { agentStart, ...computeInput } = acquisition;
-                const admission = await client.post('/v1/machines/managed/controller/admit', ManagedAdmissionInputV1Schema.parse({
-                    input: computeInput, requestId: options.requestId, continuationPresent: Boolean(agentStart),
-                }), ManagedAdmissionOutputV1Schema);
-                client.assertConnection(admission.machine);
+                const admission = await executeManagedMachineAcquire({ host: 'native',
+                    admit: async () => {
+                        const admitted = await client.post('/v1/machines/managed/controller/admit', ManagedAdmissionInputV1Schema.parse({
+                            input: computeInput, requestId: options.requestId, continuationPresent: Boolean(agentStart),
+                        }), ManagedAdmissionOutputV1Schema);
+                        client.assertConnection(admitted.machine);
+                        return admitted.machine;
+                    },
+                    onAccepted: machine => {
+                        const accepted: ManagedAcceptedV1 = { managedId: machine.id, operation: { operationId } };
+                        options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id } });
+                        options.context?.operationAcceptance?.accept(accepted);
+                    },
+                    run: machine => reconcileOnce({ input, options, client, machine, action }),
+                });
                 const accepted: ManagedAcceptedV1 = { managedId: admission.machine.id, operation: { operationId } };
-                options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: admission.machine.id } });
-                options.context?.operationAcceptance?.accept(accepted);
-                // The live Action owns settlement; no detached purchase/installer.
-                await reconcileOnce({ input, options, client, machine: admission.machine, action });
-                let enrolled = admission.machine.environmentSetup || agentStart || acquisition.enrollmentIdentity.kind === 'dedicatedDaemonUser'
+                let enrolled = admission.machine.machineSetup || agentStart || acquisition.enrollmentIdentity.kind === 'dedicatedDaemonUser'
                     ? await client.row('current', client.correlation(admission.machine)) : admission.machine;
                 client.assertConnection(enrolled);
                 await recordEnrollmentAdministratorAccess(enrolled, options, client);
                 await initializeManagedMachineEnrollmentIsolation(enrolled, input, options, () => client.isCurrent(enrolled));
-                if (enrolled.environmentSetup && !['succeeded', 'skipped'].includes(enrolled.environmentSetup.state)) {
+                if (enrolled.machineSetup && !['succeeded', 'skipped'].includes(enrolled.machineSetup.state)) {
                     if (!enrolled.enrolledMachineId || !options.runEnvironmentSetup) throw new ManagedMachineControllerError('admission_unavailable');
                     if (!await client.isCurrent(enrolled)) throw new ManagedMachineControllerError('intent_changed');
                     const joined = enrolled;
@@ -757,9 +804,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         enrolled = current;
                     }
                     client.assertConnection(enrolled);
-                    if (!enrolled.environmentSetup || !['succeeded', 'skipped'].includes(enrolled.environmentSetup.state)) {
-                        if (!agentStart || !options.subscribeEnvironmentSetupChanges) throw new ManagedMachineControllerError('machine_environment_setup_failed');
-                        options.context?.operationProgress?.update({ phase: 'environmentSetup', label: 'Waiting for environment setup recovery' });
+                    if (!enrolled.machineSetup || !['succeeded', 'skipped'].includes(enrolled.machineSetup.state)) {
+                        if (!agentStart || !options.subscribeEnvironmentSetupChanges) throw new ManagedMachineControllerError('machine_setup_setup_failed');
+                        options.context?.operationProgress?.update({ phase: 'machineSetup', label: 'Waiting for environment setup recovery' });
                         let dirty = true;
                         let failed = false;
                         let wake: (() => void) | undefined;
@@ -772,12 +819,12 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                                 onError() { failed = true; invalidate(); } });
                             for (;;) {
                                 if (options.signal?.aborted) throw new ManagedMachineControllerError('cancelled');
-                                if (failed) throw new ManagedMachineControllerError('machine_environment_observation_failed');
+                                if (failed) throw new ManagedMachineControllerError('machine_setup_observation_failed');
                                 dirty = false;
                                 const current = await client.readCurrent(joined);
                                 if (!current) throw new ManagedMachineControllerError('intent_changed');
                                 enrolled = current;
-                                if (current.environmentSetup && ['succeeded', 'skipped'].includes(current.environmentSetup.state)) break;
+                                if (current.machineSetup && ['succeeded', 'skipped'].includes(current.machineSetup.state)) break;
                                 if (dirty) continue;
                                 await new Promise<void>(resolve => {
                                     wake = resolve;
@@ -804,7 +851,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const request = action === 'machines.managed.bootstrap.retry'
                     ? ManagedMachineActionInputSchemasV1['machines.managed.bootstrap.retry'].parse(parsed)
                     : null;
-                const inspected = request ? null : await client.post(managedMachineActionEndpointPathV1('machines.managed.get'), parsed, ManagedMachineV1Schema);
+                const inspection = request ? null : ManagedMachineActionInputSchemasV1['machines.managed.inspect'].parse(parsed);
+                const inspected = request ? null : await client.post(managedMachineActionEndpointPathV1('machines.managed.get'),
+                    { homeId: inspection!.homeId, managedId: inspection!.managedId }, ManagedMachineV1Schema);
                 if (inspected) client.assertConnection(inspected);
                 const retained = await client.post('/v1/machines/managed/controller/context', {
                     homeId: request?.homeId ?? inspected!.homeId, managedId: request?.managedId ?? inspected!.id,
@@ -830,10 +879,33 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     await initializeManagedMachineEnrollmentIsolation(enrolled, input, recoveryOptions, () => recoveryClient.isCurrent(enrolled));
                     return accepted;
                 }
-                if (retained.machine.submittedNativeEffect) {
-                    return { machine: await reconcileManagedIntent({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action }) };
+                const result = retained.machine.submittedNativeEffect
+                    ? { machine: await reconcileManagedIntent({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action }) }
+                    : await reconcileManagedMachine({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action });
+                if (result === null) return null;
+                const output = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result);
+                const requester = options.context?.externalActionExecutionAuthorization?.binding.accountId;
+                if (inspection?.includeGuestDiagnostics) {
+                    const machine = output.machine;
+                    const provisioner = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+                        candidate.identity.pluginId === machine.launch.provider.pluginId
+                        && candidate.identity.localId === machine.launch.provider.localId)?.definition;
+                    output.guestDiagnostics = await readManagedGuestDiagnostics({ machine,
+                        requesterAccountId: requester ?? readAccountIdFromToken(input.credentials.token) ?? undefined,
+                        transport: provisioner?.bootstrapTransport,
+                        channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label,
+                        signal: options.signal,
+                        native: { exec: request => {
+                            const native = createManagedNativeInvocation({ input, options: recoveryOptions, client: recoveryClient,
+                                machine, action, includeGuestDiagnostics: true }, () => machine);
+                            return createManagedNativeBootstrapIO({ resource: machine.resource! }, native.invoke).exec(request);
+                        } },
+                    });
                 }
-                return await reconcileManagedMachine({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action });
+                // Reconciliation keeps its private custodian snapshot. Only the
+                // public Action result crosses back to an exact creator.
+                return requester && requester !== output.machine.custodianAccountId
+                    ? { ...output, machine: redactManagedMachineCredentialReferences(output.machine) } : output;
             }
             if (action in ManagedMachineActionOutputSchemasV1) {
                 const output = ManagedMachineActionOutputSchemasV1[action as keyof typeof ManagedMachineActionOutputSchemasV1];

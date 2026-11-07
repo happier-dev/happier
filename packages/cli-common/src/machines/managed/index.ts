@@ -3,6 +3,7 @@ export * from './bootstrapCredential.js';
 export * from './bootstrapCredentialLease.js';
 export * from './reconcile.js';
 export * from './nativeBootstrap.js';
+export * from './guestDiagnostics.js';
 export * from './acquire.js';
 export * from './nativeObservationWait.js';
 export * from './wakeThenRun.js';

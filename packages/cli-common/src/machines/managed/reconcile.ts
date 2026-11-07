@@ -3,7 +3,12 @@ import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions/op
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
+    readMachineProvisionerSelectionForLaunchV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal, ManagedMachineNativeRefusal } from './controllerErrors.js';
@@ -21,11 +26,12 @@ export type ManagedReconciliationHome = Readonly<{
     correlation(machine: ManagedMachineV1): ManagedControllerCurrentnessV1;
     row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineV1>;
     submit(machine: ManagedMachineV1): Promise<Readonly<{ submitted: boolean; machine: ManagedMachineV1 }>>;
-    reportIssuedAcquireFact(machine: ManagedMachineV1, result: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>): Promise<ManagedMachineV1>;
+    reportIssuedAcquireFact(machine: ManagedMachineV1, result: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedConfigurationFactsV1): Promise<ManagedMachineV1>;
     preparePendingAcquireBoundReport(machine: ManagedMachineV1): Promise<(result: Extract<AcquireResultV1, { kind: 'bound' }>) => Promise<ManagedMachineV1>>;
 }>;
 export type ManagedReconciliationNative = Readonly<{
     bootstrapCredentialKind?: 'ssh' | 'native-token';
+    optionsInputSchema?: PluginJsonSchemaV2;
     prepareRoles(): Promise<void>;
     invoke: ManagedNativeInvocation;
 }>;
@@ -67,6 +73,31 @@ function acquisitionFailure(result: Exclude<AcquireResultV1, { kind: 'bound' }>)
     const details = result.nativeCause ? { kind: 'managedNative' as const, nativeCause: result.nativeCause } : undefined;
     return result.kind === 'rejected' ? new ManagedMachineNativeRefusal(result.code, undefined, details)
         : new ManagedMachineControllerError('native_acquisition_unconfirmed', undefined, details);
+}
+
+/** Initial issued acquisitions retain the same facts as the configurator, without changing admitted input. */
+async function captureIssuedConfigurationFacts(machine: ManagedMachineV1, provisioner: MachineProvisionerContributionV1 | undefined,
+    native: ManagedReconciliationNative): Promise<ManagedConfigurationFactsV1 | undefined> {
+    if (machine.reviewedFacts || !provisioner) return undefined;
+    let check: ReturnType<typeof MachineProvisionerCheckResultV1Schema.parse> | undefined;
+    let optionProjection: Parameters<typeof buildManagedConfigurationFactsV1>[0]['optionProjection'];
+    try { check = MachineProvisionerCheckResultV1Schema.parse(await native.invoke('check', {})); }
+    catch { /* Optional metadata stays unavailable; never lose an issued native identity. */ }
+    if (provisioner.actions.options && native.optionsInputSchema) {
+        try {
+            const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(native.optionsInputSchema)).parse(machine.launch.choices);
+            const options = MachineProvisionerOptionsResultV1Schema.parse(await native.invoke('options', selectors));
+            optionProjection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
+                selection: readMachineProvisionerSelectionForLaunchV1(options, machine.launch.choices) });
+        } catch { /* The receipt retains exact choices and an explicit unavailable option status. */ }
+    }
+    return buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
+        launch: machine.launch, controller: machine.controller, provisioner, optionProjection,
+        optionStatus: optionProjection ? 'current' : 'unavailable', prerequisites: check?.prerequisites ?? [],
+        localResources: check?.localResources, billing: provisioner.billing, retentionCapabilities: provisioner.retention,
+        machineOverride: { retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage },
+        ...(machine.preset ? { preset: machine.preset } : {}),
+    });
 }
 
 /** Observe an issued acquisition by its retained handle, never by issuing another allocation. */
@@ -184,13 +215,17 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                 ...(bootstrapPublicKey ? { bootstrapPublicKey } : {}),
                 ...(guestHostPublicKey === undefined ? {} : { guestHostPublicKey }) }));
         } catch (error) {
+            const refusal = error instanceof ManagedMachineNativeRefusal ? error : undefined;
+            const nativeCause = refusal?.details?.kind === 'managedNative' ? refusal.details.nativeCause : undefined;
             await input.home.row('report', { ...input.home.correlation(machine), result: {
-                kind: 'unknown', recovery: { reference: machine.id, reason: 'native_acquisition_unconfirmed' },
+                ...(refusal ? { kind: 'rejected' as const, code: refusal.code,
+                    ...(nativeCause ? { nativeCause } : {}) }
+                    : { kind: 'unknown' as const, recovery: { reference: machine.id, reason: 'native_acquisition_unconfirmed' } }),
             } }, null);
             throw error;
         }
         machine = result.kind === 'bound' || result.kind === 'pending'
-            ? await input.home.reportIssuedAcquireFact(machine, result)
+            ? await input.home.reportIssuedAcquireFact(machine, result, await captureIssuedConfigurationFacts(machine, provisioner, native))
             : await input.home.row('report', { ...input.home.correlation(machine), result }, null);
         if (result.kind !== 'bound') throw acquisitionFailure(result);
         startPending = result.startPending === true;

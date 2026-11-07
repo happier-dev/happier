@@ -5,11 +5,31 @@ import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machin
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { isDeepStrictEqual } from 'node:util';
-import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal, ManagedRetentionWaitSuperseded } from './controllerErrors';
 import { createManagedNativeInvocation, reconcileManagedAcquisitionIdentity, reconcileManagedMachine, type ManagedMachineReconciliationInput } from './reconcile';
 import { createManagedGuestActivityTransport } from './managedActivityTransport';
 import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
+import { canPrepareManagedRetentionPolicy, hasSubmittedManagedRetentionEffect } from './managedRetentionPolicy';
+import { assertManagedDeleteNativeResult, canObserveAcceptedManagedDelete, observeAcceptedManagedDelete } from './deleteObservation';
+import { createManagedNativeObservationWait, executeManagedMachinePowerIntent, executeManagedMachineDeleteIntent } from '@happier-dev/cli-common/machines/managed';
+import type { MachineProvisionerRenewResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
+
+/** In-process host receipt settlement, never part of the plugin or wire context. */
+export type ManagedNativeOperationSettlement = Readonly<{
+    managedId: string;
+    controller: ManagedMachineV1['controller'];
+    resource?: ManagedMachineV1['resource'];
+    requestId: string;
+    intentRevision: number;
+    intent: Exclude<NonNullable<ManagedMachineV1['submittedNativeEffect']>['intent'], 'rebuild'>;
+    succeeded: boolean;
+}>;
+export type ManagedMachineOperationSettlementContext = ActionExecutorContext & Readonly<{
+    settleManagedNativeOperation?: (settlement: ManagedNativeOperationSettlement) => void;
+}>;
 
 /** Network observations only; the native intent decision remains in this owner. */
 export type ManagedGuestActivityTransport = Readonly<{
@@ -24,6 +44,12 @@ function assertLive(signal?: AbortSignal): void {
     if (signal?.aborted) throw new ManagedMachineControllerError('cancelled');
 }
 
+function isUnavailableGuestActivity(error: unknown): boolean {
+    const code = readRpcErrorCode(error);
+    return code === 'target_unavailable' || code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+}
+
 function remainingIdleDuration(activity: Extract<ManagedActivityBridgeResultV1, { kind: 'idle' }>, duration: number): number {
     if (!('evidence' in activity) && duration > 0) throw new ManagedMachineControllerError('admission_unavailable');
     const elapsed = 'evidence' in activity ? activity.evidence.decision.confirmedAt - activity.evidence.decision.since : 0;
@@ -32,13 +58,29 @@ function remainingIdleDuration(activity: Extract<ManagedActivityBridgeResultV1, 
 
 async function waitForIdle(params: Readonly<{
     machine: ManagedMachineV1; bridge: ManagedGuestActivityTransport; duration: number; signal?: AbortSignal;
+    deferUnavailableTarget?: boolean;
     isCurrent(): Promise<boolean>;
     onActivity(kind: 'busy' | 'unknown' | 'idle' | 'waiting'): void;
+    onWait?: (deadlineAt?: number) => Promise<number | undefined>;
 }>) {
     for (;;) {
         assertLive(params.signal);
         if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
-        const activity = await params.bridge.read(params.machine, params.signal);
+        let activity: ManagedActivityBridgeResultV1;
+        try {
+            activity = await params.bridge.read(params.machine, params.signal);
+        } catch (error) {
+            assertLive(params.signal);
+            // A power-down reply can precede the scheduler's invalidation.
+            // Retired idle work settles through its currentness owner before
+            // any guest transport failure is classified for that old intent.
+            if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
+            if (!params.deferUnavailableTarget || !isUnavailableGuestActivity(error)) throw error;
+            // An automatic preparation's ready snapshot can precede guest
+            // registration or socket loss. Keep unknown evidence until its existing Machine
+            // update/reconnect wake; Account currentness alone cannot retry it.
+            activity = { kind: 'unknown', reasons: ['coverage_unknown'] };
+        }
         if (activity.kind === 'refused') throw new ManagedMachineControllerError(activity.code);
         // The guest read commits evidence under a reversible local probe and
         // releases it before replying. Waiting never retains guest admission.
@@ -46,15 +88,26 @@ async function waitForIdle(params: Readonly<{
         let deadlineAt: number | undefined;
         if (activity.kind === 'idle') {
             const remaining = remainingIdleDuration(activity, params.duration);
+            deadlineAt = Date.now() + remaining;
             if (remaining === 0) {
+                await params.onWait?.(deadlineAt);
                 params.onActivity('idle');
                 return activity;
             }
-            deadlineAt = Date.now() + remaining;
         }
+        const renewAt = await params.onWait?.(deadlineAt);
+        const wakeAt = deadlineAt === undefined ? renewAt : renewAt === undefined ? deadlineAt : Math.min(deadlineAt, renewAt);
         await waitForChangeOrDeadline({ waitForChange: async signal => {
-            await params.bridge.waitForChange(signal);
-        }, signal: params.signal, remainingMs: deadlineAt === undefined ? undefined : Math.max(0, deadlineAt - Date.now()) });
+            try {
+                await params.bridge.waitForChange(signal);
+            } catch (error) {
+                assertLive(signal);
+                if (!params.onWait || !params.deferUnavailableTarget || !isUnavailableGuestActivity(error)) throw error;
+                // Lost idle coverage must immediately restore the native lifetime.
+                // Busy/unknown waits resume at the existing vendor renewal deadline.
+                if (activity.kind !== 'idle') await new Promise<void>(() => {});
+            }
+        }, signal: params.signal, remainingMs: wakeAt === undefined ? undefined : Math.max(0, wakeAt - Date.now()) });
     }
 }
 
@@ -73,14 +126,34 @@ function publishActivity(options: ManagedMachineReconciliationInput['options'], 
 export async function prepareManagedRetentionPolicy(params: Readonly<{
     input: ManagedMachineReconciliationInput['input']; options: ManagedMachineReconciliationInput['options'];
     machine: ManagedMachineV1; purpose: Extract<ManagedPolicyPurposeV1, { kind: 'retention' }>;
-}>): Promise<{ purpose: ManagedPolicyPurposeV1; bridge?: ManagedGuestActivityTransport }> {
+    renew?: (deadlineAt?: number) => Promise<MachineProvisionerRenewResultV1>;
+}>): Promise<{ purpose: ManagedPolicyPurposeV1; bridge?: ManagedGuestActivityTransport; nativeExpiry?: number;
+    onActivityChange?: () => Promise<boolean> }> {
     const { machine, input, options, purpose } = params;
-    if (machine.retention.kind === 'until-delete') throw new ManagedMachineControllerError('intent_changed');
-    if (purpose.evidence || machine.submittedNativeEffect) return { purpose };
+    if (machine.retention.kind === 'until-delete' && !params.renew) throw new ManagedMachineControllerError('intent_changed');
+    const continuesRetention = hasSubmittedManagedRetentionEffect(machine, options.retentionContinuationRequestId);
+    if (!canPrepareManagedRetentionPolicy(machine, options.retentionContinuationRequestId)) {
+        throw new ManagedMachineControllerError('admission_unavailable');
+    }
+    if (purpose.evidence || continuesRetention) return { purpose };
     if (machine.retention.kind === 'unused' && !machine.enrolledMachineId) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
-    const bridge = input.managedGuestActivity ?? createManagedGuestActivityTransport(input, options, machine);
+    let renewal: Readonly<{ deadlineAt?: number; result: MachineProvisionerRenewResultV1 }> | undefined;
+    const maintainNativeLifetime = async (deadlineAt?: number) => {
+        if (!params.renew || renewal?.result.kind === 'unnecessary') return undefined;
+        if (!renewal || renewal.deadlineAt !== deadlineAt
+            || renewal.result.renewAt !== undefined && Date.now() >= renewal.result.renewAt) {
+            renewal = { deadlineAt, result: await params.renew(deadlineAt) };
+        }
+        return renewal.result.kind === 'renewed' ? renewal.result.renewAt : undefined;
+    };
+    const prepared = (nextPurpose: ManagedPolicyPurposeV1) => {
+        const nativeExpiry = renewal?.result.kind === 'renewed' ? renewal.result.nativeExpiry : undefined;
+        return { purpose: nextPurpose,
+            ...(nativeExpiry !== undefined && machine.retention.kind !== 'until-delete' && machine.retention.effect === 'stop'
+                ? { nativeExpiry } : {}) };
+    };
     const isCurrent = async () => {
         if (!input.readPolicyCurrent) throw new ManagedMachineControllerError('admission_unavailable');
         const current = await input.readPolicyCurrent(machine.id, options.signal);
@@ -89,8 +162,22 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
             && isDeepStrictEqual(current.retention, machine.retention) && current.creationState === 'active');
         if (verified && current) options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: current.id,
             controller: current.controller, ...(current.resource ? { resource: current.resource } : {}) } });
+        if (!verified) throw new ManagedRetentionWaitSuperseded();
         return verified;
     };
+    if (machine.retention.kind === 'until-delete') {
+        options.context?.operationOwnerUpdate?.update({ progress: { phase: 'managed.intent.waiting-deadline', label: 'Keeping machine available' } });
+        for (;;) {
+            assertLive(options.signal);
+            await isCurrent();
+            const nextRenewAt = await maintainNativeLifetime();
+            if (renewal?.result.kind !== 'renewed') return prepared(purpose);
+            // Keep forever has no activity dependency; policy changes cancel this owner.
+            await waitForChangeOrDeadline({ waitForChange: () => new Promise<void>(() => {}),
+                signal: options.signal, remainingMs: nextRenewAt === undefined ? undefined : Math.max(0, nextRenewAt - Date.now()) });
+        }
+    }
+    const bridge = input.managedGuestActivity ?? createManagedGuestActivityTransport(input, options, machine);
     try {
         if (machine.retention.kind === 'deadline') {
             options.context?.operationOwnerUpdate?.update({ progress: { phase: 'managed.intent.waiting-deadline', label: 'Waiting for selected deadline' } });
@@ -98,17 +185,42 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
                 assertLive(options.signal);
                 if (!await isCurrent()) throw new ManagedMachineControllerError('intent_changed');
                 const remaining = machine.retention.at - Date.now();
-                if (remaining <= 0) return { purpose, bridge };
+                const nextRenewAt = await maintainNativeLifetime(machine.retention.at);
+                if (remaining <= 0) return { ...prepared(purpose), bridge };
                 await waitForChangeOrDeadline({ waitForChange: async signal => { await bridge.waitForChange(signal); },
-                    signal: options.signal, remainingMs: remaining });
+                    signal: options.signal, remainingMs: nextRenewAt === undefined ? remaining : Math.min(remaining, Math.max(0, nextRenewAt - Date.now())) });
                 assertLive(options.signal);
             }
         }
         options.context?.operationOwnerUpdate?.update({ progress: { phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine' } });
-        const fresh = await waitForIdle({ machine, bridge, duration: machine.retention.afterMs, signal: options.signal,
-            isCurrent, onActivity: kind => publishActivity(options, machine, kind) });
-        if (!('evidence' in fresh)) throw new ManagedMachineControllerError('admission_unavailable');
-        return { purpose: { kind: 'retention', evidence: fresh.evidence }, bridge };
+        const duration = machine.retention.afterMs;
+        const waitUntilUnusedExpiry = async () => {
+            const fresh = await waitForIdle({ machine, bridge, duration, signal: options.signal,
+                deferUnavailableTarget: true,
+                isCurrent, onActivity: kind => publishActivity(options, machine, kind),
+                ...(params.renew ? { onWait: maintainNativeLifetime } : {}) });
+            if (!('evidence' in fresh)) throw new ManagedMachineControllerError('admission_unavailable');
+            return fresh;
+        };
+        const fresh = await waitUntilUnusedExpiry();
+        // A lost guest channel during delayed native lapse is a coverage change.
+        // The same unused owner re-reads it as unknown and restores the native TTL.
+        const observationBridge: ManagedGuestActivityTransport = params.renew ? {
+            read: (machine, signal) => bridge.read(machine, signal),
+            confirmIdle: (machine, signal) => bridge.confirmIdle(machine, signal),
+            reopen: machine => bridge.reopen(machine),
+            dispose: () => bridge.dispose?.() ?? Promise.resolve(),
+            waitForChange: async signal => {
+                try { return await bridge.waitForChange(signal); }
+                catch (error) {
+                    assertLive(signal);
+                    if (!isUnavailableGuestActivity(error)) throw error;
+                    return 'activity';
+                }
+            },
+        } : bridge;
+        return { ...prepared({ kind: 'retention', evidence: fresh.evidence }), bridge: observationBridge,
+            ...(params.renew ? { onActivityChange: async () => { await waitUntilUnusedExpiry(); return true; } } : {}) };
     } catch (error) {
         await bridge.dispose?.();
         throw error;
@@ -125,14 +237,38 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
     let releaseDrain = !machine.submittedNativeEffect;
     const admittedMachine = machine;
     let drainMachine = machine;
+    const publishSettledNativeOperation = (before: ManagedMachineV1, after: ManagedMachineV1,
+        outstanding: NonNullable<ManagedMachineV1['submittedNativeEffect']>) => {
+        if (outstanding.intent === 'rebuild' || after.id !== before.id || after.homeId !== before.homeId
+            || after.submittedNativeEffect || !isDeepStrictEqual(after.controller, outstanding.controller)
+            || !isDeepStrictEqual(after.resource, before.resource)) return;
+        // Home already settled native custody. Only project the outcome of the
+        // original intent into its retained receipt; never issue power again.
+        const observation = after.observation;
+        const succeeded = outstanding.intent === 'delete'
+            ? after.allocation === 'confirmed-absent' && observation?.availability === 'absent'
+            : observation?.availability === 'present' && observation.power === (
+                outstanding.intent === 'start' || outstanding.intent === 'resume' ? 'running'
+                    : outstanding.intent === 'stop' ? 'stopped' : 'suspended');
+        if (outstanding.intent === 'delete' && !succeeded) return;
+        const context: ManagedMachineOperationSettlementContext | undefined = options.context;
+        context?.settleManagedNativeOperation?.({ managedId: before.id, controller: outstanding.controller,
+            ...(before.resource ? { resource: before.resource } : {}),
+            requestId: outstanding.requestId, intentRevision: outstanding.intentRevision, intent: outstanding.intent, succeeded });
+        return succeeded;
+    };
     try {
         client.assertConnection(machine);
+        options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id,
+            controller: machine.controller, ...(machine.resource ? { resource: machine.resource } : {}) } });
         let effectContext = options.context;
         // Acquisition recovery and Remove use one native correlation reader.
-        const native = createManagedNativeInvocation({ ...params, options: { ...options, get context() { return effectContext; } } }, () => machine);
+        let nativeOwner: ReturnType<typeof createManagedNativeInvocation> | undefined;
+        const native = () => nativeOwner ??= createManagedNativeInvocation({ ...params,
+            options: { ...options, get context() { return effectContext; } } }, () => machine);
         if (params.action === 'machines.managed.delete' && machine.desired === 'delete' && machine.desiredWhen === 'now'
             && machine.allocation === 'may-exist' && !machine.resource && !machine.nativeOperationRef) {
-            machine = await reconcileManagedAcquisitionIdentity(params, machine, native);
+            machine = await reconcileManagedAcquisitionIdentity(params, machine, native());
             if (machine.allocation === 'confirmed-absent') return machine;
         }
         const canceledCleanup = params.action === 'machines.managed.delete'
@@ -143,7 +279,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
             || (!pendingCleanup && (machine.allocation !== 'bound' || !machine.resource))) throw new ManagedMachineControllerError('native_resource_unavailable');
         if (pendingCleanup) {
             const retained = machine.nativeOperationRef!;
-            if (!native.contribution.definition.reconciliation) throw new ManagedMachineControllerError('provider_unavailable');
+            if (!native().contribution.definition.reconciliation) throw new ManagedMachineControllerError('provider_unavailable');
             if (retained.contributionRef.pluginId !== machine.launch.provider.pluginId
                 || retained.contributionRef.localId !== machine.launch.provider.localId
                 || retained.schemaVersion !== machine.launch.schemaVersion) throw new ManagedMachineControllerError('resource_mismatch');
@@ -153,72 +289,95 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId, controller: outstanding.controller };
             // A bound resource's retained operation is deletion custody. An
             // unbound allocation still carries its acquisition/cleanup identity.
-            if (outstanding.intent === 'delete' && machine.resource && machine.nativeOperationRef) {
-                const result = MachineProvisionerDestroyResultV1Schema.parse(await native.invoke('destroy', {
+            if (params.action === 'machines.managed.delete' && outstanding.intent === 'delete' && machine.resource && machine.nativeOperationRef) {
+                const result = MachineProvisionerDestroyResultV1Schema.parse(await native().invoke('destroy', {
                     nativeOperation: machine.nativeOperationRef.value,
                 }));
-                return await client.row('report-intent', { ...correlation, result,
+                const reported = await client.row('report-intent', { ...correlation, result,
                     ...(result.kind === 'confirmed' ? { observation: { observedAt: Date.now(), availability: 'absent' as const } } : {}),
                 }, null);
+                assertManagedDeleteNativeResult(result);
+                return { machine: reported, deleteResult: result };
             }
             if (outstanding.intent === 'delete' && !machine.resource && machine.nativeOperationRef
-                && native.contribution.definition.reconciliation?.cleanup) {
-                const observed = MachineProvisionerCleanupObservationV1Schema.parse(await native.invoke('cleanup', {
+                && native().contribution.definition.reconciliation?.cleanup) {
+                const observed = MachineProvisionerCleanupObservationV1Schema.parse(await native().invoke('cleanup', {
                     nativeOperation: machine.nativeOperationRef.value,
                 }));
-                let result: ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse> = observed.kind === 'confirmed'
+                let result: ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse> = observed.kind === 'confirmed'
                     ? { kind: 'confirmed' } : { kind: 'unknown', code: observed.kind === 'unknown' ? observed.code : 'native_cleanup_unconfirmed' };
-                if (observed.kind === 'retryable' && params.action === 'machines.managed.delete'
-                    && outstanding.intentRevision === machine.intentRevision && machine.desired === 'delete') {
+                const continuesCleanup = observed.kind === 'retryable' && params.action === 'machines.managed.delete'
+                    && outstanding.intentRevision === machine.intentRevision && machine.desired === 'delete';
+                if (continuesCleanup) {
                     // The leaf qualified an exact idempotent continuation from
                     // fresh native facts. Reuse the original current submission;
                     // ordinary inspect and unqualified uncertainty never replay.
-                    result = MachineProvisionerPowerResultV1Schema.parse(await native.invoke('destroy', {
+                    result = MachineProvisionerDestroyResultV1Schema.parse(await native().invoke('destroy', {
                         nativeOperation: machine.nativeOperationRef.value,
                     }));
                 }
-                if (observed.kind !== 'unknown') return await client.row('report-intent', { ...correlation, result,
-                    ...(result.kind === 'confirmed' ? { observation: { observedAt: Date.now(), availability: 'absent' } } : {}),
-                }, null);
+                if (observed.kind !== 'unknown') {
+                    const reported = await client.row('report-intent', { ...correlation, result,
+                        ...(result.kind === 'confirmed' ? { observation: { observedAt: Date.now(), availability: 'absent' } } : {}),
+                    }, null);
+                    if (continuesCleanup) assertManagedDeleteNativeResult(result);
+                    return { machine: reported, deleteResult: continuesCleanup ? result : undefined };
+                }
             }
-            if (!machine.resource && machine.nativeOperationRef && native.contribution.definition.reconciliation) {
-                machine = await reconcileManagedAcquisitionIdentity(params, machine, native);
+            if (!machine.resource && machine.nativeOperationRef && native().contribution.definition.reconciliation) {
+                machine = await reconcileManagedAcquisitionIdentity(params, machine, native());
                 if (machine.allocation === 'confirmed-absent' && outstanding.intent === 'delete') {
-                    return await client.row('report-intent', { ...correlation,
-                        result: { kind: 'confirmed' }, observation: machine.observation }, null);
+                    return { machine: await client.row('report-intent', { ...correlation,
+                        result: { kind: 'confirmed' }, observation: machine.observation }, null), deleteResult: undefined };
                 }
-                if (!machine.resource) return await client.row('report-intent', { ...correlation,
-                    result: { kind: 'unknown', code: 'native_cleanup_unconfirmed' } }, null);
+                if (!machine.resource) return { machine: await client.row('report-intent', { ...correlation,
+                    result: { kind: 'unknown', code: 'native_cleanup_unconfirmed' } }, null), deleteResult: undefined };
                 if (params.action === 'machines.managed.inspect') {
-                    return await client.row('report-intent', { ...correlation,
-                        result: { kind: 'unknown' }, observation: machine.observation }, null);
+                    return { machine: await client.row('report-intent', { ...correlation,
+                        result: { kind: 'unknown' }, observation: machine.observation }, null), deleteResult: undefined };
                 }
             }
-            if (outstanding.intent === 'rebuild' && native.contribution.definition.reconciliation) {
+            if (outstanding.intent === 'rebuild' && native().contribution.definition.reconciliation) {
                 const value = machine.resource!.value;
                 // Retain the admitted rebuild's review even if a newer policy
                 // changed current admission while native delivery was unknown.
                 const nativeOperation = outstanding.reviewedEffectDigest && value !== null && typeof value === 'object' && !Array.isArray(value)
                     ? { ...value, reviewedEffectDigest: outstanding.reviewedEffectDigest } : value;
-                const recovered = AcquireResultV1Schema.parse(await native.invoke('reconcile', { nativeOperation }));
+                const recovered = AcquireResultV1Schema.parse(await native().invoke('reconcile', { nativeOperation }));
                 const result = recovered.kind === 'bound' ? recovered : recovered.kind === 'unknown' ? recovered
                     : { kind: 'unknown' as const, recovery: { reference: machine.recovery?.reference ?? outstanding.requestId,
                         reason: recovered.kind === 'rejected' ? recovered.code : 'native_rebuild_unknown' } };
-                return await client.row('report-intent', { ...correlation, result }, null);
+                return { machine: await client.row('report-intent', { ...correlation, result }, null), deleteResult: undefined };
             }
-            const observation = ProviderObservationV1Schema.parse(await native.invoke('inspect', { resource: machine.resource!.value }));
-            return await client.row('report-intent', { ...correlation, result: { kind: 'unknown' }, observation }, null);
+            const observation = ProviderObservationV1Schema.parse(await native().invoke('inspect', { resource: machine.resource!.value }));
+            return { machine: await client.row('report-intent', { ...correlation, result: { kind: 'unknown' }, observation }, null), deleteResult: undefined };
+        };
+        const observeDelete = () => observeAcceptedManagedDelete(params, machine, async (current, outstanding) => {
+            machine = current;
+            const observed = (await reconcileOutstanding(outstanding)).machine;
+            publishSettledNativeOperation(current, observed, outstanding);
+            return observed;
+        });
+        const settleDeleteObservation = async (result: ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse>) => {
+            if (machine.submittedNativeEffect) assertManagedDeleteNativeResult(result);
+            if (canObserveAcceptedManagedDelete(machine, result)) machine = await observeDelete();
         };
         if (params.action === 'machines.managed.inspect') {
             const outstanding = machine.submittedNativeEffect;
             if (!outstanding) return machine;
-            return await reconcileOutstanding(outstanding);
+            const observed = (await reconcileOutstanding(outstanding)).machine;
+            publishSettledNativeOperation(machine, observed, outstanding);
+            return observed;
         }
-        if (!native.contribution.definition.retention.supportedIntents.includes(machine.desired)) {
+        const localEffect = !machine.controller && options.policyPurpose?.kind === 'retention' && machine.desired === 'stop'
+            && machine.enrolledMachineId === params.input.controller.machineId
+            ? machine.reviewedFacts?.retentionCapabilities.guestLocalStop : undefined;
+        const localStop = localEffect ? await params.input.managedGuestLocalStop?.prepare(localEffect, options.signal) : null;
+        if (!localStop && !native().contribution.definition.retention.supportedIntents.includes(machine.desired)) {
             throw new ManagedMachineControllerError('native_intent_unsupported');
         }
         if (machine.desired === 'rebuild' && (!params.rebuild || params.rebuild.managedMachineId !== machine.id
-            || !native.contribution.definition.actions.rebuild)) {
+            || !native().contribution.definition.actions.rebuild)) {
             throw new ManagedMachineControllerError('admission_unavailable');
         }
         const unusedPolicy = options.policyPurpose?.kind === 'retention' && machine.retention.kind === 'unused';
@@ -248,7 +407,6 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     effectContext = context;
                 }
                 assertLive(options.signal);
-                if (!await client.isCurrent(machine)) throw new ManagedMachineControllerError('intent_changed');
                 const submission = machine.desired === 'rebuild' ? await client.submitIntent(machine)
                     : await client.post(
                         '/v1/machines/managed/controller/submit-intent', client.correlation(machine),
@@ -268,12 +426,25 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     // Recovery observes the same native identity; an unknown delivery
                     // is not permission to issue the power/destroy role again.
                     if (outstanding) {
-                        machine = await reconcileOutstanding(outstanding);
+                        const before = machine;
+                        const observed = await reconcileOutstanding(outstanding);
+                        machine = observed.machine;
+                        publishSettledNativeOperation(before, machine, outstanding);
+                        if (admittedMachine.desired === 'delete' && observed.deleteResult) await settleDeleteObservation(observed.deleteResult);
                         if (!machine.submittedNativeEffect && outstanding.intentRevision !== admittedMachine.intentRevision) {
+                            if (admittedMachine.desired === 'delete' && machine.allocation === 'confirmed-absent'
+                                && machine.observation?.availability === 'absent' && machine.id === admittedMachine.id
+                                && machine.homeId === admittedMachine.homeId && machine.intentRevision === admittedMachine.intentRevision
+                                && isDeepStrictEqual(machine.controller, admittedMachine.controller)
+                                && isDeepStrictEqual(machine.resource, admittedMachine.resource)) return machine;
                             if (!await client.isCurrent(admittedMachine)) throw new ManagedMachineControllerError('intent_changed');
                             // Only the still-live new intent re-enters normal fresh
                             // admission. The old native effect is never resubmitted.
-                            return await reconcileManagedIntent({ ...params, machine });
+                            const retried = await reconcileManagedIntent({ ...params, machine });
+                            // The fresh retry can prove the earlier Delete's
+                            // outcome too, but present-state retirement cannot.
+                            publishSettledNativeOperation(before, retried, outstanding);
+                            return retried;
                         }
                     }
                     if (!outstanding || machine.submittedNativeEffect) throw new ManagedMachineControllerError('native_intent_unconfirmed');
@@ -282,7 +453,6 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 submitted = true;
                 try {
                     assertLive(options.signal);
-                    if (!await client.isCurrent(admittedMachine)) throw new ManagedMachineControllerError('intent_changed');
                 } catch (error) {
                     await client.row('report-intent', { ...correlation, result: { kind: 'refused', code: options.signal?.aborted ? 'cancelled' : 'intent_changed' } }, null);
                     throw error;
@@ -290,6 +460,8 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 let result: ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse>
                     | ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse>
                     | ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>;
+                let powerObservation: ProviderObservationV1 | undefined;
+                let guestStartupError: ManagedMachineControllerError | undefined;
                 try {
                     options.context?.operationOwnerUpdate?.update({ progress: {
                         phase: 'managed.intent.native-effect', label: 'Applying native machine intent',
@@ -326,15 +498,32 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                             phase: 'managed.intent.native-effect', label: 'Applying native machine intent',
                         } });
                     } } : undefined;
-                    result = machine.desired === 'rebuild'
-                        ? MachineProvisionerRebuildResultV1Schema.parse(await native.invoke('rebuild', {
+                    if (localStop) {
+                        await invocationOptions?.beforeNativeEffect();
+                        await localStop();
+                        // Shutdown cannot confirm its final native state. Keep
+                        // the dated observation until the next demanded Inspect.
+                        return machine;
+                    }
+                    if (machine.desired === 'rebuild') {
+                        result = MachineProvisionerRebuildResultV1Schema.parse(await native().invoke('rebuild', {
                             resource: machine.resource!.value, reviewedEffectDigest: params.rebuild!.reviewedEffectDigest,
-                        })) : machine.desired === 'delete'
-                            ? MachineProvisionerDestroyResultV1Schema.parse(await native.invoke('destroy',
-                                machine.resource ? { resource: machine.resource.value } : { nativeOperation: machine.nativeOperationRef!.value },
-                                invocationOptions))
-                            : MachineProvisionerPowerResultV1Schema.parse(await native.invoke('power',
-                                { resource: machine.resource!.value, intent: machine.desired }, invocationOptions));
+                        }));
+                    } else if (machine.desired === 'delete') {
+                        const deletion = await executeManagedMachineDeleteIntent({ machine, invoke: native().invoke,
+                            io: { ...invocationOptions, signal: options.signal } });
+                        result = deletion.result;
+                        powerObservation = deletion.observation;
+                    } else {
+                        const power = await executeManagedMachinePowerIntent({ machine, invoke: native().invoke,
+                            guestStartup: { transport: native().contribution.definition.bootstrapTransport,
+                                channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
+                            waitForObservation: createManagedNativeObservationWait(options.signal),
+                            io: { ...invocationOptions, signal: options.signal } });
+                        result = power.result;
+                        powerObservation = power.observation;
+                        guestStartupError = power.guestStartupError;
+                    }
                 } catch (error) {
                     if (error instanceof ManagedMachineNativeEffectGuardRefusal) {
                         // The actual private pre-handler refused before native IO.
@@ -355,20 +544,18 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     throw error;
                 }
                 if (result.kind === 'refused') releaseDrain = true;
-                let observation: ProviderObservationV1 | undefined;
-                if (!options.signal?.aborted && result.kind !== 'refused' && machine.desired !== 'rebuild') {
-                    if (!machine.resource && result.kind === 'confirmed') {
-                        // Pending destroy confirms complete observed cleanup of
-                        // the exact owned attachments, not command acceptance.
-                        observation = ProviderObservationV1Schema.parse({ observedAt: Date.now(), availability: 'absent' });
-                    } else if (machine.resource) {
-                        try { observation = ProviderObservationV1Schema.parse(await native.invoke('inspect', { resource: machine.resource.value })); }
-                        catch { /* Command acceptance is still not an observed power/absence fact. */ }
-                    }
-                }
+                const observation = powerObservation;
+                const before = machine;
                 machine = result.kind === 'bound' ? await client.reportIssuedRebuildBound(machine, result)
                     : await client.row('report-intent', { ...correlation, result, ...(observation ? { observation } : {}) }, null);
-                if (result.kind === 'refused') throw new ManagedMachineNativeRefusal(result.code);
+                const settled = outstanding ? publishSettledNativeOperation(before, machine, outstanding) : undefined;
+                if (guestStartupError) throw guestStartupError;
+                if (result.kind === 'refused') throw new ManagedMachineNativeRefusal(result.code, undefined,
+                    result.nativeCause ? { kind: 'managedNative', nativeCause: result.nativeCause } : undefined);
+                if (before.desired !== 'delete' && before.desired !== 'rebuild' && settled !== undefined) {
+                    if (!settled) throw new ManagedMachineNativeRefusal('native_intent_unconfirmed');
+                    return machine;
+                }
                 if (result.kind === 'bound') {
                     // Persist replacement identity before ordinary fresh enrollment.
                     // Cancellation or newer intent can stop bootstrap, not erase it.
@@ -377,7 +564,10 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     await reconcileManagedMachine({ ...params, machine });
                     return await client.row('current', client.correlation(machine));
                 }
-                if (result.kind !== 'confirmed') throw new ManagedMachineControllerError('native_intent_unconfirmed');
+                if (before.desired === 'delete') await settleDeleteObservation(result);
+                if (result.kind !== 'confirmed' && !(before.desired === 'delete' && machine.allocation === 'confirmed-absent'
+                    && machine.observation?.availability === 'absent' && !machine.submittedNativeEffect)) throw new ManagedMachineControllerError('native_intent_unconfirmed', undefined,
+                    'nativeCause' in result && result.nativeCause ? { kind: 'managedNative', nativeCause: result.nativeCause } : undefined);
                 return machine;
             };
             try {
@@ -390,22 +580,11 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
     } finally {
         // The exact guest bridge releases only unused-stop, never user refusal,
         // handoff or shutdown. A submitted effect also retains its native fact.
-        if (draining && releaseDrain) {
-            try { await bridge?.reopen(drainMachine); }
-            catch (error) { if (!submitted) throw error; }
-        }
-        await bridge?.dispose?.();
+        try {
+            if (draining && releaseDrain) {
+                try { await bridge?.reopen(drainMachine); }
+                catch (error) { if (!submitted) throw error; }
+            }
+        } finally { await bridge?.dispose?.(); }
     }
 }
-
-export type ManagedMachineOperationSettlementContext = ActionExecutorContext & Readonly<{
-    settleManagedDeleteOperation?: (settlement: ManagedDeleteOperationSettlement) => void;
-}>;
-
-export type ManagedDeleteOperationSettlement = Readonly<{
-    managedId: string;
-    controller: ManagedMachineV1['controller'];
-    resource?: ManagedMachineV1['resource'];
-    requestId: string;
-    intentRevision: number;
-}>;

@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { isNormalizedPluginJsonSchema } from './jsonSchema.js';
+import { isNormalizedPluginJsonSchema, isRecursivelyClosedPluginJsonSchemaV2 as isClosedSchema } from './jsonSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import * as mini from 'zod/mini';
@@ -21,27 +21,13 @@ import { ManagedControllerV1Schema } from '../../machines/managed/managedMachine
 import { DevcontainerEffectReviewV1Schema } from '../../machines/managed/devcontainerV1.js';
 import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPriceV1Schema,
   ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
+export type { MachineProvisionerNativeCauseV1 } from '../../machines/managed/providerFactsV1.js';
 import { AcquireResultV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedResourceV1Schema, ManagedRecoveryHintV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, type AcquireResultV1 } from '../../machines/managed/providerFactsV1.js';
 import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue } from '../actions/protocolComposableSchema.js';
 
-export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'nativeCredentialApply'] as const;
+export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'nativeCredentialApply', 'renew'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
 export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | MachineProvisionerEffectRoleV1;
-export const MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'inspect', 'reconcile', 'destroy'] as const;
-export type MachineProvisionerBootstrapCredentialRoleV1 = typeof MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1[number];
-export function isMachineProvisionerBootstrapCredentialRoleV1(role: MachineProvisionerRoleV1): role is MachineProvisionerBootstrapCredentialRoleV1 {
-  return MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1.some(candidate => candidate === role);
-}
-
-function isClosedSchema(schema: PluginJsonSchemaV2): boolean {
-  if ((schema.type === 'object' || schema.properties) && schema.additionalProperties !== false) return false;
-  return Object.values(schema.properties ?? {}).every(isClosedSchema)
-    && Object.values(schema.definitions ?? {}).every(isClosedSchema)
-    && Object.values(schema.$defs ?? {}).every(isClosedSchema)
-    && (!schema.items || isClosedSchema(schema.items))
-    && (!schema.not || isClosedSchema(schema.not))
-    && [...(schema.anyOf ?? []), ...(schema.oneOf ?? []), ...(schema.allOf ?? [])].every(isClosedSchema);
-}
 
 const strictPortableSchema = lazyZodSchema(() => PluginJsonSchemaV2Schema.check(z.superRefine((value, context) => {
   try {
@@ -50,14 +36,15 @@ const strictPortableSchema = lazyZodSchema(() => PluginJsonSchemaV2Schema.check(
   } catch { context.addIssue({ code: 'custom', message: 'Invalid portable managed native schema.' }); }
 })));
 const local = () => asProtocolZod(PluginContributionLocalIdSchema);
+// Native declarations have passed strictPortableSchema; authored role documents
+// come from their composable owner. Embedding either only removes the root dialect,
+// it must not clone and re-admit the whole schema for each provisioner role.
 function nestedProjection(schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
   if (schema.$schema === undefined) return schema;
   const { $schema: _dialect, ...projection } = schema;
   return projection;
 }
 
-// This is the public manifest/classic-schema consumer seam. Facts have their
-// existing Mini owners; there is no second provider-facts validation tree.
 /** Older writers may omit optional result facts, but cannot redefine a retained field. */
 function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical: PluginJsonSchemaV2): boolean {
   if (declared === canonical) return true;
@@ -91,6 +78,8 @@ function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical
   return sameStrictJsonValue(writer, projectWriterShape(reader, writer));
 }
 
+// This is the public manifest/classic-schema consumer seam. Facts have their
+// existing Mini owners; there is no second provider-facts validation tree.
 const enrollmentRole = lazyDefinition(() => mini.enum(['server', 'personal', 'sandbox']));
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: local(), title: PluginLocalizedStringV2Schema, icon: PluginActionIconV2Schema,
@@ -104,7 +93,7 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   browserReachable: z.optional(z.boolean()),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
-  actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()) }),
+  actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), renew: z.optional(local()) }),
   // References the existing options Action editor, not a second duration
   // schema or an observed resource expiry. The unit belongs to that raw input.
   nativeDurationInput: z.optional(z.strictObject({ path: InputPathSchema, unit: z.enum(['milliseconds', 'seconds']) })),
@@ -165,9 +154,9 @@ export function readMachineProvisionerActionRolesV1(descriptor: MachineProvision
       { role: 'exec' as const, action: descriptor.bootstrapTransport.exec },
       { role: 'putFile' as const, action: descriptor.bootstrapTransport.putFile },
     ] : []),
-    ...(descriptor.nativeCredentialDelivery ? [{ role: 'nativeCredentialApply' as const, action: descriptor.nativeCredentialDelivery.apply }] : []),
     ...(descriptor.reconciliation ? [{ role: 'reconcile' as const, action: descriptor.reconciliation.action }] : []),
     ...(descriptor.reconciliation?.cleanup ? [{ role: 'cleanup' as const, action: descriptor.reconciliation.cleanup }] : []),
+    ...(descriptor.nativeCredentialDelivery ? [{ role: 'nativeCredentialApply' as const, action: descriptor.nativeCredentialDelivery.apply }] : []),
   ]);
 }
 
@@ -176,12 +165,6 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
   value.machineProvisioners.forEach((descriptor, index) => {
     if (seen.has(descriptor.id)) context.addIssue({ code: 'custom', path: ['machineProvisioners', index, 'id'], message: 'Duplicate machine provisioner id.' });
     seen.add(descriptor.id);
-    const acquire = value.actions.find(action => action.id === descriptor.actions.acquire);
-    descriptor.credentialPurposeRequirements?.forEach((requirement, requirementIndex) => {
-      if (!acquire?.hostAccess?.includes(requirement.purpose)) context.addIssue({ code: 'custom',
-        path: ['machineProvisioners', index, 'credentialPurposeRequirements', requirementIndex, 'purpose'],
-        message: 'A conditional credential purpose must be declared by its acquisition Action.' });
-    });
     for (const binding of readMachineProvisionerActionRolesV1(descriptor)) {
       const action = value.actions.find(candidate => candidate.id === binding.action);
       const path = ['machineProvisioners', index, ...(binding.role === 'nativeCredentialApply' ? ['nativeCredentialDelivery', 'apply']
@@ -242,6 +225,7 @@ const machineProvisionerCheckResult = lazyDefinition(() => mini.strictObject({
   nativeCredentialDelivery: mini.optional(mini.strictObject({
     status: mini.enum(['supported', 'unsupported', 'unknown']), code: mini.optional(text()),
   })),
+  nativeCause: mini.optional(MachineProvisionerNativeCauseV1Schema),
   status: mini.optional(PluginLocalizedStringV2Schema),
   prerequisites: mini.optional(mini.array(ManagedPrerequisiteV1Schema)),
   localResources: mini.optional(ManagedLocalResourceFactsV1Schema),
@@ -258,6 +242,13 @@ const optionPrice = lazyDefinition(() => mini.strictObject({
 }));
 const optionFacts = () => ({
   available: mini.optional(mini.boolean()), prices: mini.optional(mini.array(optionPrice)),
+  /** Native refusal presentation, owned by the provider rather than inferred from another dimension. */
+  unavailableReason: mini.optional(mini.strictObject({
+    code: text(), status: PluginLocalizedStringV2Schema, fieldPath: mini.optional(InputPathSchema),
+  })),
+  guestPlatform: mini.optional(mini.enum(['linux', 'darwin', 'windows'])),
+  enrollmentRole: mini.optional(enrollmentRole),
+  billing: mini.optional(BillingCapabilitiesV1Schema),
   retention: mini.optional(RetentionCapabilitiesV1Schema), nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
 });
 const dimensionOption = lazyDefinition(() => mini.strictObject({
@@ -329,8 +320,12 @@ export type MachineProvisionerSelectionV1 = Readonly<Partial<Record<MachineProvi
 type SelectionFacts = Readonly<{
   prices: readonly mini.infer<typeof ProviderPriceV1Schema>[];
   nativeFacts: mini.infer<typeof ProviderNativeOptionFactsV1Schema>;
+  guestPlatform?: MachineProvisionerDimensionOptionV1['guestPlatform'];
+  enrollmentRole?: MachineProvisionerDimensionOptionV1['enrollmentRole'];
+  billing?: MachineProvisionerContributionV1['billing'];
   retention?: MachineProvisionerContributionV1['retention'];
   effectReview?: mini.infer<typeof DevcontainerEffectReviewV1Schema>;
+  unavailableReason?: MachineProvisionerDimensionOptionV1['unavailableReason'];
 }>;
 export type MachineProvisionerSelectionProjectionV1 = SelectionFacts & (
   Readonly<{ kind: 'ready'; launch: ProtocolJsonValue }>
@@ -358,13 +353,21 @@ export function projectMachineProvisionerSelectionV1(input: Readonly<{
   const { options, selection } = input;
   const prices: mini.infer<typeof ProviderPriceV1Schema>[] = [];
   const nativeFacts: mini.infer<typeof ProviderNativeOptionFactsV1Schema> = {};
+  let billing = options.base?.billing;
+  let selectedBilling: MachineProvisionerContributionV1['billing'] | undefined | null;
   let retention = options.base?.retention;
   let selectedRetention: MachineProvisionerContributionV1['retention'] | undefined;
+  let guestPlatform: MachineProvisionerDimensionOptionV1['guestPlatform'] | null;
+  let enrollmentRole: MachineProvisionerDimensionOptionV1['enrollmentRole'] | null;
   let invalid: string | undefined;
   let unavailable = options.code !== undefined || options.base?.available === false;
+  let unavailableReason = options.base?.available === false ? options.base.unavailableReason : undefined;
   let incomplete = options.base === undefined;
   const selected: MachineProvisionerDimensionOptionV1[] = [];
-  const facts = () => ({ prices, nativeFacts, ...(retention ? { retention } : {}),
+  const facts = () => ({ prices, nativeFacts, ...(billing ? { billing } : {}), ...(retention ? { retention } : {}),
+    ...(unavailableReason ? { unavailableReason } : {}),
+    ...(guestPlatform ? { guestPlatform } : {}),
+    ...(enrollmentRole ? { enrollmentRole } : {}),
     ...(options.base?.effectReview ? { effectReview: options.base.effectReview } : {}) });
   for (const dimension of Object.keys(selection)) {
     if (!MACHINE_PROVISIONER_DIMENSIONS_V1.some(candidate => candidate === dimension)) invalid = 'unknown_dimension';
@@ -376,7 +379,15 @@ export function projectMachineProvisionerSelectionV1(input: Readonly<{
     const option = entries.find(entry => entry.id === id);
     if (!option) { invalid = 'unknown_option'; continue; }
     selected.push(option);
-    if (option.available === false) unavailable = true;
+    if (option.available === false) { unavailable = true; unavailableReason ??= option.unavailableReason; }
+    if (option.billing) {
+      if (selectedBilling === undefined) { selectedBilling = option.billing; billing = option.billing; }
+      else if (!pluginJsonValuesEqual(selectedBilling, option.billing)) {
+        selectedBilling = null;
+        billing = undefined;
+        invalid = 'conflicting_billing';
+      }
+    }
     if (option.retention) {
       if (selectedRetention && !pluginJsonValuesEqual(selectedRetention, option.retention)) invalid = 'conflicting_retention';
       selectedRetention = option.retention;
@@ -384,6 +395,20 @@ export function projectMachineProvisionerSelectionV1(input: Readonly<{
     }
   }
   for (const owner of [options.base, ...selected]) {
+    if (owner?.enrollmentRole !== undefined) {
+      if (enrollmentRole === undefined) enrollmentRole = owner.enrollmentRole;
+      else if (enrollmentRole !== owner.enrollmentRole) {
+        enrollmentRole = null;
+        invalid = 'conflicting_enrollment_role';
+      }
+    }
+    if (owner?.guestPlatform !== undefined) {
+      if (guestPlatform === undefined) guestPlatform = owner.guestPlatform;
+      else if (guestPlatform !== owner.guestPlatform) {
+        guestPlatform = null;
+        invalid = 'conflicting_guest_platform';
+      }
+    }
     for (const price of owner?.prices ?? []) {
       if (price.when && !price.when.every(condition => selection[condition.dimension] !== undefined
         && condition.optionIds.includes(selection[condition.dimension]!))) continue;
@@ -430,7 +455,7 @@ export function projectMachineProvisionerSelectionV1(input: Readonly<{
   }
   if (options.base?.effectReview && !pluginJsonValuesEqual(launch, options.base.launch)) invalid = 'effect_review_mismatch';
   if (invalid) return { ...facts(), kind: 'invalid', code: invalid };
-  if (unavailable) return { ...facts(), kind: 'unavailable', code: options.code ?? 'option_unavailable' };
+  if (unavailable) return { ...facts(), kind: 'unavailable', code: unavailableReason?.code ?? options.code ?? 'option_unavailable' };
   if (incomplete || launch === undefined) return { ...facts(), kind: 'incomplete', code: 'selection_incomplete' };
   try {
     const schema = normalizePluginJsonSchema(input.launchSchema);
@@ -459,6 +484,13 @@ export const MachineProvisionerOptionsResultProtocolV1Schema = projectRoleSchema
 export const MachineProvisionerAcquireResultV1Schema = projectRoleSchema(AcquireResultV1Schema);
 export const MachineProvisionerBootstrapCarrierV1Schema = projectRoleSchema(ManagedBootstrapCarrierV1Schema);
 export const MachineProvisionerObservationV1Schema = projectRoleSchema(ProviderObservationV1Schema);
+/** Native wall-clock expiry only; the managed retention owner supplies any selected idle deadline. */
+export const MachineProvisionerRenewResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('unnecessary') }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('renewed'), nativeExpiry: defineProtocolNumber({ minimum: 0 }),
+    renewAt: defineProtocolNumber({ minimum: 0 }).optional() }, { policy: 'closed' }),
+]);
+export type MachineProvisionerRenewResultV1 = ReturnType<typeof MachineProvisionerRenewResultV1Schema.parse>;
 export const MachineProvisionerPowerResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional(), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
@@ -466,8 +498,9 @@ export const MachineProvisionerPowerResultV1Schema = defineProtocolUnion([
 ]);
 export const MachineProvisionerDestroyResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional() }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('refused'), code: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('pending') }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional(), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('refused'), code: defineProtocolString({ minLength: 1 }), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
   projectRoleSchema(lazyDefinition(() => mini.strictObject({
     kind: mini.literal('accepted'),
     nativeOperationRef: ManagedNativeOperationReferenceV1Schema,
@@ -501,8 +534,8 @@ export const MachineProvisionerNativeCredentialApplyInputProtocolV1Schema = proj
 export const MachineProvisionerNativeCredentialApplyResultV1Schema = MachineProvisionerPowerResultV1Schema;
 export const MachineProvisionerRebuildResultV1Schema = projectRoleSchema(lazyDefinition(() => mini.discriminatedUnion('kind', [
   mini.strictObject({ kind: mini.literal('bound'), resource: ManagedResourceV1Schema }),
-  mini.strictObject({ kind: mini.literal('unknown'), recovery: ManagedRecoveryHintV1Schema }),
-  mini.strictObject({ kind: mini.literal('refused'), code: text() }),
+  mini.strictObject({ kind: mini.literal('unknown'), recovery: ManagedRecoveryHintV1Schema, nativeCause: mini.optional(MachineProvisionerNativeCauseV1Schema) }),
+  mini.strictObject({ kind: mini.literal('refused'), code: text(), nativeCause: mini.optional(MachineProvisionerNativeCauseV1Schema) }),
 ])));
 function nativeCredentialApplyInputProjection(resource: PluginJsonSchemaV2): PluginJsonSchemaV2 {
   // The structural JSON definition belongs only to the generic resource.value.
@@ -546,9 +579,10 @@ function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerCo
     case 'inspect': return MachineProvisionerObservationV1Schema.jsonSchema;
     case 'cleanup': return MachineProvisionerCleanupObservationV1Schema.jsonSchema;
     case 'exec': return MachineProvisionerNativeExecResultV1Schema.jsonSchema;
-    case 'nativeCredentialApply': return MachineProvisionerNativeCredentialApplyResultV1Schema.jsonSchema;
     case 'putFile': return MachineProvisionerPutFileResultV1Schema.jsonSchema;
+    case 'nativeCredentialApply': return MachineProvisionerNativeCredentialApplyResultV1Schema.jsonSchema;
     case 'power': return MachineProvisionerPowerResultV1Schema.jsonSchema;
+    case 'renew': return MachineProvisionerRenewResultV1Schema.jsonSchema;
     case 'destroy': return descriptor.reconciliation
       ? destroyResultProjection(descriptor.reconciliation.nativeOperationSchema)
       : MachineProvisionerPowerResultV1Schema.jsonSchema;
@@ -597,7 +631,7 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   }
   const roles = genericRoleSchemas(descriptor.reconciliation?.continueAcquire === true);
   const schema = role === 'check' ? roles.checkInput : role === 'acquire' ? roles.acquireInput
-    : role === 'bootstrap' ? roles.bootstrapInput : role === 'power' ? roles.powerInput : role === 'rebuild' ? roles.rebuildInput
+    : role === 'bootstrap' ? roles.bootstrapInput : role === 'power' ? roles.powerInput : role === 'renew' ? roles.renewInput : role === 'rebuild' ? roles.rebuildInput
       : role === 'exec' ? roles.execInput : role === 'putFile' ? roles.putFileInput : roles.resourceInput;
   if (role === 'check') return schema.jsonSchema;
   const key = role === 'acquire' ? 'launch' : 'resource';
@@ -625,16 +659,14 @@ function defineAcquireResult<TInput, TOutput, NInput, NOutput>(resource: Protoco
   });
 }
 function destroyResultProjection(nativeOperation: PluginJsonSchemaV2): PluginJsonSchemaV2 {
-  const power = MachineProvisionerPowerResultV1Schema.jsonSchema;
-  const pending = acquireResultProjection(nativeOperation, nativeOperation).oneOf
-    ?.find(variant => variant.properties?.kind?.const === 'pending');
-  if (!pending) throw new Error('Destroy custody requires the canonical pending native-operation envelope.');
-  return { anyOf: [
-    ...(power.anyOf ?? []),
-    { ...pending, properties: { ...pending.properties,
-      kind: { ...pending.properties!.kind, const: 'accepted' },
-    } },
-  ] };
+  const canonical = MachineProvisionerDestroyResultV1Schema.jsonSchema;
+  return { ...canonical, anyOf: canonical.anyOf?.map(variant => {
+    if (variant.properties?.kind?.const !== 'accepted') return variant;
+    const envelope = variant.properties.nativeOperationRef!;
+    return { ...variant, properties: { ...variant.properties, nativeOperationRef: { ...envelope,
+      properties: { ...envelope.properties, value: nestedProjection(nativeOperation) },
+    } } };
+  }) };
 }
 function defineDestroyResult<NI, NO>(nativeOperation: ProtocolComposableSchema<NI, NO>) {
   return createProtocolComposableSchema(() => destroyResultProjection(nativeOperation.jsonSchema), value => {
@@ -740,21 +772,25 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
   continueAcquire?: true;
 }>) {
   const closed = { policy: 'closed' } as const;
+  const guestHostPublicKey = defineProtocolString({ pattern: '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\\r\\n]*)?$' }).optional();
   return Object.freeze({
     checkInput: MachineProvisionerCheckInputV1Schema,
     nativeCredentialApplyInput: defineNativeCredentialApplyInput(schemas.resource),
-    acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(),
+    acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey,
       ...(schemas.continueAcquire ? { resource: schemas.resource.optional() } : {}) }, closed),
     acquireResult: defineAcquireResult(schemas.resource),
     rebuildInput: defineProtocolObject({ resource: schemas.resource, reviewedEffectDigest: defineProtocolString({ minLength: 1 }) }, closed),
     rebuildResult: defineRebuildResult(schemas.resource),
-    bootstrapInput: defineProtocolObject({ resource: schemas.resource, credentialRef: projectRoleSchema(SharedSavedSecretRefV1Schema).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional() }, closed),
+    bootstrapInput: defineProtocolObject({ resource: schemas.resource, credentialRef: projectRoleSchema(SharedSavedSecretRefV1Schema).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey }, closed),
     resourceInput: defineProtocolObject({ resource: schemas.resource }, closed),
+    renewInput: defineProtocolObject({ resource: schemas.resource, deadlineAt: defineProtocolNumber({ minimum: 0 }).optional() }, closed),
     powerInput: defineProtocolObject({ resource: schemas.resource, intent: defineProtocolUnion([
       defineProtocolLiteral('start'), defineProtocolLiteral('stop'), defineProtocolLiteral('suspend'),
       defineProtocolLiteral('resume'), defineProtocolLiteral('delete'), defineProtocolLiteral('rebuild'),
     ]) }, closed),
     execInput: defineProtocolObject({ resource: schemas.resource, argv: defineProtocolArray(defineProtocolString(), { minItems: 1 }),
+      // Read-only guest diagnostics must not inherit installer wake/activation effects.
+      allowWake: defineProtocolLiteral(false).optional(),
       inputBase64: roleBase64.optional(), timeoutMs: defineProtocolNumber({ integer: true, minimum: 0 }).nullable().optional(),
       processConfig: defineProtocolObject({
         environment: defineProtocolObject({ HOME: roleString, HAPPIER_HOME_DIR: roleString }, closed),
@@ -765,5 +801,3 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
       mode: defineProtocolNumber({ integer: true, minimum: 0 }).optional() }, closed),
   });
 }
-
-export type { MachineProvisionerNativeCauseV1 } from '../../machines/managed/providerFactsV1.js';

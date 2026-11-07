@@ -1,23 +1,25 @@
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedAcquireInputV1Schema, ManagedControllerUpdateInputV1Schema, ManagedCredentialInstallInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { randomUUID } from 'node:crypto';
-import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
-import { isOriginalLocalManagedSetupContext } from '@/api/externalActionExecutionAuthorization';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
-import { ManagedRetentionWaitSuperseded } from '@/machines/managed/controllerErrors';
+import { ManagedMachineControllerError, ManagedRetentionWaitSuperseded } from '@/machines/managed/controllerErrors';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import type { ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
 
 import { prepareInstalledWorkflowActionAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { StoredCredentials } from '@/persistence';
@@ -28,6 +30,8 @@ import type { ManagedProviderOperationAuthority } from '../connectedServices/pur
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import type { PrepareExternalActionRequesterAccountContext } from '../externalActions/executeExternalAction';
+import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
+import type { ManagedGuestLocalStop } from '@/machines/managed/managedRetentionPolicy';
 
 /** The incumbent daemon factory binds the current controller to its driver. */
 type ManagedMachineActionAdapterParams = Readonly<{
@@ -40,21 +44,19 @@ type ManagedMachineActionAdapterParams = Readonly<{
     executeSessionStart?: (input: SessionSpawnNewInputV2, context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<ActionExecuteResult>;
     executeEnvironmentSetup?: (machine: ManagedMachineV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
     subscribeEnvironmentSetupChanges?: (context: ActionExecutorContext, callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
-    /** Original requester-private observation only; the guest retains replay authority. */
-    observeSessionStartApproval?: (args: Readonly<{ artifactId: string; context: ActionExecutorContext;
-        machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<ActionExecuteResult>;
-    observeEnvironmentSetupApproval?: ManagedMachineActionAdapterParams['observeSessionStartApproval'];
+    observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
     preflightSessionStart?: (context: ActionExecutorContext) => Promise<boolean>;
     resolveCurrentMachineExecutionOriginContext?: (signal?: AbortSignal) => Promise<CurrentMachineExecutionOriginContext | null>;
     installationIdentity: Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }> | null;
     managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
+    managedGuestLocalStop?: ManagedGuestLocalStop;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
-    executeManagedPolicyAction?: (machine: ManagedMachineV1, context: ActionExecutorContext,
-        runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>) => Promise<ManagedMachineV1>;
-    prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
+    executeManagedPolicyAction?: (machine: ManagedMachineV1, context: ActionExecutorContext,
+        runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>, purpose: ManagedPolicyPurposeV1) => Promise<ManagedMachineV1>;
+    prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
     acquireRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
 }>;
 
@@ -71,55 +73,6 @@ function isManagedMachinePolicyRetentionSatisfiedAbort(reason: unknown): boolean
     return reason === MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT;
 }
 
-/** Captures this runtime's own requester Account services, never borrowed custodian credentials. */
-export function createManagedSessionStartApprovalObserver(params: Readonly<{
-    actionId?: 'session.spawn_new' | 'machines.environment.apply';
-    credentials: StoredCredentials;
-    machineId: string;
-    observeRecordedApprovalExecution(args: RecordedApprovalExecutionObservationArgs): Promise<ActionExecuteResult>;
-    isRequesterRuntimeCurrent?: (context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<boolean>;
-}>): NonNullable<ManagedMachineActionAdapterParams['observeSessionStartApproval']> {
-    return async ({ artifactId, context, machine, isCurrent }) => {
-        const authorization = context.externalActionExecutionAuthorization;
-        const root = authorization?.binding;
-        const requesterHttpProjection = authorization?.requesterHttpProjection;
-        const actionId = params.actionId ?? 'session.spawn_new';
-        if (actionId === 'machines.environment.apply' && !authorization) {
-            // Observation consumes the original installed Account's private
-            // recorded result. Only the ordinary Home signer admits effects.
-            if (!machine.enrolledMachineId || !context.signal || !params.isRequesterRuntimeCurrent
-                || !isOriginalLocalManagedSetupContext({ context, credentials: params.credentials,
-                    custodianAccountId: machine.custodianAccountId, homeId: machine.homeId })) {
-                return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-            }
-            return params.observeRecordedApprovalExecution({ artifactId, signal: context.signal,
-                expectedOrigin: { actionId, requestId: context.actionRequestId!, accountId: machine.custodianAccountId,
-                    serverIdentityId: machine.homeId, machineId: machine.enrolledMachineId },
-                isCurrent: async () => await isCurrent() && await params.isRequesterRuntimeCurrent!(context, machine) });
-        }
-        if (!authorization || !root || root.actionId !== 'machines.managed.acquire'
-            || root.requestId !== context.actionRequestId || root.serverIdentityId !== machine.homeId
-            || root.machineId !== params.machineId || root.machineId !== machine.controller?.machineId
-            || root.installationId !== machine.controller?.installationId || root.custodianAccountId !== machine.custodianAccountId
-            || (actionId === 'session.spawn_new' && (!root.sessionActionOrigin || !root.sessionActionSource))
-            || readAccountIdFromToken(params.credentials.token) !== root.accountId
-            || !root.accountEncryptionMode || !requesterHttpProjection
-            || requesterHttpProjection.accountId !== root.accountId
-            || requesterHttpProjection.serverIdentityId !== root.serverIdentityId
-            || requesterHttpProjection.accountEncryptionMode !== root.accountEncryptionMode
-            || !machine.enrolledMachineId || !context.signal) {
-            return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-        }
-        return await params.observeRecordedApprovalExecution({ artifactId, signal: context.signal,
-            expectedOrigin: { actionId, requestId: root.requestId, accountId: root.accountId,
-                serverIdentityId: root.serverIdentityId, machineId: machine.enrolledMachineId },
-            isCurrent: async () => await isCurrent()
-                && (!params.isRequesterRuntimeCurrent || await params.isRequesterRuntimeCurrent(context, machine))
-                && await requesterHttpProjection.isCurrent(),
-        });
-    };
-}
-
 async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, signal: AbortSignal | undefined,
     execute: (driver: ReturnType<typeof import('@/machines/managed/acquire')['createManagedMachineAcquisitionDriver']>) => Promise<T>): Promise<T> {
         if (!params.managedProviderOperationAuthority) {
@@ -134,24 +87,55 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
             throw Object.assign(new Error('controller_unavailable'), { code: 'controller_unavailable' });
         }
         const lease = await params.acquireRuntimeRegistryLease();
+        let accountRuntime: Promise<AccountExecutionRuntime> | undefined;
+        let current = true;
         try {
             const { createManagedMachineAcquisitionDriver } = await import('@/machines/managed/acquire');
             const controllerCredentials = params.controllerCredentials ?? params.credentials;
+            const isCurrent = () => current && !signal?.aborted;
+            const resolveAccountRuntime = async () => {
+                accountRuntime ??= runWithServerHttpBaseUrl(params.serverBaseUrl, async () => {
+                    await ensureCliActionPolicySettings(controllerCredentials, params.serverBaseUrl);
+                    const snapshot = getActiveAccountSettingsSnapshot();
+                    if (!snapshot) throw Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' });
+                    const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+                    const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({
+                        credentials: controllerCredentials, snapshot, serverHttpBaseUrl: params.serverBaseUrl,
+                        isCurrent: async () => isCurrent() && lifetime === getActiveAccountSettingsSnapshotLifetimeToken(),
+                    });
+                    return await resolveAccountExecutionRuntime({ signal,
+                        credentialRuntimeRegistry: lease.registry,
+                        accountExecution: { credentials: controllerCredentials, serverUrl: params.serverBaseUrl,
+                            serverId: params.serverId, serverIdentityId: origin.serverIdentityId,
+                            machineId: params.machineId, explicitMachineId: params.machineId,
+                            savedSecretOperationContext, isCurrent,
+                        } });
+                });
+                const runtime = await accountRuntime;
+                if (!runtime.purposeRuntime) throw Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' });
+                return { runtimeRegistry: runtime.registry, managedProviderOperationAuthority:
+                    params.managedProviderOperationAuthority!.forPurposeBindingOwner(runtime.purposeRuntime.purposes) };
+            };
             return await execute(createManagedMachineAcquisitionDriver({
                 token: controllerCredentials.token, serverUrl: params.serverBaseUrl,
                 homeId: origin.serverIdentityId,
                 controller: { machineId: params.machineId, installationId: params.installationIdentity.installationId },
                 runtimeRegistry: lease.registry,
+                resolveAccountRuntime,
                 externalActionMachineRequestPrivateKey: params.installationIdentity.privateKey,
                 managedProviderOperationAuthority: params.managedProviderOperationAuthority,
+                ...(params.managedGuestLocalStop ? { managedGuestLocalStop: params.managedGuestLocalStop } : {}),
                 credentials: controllerCredentials,
+                observeRecordedApprovalExecution: params.observeRecordedApprovalExecution,
                 homeTarget,
-                ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
+                ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),
             }));
         } finally {
-            await lease.release();
+            current = false;
+            try { if (accountRuntime) await accountRuntime.then(runtime => runtime.registry.dispose(), () => {}); }
+            finally { await lease.release(); }
         }
 }
 
@@ -180,7 +164,9 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         // the public Action/RPC payload cannot supply it. Home independently
         // checks the signed installation's persisted Run assignment and cause.
         const runId = context.executionRunWorkflowRunId;
-        if (runId && !context.externalActionExecutionAuthorization) {
+        // Preflight reads retain the invoking Action's context; they do not
+        // become separately authorized Workflow effects.
+        if (runId && getActionSpec(actionId).sideEffectClass !== 'read' && !context.externalActionExecutionAuthorization) {
             const installation = params.installationIdentity;
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
             if (!installation || !origin || origin.machineId !== params.machineId) {
@@ -200,7 +186,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             || (context.externalActionCredential && !context.externalActionExecutionAuthorization)
             // A Session continuation needs a private reader owned by the
             // requester Account, not another resource custodian's credentials.
-            || (context.externalActionExecutionAuthorization && context.actionCaller?.kind === 'session' && !params.observeSessionStartApproval)
+            || (context.externalActionExecutionAuthorization && context.actionCaller?.kind === 'session' && !params.observeRecordedApprovalExecution)
             || (context.externalActionExecutionAuthorization && (!params.preflightSessionStart || !await params.preflightSessionStart(context))))) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
@@ -208,16 +194,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
                 ...(params.executeEnvironmentSetup ? { runEnvironmentSetup: async ({ machine, isCurrent }) => {
                     if (!machine.enrolledMachineId || !machine.preset || !await isCurrent()) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
-                    let setup = await params.executeEnvironmentSetup!(machine, context, isCurrent);
-                    if (setup.ok) {
-                        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(setup.result);
-                        if (approval.success && approval.data.actionId === 'machines.environment.apply') {
-                            if (!params.observeEnvironmentSetupApproval) throw Object.assign(new Error('approval_context_unavailable'), { code: 'approval_context_unavailable' });
-                            context.operationOwnerUpdate?.update({ observation: { kind: 'outcome_uncertain', code: 'approval_pending' } });
-                            setup = await params.observeEnvironmentSetupApproval({ artifactId: approval.data.artifactId, context, machine, isCurrent });
-                            if (setup.ok) context.operationOwnerUpdate?.update({ observation: null });
-                        }
-                    }
+                    const setup = await params.executeEnvironmentSetup!(machine, context, isCurrent);
                     if (!setup.ok) throw Object.assign(new Error(setup.errorCode), { code: setup.errorCode });
                     const current = await driver.execute('machines.managed.get', { homeId: machine.homeId, managedId: machine.id }, { requestId, context, signal });
                     return ManagedMachineV1Schema.parse(current);
@@ -228,30 +205,13 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                         throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     }
                     if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-                    let result = await executeSessionStart({ ...agentStart,
+                    const result = await executeSessionStart({ ...agentStart,
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, context, machine);
-                    if (result.ok && params.observeSessionStartApproval) {
-                        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-                        if (approval.success && approval.data.actionId === 'session.spawn_new') {
-                            context.operationOwnerUpdate!.update({ observation: { kind: 'outcome_uncertain', code: 'approval_pending' } });
-                            result = await params.observeSessionStartApproval({ artifactId: approval.data.artifactId, context, machine, isCurrent });
-                        }
-                    }
                     if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
-                    const spawn = SessionSpawnNewResultV1Schema.safeParse(result.result);
-                    if (!spawn.success) {
-                        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-                        if (!approval.success || approval.data.actionId !== 'session.spawn_new') {
-                            throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
-                        }
-                        // A real Inbox request is not a Session-start result.
-                        // Requester-private Artifact consumption stays with its
-                        // existing owner; this projection grants no read power.
-                        context.operationOwnerUpdate!.update({ observation: { kind: 'outcome_uncertain', code: 'approval_pending' } });
-                        return;
-                    }
+                    const spawn = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
+                    if (!spawn.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
                     if (spawn.success && spawn.data.type === 'error') {
                         throw Object.assign(new Error(spawn.data.code), { code: spawn.data.code });
                     }
@@ -296,18 +256,22 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         const { actionId, input, context, signal } = request;
         const runId = context.executionRunWorkflowRunId;
         const observe = params.observeActionExecution;
+        const settlementContext: ManagedMachineOperationSettlementContext = context;
+        const observesNativeSettlement = actionId === 'machines.managed.inspect' && observe
+            && !settlementContext.settleManagedNativeOperation;
         // Detached Ask replay has no live parent's ports. Bind once through the
-        // existing operation owner; ordinary calls may have no observed scope.
-        if (!context.operationAcceptance && (runId || (getActionSpec(actionId).operation && observe))) {
+        // existing operation owner. Inspect binds only its private settlement
+        // port; it remains read-only and creates no operation of its own.
+        if (!context.operationAcceptance && (observesNativeSettlement || (getActionSpec(actionId).operation && (runId || observe)))) {
             if (!context.actionRequestId || !observe) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
             const observed = await observe({ actionId, input, actionRequestId: context.actionRequestId,
                 execute: async operation => {
-                    if (runId && !operation.operationAcceptance) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+                    if (runId && actionId !== 'machines.managed.inspect' && !operation.operationAcceptance) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
                     // A detached Ask replay is only the admission carrier. Once
                     // the durable operation owns the accepted effect, ending the
                     // approving HTTP request must not cancel native dispatch.
                     // Explicit operation cancellation remains authoritative.
-                    const lifetime = operation.signal;
+                    const lifetime = actionId === 'machines.managed.inspect' ? signal ?? operation.signal : operation.signal;
                     // The driver retains all native admission requirements,
                     // including acceptance for acquisition and lifecycle effects.
                     const result = await executeNativeAction({ ...request, context: { ...context, ...operation, signal: lifetime }, signal: lifetime });
@@ -319,6 +283,8 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         return await executeNativeAction(request);
     };
     return Object.assign(actionAdapter, {
+        supportsNativeLifetimeRenewal: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<boolean> =>
+            withBoundDriver(params, signal, async driver => driver.supportsNativeLifetimeRenewal(machine)),
         reconcileNativeCredentials: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<void> =>
             serializeNativeCredentialWrite(machine.homeId, machine.id, signal, () =>
                 withBoundDriver(params, signal, driver => driver.reconcileNativeCredentials(machine, {
@@ -364,7 +330,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                                 request.machine, request.purpose, { requestId, context, signal: lifetime.signal,
                                     ...(request.retentionContinuationRequestId ? { retentionContinuationRequestId: request.retentionContinuationRequestId } : {}),
                                     ...(request.actionOrigin ? { actionOrigin: request.actionOrigin } : {}),
-                                    runPolicyAction: (machine, runApproved) => params.executeManagedPolicyAction!(machine, context, runApproved) },
+                                    runPolicyAction: (machine, runApproved) => params.executeManagedPolicyAction!(machine, context, runApproved, request.purpose) },
                             ));
                             return { ok: true as const, result };
                         } catch (error) {
@@ -387,7 +353,9 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                             const code = lifetime.signal.aborted || supersededWait ? 'cancelled'
                                 : readRpcErrorCode(error)
                                     ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'managed_controller_request_failed');
-                            return { ok: false as const, errorCode: code, error: code };
+                            return { ok: false as const, errorCode: code, error: code,
+                                ...(error instanceof ManagedMachineControllerError && error.code === code && error.details
+                                    ? { details: error.details } : {}) };
                         } finally {
                             operation.signal.removeEventListener('abort', cancel);
                             request.signal?.removeEventListener('abort', cancel);

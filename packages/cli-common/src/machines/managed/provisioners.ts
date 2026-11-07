@@ -15,9 +15,19 @@ export type ManagedProvisionerSelectionRead = (pluginId: string) => Promise<read
 
 export function readMachineProvisionerHostAvailability(input: Readonly<{
     host: 'browser' | 'native'; provisioner: Pick<MachineProvisionerContributionV1, 'browserReachable'>;
-}>): Pick<MachineProvisionerCheckResultV1, 'available' | 'code'> {
-    return input.host === 'browser' && input.provisioner.browserReachable !== true
-        ? { available: false, code: 'provider_unavailable' } : { available: true };
+    acquireExecutionTarget?: ManagedProvisionerDiscoveryEntry['acquireExecutionTarget'];
+    controller?: ManagedMachineV1['controller'];
+}>): Pick<MachineProvisionerCheckResultV1, 'available' | 'code'> & Readonly<{
+    executionTarget: 'account' | 'daemon'; controller?: ManagedMachineV1['controller'];
+}> {
+    // Machine placement runs the same Account role with native host services; it does not change its declaration.
+    const executionTarget = input.acquireExecutionTarget === 'daemon'
+        || input.host === 'browser' && input.provisioner.browserReachable !== true && input.controller
+        ? 'daemon' : 'account';
+    const controller = executionTarget === 'daemon' ? input.controller : undefined;
+    const unavailable = !controller && input.host === 'browser' && input.provisioner.browserReachable !== true;
+    return { executionTarget, ...(controller ? { controller } : {}),
+        ...(unavailable ? { available: false, code: 'provider_unavailable' as const } : { available: true }) };
 }
 
 /** Account declaration custody already includes bundled and explicitly selected releases. */
@@ -59,6 +69,7 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
     readSelected: ManagedProvisionerSelectionRead,
     actionId: 'machines.managed.power.set' | 'machines.managed.inspect' | 'machines.managed.bootstrap.retry'
         | 'machines.managed.delete' | 'machines.managed.cancel' = 'machines.managed.power.set',
+    options?: Readonly<{ includeGuestDiagnostics?: true }>,
 ): Promise<HostReviewedChildrenPlanV1 | ActionExecuteFailure | null> {
     if ('ok' in machine) return machine.errorCode === 'permission_denied' ? { children: [] } : machine;
     if (machine.controller) return null;
@@ -67,8 +78,11 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
         return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     return { children: readMachineProvisionerActionRolesV1(provisioner)
         .filter(({ role }) => actionId === 'machines.managed.power.set' ? role === 'power' || role === 'inspect'
+                || Boolean(machine.enrolledMachineId) && machine.enrollmentIdentity?.kind !== 'dedicatedDaemonUser'
+                    && provisioner.bootstrapTransport?.kind === 'native' && (role === 'bootstrap' || role === 'exec')
             : actionId === 'machines.managed.delete' || actionId === 'machines.managed.cancel' ? role === 'destroy' || role === 'inspect' || role === 'cleanup' || role === 'reconcile'
             : actionId === 'machines.managed.inspect' ? role === 'inspect' || role === 'reconcile'
+                || options?.includeGuestDiagnostics === true && role === 'exec'
             : role === 'acquire' || role === 'bootstrap' || role === 'inspect' || role === 'reconcile'
                 || role === 'exec' || role === 'putFile')
         .map(({ action, role }) => ({ action: { pluginId: machine.launch.provider.pluginId, localId: action }, role })) };
