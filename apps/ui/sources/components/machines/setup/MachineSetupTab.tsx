@@ -9,7 +9,7 @@ import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionO
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
 import { useMachineToolsSummary } from '@/components/machines/installables/useMachineToolsSummary';
-import type { MachinePageTabBodyProps } from '@/components/machines/page/machinePageTabQuery';
+import type { MachinePageTabBodyProps, MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
 import { describeMachineToolsSummary } from '@/components/machines/page/machineThisMachineSummaries';
 import {
@@ -46,7 +46,7 @@ import {
   type MachineSetupState,
 } from './useMachineSetup';
 
-type SetupParams = Readonly<{ id: 'setup'; page?: 'tools' }>;
+type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
 const SETUP_PARAMS = Object.freeze({ id: 'setup' }) as SetupParams;
 const TOOLS_PARAMS = Object.freeze({
   id: 'setup',
@@ -70,8 +70,8 @@ const selectCanManage = (machine: Machine | null) =>
  * Apply's own operation rows. Tools (`page=tools`) is pushed inside the tab.
  */
 export function MachineSetupTab(props: MachinePageTabBodyProps) {
-  const params = props.params as unknown as SetupParams;
-  const setParams = props.setParams as unknown as (next: SetupParams) => void;
+  const params = props.params as SetupParams;
+  const setParams = props.setParams;
   if (params.page === 'tools') {
     return (
       <View testID="machine-setup-tools">
@@ -203,6 +203,7 @@ function MachineSetupRoot(
               {presetSource ? (
                 <Item
                   testID="machine-setup-preset-row"
+                  accessoryLayout="adaptive"
                   icon={<Icon name="shield" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                   title={
                     preset?.name ??
@@ -261,6 +262,7 @@ function MachineSetupRoot(
                   title={entry.name}
                   subtitle={describePreset(entry)}
                   showChevron={false}
+                  accessoryLayout="adaptive"
                   rightElement={
                     editable ? (
                       <RoundButton

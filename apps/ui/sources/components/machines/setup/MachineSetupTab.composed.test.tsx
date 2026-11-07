@@ -461,7 +461,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     phase = 'open the Setup tab';
     screen = await renderScreen(
       <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
-        params={{ id: 'setup' } as never} setParams={vi.fn()} />,
+        params={{ id: 'setup' }} setParams={vi.fn()} />,
     );
     const mounted = screen;
     const pressable = (testID: string) => mounted.tree.findAll(
@@ -524,7 +524,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     } });
     const { MachineSetupTab } = await import('./MachineSetupTab');
     const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
-      params={{ id: 'setup' } as never} setParams={vi.fn()} />);
+      params={{ id: 'setup' }} setParams={vi.fn()} />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-preset-none')).not.toBeNull());
     expect(screen.findByTestId('machine-setup-recipes-none')).not.toBeNull();
     await screen.pressByTestIdAsync('machine-setup-preset-none');
@@ -543,14 +543,14 @@ describe('Machine → Setup tab (P-M1)', () => {
     const { MachineSetupTab } = await import('./MachineSetupTab');
     const setParams = vi.fn();
     const root = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online={false}
-      params={{ id: 'setup' } as never} setParams={setParams} />);
+      params={{ id: 'setup' }} setParams={setParams} />);
     await root.pressByTestIdAsync('machine-setup-tools-row');
     expect(setParams).toHaveBeenLastCalledWith({ id: 'setup', page: 'tools' });
     // Offline: no check is sent, so nothing is read from a Machine that can't answer.
     expect(harness.requestsFor('/v1/actions/machines.setup.plan')).toHaveLength(0);
     await root.unmount();
     const tools = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online={false}
-      params={{ id: 'setup', page: 'tools' } as never} setParams={setParams} />);
+      params={{ id: 'setup', page: 'tools' }} setParams={setParams} />);
     expect(tools.findByTestId('machine-setup-tools')).not.toBeNull();
     await tools.pressByTestIdAsync('machine-setup-tools-back');
     expect(setParams).toHaveBeenLastCalledWith({ id: 'setup' });
