@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { ManagedActivityReasonV1Schema } from '../../../machines/managed/activityDecisionV1.js';
@@ -24,7 +25,8 @@ export const MachineRebootResultV1Schema = lazyZodSchema(() => z.union([
     'daemon_draining', 'daemon_shutting_down', 'needs_attendance']) }),
 ]));
 export type MachineRebootResultV1 = z.infer<typeof MachineRebootResultV1Schema>;
-export const MACHINE_REBOOT_ACTION_SPECS = [{
+function createMachineRebootActionSpecs() {
+  return [{
   id: 'machines.reboot', title: 'Reboot Machine',
   description: 'Reboot this exact installation only after fresh maintenance admission and administrator authorization.',
   approval: { result: 'required' }, approvalScope: 'machine', approvalPolicy: { uiConfirmation: 'policy' },
@@ -41,3 +43,6 @@ export const MACHINE_REBOOT_ACTION_SPECS = [{
     { path: 'expectedInstallationId', title: 'Reviewed installation ID', widget: 'text', required: true },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_REBOOT_ACTION_SPECS: ReturnType<typeof createMachineRebootActionSpecs> = lazyActionSpecArray(createMachineRebootActionSpecs);

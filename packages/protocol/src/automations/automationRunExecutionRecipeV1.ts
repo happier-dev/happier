@@ -2,6 +2,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import {
@@ -88,6 +90,11 @@ export const AutomationRunTemplateV1Schema = lazyZodSchema(() => z.strictObject(
    * provider context — that is still reconstructed at dispatch (D-3/INV-9).
    */
   mentions: z.optional(z.array(MentionRefV1Schema).check(z.maxLength(MENTION_BOUNDS.maxPerMessage))),
+  /** Private Action operands; Event payloads come from the frozen occurrence. */
+  actionInput: z.optional(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('literal'), value: PluginJsonValueV2Schema }),
+    z.strictObject({ kind: z.literal('eventPayload') }),
+  ])),
 }));
 export type AutomationRunTemplateV1 = z.infer<typeof AutomationRunTemplateV1Schema>;
 export const AutomationRunTemplateV1ReadSchema = createStoredReadSchema(AutomationRunTemplateV1Schema);
@@ -306,7 +313,13 @@ export function materializeAutomationRunPromptV1(params: Readonly<{
   };
 }
 
+export const AutomationContributedActionTargetV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('contributedAction'),
+    action: asProtocolZod(PluginContributionIdentityV1Schema),
+}));
+
 export const AutomationRunExecutionTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  AutomationContributedActionTargetV1Schema,
   z.strictObject({
     kind: z.literal('existingSession'),
     sessionId: asProtocolZod(SessionIdSchema),
@@ -341,6 +354,18 @@ export function automationRunExecutionTargetDeliversComposerReferencesV1(
   return kind === 'existingSession';
 }
 
+/** Physical predecessor target projection, shared by stored readers and admission. */
+export function automationRunExecutionTargetTypeV1(
+  target: AutomationRunExecutionTargetV1,
+): 'new_session' | 'existing_session' | 'execution_run' | null {
+  switch (target.kind) {
+    case 'contributedAction': return null;
+    case 'newSession': return 'new_session';
+    case 'existingSession': return 'existing_session';
+    case 'executionRun': return 'execution_run';
+  }
+}
+
 export type AutomationRunTemplateTargetAdmissionV1Result =
   | Readonly<{
     kind: 'available';
@@ -364,6 +389,9 @@ export function validateAutomationRunTemplateForExecutionTargetV1(params: Readon
   const template = AutomationRunTemplateV1Schema.safeParse(params.template);
   const target = AutomationRunExecutionTargetV1Schema.safeParse(params.target);
   if (!template.success || !target.success) return { kind: 'contentInvalid' };
+  if (target.data.kind === 'contributedAction'
+    ? template.data.actionInput === undefined || template.data.prompt !== ''
+    : template.data.actionInput !== undefined) return { kind: 'contentInvalid' };
   if (
     (template.data.mentions?.length ?? 0) > 0
     && !automationRunExecutionTargetDeliversComposerReferencesV1(target.data.kind)
@@ -502,6 +530,12 @@ export const AutomationStoredDefinitionExecutionRecipeV1Schema = defineStoredRea
 export type AutomationStoredDefinitionExecutionRecipeV1 = z.infer<
   typeof AutomationStoredDefinitionExecutionRecipeV1Schema
 >;
+
+/** Current Action writes reuse the recipe owner; historical Session writes stay retired. */
+export const AutomationStoredActionDefinitionRecipeV1Schema = lazyZodSchema(() => z.safeExtend(
+  AutomationStoredDefinitionExecutionRecipeV1Schema, { target: AutomationContributedActionTargetV1Schema },
+));
+export type AutomationStoredActionDefinitionRecipeV1 = z.infer<typeof AutomationStoredActionDefinitionRecipeV1Schema>;
 
 export const AutomationRunExecutionRecipeV1ReadSchema = createStoredReadSchema(AutomationRunExecutionRecipeV1Schema);
 export const AutomationStoredDefinitionExecutionRecipeV1ReadSchema = createStoredReadSchema(AutomationStoredDefinitionExecutionRecipeV1Schema);
@@ -834,6 +868,11 @@ export type AutomationRunExecutionRecipeMaterializationResultV1 =
     kind: 'available';
     target:
       | Readonly<{
+        kind: 'contributedAction';
+        action: PluginContributionIdentityV1;
+        input: z.infer<typeof PluginJsonValueV2Schema>;
+      }>
+      | Readonly<{
         kind: 'existingSession';
         sessionId: string;
         prompt: string;
@@ -884,6 +923,15 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
   }
   const parsedEvidence = triggerEvidence?.data ?? null;
   if (!matchesCauseEvidence(cause.data, parsedEvidence)) return { kind: 'contentInvalid' };
+
+  if (outer.recipe.target.kind === 'contributedAction') {
+    const program = admittedTemplate.template.actionInput;
+    if (!program) return { kind: 'contentInvalid' };
+    if (program.kind === 'literal') return { kind: 'available', target: { ...outer.recipe.target, input: program.value } };
+    return parsedEvidence?.kind === 'pluginEvent'
+      ? { kind: 'available', target: { ...outer.recipe.target, input: parsedEvidence.payload } }
+      : { kind: 'contentInvalid' };
+  }
 
   const prompt = materializeAutomationRunPromptV1({
     template: admittedTemplate.template,

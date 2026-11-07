@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { HomeHubLayoutV1Schema, HomeHubLayoutIntentSchema } from '../../home/homeHubLayoutV1.js';
@@ -27,7 +28,8 @@ export const HomeHubLayoutResultSchema = lazyZodSchema(() => z.strictObject({
   hiddenSetupStepIds: z.array(sectionId),
 }));
 
-export const HOME_HUB_LAYOUT_ACTION_SPECS = [
+function createHomeHubLayoutActionSpecs() {
+  return [
   {
     id: 'home.reachNudge.dismiss', approval: {result: 'required'}, title: 'Dismiss Home reachability suggestion',
     description: 'Permanently dismiss the selected Home’s reachability suggestion on this client device. Other devices are unchanged.',
@@ -69,3 +71,6 @@ export const HOME_HUB_LAYOUT_ACTION_SPECS = [
     examples: { voice: { argsExample: '{"intent":{"kind":"visibility","sectionId":"machines","hidden":false}}' } },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const HOME_HUB_LAYOUT_ACTION_SPECS: ReturnType<typeof createHomeHubLayoutActionSpecs> = lazyActionSpecArray(createHomeHubLayoutActionSpecs);

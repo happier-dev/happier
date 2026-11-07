@@ -6,30 +6,17 @@ import {
   ProviderCatalogProbeModelV1Schema,
   ProviderCatalogSnapshotV1Schema,
 } from '../catalog/merge.js';
-import { PROVIDER_CATALOG_LIMITS_V1 } from '../catalog/limits.js';
 import {
   ProviderCatalogFingerprintV1Schema,
   ProviderEndpointObservationFingerprintV1Schema,
   ProviderObservationAuthorizationFingerprintV1Schema,
 } from '../fingerprints.js';
-import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import {
   ProviderConnectionIdSchema,
-  ProviderContributionKeySchema,
   ProviderLocalIdSchema,
   ProviderMachineIdSchema,
   ProviderModelIdSchema,
 } from '../ids.js';
-
-export const PROVIDER_RUNTIME_STATE_LIMITS_V1 = Object.freeze({
-  maxEndpointRecords: 8_192,
-  maxCatalogRecords: 2_048,
-  maxInstallationRecords: 4_096,
-  maxCatalogModelIdentities: 50_000,
-  maxModelLoadRecords: 50_000,
-  maxEncodedBytes: 64 * 1024 * 1024,
-  maxRetryDelayMs: 24 * 60 * 60 * 1_000,
-} as const);
 
 export const ProviderModelLoadStateV1Schema = lazyZodSchema(() => z.enum(['loaded', 'unloaded', 'unknown']));
 export type ProviderModelLoadStateV1 = z.infer<typeof ProviderModelLoadStateV1Schema>;
@@ -59,13 +46,6 @@ export const ProviderCatalogRuntimeStateKeyV1Schema = lazyZodSchema(() => z.stri
 }));
 export type ProviderCatalogRuntimeStateKeyV1 = z.infer<typeof ProviderCatalogRuntimeStateKeyV1Schema>;
 
-export const ProviderInstallationRuntimeStateKeyV1Schema = lazyZodSchema(() => z.strictObject({
-  machineId: ProviderMachineIdSchema,
-  contributionKey: z.pipe(ProviderContributionKeySchema, z.transform(canonicalizeProviderContributionKeyV1)),
-  checkId: ProviderLocalIdSchema,
-}));
-export type ProviderInstallationRuntimeStateKeyV1 = z.infer<typeof ProviderInstallationRuntimeStateKeyV1Schema>;
-
 export const ProviderModelLoadRuntimeStateKeyV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: ProviderMachineIdSchema,
   connectionId: ProviderConnectionIdSchema,
@@ -93,10 +73,6 @@ function serializeCatalogKey(key: ProviderCatalogRuntimeStateKeyV1): string {
   ]);
 }
 
-function serializeInstallationKey(key: ProviderInstallationRuntimeStateKeyV1): string {
-  return JSON.stringify([key.machineId, key.contributionKey, key.checkId]);
-}
-
 function serializeModelLoadKey(key: ProviderModelLoadRuntimeStateKeyV1): string {
   return JSON.stringify([key.machineId, key.connectionId, key.catalogObservationId, key.modelId]);
 }
@@ -107,10 +83,6 @@ export function serializeProviderEndpointRuntimeStateKeyV1(input: unknown): stri
 
 export function serializeProviderCatalogRuntimeStateKeyV1(input: unknown): string {
   return serializeCatalogKey(ProviderCatalogRuntimeStateKeyV1Schema.parse(input));
-}
-
-export function serializeProviderInstallationRuntimeStateKeyV1(input: unknown): string {
-  return serializeInstallationKey(ProviderInstallationRuntimeStateKeyV1Schema.parse(input));
 }
 
 export function serializeProviderModelLoadRuntimeStateKeyV1(input: unknown): string {
@@ -169,9 +141,6 @@ export const ProviderEndpointRuntimeStateV1Schema = lazyZodSchema(() => z.discri
     if (value.retryAt < value.observedAt) {
       ctx.addIssue({ code: 'custom', path: ['retryAt'], message: 'Retry time cannot precede observation time' });
     }
-    if (value.retryAt - value.observedAt > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxRetryDelayMs) {
-      ctx.addIssue({ code: 'custom', path: ['retryAt'], message: 'Retry time exceeds the maximum provider backoff' });
-    }
   }
 })));
 export type ProviderEndpointRuntimeStateV1 = z.infer<typeof ProviderEndpointRuntimeStateV1Schema>;
@@ -194,7 +163,7 @@ const EmptyCatalogRuntimeStateV1Schema = lazyZodSchema(() => z.strictObject({
 const ObservedCatalogRuntimeStateV1Schema = lazyZodSchema(() => z.strictObject({
   catalogObservationId: ProviderCatalogObservationIdV1Schema,
   snapshot: ProviderCatalogSnapshotV1Schema,
-  staleProbeModels: z.array(ProviderCatalogProbeModelV1Schema).check(z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)),
+  staleProbeModels: z.array(ProviderCatalogProbeModelV1Schema),
 }).check(z.superRefine((value, ctx) => {
   const activeIds = new Set(value.snapshot.models.map((model) => model.id));
   const staleIds = new Set<string>();
@@ -225,20 +194,6 @@ export const ProviderCatalogRuntimeStateRecordV1Schema = lazyZodSchema(() => z.s
 })));
 export type ProviderCatalogRuntimeStateRecordV1 = z.infer<typeof ProviderCatalogRuntimeStateRecordV1Schema>;
 
-export const ProviderInstallationRuntimeStateRecordV1Schema = lazyZodSchema(() => z.strictObject({
-  key: ProviderInstallationRuntimeStateKeyV1Schema,
-  state: z.strictObject({
-    status: z.enum(['present', 'absent']),
-    observedAt: RuntimeTimestampSchema,
-  }),
-  lastAccessedAt: RuntimeTimestampSchema,
-}).check(z.superRefine((value, ctx) => {
-  if (value.lastAccessedAt < value.state.observedAt) {
-    ctx.addIssue({ code: 'custom', path: ['lastAccessedAt'], message: 'Access time cannot precede observation time' });
-  }
-})));
-export type ProviderInstallationRuntimeStateRecordV1 = z.infer<typeof ProviderInstallationRuntimeStateRecordV1Schema>;
-
 export const ProviderModelLoadRuntimeStateRecordV1Schema = lazyZodSchema(() => z.strictObject({
   key: ProviderModelLoadRuntimeStateKeyV1Schema,
   loadState: ProviderModelLoadStateV1Schema,
@@ -254,15 +209,14 @@ export type ProviderModelLoadRuntimeStateRecordV1 = z.infer<typeof ProviderModel
 const ProviderRuntimeStateFileShapeV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   machineId: ProviderMachineIdSchema,
-  endpointHealth: z.array(ProviderEndpointRuntimeStateRecordV1Schema).check(z.maxLength(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEndpointRecords)),
-  catalogs: z.array(ProviderCatalogRuntimeStateRecordV1Schema).check(z.maxLength(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxCatalogRecords)),
-  installationChecks: z.array(ProviderInstallationRuntimeStateRecordV1Schema).check(z.maxLength(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxInstallationRecords)),
-  modelLoadStates: z.array(ProviderModelLoadRuntimeStateRecordV1Schema).check(z.maxLength(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxModelLoadRecords)),
+  endpointHealth: z.array(ProviderEndpointRuntimeStateRecordV1Schema),
+  catalogs: z.array(ProviderCatalogRuntimeStateRecordV1Schema),
+  modelLoadStates: z.array(ProviderModelLoadRuntimeStateRecordV1Schema),
 }));
 export type ProviderRuntimeStateFileV1 = z.infer<typeof ProviderRuntimeStateFileShapeV1Schema>;
 
 type RuntimeStateSemanticIssue = Readonly<{
-  reason: 'machine_mismatch' | 'duplicate_key' | 'limit_exceeded' | 'malformed';
+  reason: 'machine_mismatch' | 'duplicate_key' | 'malformed';
   path: readonly (string | number)[];
   message: string;
 }>;
@@ -285,7 +239,6 @@ function validateRuntimeStateSemantics(value: ProviderRuntimeStateFileV1): Runti
   const childMachineRows: readonly Readonly<{ machineId: string; path: readonly (string | number)[] }>[] = [
     ...value.endpointHealth.map((record, index) => ({ machineId: record.key.machineId, path: ['endpointHealth', index, 'key', 'machineId'] })),
     ...value.catalogs.map((record, index) => ({ machineId: record.key.machineId, path: ['catalogs', index, 'key', 'machineId'] })),
-    ...value.installationChecks.map((record, index) => ({ machineId: record.key.machineId, path: ['installationChecks', index, 'key', 'machineId'] })),
     ...value.modelLoadStates.map((record, index) => ({ machineId: record.key.machineId, path: ['modelLoadStates', index, 'key', 'machineId'] })),
   ];
   const mismatched = childMachineRows.find((row) => row.machineId !== value.machineId);
@@ -302,17 +255,11 @@ function validateRuntimeStateSemantics(value: ProviderRuntimeStateFileV1): Runti
   if (duplicateCatalog !== null) {
     return { reason: 'duplicate_key', path: ['catalogs', duplicateCatalog], message: 'Duplicate semantic runtime-state key' };
   }
-  const duplicateInstallation = firstDuplicateKey(value.installationChecks, (record) =>
-    serializeInstallationKey(record.key));
-  if (duplicateInstallation !== null) {
-    return { reason: 'duplicate_key', path: ['installationChecks', duplicateInstallation], message: 'Duplicate semantic runtime-state key' };
-  }
   const duplicateLoad = firstDuplicateKey(value.modelLoadStates, (record) => serializeModelLoadKey(record.key));
   if (duplicateLoad !== null) {
     return { reason: 'duplicate_key', path: ['modelLoadStates', duplicateLoad], message: 'Duplicate semantic runtime-state key' };
   }
 
-  let catalogModelIdentities = 0;
   const catalogGenerations = new Map<string, ReadonlySet<string>>();
   for (let index = 0; index < value.catalogs.length; index += 1) {
     const record = value.catalogs[index]!;
@@ -329,18 +276,10 @@ function validateRuntimeStateSemantics(value: ProviderRuntimeStateFileV1): Runti
         message: 'Catalog observation generation is ambiguous for this connection',
       };
     }
-    const catalogIdentityIds = new Set([
-      ...record.state.snapshot.models.map((model) => model.id),
-      ...record.state.staleProbeModels.map((model) => model.id),
-    ]);
-    catalogModelIdentities += catalogIdentityIds.size;
     catalogGenerations.set(
       generationKey,
       new Set(record.state.snapshot.models.map((model) => model.id)),
     );
-  }
-  if (catalogModelIdentities > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxCatalogModelIdentities) {
-    return { reason: 'limit_exceeded', path: ['catalogs'], message: 'Cached catalog identities exceed the runtime-state limit' };
   }
 
   for (let index = 0; index < value.modelLoadStates.length; index += 1) {
@@ -364,15 +303,11 @@ function validateRuntimeStateSemantics(value: ProviderRuntimeStateFileV1): Runti
 export const ProviderRuntimeStateFileV1Schema = lazyZodSchema(() => ProviderRuntimeStateFileShapeV1Schema.check(z.superRefine((value, ctx) => {
   const issue = validateRuntimeStateSemantics(value);
   if (issue) ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message });
-  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes) {
-    ctx.addIssue({ code: 'custom', message: 'Provider runtime-state file exceeds the encoded byte limit' });
-  }
 })));
 
 export type ProviderRuntimeStateParseFailureReasonV1 =
   | RuntimeStateSemanticIssue['reason']
-  | 'future_version'
-  | 'encoded_size_exceeded';
+  | 'future_version';
 
 export type ProviderRuntimeStateParseResultV1 =
   | Readonly<{ ok: true; state: ProviderRuntimeStateFileV1 }>
@@ -391,7 +326,6 @@ export function createEmptyProviderRuntimeStateFileV1(machineId: string): Provid
     machineId: ProviderMachineIdSchema.parse(machineId),
     endpointHealth: [],
     catalogs: [],
-    installationChecks: [],
     modelLoadStates: [],
   };
 }
@@ -409,17 +343,9 @@ function invalidRuntimeState(
 
 export function parseProviderRuntimeStateFileV1(
   input: unknown,
-  options: Readonly<{ expectedMachineId: string; encodedBytes?: number }>,
+  options: Readonly<{ expectedMachineId: string }>,
 ): ProviderRuntimeStateParseResultV1 {
   const expectedMachineId = ProviderMachineIdSchema.parse(options.expectedMachineId);
-  if (options.encodedBytes !== undefined) {
-    if (!Number.isSafeInteger(options.encodedBytes) || options.encodedBytes < 0) {
-      return invalidRuntimeState(expectedMachineId, 'malformed');
-    }
-    if (options.encodedBytes > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes) {
-      return invalidRuntimeState(expectedMachineId, 'encoded_size_exceeded');
-    }
-  }
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return invalidRuntimeState(expectedMachineId, 'malformed');
   }
@@ -431,24 +357,16 @@ export function parseProviderRuntimeStateFileV1(
   if (raw.machineId !== expectedMachineId) return invalidRuntimeState(expectedMachineId, 'machine_mismatch');
 
   const rawArrays = [
-    ['endpointHealth', raw.endpointHealth, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEndpointRecords],
-    ['catalogs', raw.catalogs, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxCatalogRecords],
-    ['installationChecks', raw.installationChecks, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxInstallationRecords],
-    ['modelLoadStates', raw.modelLoadStates, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxModelLoadRecords],
+    raw.endpointHealth, raw.catalogs, raw.modelLoadStates,
   ] as const;
-  for (const [, candidate, limit] of rawArrays) {
+  for (const candidate of rawArrays) {
     if (!Array.isArray(candidate)) return invalidRuntimeState(expectedMachineId, 'malformed');
-    if (candidate.length > limit) return invalidRuntimeState(expectedMachineId, 'limit_exceeded');
   }
 
   const parsed = createStoredReadSchema(ProviderRuntimeStateFileShapeV1Schema).safeParse(input);
   if (!parsed.success) return invalidRuntimeState(expectedMachineId, 'malformed');
   const semanticIssue = validateRuntimeStateSemantics(parsed.data);
   if (semanticIssue) return invalidRuntimeState(expectedMachineId, semanticIssue.reason);
-  const encodedBytes = new TextEncoder().encode(JSON.stringify(parsed.data)).byteLength;
-  if (encodedBytes > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes) {
-    return invalidRuntimeState(expectedMachineId, 'encoded_size_exceeded');
-  }
   return { ok: true, state: parsed.data };
 }
 
@@ -471,7 +389,7 @@ export function deriveProviderConnectionSummaryHealthV1(
   if (states.length === 0 || states.every((state) => state.status === 'not_checked')) return 'not_checked';
   if (states.every((state) => state.status === 'available')) return 'available';
   if (states.some((state) => state.status === 'available')) return 'partial';
-  if (states.some((state) => ['rate_limited', 'unauthorized', 'invalid_response'].includes(state.status))) return 'needs_attention';
+  if (states.some((state) => ['temporarily_unavailable', 'rate_limited', 'unauthorized', 'invalid_response'].includes(state.status))) return 'needs_attention';
   if (states.some((state) => state.status === 'not_checked')) return 'not_checked';
   return 'unreachable';
 }

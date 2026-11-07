@@ -34,6 +34,7 @@ import { isWorkflowActionLiteralFieldV1 } from './stepActionsV1.js';
 import { AgentLaunchEnvironmentV1Schema, AgentSessionProviderResumeV1Schema } from '../runtime/agentSessionV1.js';
 import { readCapabilitySelectionCarrierV1 } from '../reach/sessionCapabilitySelectionV1.js';
 import { findInvalidWorkflowResultFieldName } from './workflowResultFieldsV1.js';
+import { isWorkflowRunSummaryActionIdV1 } from '../actions/actionIds.js';
 
 export {
   WorkflowStepComposerDocumentSchema,
@@ -160,6 +161,7 @@ const WORKFLOW_SESSION_AUTHORING_SELECTION_SHAPE = {
   // the underlying selection schema without that default.
   modelSelection: zMini.optional(zMini.nullable(SessionModelSelectionV1Schema)),
   profileId: zMini.optional(SessionAuthoringSelectionFieldsV1.profileId),
+  approvalProfileId: zMini.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   permissionMode: zMini.optional(SessionAuthoringSelectionFieldsV1.permissionMode),
   acpSessionModeId: zMini.optional(SessionAuthoringSelectionFieldsV1.acpSessionModeId),
   sessionConfigOptionOverrides: zMini.optional(SessionAuthoringSelectionFieldsV1.sessionConfigOptionOverrides),
@@ -304,16 +306,20 @@ export const WorkflowActionFieldBindingV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type WorkflowActionFieldBindingV1 = z.infer<typeof WorkflowActionFieldBindingV1Schema>;
 const workflowLeafFields = { id: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema, execution: zMini.optional(WorkflowStepSelectionV1Schema), onlyWhen: zMini.optional(WorkflowConditionSchema), runWhen: zMini.optional(WorkflowRunWhenV1Schema) };
-function refineWorkflowActionBindings(value: Readonly<{ actionId: string; input: Record<string, { kind: string }> }>, context: z.core.$RefinementCtx) {
+function refineWorkflowActionBindings(value: Readonly<{ actionId: string; input: Record<string, WorkflowActionFieldBindingV1> }>, context: z.core.$RefinementCtx) {
   for (const [field, binding] of Object.entries(value.input)) {
-    if (isWorkflowActionLiteralFieldV1(value.actionId, field) && binding.kind !== 'literal') {
-      context.addIssue({ code: 'custom', path: ['input', field], message: 'Command text must be literal; bind dynamic values through env' });
+    if (!isWorkflowActionLiteralFieldV1(value.actionId, field)) continue;
+    const literal = binding.kind === 'literal'
+      || field === 'argv' && binding.kind === 'list' && binding.items.every(item => item.kind === 'literal');
+    if (!literal) {
+      context.addIssue({ code: 'custom', path: ['input', field], message: 'Command text and argv elements must be literal' });
     }
   }
 }
 export const WorkflowActionLeafV1Schema = lazyZodSchema(() => z.strictObject({
   ...workflowLeafFields, kind: z.literal('action'),
-  actionId: z.string().check(z.minLength(1), z.refine((id) => !id.startsWith('workflow.run.'), 'Workflow composition uses a Workflow leaf')),
+  actionId: z.string().check(z.minLength(1), z.refine((id) => !id.startsWith('workflow.run.')
+    || isWorkflowRunSummaryActionIdV1(id), 'Workflow composition uses a Workflow leaf')),
   input: z._default(z.record(z.string().check(z.minLength(1)), WorkflowActionFieldBindingV1Schema), {}),
   timeoutMs: z.optional(z.number().check(z.int(), z.positive(), z.int())),
   pauseForReview: z.optional(z.boolean()),

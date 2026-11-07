@@ -1,7 +1,3 @@
-import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
-import { WorkspaceRefV1WriteSchema } from '../../workspaces/workspaceRefV1.js';
-import { ProjectSourceV1Schema } from '../../projects/sources/projectSourceV1.js';
-import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUiPageNavigationProjectionV1Schema } from './pageNavigation.js';
 import { z } from 'zod/mini';
@@ -18,6 +14,11 @@ import {
   type PluginUiDestinationContainerV1,
 } from '../contributions/ui/surfaceRegistry.js';
 import { PluginUiTargetedContributionsV1Schema } from './targetedContributions.js';
+import { PluginUiInstanceKeyV1Schema, PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema, type PluginUiInstanceKeyV1 } from './semanticCommands.js';
+import { ProjectSourceV1Schema } from '../../projects/sources/projectSourceV1.js';
+import { WorkspaceRefV1WriteSchema } from '../../workspaces/workspaceRefV1.js';
+import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
+import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 import {
   PluginUiSurfacePlacementV1Schema,
   type PluginUiSurfacePlacementV1,
@@ -44,6 +45,7 @@ export const PluginUiMountContextV1Schema = lazyZodSchema(() => z.discriminatedU
     kind: z.literal('destination'),
     destination: asProtocolZod(PluginContributionIdentityV1Schema),
     container: PluginUiDestinationContainerV1Schema,
+    instanceKey: z.optional(PluginUiInstanceKeyV1Schema),
   }),
   z.strictObject({
     kind: z.literal('embedded'),
@@ -56,6 +58,7 @@ export type PluginUiMountContextV1 =
     kind: 'destination';
     destination: PluginContributionIdentityV1;
     container: PluginUiDestinationContainerV1;
+    instanceKey?: PluginUiInstanceKeyV1;
   }>
   | Readonly<{
     kind: 'embedded';
@@ -85,6 +88,9 @@ export const PluginUiHostApiSurfaceTargetV1Schema = lazyZodSchema(() => z.discri
     kind: z.literal('session'),
     sessionId: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     agentId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+    repository: z.optional(ScmHostingRepositoryIdentityV1Schema),
+    branch: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+    headOid: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   z.strictObject({
     kind: z.literal('project'),
@@ -104,9 +110,9 @@ export const PluginUiHostApiSurfaceTargetV1Schema = lazyZodSchema(() => z.discri
   }),
   z.strictObject({ kind: z.literal('services') }),
 ]));
-export type PluginUiHostApiSurfaceTargetV1 = z.infer<
+export type PluginUiHostApiSurfaceTargetV1 = Readonly<z.infer<
   typeof PluginUiHostApiSurfaceTargetV1Schema
->;
+>>;
 
 const PluginUiHostApiSurfaceMetricV1Schema = lazyZodSchema(() => z.number().check(z.nonnegative()));
 
@@ -176,6 +182,10 @@ export const PluginUiHostApiSurfaceThemeV1Schema = lazyZodSchema(() => z.strictO
     onAccent: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     /** The one accent data marks are drawn in (series, meters); the ramp of its tones tells series apart. Older snapshots omit it. */
     dataAccent: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+    /** The host's blue, for a colour a person picks for a mark (a label's dot). Older snapshots omit it. */
+    blue: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+    /** The host's purple, for the same picked marks. Older snapshots omit it. */
+    purple: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
     success: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     warning: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     /** "Needs you": the host's one attention ink (its Brand amber), distinct from a caution warning. */
@@ -251,6 +261,16 @@ export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.stric
   }))),
   /** Host page chrome for app pages; absent on other surface placements. */
   page: z.optional(z.strictObject({ columnVisible: z.boolean(), navigation: z.optional(PluginUiPageNavigationProjectionV1Schema) })),
+  /**
+   * A companion opened from a page's own navigation item: that page's launch input and current location, as the
+   * page has them now, so the companion shows the page's entity. A read of the opener, never navigation or authority;
+   * absent on every other mount.
+   */
+  openedFrom: z.optional(z.strictObject({
+    pageKind: asProtocolZod(PluginContributionIdentityV1Schema),
+    launchInput: z.optional(PluginUiLaunchInputV1Schema),
+    subPath: z.nullable(PluginUiSubPathV1Schema),
+  })),
   /** The mount's existing approval presenter fact, not an approval or effect authority. */
   pendingApproval: z.optional(z.nullable(z.strictObject({
     artifactId: PluginUiHostApiSurfaceNonBlankStringV1Schema,

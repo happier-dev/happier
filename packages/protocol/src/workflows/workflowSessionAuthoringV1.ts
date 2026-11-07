@@ -29,6 +29,7 @@ export function buildWorkflowSelectionFromServerStartSpawnDraftV1(
     agentTarget: spawn.agentTarget,
     ...(spawn.modelSelection === undefined ? {} : { modelSelection: spawn.modelSelection }),
     ...(spawn.profileId === undefined ? {} : { profileId: spawn.profileId }),
+    ...(spawn.approvalProfileId === undefined ? {} : { approvalProfileId: spawn.approvalProfileId }),
     ...(spawn.permissionMode === undefined ? {} : { permissionMode: spawn.permissionMode }),
     ...(spawn.agentModeId === undefined ? {} : { acpSessionModeId: spawn.agentModeId }),
     ...(overrides === null ? {} : { sessionConfigOptionOverrides: overrides }),

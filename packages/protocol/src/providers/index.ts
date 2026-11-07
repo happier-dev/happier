@@ -1,7 +1,6 @@
 export * from './capabilities/v1.js';
 export * from './codex/oauth.js';
 export * from './catalog/descriptorV1.js';
-export * from './catalog/limits.js';
 export * from './catalog/merge.js';
 export * from './compatibility/resolve.js';
 export * from './compatibility/v1.js';
@@ -42,7 +41,6 @@ export * from './sessions/adapterBindingKeyV1.js';
 export * from './sessions/lifecycle.js';
 export * from './settings/classifySubtreeV1.js';
 export * from './settings/externalReferencesV1.js';
-export * from './settings/limits.js';
 export * from './settings/operationsV1.js';
 export * from './settings/v1.js';
 export * from './brokerRouteGrantV1.js';

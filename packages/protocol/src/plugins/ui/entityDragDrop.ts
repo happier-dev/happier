@@ -5,7 +5,7 @@ import { z } from 'zod/mini';
 export const ENTITY_DRAG_DELIVERY_MIME_V1 = 'application/x-happier-entity-carry';
 import { BoardItemRefV1Schema } from '../../boards/workBoardV1.js';
 
-import { VoiceTrackedSessionAddressV1Schema } from '../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { SessionCompanionPresentationItemRefV1Schema } from '../../sessions/presentation/currentSessionPresentationV1.js';
 import { QualifiedConnectedAccountGroupRefSchema } from '../../connect/qualifiedConnectedAccountProjectionsV4.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';

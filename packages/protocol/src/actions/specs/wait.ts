@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -52,7 +53,8 @@ export const WAIT_CLI_PROJECTION = {
 } satisfies ActionCliProjection;
 
 
-export const WAIT_ACTION_SPECS = Object.freeze([
+function createWaitActionSpecs() {
+  return Object.freeze([
   {
     id: 'wait', approval: {result: 'required'},
     title: 'Wait for work',
@@ -73,4 +75,7 @@ export const WAIT_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const WAIT_ACTION_SPECS: ReturnType<typeof createWaitActionSpecs> = lazyActionSpecArray(createWaitActionSpecs);
 

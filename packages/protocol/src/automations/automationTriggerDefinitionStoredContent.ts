@@ -60,17 +60,11 @@ export type AutomationTriggerDefinitionBindingV1 = z.infer<
   typeof AutomationTriggerDefinitionBindingV1Schema
 >;
 
-/** Canonical mapping from caller-owned Event facts to a revision-bound private definition. */
-export function sealAutomationPluginEventTriggerInputV1(params: Readonly<{
-  binding: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>;
-  trigger: AutomationPluginEventDefinitionTrigger & Readonly<{ enabled: boolean }>;
-  seal: (params: Readonly<{
-    binding: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>;
-    definition: AutomationEventTriggerDefinitionStoredPayloadV1;
-  }>) => AutomationEncryptedTriggerDefinitionEnvelopeV1;
-}>): AutomationPluginEventEncryptedDefinitionTrigger & Readonly<{ enabled: boolean }> {
-  const definition = params.trigger;
-  const storedDefinition: AutomationEventTriggerDefinitionStoredPayloadV1 = {
+/** The private payload compared before sealing and persisted by the Event writer. */
+export function createAutomationPluginEventTriggerDefinitionV1(
+  definition: AutomationPluginEventDefinitionTrigger,
+): AutomationEventTriggerDefinitionStoredPayloadV1 {
+  return {
     v: 1,
     sourceInstanceId: definition.sourceInstanceId,
     ...(definition.observationTransport.kind === 'durablePush' ? {
@@ -81,6 +75,19 @@ export function sealAutomationPluginEventTriggerInputV1(params: Readonly<{
     filter: definition.filter,
     maximumObservationAgeMs: definition.maximumObservationAgeMs,
   };
+}
+
+/** Canonical mapping from caller-owned Event facts to a revision-bound private definition. */
+export function sealAutomationPluginEventTriggerInputV1(params: Readonly<{
+  binding: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>;
+  trigger: AutomationPluginEventDefinitionTrigger & Readonly<{ enabled: boolean }>;
+  seal: (params: Readonly<{
+    binding: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>;
+    definition: AutomationEventTriggerDefinitionStoredPayloadV1;
+  }>) => AutomationEncryptedTriggerDefinitionEnvelopeV1;
+}>): AutomationPluginEventEncryptedDefinitionTrigger & Readonly<{ enabled: boolean }> {
+  const definition = params.trigger;
+  const storedDefinition = createAutomationPluginEventTriggerDefinitionV1(definition);
   return {
     kind: 'pluginEvent',
     enabled: definition.enabled,

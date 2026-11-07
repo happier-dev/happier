@@ -46,6 +46,7 @@ import {
 } from './qualifiedConnectedAccountProjectionsV4.js';
 
 export {
+  QualifiedConnectedAccountAuthenticationProvenanceV4Schema,
   QualifiedConnectedServiceUsageSourceV4Schema,
   QualifiedProviderAccountUsageRecordResponseV4Schema,
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
@@ -104,10 +105,7 @@ export const QUALIFIED_CONNECTED_ACCOUNT_V4_ROUTES = Object.freeze([
   ['GET', '/v4/connect/qualified/provider-account-usage/sources/resolve'],
   ['POST', '/v4/connect/qualified/provider-account-usage'],
   ['GET', '/v4/connect/qualified/provider-account-usage/history'],
-  ['HEAD', '/v4/connect/qualified/provider-account-usage/history'],
   ['PUT', '/v4/connect/qualified/provider-account-usage/history'],
-  // Automatic HEAD aliases of GET routes are not census entries.
-  ['GET', '/v4/connect/qualified/provider-account-usage/history/document'],
   ['GET', '/v4/connect/qualified/provider-account-usage/record'],
   ['DELETE', '/v4/connect/qualified/provider-account-usage/record'],
   ['POST', '/v4/connect/qualified/provider-account-usage/record/refresh'],
@@ -183,6 +181,7 @@ export const QualifiedConnectedAccountCredentialErrorV4Schema = lazyZodSchema(()
   z.strictObject({
     error: z.literal('connect_credential_saved_secret_held'),
   }),
+  z.strictObject({ error: z.literal('connect_credential_saved_secret_reference_invalid') }),
   QualifiedConnectedAccountCredentialMutationSupersededV4Schema,
 ]));
 

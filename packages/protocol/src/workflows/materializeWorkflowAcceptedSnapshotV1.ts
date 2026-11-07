@@ -60,8 +60,8 @@ export type WorkflowMaterializationEffectsV1 = Readonly<{
   admitSessionAuthority?: (target: WorkflowResolvedSessionTargetV1) => Promise<boolean>;
   readWorkflowDefinition?: (ref: WorkflowDefinitionRefV1) => Promise<Readonly<{ definition: unknown; sourceKey: string; version?: number | string }> | null>;
   readLaunchProfile?: (profileId: string) => Promise<AiLaunchProfile | null>;
-  /** Fresh source facts for an unfrozen Role actually consumed by this admission. */
-  readRoleSelection?: (roleId: string) => Promise<NonNullable<MaterializeWorkflowAcceptedSnapshotV1Input['roleSelection']>>;
+  /** Fresh ambient or named Role facts actually consumed by this admission. */
+  readRoleSelection?: (roleId?: string) => Promise<NonNullable<MaterializeWorkflowAcceptedSnapshotV1Input['roleSelection']>>;
   resolveTargetAvailability: (leaf: Readonly<{
     blockId: string; selection: WorkflowResolvedStepSelectionV1;
     executionTarget: WorkflowRunExecutionTargetV1; actionId?: string; kind?: WorkflowMaterializedLeafV1['kind'];
@@ -69,14 +69,19 @@ export type WorkflowMaterializationEffectsV1 = Readonly<{
   }>, context: Readonly<{ sessionIds: readonly string[] }>) => Promise<boolean | WorkflowTargetUnavailableDetailsV1>;
   readActionContract?: (actionId: string) => Promise<NonNullable<WorkflowMaterializedLeafV1['actionContract']> | null>;
 }>;
+type WorkflowStartAdmissionV1 = AgentStartAdmissionV1
+  | Readonly<{ ok: false; refusal: WorkflowTargetUnavailableDetailsV1 }>;
+
 export type WorkflowMaterializationAdmissionV1 =
   | Readonly<{ kind: 'user' }>
-  | Readonly<{ kind: 'agent'; admitRun?: (facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1 }>) => Promise<AgentStartAdmissionV1>; admitLeaf: (leaf: MaterializedWorkflowLeafV1,
-    facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1; role?: ResolvedRoleV1 }>) => Promise<AgentStartAdmissionV1> }>
+  | Readonly<{ kind: 'agent'; admitRun?: (facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1 }>) => Promise<WorkflowStartAdmissionV1>; admitLeaf: (leaf: MaterializedWorkflowLeafV1,
+    facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1; role?: ResolvedRoleV1 }>) => Promise<WorkflowStartAdmissionV1> }>
   | Readonly<{ kind: 'trigger'; workDepth: number; admitLeaf: (leaf: MaterializedWorkflowLeafV1,
-    facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1; role?: ResolvedRoleV1 }>) => Promise<AgentStartAdmissionV1> }>;
+    facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1; role?: ResolvedRoleV1 }>) => Promise<WorkflowStartAdmissionV1> }>;
 export type MaterializeWorkflowAcceptedSnapshotV1Input = Readonly<{
   definition: unknown; context: WorkflowMaterializationContextV1; ingressContext?: WorkflowIngressContextV1;
+  /** Host validation of this unchanged root with the same ingress context; never authored Action input. */
+  definitionValidation?: ReturnType<typeof validateWorkflowDefinition>;
   roleOverrides?: WorkflowRoleOverridesV1;
   /** Host-opened immutable source, never an authored/client-supplied snapshot. */
   replay?: Readonly<{ snapshot: WorkflowAcceptedSnapshotV1; agentOverride?: WorkflowReplayAgentOverrideV1 }>;
@@ -92,6 +97,7 @@ export type MaterializeWorkflowAcceptedSnapshotV1Result =
   | Readonly<{ ok: false; error: WorkflowMaterializationErrorV1 }>;
 export type MaterializeWorkflowDefinitionAuthorityV1Result =
   | Readonly<{ ok: true; agentStartLeaves: readonly MaterializedWorkflowLeafV1[];
+    permissionCeiling: AgentPermissionIntentV1;
     materializedLeaves: readonly WorkflowMaterializedLeafV1[] }>
   | Readonly<{ ok: false; error: WorkflowMaterializationErrorV1 }>;
 
@@ -399,7 +405,6 @@ function hasUnresolvedValue(value: unknown): boolean {
   }
   return false;
 }
-
 export { hasUnresolvedValue as hasUnresolvedWorkflowValueV1 };
 
 /** Host-only Run admission; concrete Action children still require ordinary admission at the frozen Run depth. */
@@ -459,7 +464,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     if (override && !override.success) return invalidInput();
     if (replay.agentOverride && !replay.snapshot.materializedLeaves.some(leaf => leaf.kind === 'step'
       && leaf.sourceKey === replay.agentOverride!.sourceKey && leaf.blockId === replay.agentOverride!.blockId)) return invalidInput();
-    input = { ...input, definition: replay.snapshot.authoredDefinition, roleOverrides: replay.snapshot.roleOverrides,
+    input = { ...input, definition: replay.snapshot.authoredDefinition, definitionValidation: undefined, roleOverrides: replay.snapshot.roleOverrides,
       context: { ...input.context, machineId: replay.snapshot.machineId,
         workspaceTarget: replay.snapshot.workspaceTarget, executionTarget: replay.snapshot.executionTarget,
         origin: replay.snapshot.origin } };
@@ -468,19 +473,19 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
   if (!overrides.success) return invalidInput(undefined, overrides.error.issues.map((issue) => ({
     code: 'invalid_input', path: `/roleOverrides/${issue.path.map(String).join('/')}`, message: issue.message, severity: 'error',
   })));
-  const normalized = validateWorkflowDefinition(input.definition, { context: input.ingressContext });
+  const normalized = input.definitionValidation ?? validateWorkflowDefinition(input.definition, { context: input.ingressContext });
   if (!normalized.valid || !normalized.normalizedDefinition) return invalidDefinition(normalized.issues);
   const root = normalized.normalizedDefinition;
   // One finite admission observes each consumed source once; a later operation
   // opens it afresh. Unchanged frozen replay never opens the mutable catalog.
-  const roleSelections = new Map<string, Promise<NonNullable<MaterializeWorkflowAcceptedSnapshotV1Input['roleSelection']>>>();
-  const readRoleSelection = async (roleId: string) => {
+  const roleSelections = new Map<string | undefined, Promise<NonNullable<MaterializeWorkflowAcceptedSnapshotV1Input['roleSelection']>>>();
+  const readRoleSelection = async (roleId?: string): Promise<NonNullable<MaterializeWorkflowAcceptedSnapshotV1Input['roleSelection']>> => {
     let selected = roleSelections.get(roleId);
     if (!selected) {
       selected = input.effects.readRoleSelection?.(roleId) ?? Promise.resolve({});
       roleSelections.set(roleId, selected);
     }
-    return { ...await selected, ...input.roleSelection };
+    return { ...await selected, ...(roleId === undefined ? {} : await readRoleSelection()), ...input.roleSelection };
   };
   if (purpose === 'run') {
     try {
@@ -632,6 +637,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       let boundSessions: WorkflowMaterializedLeafV1['sessionBindings'];
       let boundParticipants: WorkflowMaterializedLeafV1['participantBindings'];
       try {
+        const roleSelection = leaf.kind === 'step' && (!frozen || agentOverride)
+          ? await readRoleSelection() : input.roleSelection;
         const conversation = leaf.execution?.conversation ?? definition.defaults.conversation;
         const engine = leaf.execution?.engine ?? definition.defaults.engine;
         const producer = conversation?.kind === 'from_step' ? materializedLeaves.find(candidate => candidate.sourceKey === sourceKey
@@ -646,7 +653,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
             || frozen && (!frozen.participantBindings
               || !sameStrictJsonValue(frozen.participantBindings.reference, participantBinding))
             || !frozen && (leaf.execution?.permissionMode !== undefined && leaf.execution.permissionMode !== 'read-only'
-              || Object.keys(leaf.execution ?? {}).some(key => key !== 'participant' && key !== 'permissionMode'
+              || Object.keys(leaf.execution ?? {}).some(key => key !== 'participant' && key !== 'permissionMode' && key !== 'approvalProfileId'
               && !(key === 'workspace' && leaf.execution?.workspace?.kind === 'inherit')
               && !(key === 'executionTarget' && leaf.execution?.executionTarget?.kind === 'session')))) return invalidInput(leaf.id);
           boundParticipants = { reference: participantBinding, selections: [] };
@@ -748,6 +755,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                 if (accepted && !sameStrictJsonValue(accepted.participant, participant)) return invalidInput(leaf.id);
                 boundParticipants.selections.push({ value, participant,
                   selection: { agentTarget: effectiveLaunch.data.agentTarget,
+                    ...(effectiveLaunch.data.approvalProfileId === undefined ? {} : { approvalProfileId: effectiveLaunch.data.approvalProfileId }),
                     ...(effectiveLaunch.data.modelSelection ? { modelSelection: effectiveLaunch.data.modelSelection } : {}),
                     ...(effectiveLaunch.data.permissionMode ? { permissionMode: effectiveLaunch.data.permissionMode } : {}),
                     ...(effectiveLaunch.data.connectedServices ? { connectedServices: effectiveLaunch.data.connectedServices } : {}),
@@ -798,7 +806,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
             ...(conversation?.kind === 'from_step' ? { producerExecutionTarget: producer
               ? resolveWorkflowAcceptedStepSelectionV1(producer, itemValue, inputs).executionTarget
               : targetById.get(conversation.producer.blockId) } : {}),
-            roleSelection: { ...input.roleSelection, workflowRoles: definition.roles, runOverrides: overrides.data },
+            roleSelection: { ...roleSelection, workflowRoles: definition.roles, runOverrides: overrides.data },
           };
           const engine = resolveWorkflowEngineSelectionV1(selectionInput);
           return resolveWorkflowStepSelectionV1({ ...selectionInput,
@@ -826,7 +834,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         resolved = boundParticipants ? { selection: boundParticipants.selections[0]?.selection ?? {},
           executionTarget: { kind: 'session' }, role: boundParticipants.selections[0]?.role } : frozen ? { selection: agentOverride
           ? resolveWorkflowStepSelectionV1({ defaults: frozen.selection, step: { engine: agentOverride.engine },
-            roleSelection: 'role' in agentOverride.engine ? await readRoleSelection(agentOverride.engine.role) : input.roleSelection,
+            roleSelection: 'role' in agentOverride.engine ? await readRoleSelection(agentOverride.engine.role) : roleSelection,
             ...(frozen.selection.conversation?.kind === 'from_step'
               ? { producerExecutionTarget: frozen.executionTarget } : {}) }).selection
           : structuredClone(frozen.selection), executionTarget: frozen.executionTarget, role: frozen.role }
@@ -842,6 +850,16 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
             : { ok: false, error: { ...error.refusal, blockId: leaf.id } };
         }
         throw error;
+      }
+      if (!frozen) {
+        const approvalProfileId = leaf.execution?.approvalProfileId !== undefined ? leaf.execution.approvalProfileId
+          : definition.defaults.approvalProfileId !== undefined ? definition.defaults.approvalProfileId
+          : input.context.origin?.actionPolicy?.approvalProfileId;
+        if (approvalProfileId !== undefined) {
+          resolved = { ...resolved, selection: { ...resolved.selection, approvalProfileId } };
+          for (const choice of boundEngines?.selections ?? []) choice.selection = { ...choice.selection, approvalProfileId };
+          for (const choice of boundParticipants?.selections ?? []) choice.selection = { ...choice.selection, approvalProfileId };
+        }
       }
       const executionTarget = resolved.executionTarget ?? input.context.executionTarget;
       let selection = resolved.selection;
@@ -976,7 +994,12 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       const owner = materializedLeaves.find(sidecar => sidecar.sourceKey === leaf.sourceKey && sidecar.blockId === leaf.blockId);
       const role = (owner ? listWorkflowAcceptedLeafSelectionsV1(owner) : []).find(selected => selected.role?.roleId === leaf.roleId)?.role;
       const admitted = await input.admission.admitLeaf(leaf, { permissionCeiling, ...(role ? { role } : {}) });
-      if (!admitted.ok) return { ok: false, error: leaf.kind === 'action' && hasUnresolvedValue(leaf.facts)
+      // Known forbidden selections reject the definition too, including when
+      // another leaf defers its engine choice. Keep the policy's cause intact.
+      if (!admitted.ok) return { ok: false, error: admitted.refusal.code !== 'target_unavailable'
+        && (input.admission.kind === 'agent'
+          && (admitted.refusal.code === 'policy_denied_field' || admitted.refusal.code === 'permission_exceeds_ceiling')
+          || leaf.kind === 'action' && hasUnresolvedValue(leaf.facts))
         ? { code: 'definition_exceeds_authority', blockId: leaf.blockId, cause: admitted.refusal }
         : { ...admitted.refusal, blockId: admitted.refusal.blockId ?? leaf.blockId } };
       if (input.admission.kind === 'agent') workDepth = admitted.stamped.workDepth;
@@ -1005,8 +1028,12 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     }, { sessionIds: [] });
     if (availability !== true) return unavailable(leaf.blockId, availability === false ? undefined : availability);
   }
-  if (purpose === 'definition') return { ok: true, agentStartLeaves, materializedLeaves };
-  const { origin, resultDelivery, actionCaller, ...sharedContext } = input.context;
+  if (purpose === 'definition') return { ok: true, agentStartLeaves, materializedLeaves, permissionCeiling };
+  // A new Run accepts the program again; a prior parent's person approval is
+  // not context metadata. Only freshly approved parent preparation can add it.
+  const { origin, resultDelivery, actionCaller, approvedOperation: _priorApproval, ...sharedContext } = {
+    ...input.context, approvedOperation: undefined,
+  };
   const snapshot = WorkflowAcceptedSnapshotV1Schema.safeParse({
     ...sharedContext, ...(origin ? { origin } : input.context.source.kind === 'automation' ? {} : { origin: { kind: 'direct' } }),
     ...(resultDelivery ? { resultDelivery } : {}),

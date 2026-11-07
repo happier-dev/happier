@@ -187,6 +187,9 @@ export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[]
 }, {
   id: 'builtin:compose-catalog', title: 'Service templates', format: 'coolify-templates', kinds: ['app'],
   url: 'https://github.com/coollabsio/coolify', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
+}, {
+  id: 'builtin:dokploy-templates', title: 'Dokploy templates', format: 'dokploy-templates', kinds: ['app'],
+  url: 'https://templates.dokploy.com/meta.json', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }];
 
 /** Host-authored descriptor metadata and probes for existing catalog Domain keys. */

@@ -26,7 +26,7 @@ export function prepareArtifactWorkspaceFileV1(params: Readonly<{
   const { file, input, caller } = params;
   const declaredMime = input.mime?.split(';', 1)[0].trim().toLowerCase();
   if (file.bundle && ((input.kind !== undefined && input.kind !== 'html')
-    || (declaredMime !== undefined && declaredMime !== ARTIFACT_HTML_BUNDLE_MIME_V1))) {
+    || (declaredMime !== undefined && declaredMime !== 'text/html' && declaredMime !== ARTIFACT_HTML_BUNDLE_MIME_V1))) {
     throw Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
   }
   const acquiredBundle = file.bundle ? ArtifactHtmlBundleV1Schema.parse(file.bundle) : undefined;

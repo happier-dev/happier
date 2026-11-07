@@ -1,8 +1,9 @@
+import { ExternalActionAuthorizationRefusalPhaseSchema } from './externalActionAuthorizationRefusalPhase.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrant.js';
-import { UNEXPECTED_ACTION_FAILURE_CODES_V1 } from './actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, UNEXPECTED_ACTION_FAILURE_CODES_V1, type ActionExecuteFailure, type ActionFailureCauseV1 } from './actionExecutionResult.js';
 import { EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 } from './externalActionLimits.js';
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
 import { MachineAvailabilityDiagnosticV1Schema, type MachineAvailabilityDiagnosticV1 } from '../machines/machineAccessV1.js';
@@ -78,6 +79,7 @@ const ExternalActionInvalidRequestHttpErrorSchema = lazyZodSchema(() => z.strict
   error: z.literal('invalid_request'),
   code: ExternalActionPreOpenFailureCodeSchema,
   requestId: z.optional(ExternalActionRequestIdV1Schema),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
 }));
 const ExternalActionTargetRefusalHttpErrorSchema = lazyZodSchema(() => z.strictObject({
   ...ExternalActionInvalidRequestHttpErrorSchema.shape,
@@ -95,17 +97,32 @@ const ExternalActionTargetUnavailableHttpErrorSchema = lazyZodSchema(() => z.str
   diagnostic: z.optional(MachineAvailabilityDiagnosticV1Schema),
 }));
 
+export { ExternalActionAuthorizationRefusalPhaseSchema, type ExternalActionAuthorizationRefusalPhase } from './externalActionAuthorizationRefusalPhase.js';
+
 const ExternalActionAuthenticationHttpErrorSchema = lazyZodSchema(() => z.strictObject({
   error: z.enum(EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES),
+  authorizationRefusal: z.optional(ExternalActionAuthorizationRefusalPhaseSchema),
+  details: ActionExecuteFailureSchema.shape.details,
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
 }));
-export const ExternalActionCredentialScopeDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
-  admissionStage: z.literal('execution_authorization'),
-  grantReason: ApiTokenGrantDenialReasonV1Schema,
-}));
+export const ExternalActionCredentialScopeDiagnosticV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    admissionStage: z.literal('execution_authorization'),
+    grantReason: ApiTokenGrantDenialReasonV1Schema,
+  }),
+  z.strictObject({
+    admissionStage: z.literal('daemon_rpc'),
+    errorCode: z.literal(RPC_ERROR_CODES.FORBIDDEN),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
+  }),
+]));
 export type ExternalActionCredentialScopeDiagnosticV1 = z.infer<typeof ExternalActionCredentialScopeDiagnosticV1Schema>;
 const ExternalActionCredentialScopeHttpErrorSchema = lazyZodSchema(() => z.strictObject({
   error: z.literal('credential_scope_denied'),
   diagnostic: z.optional(ExternalActionCredentialScopeDiagnosticV1Schema),
+  authorizationRefusal: z.optional(ExternalActionAuthorizationRefusalPhaseSchema),
+  details: ActionExecuteFailureSchema.shape.details,
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
 }));
 
 /** Transport evidence only: an RPC refusal is not an authenticated Action settlement. */
@@ -119,7 +136,7 @@ const ExternalActionSubmittedUnknownHttpErrorSchema = lazyZodSchema(() => z.stri
   requestId: z.optional(ExternalActionRequestIdV1Schema), diagnostic: ExternalActionSubmittedUnknownCauseV1Schema,
 }));
 
-export type ActionCredentialScopeDeniedFailureV1 = Readonly<{
+export type ActionCredentialScopeDeniedFailureV1 = Pick<ActionExecuteFailure, 'details' | 'failureCause'> & Readonly<{
   ok: false;
   errorCode: 'credential_scope_denied';
   error: 'credential_scope_denied';
@@ -130,8 +147,12 @@ export function readActionCredentialScopeDeniedHttpFailureV1(
   status: number,
   payload: unknown,
 ): ActionCredentialScopeDeniedFailureV1 | null {
-  if (status !== 403 || !ExternalActionCredentialScopeHttpErrorSchema.safeParse(payload).success) return null;
-  return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+  if (status !== 403) return null;
+  const parsed = ExternalActionCredentialScopeHttpErrorSchema.safeParse(payload);
+  if (!parsed.success) return null;
+  return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+    ...(parsed.data.details === undefined ? {} : { details: parsed.data.details }),
+    ...(parsed.data.failureCause === undefined ? {} : { failureCause: parsed.data.failureCause }) };
 }
 
 /** One strict redacted outer error union shared by both Action HTTP origins. */
@@ -188,6 +209,7 @@ export function projectExternalActionHttpError(
   credentialScopeDiagnostic?: ExternalActionCredentialScopeDiagnosticV1,
   phase?: ExternalActionTargetRefusalPhase,
   machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1,
+  failureCause?: ActionFailureCauseV1,
 ): Readonly<{
   statusCode: 400 | 401 | 403 | 409 | 413 | 500 | 503;
   payload: ExternalActionHttpError;
@@ -218,6 +240,7 @@ export function projectExternalActionHttpError(
     payload: ExternalActionCredentialScopeHttpErrorSchema.parse({
       error: code,
       ...(credentialScopeDiagnostic === undefined ? {} : { diagnostic: credentialScopeDiagnostic }),
+      ...(failureCause === undefined ? {} : { failureCause }),
     }),
   };
   return isExternalActionHttpAuthenticationErrorCode(code)
@@ -228,6 +251,7 @@ export function projectExternalActionHttpError(
           error: 'invalid_request',
           code,
           ...(requestId === undefined ? {} : { requestId }),
+          ...(failureCause === undefined ? {} : { failureCause: ActionFailureCauseV1Schema.parse(failureCause) }),
         },
       };
 }

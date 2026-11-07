@@ -30,6 +30,8 @@ export const AtmospherePictureRefSchema = lazyDefinition(() => z.discriminatedUn
 export const AtmospherePictureSchema = lazyDefinition(() => z.strictObject({
     ref: AtmospherePictureRefSchema,
     layout: z.enum(['horizon', 'wallpaper']),
+    /** Deliberate selection time. Automatic idle rotation never writes this preference. */
+    selectedAtMs: z.optional(z.number().check(z.minimum(0))),
 }));
 export const AtmosphereLookOverrideSchema = lazyDefinition(() => z.strictObject({
     look: z.optional(z.enum(['original', 'fine', 'painted-fine', 'halftone', 'mosaic', 'painted', 'haze', 'engraving'])),
@@ -66,6 +68,11 @@ export function applyAtmosphereLayoutDefault<T extends AtmospherePresentation & 
         left.length === right.length && left.every(place => right.includes(place));
     return samePlaces(current.showOn, previousDefault) && samePlaces(next.showOn, current.showOn)
         ? { ...next, showOn: defaultAtmosphereShowOn(next.picture.layout) } : next;
+}
+
+/** A person (or their Action) chose the picture; automatic display changes never call this. */
+export function recordAtmospherePictureSelection<T extends AtmospherePresentation>(value: T, nowMs = Date.now()): T {
+    return { ...value, picture: { ...value.picture, selectedAtMs: nowMs } };
 }
 
 export const DEFAULT_HOME_ATMOSPHERE: HomeAtmosphere = {

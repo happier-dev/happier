@@ -5,11 +5,11 @@ import { z } from 'zod/mini';
 
 import { SessionListFilterFieldsV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
 import { FileChangesScopeSchema } from '../scm/fileChangesScope.js';
-
+import { WorkflowListFilterPatchV1Schema, WorkflowListFilterV1StoredSchema, WorkflowListFilterViewV1Schema } from '../workflows/listing/workflowListFilterV1.js';
 import { DiscussionListFilterV1Schema, DiscussionListFilterV1StoredSchema } from '../discussions/listing/discussionListFilterV1.js';
+import { createEntityListFilterStoredReadSchemaV1, StringSetSelectionV1Schema } from '../collections/filter/entityListFilterV1.js';
 import { OpenableContentPreferenceSelectorV1Schema } from '../plugins/openableContent.js';
 import { WorkspaceFileViewerIdentityV1Schema } from '../account/settings/workspaceFileViewerPreferencesV1.js';
-import { StringSetSelectionV1Schema } from '../collections/filter/entityListFilterV1.js';
 export type ScopeActionId = typeof SCOPE_ACTION_IDS[number];
 export const ScopeActionIdSchema = lazyZodSchema(() => z.enum(SCOPE_ACTION_IDS));
 
@@ -22,14 +22,15 @@ const SessionListViewTargetSchema = lazyZodSchema(() => z.strictObject({
   storage: z.optional(z.enum(['active', 'archived'])),
 }));
 export const SessionListActionFiltersSchema = lazyZodSchema(() => z.extend(SessionListFilterFieldsV1Schema, { searchQuery: z.string() }));
+const SessionListActionFiltersStoredSchema = lazyZodSchema(() => createEntityListFilterStoredReadSchemaV1(SessionListActionFiltersSchema));
 const MutationResultSchema = lazyZodSchema(() => z.strictObject({ ok: z.literal(true) }));
-export const WorkflowLibraryViewSchema = lazyZodSchema(() => z.enum(['all', 'triggered', 'running']));
+const WorkflowLibraryViewTargetSchema = z.strictObject({ clientId: z.optional(z.string().check(z.minLength(1))) });
+export const WorkflowLibraryViewSchema = WorkflowListFilterViewV1Schema;
 export type WorkflowLibraryView = z.infer<typeof WorkflowLibraryViewSchema>;
 export const ShellColumnSchema = lazyZodSchema(() => z.enum(['navigation', 'main', 'side']));
 export type ShellColumn = z.infer<typeof ShellColumnSchema>;
 export const FileViewModeSchema = lazyZodSchema(() => z.enum(['view', 'changes', 'preview', 'source', 'edit']));
 export type FileViewMode = z.infer<typeof FileViewModeSchema>;
-
 const DiscussionListViewTargetSchema = lazyZodSchema(() => z.strictObject({
   serverId: z.string().check(z.trim(), z.minLength(1)), accountId: z.string().check(z.trim(), z.minLength(1)),
 }));
@@ -46,12 +47,11 @@ export const ScopeActionInputSchemas = {
   'session.list.view.get': SessionListViewTargetSchema,
   'session.list.view.set': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionListViewTargetSchema, {
     filters: lazyZodSchema(() => z.optional(z.partial(SessionListActionFiltersSchema))),
-    includeInactive: z.optional(z.boolean()),
   }))),
   'session.list.view.reset': SessionListViewTargetSchema,
-  'workflow.library.view.get': z.strictObject({}),
-  'workflow.library.view.set': z.strictObject({ view: z.optional(WorkflowLibraryViewSchema), searchQuery: z.optional(z.string()) }),
-  'workflow.library.view.reset': z.strictObject({}),
+  'workflow.library.view.get': WorkflowLibraryViewTargetSchema,
+  'workflow.library.view.set': lazyZodSchema(() => z.extend(WorkflowLibraryViewTargetSchema, { filters: z.optional(WorkflowListFilterPatchV1Schema), searchQuery: z.optional(z.string()) })),
+  'workflow.library.view.reset': WorkflowLibraryViewTargetSchema,
   'discussion.list.view.get': DiscussionListViewTargetSchema,
   'discussion.list.view.set': lazyZodSchema(() => z.strictObject({
     ...DiscussionListViewTargetSchema.shape,
@@ -89,7 +89,8 @@ export const ScopeActionOutputSchemas = {
   'session.list.view.get': z.strictObject({
     view: SessionListActionViewSchema,
     storage: z.enum(['active', 'archived']),
-    filters: SessionListActionFiltersSchema,
+    filters: SessionListActionFiltersStoredSchema,
+    selectedSpaceId: z.string(), coverage: z.enum(['complete', 'partial', 'unavailable']),
     includeInactive: z.boolean(),
     queryEnabled: z.boolean(),
     followingAvailable: z.boolean(),
@@ -99,8 +100,12 @@ export const ScopeActionOutputSchemas = {
   'session.list.view.set': MutationResultSchema,
   'session.list.view.reset': MutationResultSchema,
   'workflow.library.view.get': z.strictObject({
-    view: WorkflowLibraryViewSchema, searchQuery: z.string(),
+    answeringClientId: z.optional(z.string().check(z.minLength(1))),
+    answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+    view: WorkflowLibraryViewSchema, filters: WorkflowListFilterV1StoredSchema, searchQuery: z.string(),
     offeredViews: z.array(WorkflowLibraryViewSchema), visibleKeys: z.array(z.string()),
+    coverage: z.enum(['complete', 'partial', 'unavailable']),
+    selectedSpaceId: z.string(),
   }),
   'workflow.library.view.set': MutationResultSchema,
   'workflow.library.view.reset': MutationResultSchema,

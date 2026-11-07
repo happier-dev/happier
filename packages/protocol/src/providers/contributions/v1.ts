@@ -49,7 +49,6 @@ import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import type { ProviderConnectionV1 } from '../connections/v1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
-import { PROVIDER_CATALOG_LIMITS_V1 } from '../catalog/limits.js';
 import { ConnectedServiceQuotaMeterV1Schema } from '../../connect/connectedServiceSchemas.js';
 
 const LegacyProfileEnvironmentNameSchema = lazyZodSchema(() => z.string().check(z.regex(/^[A-Z_][A-Z0-9_]*$/u), z.maxLength(128)));
@@ -108,6 +107,16 @@ export const ProviderEndpointTemplateV1Schema = lazyZodSchema(() => z.strictObje
 })));
 export type ProviderEndpointTemplateV1 = z.infer<typeof ProviderEndpointTemplateV1Schema>;
 
+export const ProviderInlineCompletionOperationV1Schema = lazyZodSchema(() => z.strictObject({
+  id: ProviderLocalIdSchema,
+  mode: z.enum(['native-fim', 'raw-fim-template', 'chat-fallback', 'next-edit-codec']),
+  codec: z.optional(z.literal('rewrite-window-v1')),
+  endpointTemplateId: ProviderLocalIdSchema,
+  path: ProviderOriginRelativePathSchema,
+  wireFormat: z.enum(['ollama-generate', 'openai-text-completions', 'openai-chat', 'openai-responses', 'anthropic']),
+}).check(z.refine(value => (value.mode === 'next-edit-codec') === (value.codec !== undefined), 'Only a dedicated next-edit operation selects a codec')));
+export type ProviderInlineCompletionOperationV1 = z.infer<typeof ProviderInlineCompletionOperationV1Schema>;
+
 export const ProviderModelLoadDescriptorV1Schema = lazyZodSchema(() => z.strictObject({
   endpointTemplateId: ProviderLocalIdSchema,
   path: ProviderOriginRelativePathSchema,
@@ -138,7 +147,7 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
     /** Exact managed endpoints supported by this upstream purpose; absent means no broker route. */
     endpointTemplateIds: z.optional(z.array(ProviderLocalIdSchema).check(z.minLength(1))),
     /** Credential-free compatibility catalog for this exact upstream service, never account entitlement. */
-    staticModels: z.optional(z.array(ProviderModelDescriptorV1Schema).check(z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection))),
+    staticModels: z.optional(z.array(ProviderModelDescriptorV1Schema)),
   })).check(z.superRefine((declarations, context) => {
     const checked = ConnectedAccountPurposeDeclarationsV1Schema.safeParse(
       declarations.map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => declaration),
@@ -482,7 +491,12 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
   credential: z.optional(ProviderApiKeyCredentialRequirementV1Schema),
   catalog: ProviderCatalogDeclarationV1Schema,
   modelLoad: z.optional(ProviderModelLoadDescriptorV1Schema),
+  inlineCompletion: z.optional(z.array(ProviderInlineCompletionOperationV1Schema)),
   usageSources: z.optional(z.array(ProviderUsageSourceV1Schema)),
+  /** Endpoints whose terminal usage carries a plugin-decoded charged USD amount. */
+  requestCost: z.optional(z.strictObject({
+    endpointTemplateIds: z.array(ProviderLocalIdSchema).check(z.minLength(1)),
+  })),
   discovery: z.optional(ProviderDetectionDescriptorV1Schema),
   managedRuntime: z.optional(ProviderManagedRuntimeDeclarationV1Schema),
   compatibilityOverrides: z.optional(ProviderCompatibilityOverridesV1Schema),
@@ -509,6 +523,10 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
     });
   });
   const usageIds = new Set<string>();
+  const costEndpoints = value.requestCost?.endpointTemplateIds ?? [];
+  if (new Set(costEndpoints).size !== costEndpoints.length || costEndpoints.some(id => !endpointIds.has(id))) {
+    ctx.addIssue({ code: 'custom', path: ['requestCost', 'endpointTemplateIds'], message: 'Request cost endpoints must be unique declared endpoints' });
+  }
   const billingSlots = new Map<string, string>();
   value.usageSources?.forEach((source, index) => {
     if (usageIds.has(source.id) || !endpointIds.has(source.endpointTemplateId)) {
@@ -522,6 +540,25 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
         ctx.addIssue({ code: 'custom', path: ['usageSources', index, 'billingCredential'], message: 'Billing slots must be distinct from the connection key and have one descriptor' });
       }
       billingSlots.set(slotId, descriptor);
+    }
+  });
+  const operationIds = new Set<string>();
+  value.inlineCompletion?.forEach((operation, index) => {
+    const endpoint = value.endpointTemplates.find(candidate => candidate.id === operation.endpointTemplateId);
+    if (!endpoint || operationIds.has(operation.id)) {
+      ctx.addIssue({ code: 'custom', path: ['inlineCompletion', index], message: 'Inline completion operation ids must be unique and name a declared endpoint' });
+    }
+    operationIds.add(operation.id);
+    if (endpoint && value.credential && value.credential.transports.filter(transport => transport.protocols.includes(endpoint.protocol) && transport.uses.includes('runtime')).length !== 1) {
+      ctx.addIssue({ code: 'custom', path: ['inlineCompletion', index], message: 'Inline completion requires one runtime credential transport' });
+    }
+    const protocol = operation.wireFormat === 'ollama-generate' ? 'ollama-native' : operation.wireFormat === 'openai-text-completions' ? 'openai-completions' : operation.wireFormat;
+    if (endpoint && endpoint.protocol !== protocol) {
+      ctx.addIssue({ code: 'custom', path: ['inlineCompletion', index], message: 'Inline completion wire format must match its endpoint protocol' });
+    }
+    if (operation.mode === 'chat-fallback' && !['openai-chat', 'openai-responses', 'anthropic'].includes(operation.wireFormat)
+      || operation.mode !== 'chat-fallback' && ['openai-chat', 'openai-responses', 'anthropic'].includes(operation.wireFormat)) {
+      ctx.addIssue({ code: 'custom', path: ['inlineCompletion', index], message: 'Inline completion mode must match its wire format' });
     }
   });
   if ('probes' in value.catalog) {

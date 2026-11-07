@@ -4,12 +4,8 @@ import type { MachineRetentionCategoryV1, MachineRetentionDefaultsV1, MachineRet
 
 /** D21's selected product default, not a lifecycle timeout or resource limit. */
 export const DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1 = 3_600_000;
-export type MachineRetentionPolicySourceV1 = 'machine' | 'preset' | 'category' | 'default';
 export type ResolvedMachineRetentionPolicyV1 = MachineRetentionPolicyV1 & Readonly<{
   category: MachineRetentionCategoryV1;
-  source: MachineRetentionPolicySourceV1 | 'mixed';
-  retentionSource: MachineRetentionPolicySourceV1;
-  wakeSource: MachineRetentionPolicySourceV1;
 }>;
 
 /** Until-delete permits wake after a manual Stop; destruction-ending policies cannot retain the resource. */
@@ -74,6 +70,13 @@ export function isRedundantManagedWakeIntentV1(intent: 'start' | 'resume', obser
   return intent === 'start' ? suspended && supportedIntents.includes('resume') : !suspended && supportedIntents.includes('start');
 }
 
+/** Choose only a declared wake verb, using the same paired-verb rule as presentation. */
+export function resolveMachineWakeNativeIntentV1(observedPower: Parameters<typeof isRedundantManagedWakeIntentV1>[1],
+  supportedIntents: NativeIntentsV1): 'start' | 'resume' | null {
+  return (['start', 'resume'] as const).find(intent => supportedIntents.includes(intent)
+    && !isRedundantManagedWakeIntentV1(intent, observedPower, supportedIntents)) ?? null;
+}
+
 /** Explicit live edits are refused rather than mapped to a different native effect. */
 export function isMachineRetentionPolicySupportedV1(policy: MachineRetentionPolicyV1,
   nativeCapabilities: Pick<RetentionCapabilitiesV1, 'supportedIntents' | 'finiteOnly'>): boolean {
@@ -99,7 +102,7 @@ export function getMachineRetentionCategoryDefaultV1(category: MachineRetentionC
     retention: unused
       ? { kind: 'unused', afterMs: DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1, effect: 'stop' }
       : { kind: 'until-delete' },
-    wakeOnAcceptedMessage: unused,
+    wakeOnAcceptedMessage: unused || category === 'stopped-billed',
   };
 }
 
@@ -112,28 +115,26 @@ export function resolveMachineRetentionPolicyV1(input: Readonly<{
   nativeCapabilities?: Pick<RetentionCapabilitiesV1, 'supportedIntents' | 'finiteOnly'>;
 }>): ResolvedMachineRetentionPolicyV1 {
   const category = resolveMachineRetentionCategoryV1(input.billing);
-  const defaultPolicy = getMachineRetentionCategoryDefaultV1(category);
+  const defaultPolicy = { ...getMachineRetentionCategoryDefaultV1(category),
+    // Cloud input wake is independent of whether stopped compute is billed or unknown.
+    ...(input.billing.location === 'cloud' ? { wakeOnAcceptedMessage: true } : {}) };
   const policies = [
-    ['machine', input.machineOverride],
-    ['preset', input.presetOverride],
-    ['category', input.categoryPreferences?.[category]],
-    ['default', defaultPolicy],
+    input.machineOverride,
+    input.presetOverride,
+    input.categoryPreferences?.[category],
+    defaultPolicy,
   ] as const;
   let retention: RetentionV1 = defaultPolicy.retention;
   let wakeOnAcceptedMessage = defaultPolicy.wakeOnAcceptedMessage;
-  let retentionSource: MachineRetentionPolicySourceV1 = 'default';
-  let wakeSource: MachineRetentionPolicySourceV1 = 'default';
-  for (const [source, policy] of policies) {
+  for (const policy of policies) {
     if (policy?.retention !== undefined) {
       retention = { ...policy.retention };
-      retentionSource = source;
       break;
     }
   }
-  for (const [source, policy] of policies) {
+  for (const policy of policies) {
     if (policy?.wakeOnAcceptedMessage !== undefined) {
       wakeOnAcceptedMessage = policy.wakeOnAcceptedMessage;
-      wakeSource = source;
       break;
     }
   }
@@ -151,12 +152,5 @@ export function resolveMachineRetentionPolicyV1(input: Readonly<{
   if (!isMachineRetainedWakeEligibleV1(retention, input.nativeCapabilities)) {
     wakeOnAcceptedMessage = false;
   }
-  return { category, retention, wakeOnAcceptedMessage, retentionSource, wakeSource,
-    source: retentionSource === wakeSource ? retentionSource : 'mixed' };
-}
-
-export function resolveMachineWakeNativeIntentV1(observedPower: Parameters<typeof isRedundantManagedWakeIntentV1>[1],
-  supportedIntents: NativeIntentsV1): 'start' | 'resume' | null {
-  return (['start', 'resume'] as const).find(intent => supportedIntents.includes(intent)
-    && !isRedundantManagedWakeIntentV1(intent, observedPower, supportedIntents)) ?? null;
+  return { category, retention, wakeOnAcceptedMessage };
 }

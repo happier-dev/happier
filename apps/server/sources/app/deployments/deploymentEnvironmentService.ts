@@ -96,11 +96,11 @@ export async function loadDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
 
 /** Captured receipt admission needs current Environment/Source custody, without re-admitting its work. */
 export async function loadDeploymentEnvironmentCustodyInTx(tx: Tx, input: Readonly<{
-    serverId: string; environmentId: string;
+    serverId: string; environmentId: string; includeRemoved?: boolean;
 }>) {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
     const row = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
-    if (!row || row.deletedAt) return deploymentFailure('deployment_unavailable');
+    if (!row || row.deletedAt && !input.includeRemoved) return deploymentFailure('deployment_unavailable');
     const custody = await readProjectSourceCustodyInTx(tx, row.projectSourceId);
     if (!custody) return deploymentFailure('deployment_unavailable');
     return { ok: true as const, row, ...custody };

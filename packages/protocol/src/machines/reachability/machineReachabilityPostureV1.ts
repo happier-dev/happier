@@ -1,7 +1,10 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachinePublicSshV1Schema, MachineFirewallTransitionFactsV1Schema } from '../setup/machineFirewallV1.js';
-import { AccessProviderRefV1Schema, AccessProviderSelectionV1Schema, AccessProviderInboundPortV1Schema, AccessProviderHttpsConstraintsV1Schema, MachinePrivateNetworkObservationV1Schema } from '../../plugins/contributions/accessProviders.js';
+import {
+  AccessProviderRefV1Schema, AccessProviderSelectionV1Schema, AccessProviderInboundPortV1Schema,
+  AccessProviderHttpsConstraintsV1Schema, MachinePrivateNetworkObservationV1Schema,
+} from '../../plugins/contributions/accessProviders.js';
 export {
   AccessProviderRefV1Schema, type AccessProviderRefV1,
   MachinePrivateNetworkObservationV1Schema, type MachinePrivateNetworkObservationV1,

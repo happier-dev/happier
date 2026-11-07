@@ -1,15 +1,17 @@
-export * from './actionControl.js';
 export * from './artifactArchive.js';
 export * from './artifactIntegrity.js';
 export * from './composer.js';
 export * from './entityDragDrop.js';
 export * from './entityDragDropHost.js';
+export * from './actionControl.js';
 export * from './currentUiContext.js';
+export * from './transcriptAnnotation.js';
 export * from './hostApi.js';
 export * from './pageNavigation.js';
 export * from './widgetArea.js';
 export * from './widgetAreaHost.js';
 export * from './hostApiRequests.js';
+export * from '../contributions/ui/resourceLinks.js';
 export * from './selectedActionInput.js';
 // `hostApiRequests` consumes this semantic identity, but UI host integrations
 // import the canonical public schema from this barrel rather than an unexported
@@ -46,16 +48,6 @@ export {
   type UiSurfaceNetworkOriginV1,
   type UiSurfaceResourceRequestV1,
 } from '../contributions/ui/hostedHtmlCapabilitiesV1.js';
-export {
-  UI_SURFACE_ISOLATION_PROFILE_VERSION_V1,
-  UiSurfaceExecutableApprovalKeyV1Schema,
-  UiSurfaceExecutableApprovalSubjectV1Schema,
-  buildUiSurfaceExecutableApprovalKeyStringV1,
-  createUiSurfaceExecutableSecurityFingerprintV1,
-  createUiSurfaceRequestedCapabilitiesDigestV1,
-  type UiSurfaceExecutableApprovalKeyV1,
-  type UiSurfaceExecutableApprovalSubjectV1,
-} from '../contributions/ui/executableSurfaceApprovalV1.js';
 export * from './hostedWebEndpoint.js';
 export * from './hostRuntimeExternals.js';
 export * from './reactNativeCompatibility.js';
@@ -133,14 +125,18 @@ export {
   PluginUiDestinationBadgeV1Schema,
   PluginRightSidebarDefaultPlacementSchema,
   PluginRightSidebarCountV1Schema,
+  PluginUiCountsBindingV1Schema,
+  createPluginUiCountsValueV1Schema,
   type PluginRightSidebarDefaultPlacement,
   type PluginRightSidebarCountV1,
+  type PluginUiCountsBindingV1,
   PluginUiDestinationPlacementV1Schema,
   PluginUiAppPageColumnV1Schema,
   PluginUiWidgetHomeV1Schema,
   PluginUiDestinationRankHintV1Schema,
   PluginUiSettingsGroupReferenceV1Schema,
   PluginUiSettingsGroupV1Schema,
+  PluginCollectionListExtensionV1Schema,
   PluginUiSettingsHostGroupIdV1Schema,
   PluginUiSettingsPageV1Schema,
   PluginDeclarativeComposerApplyEffectV1Schema,
@@ -150,6 +146,7 @@ export {
   type PluginUiWidgetHomeV1,
   type PluginUiSettingsGroupReferenceV1,
   type PluginUiSettingsGroupV1,
+  type PluginCollectionListExtensionV1,
   type PluginUiSettingsHostGroupIdV1,
   type PluginUiSettingsPageV1,
   type PluginDeclarativeComposerApplyEffectV1,
@@ -229,5 +226,3 @@ export {
 } from '../../actions/actionIds.js';
 export * from './liveStream.js';
 export { selectPluginUiWidgetEntriesV1 } from '../contributions/ui/widgetInventory.js';
-
-export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from '../contributions/ui/resourceLinks.js';

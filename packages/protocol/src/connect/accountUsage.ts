@@ -34,6 +34,7 @@ import {
     ProviderAccountUsageSourceV1Schema,
     SealedProviderAccountUsageRecoveryCreditDetailsV1Schema,
     buildProviderAccountUsageRecordId,
+    getProviderAccountUsageRefreshErrorAt,
     type ProviderAccountUsageConfidenceV1,
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSnapshotV1,
@@ -92,6 +93,7 @@ export function isProviderAccountUsageIdentityMatch(
 export const SealedProviderAccountUsageSnapshotV1Schema = lazyZodSchema(() => z.object({
     format: ConnectedServiceCredentialFormatSchema,
     ciphertext: z.string().check(z.minLength(1)),
+    refreshErrorAt: z.optional(z.number().check(z.int(), z.nonnegative())),
     subscription: z.optional(SealedProviderAccountSubscriptionV1Schema),
     recoveryCreditDetails: z.optional(SealedProviderAccountUsageRecoveryCreditDetailsV1Schema),
 }));
@@ -296,6 +298,8 @@ export function sealProviderAccountUsageSnapshot(params: Readonly<{
     return {
         format: 'account_scoped_v1',
         ciphertext: sealProviderAccountUsageSnapshotCiphertext({ ...params, payload: snapshot }),
+        ...(getProviderAccountUsageRefreshErrorAt(snapshot) !== undefined
+            ? { refreshErrorAt: getProviderAccountUsageRefreshErrorAt(snapshot) } : {}),
         ...(subscription ? {
             subscription: {
                 observedAtMs: Math.max(subscription.observedAtMs, subscription.lastRefreshError?.observedAtMs ?? 0),

@@ -19,6 +19,7 @@ import {
   agentSupportsNoAuthForProtocolV1,
   AgentProviderRequirementsV1Schema,
   type AgentProviderRequirementsV1,
+  type AgentCredentialTransportSupportV1,
   type ProviderBindingCompatibilityV1,
   type ProviderCompatibilityReasonCodeV1,
 } from './v1.js';
@@ -88,23 +89,32 @@ export function resolveProviderModelCapabilityCompatibilityV1(input: Readonly<{
   return { incompatible, reasons: [...new Set(reasons)] };
 }
 
+function matchesCredentialDestination(
+  destination: ProviderCredentialTransportV1['destination'],
+  support: AgentCredentialTransportSupportV1,
+  protocol: ProviderEndpointTemplateV1['protocol'],
+): boolean {
+  if (support.protocol !== protocol || support.destination.kind !== destination.kind) return false;
+  const names = support.destination.names;
+  const nameMatches = names === 'anyValidated'
+    || names.some((name) => destination.kind === 'httpHeader'
+      ? name.toLowerCase() === destination.name.toLowerCase()
+      : name === destination.name);
+  return nameMatches && support.destination.formats.includes(providerCredentialFormatKind(destination.format));
+}
+
 function matchesTransport(
   transport: ProviderCredentialTransportV1,
   agent: AgentProviderRequirementsV1,
   protocol: ProviderEndpointTemplateV1['protocol'],
 ): boolean {
-  const format = providerCredentialFormatKind(transport.destination.format);
+  const destinations = [transport.destination, ...(transport.additionalCredentials ?? []).map(credential => credential.destination)];
+  const required = agent.credentialSupport.requiredApiKeyTransports?.filter(support => support.protocol === protocol) ?? [];
   return transport.uses.includes('runtime')
     && transport.protocols.includes(protocol)
-    && agent.credentialSupport.apiKeyTransports.some((support) => {
-      if (support.protocol !== protocol || support.destination.kind !== transport.destination.kind) return false;
-      const names = support.destination.names;
-      const nameMatches = names === 'anyValidated'
-        || names.some((name) => support.destination.kind === 'httpHeader'
-          ? name.toLowerCase() === transport.destination.name.toLowerCase()
-          : name === transport.destination.name);
-      return nameMatches && support.destination.formats.includes(format);
-    });
+    && (!(transport.additionalCredentials?.length) || agent.credentialSupport.supportsAdditionalCredentials === true)
+    && destinations.every(destination => agent.credentialSupport.apiKeyTransports.some(support => matchesCredentialDestination(destination, support, protocol)))
+    && (required.length === 0 || destinations.some(destination => required.some(support => matchesCredentialDestination(destination, support, protocol))));
 }
 
 /**
@@ -114,6 +124,13 @@ function matchesTransport(
  * transport described by a compatibility result is the transport bound at
  * launch. Throws when the declaration is ambiguous rather than picking one.
  */
+export class ProviderCredentialTransportAmbiguityErrorV1 extends TypeError {
+  constructor() {
+    super('Multiple runtime credential transports match the selected agent protocol');
+    this.name = 'ProviderCredentialTransportAmbiguityErrorV1';
+  }
+}
+
 export function selectProviderRuntimeCredentialTransportV1(input: Readonly<{
   transports: readonly ProviderCredentialTransportV1[];
   agent: AgentProviderRequirementsV1;
@@ -122,7 +139,7 @@ export function selectProviderRuntimeCredentialTransportV1(input: Readonly<{
   const matches = input.transports.filter((transport) =>
     matchesTransport(transport, input.agent, input.protocol));
   if (matches.length > 1) {
-    throw new TypeError('Multiple runtime credential transports match the selected agent protocol');
+    throw new ProviderCredentialTransportAmbiguityErrorV1();
   }
   return matches[0] ?? null;
 }
@@ -298,7 +315,8 @@ function candidateCredentialProjection(
   if (!credential) return { kind: 'none' as const, supportsNoAuth };
   const runtimeMatches = credential.transports
     .filter((transport) => matchesTransport(transport, agent, protocol))
-    .map((transport) => ({ destination: transport.destination }))
+    .map((transport) => ({ destination: transport.destination,
+      ...(transport.additionalCredentials?.length ? { additionalCredentials: transport.additionalCredentials.map(({slotId, destination}) => ({slotId, destination})).sort((a,b) => compareProviderCanonicalStringsV1(a.slotId,b.slotId)) } : {}) }))
     .sort((left, right) => compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right)));
   return {
     kind: 'apiKey' as const,

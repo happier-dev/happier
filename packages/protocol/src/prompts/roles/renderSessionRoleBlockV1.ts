@@ -47,14 +47,26 @@ export function renderSessionRoleBlockV1(context: SessionRolePromptContextV1): s
   }
   if (context.notes) lines.push(`Orchestration notes: ${escape(context.notes)}`);
   if (!voice && context.originKind !== 'run_step') lines.push('Post progress, results, blockers, or failure through session.update.post. This persists an update on your current session even when no manager is attached; follow policy determines delivery to observers.');
+  if (!voice) lines.push(
+    'Use session.message.send for information or an ask: reply none creates no answer obligation; wait observes one exact answer inline; return retains a later answer to the admitted source Session. A wait timeout ends observation, not accepted work. Returned answers are information and need no acknowledgment.',
+    'Discover the current Action schema before using these examples; replace the sample message and exact request identity with the real values:',
+    'session.message.send {"sessionId":"manager","message":"The API contract is ready.","reply":"none"}',
+    'session.message.send {"sessionId":"manager","message":"Which API contract should I use?","reply":"wait"}',
+    'session.message.send {"sessionId":"manager","message":"Review the API contract and get back to me.","reply":"return"}',
+    'For an admitted request, use its reply_session_id and request_local_id from host context. An explicit answer or typed pass fulfills that exact obligation; the turn final is the fallback, so do not send a second answer. Pass when you have nothing to add; silence and timeout are not passes.',
+    'session.message.reply {"sessionId":"self","requestLocalId":"original-input-id","reply":{"kind":"answer","message":"Use the versioned API contract."}}',
+    'session.message.reply {"sessionId":"self","requestLocalId":"original-input-id","reply":{"kind":"pass"}}',
+    'Preview a group through session.targets.resolve with the intended actionId. A matching selector uses the shared Session list filter; incomplete coverage is unavailable, not permission to act on a subset. In the composer, Matching → Use these keeps the filter; the operation resolves current targets before approval, then retains the reviewed exact list. Selectors address Sessions, never people, and grant no access.',
+    'session.targets.resolve {"target":{"selector":"workers"},"actionId":"session.message.send"}',
+    'Autonomous conversation check-in is separate from structural work depth. Continue changes the exchange allowance, not spawn authority; returned answers add no autonomous-start count.',
+  );
   if (context.worker) {
     const publishAction = context.originKind === 'run_step' ? 'session.worker.publish_draft' : 'session.update.post';
     if (!voice) lines.push(`lead_session_id=${data(context.worker.leadSessionId)}`);
     lines.push(`Task boundary: ${escape(context.worker.taskBoundary)}`);
     if (!voice) lines.push(`Publish through ${publishAction} when finished, when a blocker needs the lead, or on failure. Report success or failure explicitly with outcome and evidence, then go idle; do not poll the lead.`,
-      'Send lead-owned decisions to the lead and human decisions to the user. A direct user message is user-owned work.',
-      'You cannot approve permissions for yourself or other sessions. Human approvals must go to the user.');
-    if (voice) lines.push('Human decisions and permission approvals must go to the user.');
+      'Send lead-owned decisions to the lead and human decisions to the user. A direct user message is user-owned work.');
+    lines.push("Never approve your own request; approval decisions follow the Action's policy.");
   }
   lines.push('</happier_role>');
   return lines.join('\n');

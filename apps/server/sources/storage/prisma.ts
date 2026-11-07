@@ -1,6 +1,6 @@
 import type { Prisma as PrismaNamespace, PrismaClient as PrismaClientInstance } from "@prisma/client";
 import { PGlite } from "@electric-sql/pglite";
-import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import { FramedPgliteSocketServer } from "./pgliteFramedSocketServer.mjs";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -98,6 +98,14 @@ export function applyConfiguredDatabaseConnectionLimit(rawUrl: string, env: Node
 }
 
 let prismaEngineRuntimePrepared = false;
+// Prisma's SQLite engine runs each query synchronously on a Tokio worker, so a busy connection
+// holds one worker for the whole query. Besides the app pool, a SQLite server opens three
+// single-connection clients: the read snapshot (`withSqliteReadSnapshot`, read-only
+// transactions such as Session listing pages), the WAL checkpoint / incremental-vacuum
+// maintenance client (`startServer.ts`), and the readiness probe client (`initDbSqlite`).
+// With one worker per connection, `/ready` keeps a free worker while every other connection
+// runs a long query (#832). Other providers' engines do async I/O and open no side clients.
+const SQLITE_SERVER_SIDE_CONNECTIONS = 3;
 function preparePrismaEngineRuntime(provider: DbProvider, databaseUrl?: string): void {
     // PGlite's resolved socket URL is a fixed single-connection resource, not an operator-sized pool.
     if (provider !== 'pglite' && process.env.DATABASE_URL) {
@@ -111,8 +119,12 @@ function preparePrismaEngineRuntime(provider: DbProvider, databaseUrl?: string):
         DATABASE_URL: provider === 'pglite' ? databaseUrl ?? process.env.DATABASE_URL : process.env.DATABASE_URL || databaseUrl,
     }, "connection_limit"));
     if (connectionLimit !== null) {
-        // Size Prisma's native scheduler from its configured database connection pool.
-        process.env.TOKIO_WORKER_THREADS = String(connectionLimit);
+        // Size Prisma's native scheduler from the connections the server opens instead of Tokio's
+        // one-thread-per-CPU default. Worker threads are not database connections, so the extra
+        // SQLite workers add no write concurrency. Idle RSS at 1 vs 2 workers measured equal
+        // within noise (~100 MB, +1 OS thread).
+        const sideConnections = provider === 'sqlite' ? SQLITE_SERVER_SIDE_CONNECTIONS : 0;
+        process.env.TOKIO_WORKER_THREADS = String(connectionLimit + sideConnections);
     }
 }
 
@@ -177,7 +189,7 @@ function withSharedQaSchemaDiagnostics(client: PrismaClientType): PrismaClientTy
 
 let _db: ReturnType<typeof withSharedQaSchemaDiagnostics> | null = null;
 let _pglite: PGlite | null = null;
-let _pgliteServer: PGLiteSocketServer | null = null;
+let _pgliteServer: FramedPgliteSocketServer | null = null;
 let _provider: DbProvider | null = null;
 let _connectionPool: {
     connectionLimit: number | null;
@@ -191,6 +203,7 @@ let sqliteReadSnapshot: {
     lock: AsyncLock;
     client: ReturnType<typeof withSharedQaSchemaDiagnostics> | null;
 } | null = null;
+let _sqliteReadinessClient: PrismaClientType | null = null;
 
 export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
     get(_target, prop) {
@@ -339,6 +352,10 @@ export async function initDbSqlite(): Promise<void> {
         lock: new AsyncLock(),
         client: null,
     };
+    _sqliteReadinessClient = (await createGeneratedPrismaClient(
+        "sqlite",
+        withConnectionLimit(process.env.DATABASE_URL, 1),
+    )).client;
     const diagnostics = resolveSqliteStartupDiagnosticsFromEnv(process.env);
     log(
         { module: "storage", event: "sqlite-startup-diagnostics", sqlite: diagnostics },
@@ -449,12 +466,12 @@ export async function initDbPglite(): Promise<void> {
         const releaseLock = await acquirePgliteDirLock(dbDir, { purpose: "server:initDbPglite" });
 
         let pglite: PGlite | null = null;
-        let server: PGLiteSocketServer | null = null;
+        let server: FramedPgliteSocketServer | null = null;
         try {
             pglite = new PGlite(dbDir);
             // `PGlite` initializes asynchronously. Ensure it's ready before starting the socket server.
             await pglite.waitReady;
-            server = new PGLiteSocketServer({
+            server = new FramedPgliteSocketServer({
                 db: pglite,
                 host: "127.0.0.1",
                 port: 0,
@@ -690,10 +707,30 @@ export async function applySqliteRuntimePragmas(client: Pick<PrismaClientType, "
     await client.$queryRawUnsafe(`PRAGMA journal_size_limit=${pragmas.journalSizeLimitBytes};`);
 }
 
+// Readiness checks the database on its own SQLite connection. The server-light app pool
+// is deliberately a single connection, so one slow application read would otherwise queue
+// the probe behind it (#832). Reading `sqlite_master` opens a read transaction on the file,
+// so an unreadable or non-database file fails the probe; SQLite answers `SELECT 1` without
+// touching the file. Other providers keep `SELECT 1` on the app pool.
+export async function probeDbReadiness(): Promise<void> {
+    if (_sqliteReadinessClient) {
+        await _sqliteReadinessClient.$queryRawUnsafe("SELECT count(*) FROM sqlite_master;");
+        return;
+    }
+    await db.$queryRaw`SELECT 1`;
+}
+
+export async function disconnectDbReadinessProbe(): Promise<void> {
+    const readinessClient = _sqliteReadinessClient;
+    _sqliteReadinessClient = null;
+    await readinessClient?.$disconnect();
+}
+
 export async function shutdownDbClient(): Promise<void> {
     if (_pglite || _pgliteServer || _provider === "pglite") {
         throw new Error("shutdownDbClient() cannot shut down PGlite; call shutdownDbPglite() instead");
     }
+    await disconnectDbReadinessProbe();
     const reader = sqliteReadSnapshot;
     sqliteReadSnapshot = null;
     if (reader) {

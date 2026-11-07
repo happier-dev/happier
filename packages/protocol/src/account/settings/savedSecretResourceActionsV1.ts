@@ -122,6 +122,33 @@ export const SavedSecretResourceRecipientEnvelopeInputV1Schema = lazyZodSchema((
   recipientContentPublicKeyFingerprint: z.string().check(z.minLength(1)),
 }));
 
+/**
+ * The Account-mode migration's reseal of every Saved Secret the Account owns
+ * with no grants to other people. Each item is the resource's current content
+ * resealed client-side to the target mode (the server never opens E2EE
+ * material); an E2EE item carries exactly the owner's envelope for the new
+ * data key. Shared resources keep their mode and are not listed.
+ */
+export const AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({
+    resourceId: ResourceIdSchema,
+    expectedRevision: z.number().check(z.int(), z.nonnegative()),
+    storedContent: SavedSecretResourceStoredContentV1Schema,
+    ownerKeyEnvelope: z.optional(SavedSecretResourceRecipientEnvelopeInputV1Schema),
+  })),
+}).check(z.superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.items.forEach((item, index) => {
+    if (seen.has(item.resourceId)) context.addIssue({ code: 'custom', path: ['items', index, 'resourceId'],
+      message: 'Account migration cannot reseal the same Saved Secret resource twice' });
+    seen.add(item.resourceId);
+    if ((item.storedContent.t === 'encrypted') !== (item.ownerKeyEnvelope !== undefined)) context.addIssue({ code: 'custom',
+      path: ['items', index, 'ownerKeyEnvelope'], message: 'Only an encrypted Saved Secret reseal carries the owner envelope' });
+  });
+})));
+export type AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 = z.infer<typeof AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema>;
+
+export const SharedSavedSecretListInputV1Schema = lazyZodSchema(() => z.strictObject({}));
 /** Person disclosure is client-owned; neither its input nor result can carry material. */
 export const SharedSavedSecretRevealInputV1Schema = lazyZodSchema(() => z.strictObject({
   ref: SharedResourceReferenceSchema,
@@ -134,7 +161,6 @@ export const SharedSavedSecretRevealOutputV1Schema = lazyZodSchema(() => z.stric
 export type SharedSavedSecretRevealInputV1 = z.infer<typeof SharedSavedSecretRevealInputV1Schema>;
 export type SharedSavedSecretRevealOutputV1 = z.infer<typeof SharedSavedSecretRevealOutputV1Schema>;
 
-export const SharedSavedSecretListInputV1Schema = lazyZodSchema(() => z.strictObject({}));
 /** Exact material demand shares the incumbent loader; omitted selection retains catalog-use reads. */
 export const SavedSecretResourceMaterialSelectionV1Schema = lazyZodSchema(() => z.strictObject({
   includeReferenceCensus: z.optional(z.pipe(z.union([z.literal('true'), z.literal(true)]), z.transform(() => true as const))),
@@ -356,7 +382,7 @@ export const SavedSecretResourceActionErrorV1Schema = lazyZodSchema(() => z.unio
     'invalid_resource', 'resource_not_found', 'forbidden', 'resource_changed',
     'recipient_changed', 'recipient_key_unavailable', 'invalid_cursor',
     'recipient_mode_unsupported', 'settings_conflict', 'settings_invalid', 'internal',
-    'references_conflict', 'references_invalid', 'resource_in_use',
+    'references_conflict', 'references_invalid', 'resource_in_use', 'account_mode_mismatch',
   ]),
 }), z.strictObject({
   error: z.literal('managed_resources_review_required'),

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
@@ -5,11 +6,14 @@ import { TerminalStreamReadRequestSchema, TerminalStreamReadOkResponseSchema } f
 import { ActionOperationListV1RequestSchema, ActionOperationListV1ResponseSchema,
   ActionOperationGetV2RequestSchema, ActionOperationGetV1ResponseSchema,
   ActionOperationCancelV1ResponseSchema } from '../operations/v1.js';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '../operations/methodsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 import type { ActionInputFieldHint } from '../actionInputHintsRuntime.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
 import { ManagedGetInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 export { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
 
 import { ACTION_OPERATION_ACTION_IDS_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
@@ -22,7 +26,9 @@ export const ActionOperationAddressV1ProtocolSchema = lazyDefinition(() => proje
 export const ActionOperationListActionInputV1Schema = lazyZodSchema(() =>
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationListV1RequestSchema, managedObservation())));
 export const ActionOperationGetActionInputV1Schema = lazyZodSchema(() =>
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationGetV2RequestSchema, managedObservation())));
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationGetV2RequestSchema, {
+    ...managedObservation(), environmentId: z.optional(DeploymentIdentifierV1Schema),
+  })));
 
 // The terminal owner defines every cursor, credit and byte boundary. Only its
 // terminal address is replaced by a qualified operation address at this seam.
@@ -37,8 +43,44 @@ export const ProjectExecutionOutputReadInputV1Schema = lazyZodSchema(() => {
   }));
 });
 export const ProjectExecutionOutputOpenResultV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.literal('opened') }));
+const byteSelectionSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('bytes'), endByteOffset: TerminalStreamReadRequestSchema.shape.byteOffset,
+}));
+const renderedSelectionSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('rendered'), text: z.string(),
+  startLine: z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)),
+  endLine: z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)),
+}).check(z.refine(selection => selection.endLine >= selection.startLine)));
+
+export const ProjectExecutionOutputCopyInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ProjectExecutionOutputReadInputV1Schema.shape,
+  selection: z.optional(z.discriminatedUnion('kind', [byteSelectionSchema, renderedSelectionSchema])),
+}).check(z.superRefine((input, ctx) => {
+  const { selection, ...read } = input;
+  const parsed = ProjectExecutionOutputReadInputV1Schema.safeParse(read);
+  if (!parsed.success) for (const issue of parsed.error.issues) {
+    ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+  }
+  if (selection?.kind === 'bytes' && selection.endByteOffset <= input.byteOffset) {
+    ctx.addIssue({ code: 'custom', path: ['selection', 'endByteOffset'], message: 'Selection must end after byteOffset' });
+  }
+})));
+const selectedCopyRequestSchema = lazyZodSchema(() => z.safeExtend(ProjectExecutionOutputCopyInputV1Schema, {
+  selection: byteSelectionSchema,
+}));
+export const ProjectExecutionOutputSelectionReceiptV1Schema = lazyZodSchema(() => z.strictObject({
+  request: selectedCopyRequestSchema,
+  text: z.string(),
+  coverage: z.strictObject({ complete: z.boolean(), gaps: z.array(z.strictObject({
+    startByteOffset: TerminalStreamReadRequestSchema.shape.byteOffset,
+    endByteOffset: TerminalStreamReadRequestSchema.shape.byteOffset,
+    reason: z.enum(['evicted', 'not_returned']),
+  })) }),
+}));
+export type ProjectExecutionOutputSelectionReceiptV1 = z.infer<typeof ProjectExecutionOutputSelectionReceiptV1Schema>;
 export const ProjectExecutionOutputCopyResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['copied', 'bytes']), output: TerminalStreamReadOkResponseSchema,
+  selection: z.optional(ProjectExecutionOutputSelectionReceiptV1Schema),
 }));
 export const ActionOperationActionInputSchemasV1 = {
   'action.operations.list': ActionOperationListActionInputV1Schema,
@@ -46,7 +88,7 @@ export const ActionOperationActionInputSchemasV1 = {
   'action.operations.cancel': ActionOperationAddressV1Schema,
   'projects.execution.output.read': ProjectExecutionOutputReadInputV1Schema,
   'projects.execution.output.open': ActionOperationAddressV1Schema,
-  'projects.execution.output.copy': ProjectExecutionOutputReadInputV1Schema,
+  'projects.execution.output.copy': ProjectExecutionOutputCopyInputV1Schema,
 } as const satisfies Record<ActionOperationActionIdV1, z.ZodMiniType>;
 export const ActionOperationActionOutputSchemasV1 = {
   'action.operations.list': lazyZodSchema(() => z.lazy(() => ActionOperationListV1ResponseSchema)),
@@ -93,22 +135,30 @@ const inputFields = {
     { path: 'sessionId', title: 'Session id', widget: 'text' },
     { path: 'cursor', title: 'Page cursor', widget: 'text' }],
   'action.operations.get': [...operationFields,
+    { path: 'environmentId', title: 'Deployment Environment', widget: 'text' },
     { path: 'waitForTerminal', title: 'Wait for completion', widget: 'boolean' },
     { path: 'includeSetupReview', title: 'Include setup review', widget: 'boolean' },
     { path: 'refreshSetupReview', title: 'Refresh setup review', widget: 'boolean' }],
   'action.operations.cancel': operationFields,
   'projects.execution.output.read': outputFields,
   'projects.execution.output.open': operationFields,
-  'projects.execution.output.copy': outputFields,
+  'projects.execution.output.copy': [...outputFields,
+    { path: 'selection', title: 'Selected output range', widget: 'json' }],
 } satisfies Record<ActionOperationActionIdV1, ActionInputFieldHint[]>;
-export const ACTION_OPERATION_ACTION_SPECS = ACTION_OPERATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
+function createActionOperationActionSpecs() {
+  return ACTION_OPERATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
+  invocationServerIdForInput: actionInputServerId(ActionOperationActionInputSchemasV1[id], input => input.serverId),
   id, approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'policy' }, title: titles[id], description: summaries[id],
   safety: id === 'action.operations.cancel' ? 'danger' : 'safe',
   sideEffectClass: id === 'action.operations.cancel' ? 'write' : 'read',
   executionPlacement: id === 'projects.execution.output.open' ? 'client' : 'machine', placements: [],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-  bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_') },
+  bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_'),
+    ...(id === 'action.operations.cancel' ? { rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel } : {}) },
   cli: { commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   inputHints: { title: titles[id], fields: inputFields[id] },
   inputSchema: ActionOperationActionInputSchemasV1[id], outputSchema: ActionOperationActionOutputSchemasV1[id],
 }));
+}
+
+export const ACTION_OPERATION_ACTION_SPECS: ReturnType<typeof createActionOperationActionSpecs> = lazyActionSpecArray(createActionOperationActionSpecs);

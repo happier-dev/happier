@@ -1,5 +1,4 @@
-export { dismissAccountNoticeArtifactV1 } from '../activity/accountNoticeDismissalV1.js';
-import { AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema } from '../activity/accountNoticeRecoveryV1.js';
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 export { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import * as zMini from 'zod/mini';
@@ -10,15 +9,19 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
+import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
+import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/providerModelCatalogV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/references.js';
 import { DiscussionSelectionSourceV1Schema } from '../discussions/content.js';
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from '../discussions/replyTargets.js';
 import { DocEditProposalDispositionV1Schema } from '../discussions/docEditProposalDispositionV1.js';
 import { SessionQuestionContextV1Schema } from '../sessions/permissions/questionV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import { AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema } from '../activity/accountNoticeRecoveryV1.js';
+export { dismissAccountNoticeArtifactV1 } from '../activity/accountNoticeDismissalV1.js';
 
 /** One host-enforced Account admission for private notices and headless Inbox reads. */
-export function readNoticeInboxAccountIdV1(context: ActionExecutorContext): string | null {
+export function readNoticeInboxAccountIdV1(context: ActionExecutorContext, intent: 'acknowledge' | 'read' = 'acknowledge'): string | null {
   const accountId = context.expectedAccountId ?? context.runtimeAccountId;
   if (!accountId || context.externalActionCredential || context.rpcSessionAuthorization
     || context.runtimeAccountId && context.runtimeAccountId !== accountId) return null;
@@ -27,6 +30,10 @@ export function readNoticeInboxAccountIdV1(context: ActionExecutorContext): stri
   // CLI root is not an API credential or authority over a foreign custodian.
   if (binding && (!('authentication' in binding) || binding.accountId !== accountId
     || binding.custodianAccountId !== accountId)) return null;
+  // Trusted plugins may read exact private evidence in their host-admitted
+  // Account. This does not grant Inbox acknowledgement or producer writes.
+  if (intent === 'read' && context.surface === 'plugin' && context.authority === 'account_automation'
+    && context.actionCaller?.kind === 'plugin') return accountId;
   const host = context.actionCaller === undefined || context.actionCaller.kind === 'host';
   if (host && (context.surface === 'ui' && context.authority === 'present_user'
     || context.surface === 'voice' && context.authority === 'account_automation')) return accountId;
@@ -34,8 +41,6 @@ export function readNoticeInboxAccountIdV1(context: ActionExecutorContext): stri
     && (context.authority === 'account_automation' || context.authority === 'present_user')
     && context.runtimeAccountId === accountId && (host || context.actionCaller?.kind === 'session') ? accountId : null;
 }
-
-
 export type AppShellActionId = typeof APP_SHELL_ACTION_IDS[number];
 export function isAppShellActionId(value: string): value is AppShellActionId {
   return (APP_SHELL_ACTION_IDS as readonly string[]).includes(value);
@@ -69,7 +74,7 @@ const InboxReadItemSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('snoozed'), key: z.string(), serverId: z.string(), sessionId: z.string(), remindAt: z.number() }),
 ]);
 const InboxReadGroupSchema = z.strictObject({ key: z.string(), root: z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('lead'), sessionId: z.string() }),
+  z.strictObject({ kind: z.literal('lead'), serverId: z.string().check(z.minLength(1)), sessionId: z.string() }),
   z.strictObject({ kind: z.literal('run'), runId: z.string() }),
   z.strictObject({ kind: z.literal('automation'), automationId: z.string(), serverId: z.string(), runId: z.string() }),
   z.strictObject({ kind: z.literal('other') }),
@@ -93,8 +98,11 @@ const InboxCanonicalItemSchema = lazyZodSchema(() => z.strictObject({
     z.strictObject({ kind: z.literal('session'), serverId: z.string(), id: z.string(), jumpSeq: z.optional(z.number()) }),
     z.strictObject({ kind: z.literal('approval'), serverId: z.string(), id: z.string() }),
     z.strictObject({ kind: z.literal('notice'), serverId: z.string(), id: z.string() }),
+    z.strictObject({ kind: z.literal('managed_machine'), serverId: z.string(), id: z.string() }),
     z.strictObject({ kind: z.literal('workflow_run'), serverId: z.string(), id: z.string(), invocationId: z.optional(z.string()) }),
-    z.strictObject({ kind: z.literal('execution_run'), serverId: z.string(), id: z.string(), sessionId: z.string() }),
+    z.strictObject({ kind: z.literal('execution_run'), serverId: z.string(), id: z.string(),
+      sessionId: z.optional(z.string()), machineId: z.optional(z.string()) })
+      .check(z.refine(value => (value.sessionId !== undefined) !== (value.machineId !== undefined))),
     z.strictObject({ kind: z.literal('automation_run'), serverId: z.string(), id: z.string(), automationId: z.string() }),
     z.strictObject({ kind: z.literal('discussion'), serverId: z.string(), id: z.string(), messageId: z.string() }),
   ]),
@@ -117,6 +125,13 @@ export function projectInboxReadItemV1(item: z.infer<typeof InboxCanonicalItemSc
     ...(item.question ? { question: item.question } : {}), ...(item.discussion ? { discussion: item.discussion } : {}),
   });
 }
+export const NewSessionDraftModelIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('mode'), modelId: z.string().check(z.trim(), z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('selection'), ref: z.nullable(ProviderBoundModelRefSchema) }),
+  z.strictObject({ kind: z.literal('team'), selection: z.nullable(TeamCredentialProviderModelSelectionV1Schema) }),
+]));
+export type NewSessionDraftModelIntent = z.infer<typeof NewSessionDraftModelIntentSchema>;
+
 export const AppShellActionInputSchemas = {
   'session.work.get': z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
   'inbox.get': z.strictObject({}),
@@ -126,12 +141,13 @@ export const AppShellActionInputSchemas = {
   'session.draft.delete': z.strictObject({ draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
   'session.draft.directory.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
     directory: SessionDirectoryIntentV1Schema }),
+  'session.draft.model.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
+    model: NewSessionDraftModelIntentSchema }),
   'session.draft.append': z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)),
     text: z.string().check(z.refine(text => text.trim().length > 0)), sourceSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     discussionSource: z.optional(z.omit(DiscussionSelectionSourceV1Schema, { draftCorrelationId: true })) }),
 } as const;
 export const AppShellActionOutputSchemas = {
-  'inbox.notice.dismiss': AccountNoticeDismissResultV1Schema,
   'session.work.get': z.discriminatedUnion('status', [ReadUnavailableSchema, ReadLoadingSchema, z.strictObject({
     status: z.literal('ready'), sessionId: z.string(),
     summary: z.strictObject({ outstanding: z.number(), needsYou: z.number(), stalled: z.number(), sessions: z.number(), runs: z.number() }),
@@ -154,17 +170,20 @@ export const AppShellActionOutputSchemas = {
     status: z.enum(['succeeded', 'failed', 'skipped', 'cancelled']),
   }))) }),
   'session.draft.delete': z.strictObject({ status: z.enum(['deleted', 'missing', 'launch_custody', 'unavailable']) }),
+  'inbox.notice.dismiss': AccountNoticeDismissResultV1Schema,
   'session.draft.open': z.discriminatedUnion('status', [
     z.strictObject({ status: z.literal('opened'), draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
     z.strictObject({ status: z.enum(['missing', 'unavailable']) }),
   ]),
   'session.draft.directory.set': z.strictObject({ status: z.enum(['applied', 'unavailable']) }),
+  'session.draft.model.set': z.strictObject({ status: z.enum(['applied', 'unavailable']) }),
   'session.draft.append': z.discriminatedUnion('status', [ReadUnavailableSchema, z.strictObject({
     status: z.literal('appended'), sessionId: z.string().check(z.minLength(1)), createdAtMs: z.number().check(z.int(), z.nonnegative()),
   })]),
 } as const;
 
-export const APP_SHELL_ACTION_SPECS = [
+function createAppShellActionSpecs() {
+  return [
   {
     id: 'inbox.notice.dismiss', approval: { result: 'required' }, title: 'Dismiss an Inbox notice',
     description: 'Dismiss one current private notice on the invoking Home and own Account. Keeps its evidence and never recovers a deployment.',
@@ -249,6 +268,18 @@ export const APP_SHELL_ACTION_SPECS = [
     inputHints: { fields: [{ path: 'draftId', title: 'Draft id', widget: 'text', required: true }] },
   },
   {
+    id: 'session.draft.model.set', approval: {result: 'required'}, title: 'Set New Session draft model',
+    description: 'Select a model on one exact mounted editable New Session draft through its existing model and Team credential disclosure owners.',
+    safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
+    placements: [], bindings: { mcpToolName: 'session_draft_model_set' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'draft', 'model', 'set'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: AppShellActionInputSchemas['session.draft.model.set'], outputSchema: AppShellActionOutputSchemas['session.draft.model.set'],
+    inputHints: { fields: [{ path: 'ref', title: 'Exact New Session composer', widget: 'json', required: true },
+      { path: 'model', title: 'Model selection', widget: 'json', required: true }] },
+  },
+  {
     id: 'session.draft.directory.set', approval: {result: 'required'}, title: 'Set New Session draft directory',
     description: 'Set folder or no-folder intent on one exact mounted editable New Session composer. Does not launch a Session or create a directory.',
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
@@ -261,3 +292,6 @@ export const APP_SHELL_ACTION_SPECS = [
       { path: 'directory', title: 'Directory intent', widget: 'json', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const APP_SHELL_ACTION_SPECS: ReturnType<typeof createAppShellActionSpecs> = lazyActionSpecArray(createAppShellActionSpecs);

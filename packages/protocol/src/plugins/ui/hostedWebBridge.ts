@@ -215,6 +215,11 @@ export const PluginHostedWebBridgeBootstrapPayloadV1Schema = z.strictObject({
   authorPlugin: z.optional(z.strictObject({ id: BridgeIdSchema, version: BridgeIdSchema })),
   subPath: zMini.optional(PluginUiSubPathV1Schema),
   launchInput: zMini.optional(PluginUiLaunchInputV1Schema),
+  /** One staged explicit open for this physical mount; restored pages omit it. */
+  launch: zMini.optional(z.strictObject({
+    kind: z.literal('explicit'),
+    input: zMini.optional(PluginUiLaunchInputV1Schema),
+  })),
   composerRef: zMini.optional(ComposerRefV1ZodSchema),
 });
 export type PluginHostedWebBridgeBootstrapPayloadV1 =

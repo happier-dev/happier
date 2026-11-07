@@ -4,7 +4,6 @@ import { z } from 'zod/mini';
 import { ProviderLocalIdSchema } from '../ids.js';
 import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
-import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 
 /**
  * The catalog wire formats Happier bundles an implementation for. This list
@@ -130,20 +129,20 @@ const ManualCatalogSchema = lazyZodSchema(() => z.strictObject({
 const StaticCatalogSchema = lazyZodSchema(() => z.strictObject({
   source: z.literal('static'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
-  staticModels: z.array(ProviderModelDescriptorV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)),
+  staticModels: z.array(ProviderModelDescriptorV1Schema).check(z.minLength(1)),
 }));
 const ProbeCatalogSchema = lazyZodSchema(() => z.strictObject({
   source: z.literal('probe'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
-  probes: z.array(ProviderCatalogProbeV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes)),
+  probes: z.array(ProviderCatalogProbeV1Schema).check(z.minLength(1)),
   sourceRegistryVersion: z.optional(ProviderCatalogSourceRegistryVersionV1Schema),
 }));
 const StaticProbeCatalogSchema = lazyZodSchema(() => z.strictObject({
   source: z.literal('static+probe'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   membershipPolicy: z.optional(ProviderCatalogMembershipPolicyV1Schema),
-  staticModels: z.array(ProviderModelDescriptorV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)),
-  probes: z.array(ProviderCatalogProbeV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes)),
+  staticModels: z.array(ProviderModelDescriptorV1Schema).check(z.minLength(1)),
+  probes: z.array(ProviderCatalogProbeV1Schema).check(z.minLength(1)),
   sourceRegistryVersion: z.optional(ProviderCatalogSourceRegistryVersionV1Schema),
 }));
 

@@ -1,11 +1,14 @@
+import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, ArtifactDocumentV1Schema,
+  ArtifactSignedInLinkCreateRequestV1Schema, ArtifactSignedInLinkEnsureResponseV1Schema, ArtifactSignedInLinkJoinReadV1Schema, ArtifactSignedInLinkJoinCommitInputV1Schema,
+  ArtifactSignedInLinkJoinCommitResultV1Schema, type ArtifactSignedInLinkJoinReadV1 } from '../../artifacts/artifactActionsV1.js';
+import { getArtifactUseTargetV1, type ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
+import type { ArtifactHtmlBundleV1 } from '../../artifacts/artifactHtmlV1.js';
+import { sealPublicShareDataKeyV1, openPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { computeContentPublicKeyFingerprint } from '../../machines/identity/contentPublicKeyFingerprint.js';
 import { prepareResourceRecipientKeyEnvelopesV1 } from '../../teams/resourceRecipientKeyPreparationV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, ArtifactDocumentV1Schema, ArtifactSignedInLinkCreateRequestV1Schema, ArtifactSignedInLinkEnsureResponseV1Schema, ArtifactSignedInLinkJoinReadV1Schema, ArtifactSignedInLinkJoinCommitInputV1Schema, ArtifactSignedInLinkJoinCommitResultV1Schema, type ArtifactSignedInLinkJoinReadV1 } from '../../artifacts/artifactActionsV1.js';
-import { getArtifactUseTargetV1, type ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
-import { sealPublicShareDataKeyV1, openPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMaterialV1,
   StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema,
   StoredContentPublicSharesListResponseV1Schema } from '../../sharing/storedContentPublicShareV1.js';
@@ -15,6 +18,8 @@ export type ArtifactPublicLinkActionIdV1 = 'artifact.public_link.create' | 'arti
 export type ArtifactPublicLinkIssuedV1 = Readonly<{ lookupId: string; secret: string; shareId: string; url: string }>;
 export type ArtifactPublicLinkKeyholdingResourceV1 = ArtifactSharingResourceV1 & Readonly<{
   encryptionMode: 'plain' | 'e2ee'; dataKey: Uint8Array | null;
+  /** Already opened by the keyholding host; never transported or treated as authority. */
+  htmlBundle?: ArtifactHtmlBundleV1;
 }>;
 export type ArtifactPublicLinkRequestV1 = Readonly<{ method: 'GET' | 'POST' | 'DELETE'; path: string; body?: unknown; signal?: AbortSignal }>;
 
@@ -26,7 +31,6 @@ export type ArtifactSignedInLinkOpenedV1 = Readonly<{
   artifact: ArtifactSignedInLinkOpenedArtifactV1;
   source: Readonly<{ authorAccountId: string; artifactId: string }>;
   follow: boolean;
-  followUnavailableReason?: 'plain_account';
 }>;
 
 /** Opening material belongs to the answering host, never to an Action operand or stored source. */
@@ -62,9 +66,7 @@ export function createArtifactSignedInLinkJoinActionV1(params: Readonly<{
     let keyEnvelope;
     if (dataKey) {
       if (recipient.mode === 'plain') {
-        const result = { ...source, follow: false, followUnavailableReason: 'plain_account' as const };
-        await params.onOpened({ artifact, source, follow: false, followUnavailableReason: 'plain_account' });
-        return ArtifactActionOutputSchemasV1['artifact.public_link.join'].parse(result);
+        throw Object.assign(new Error('recipient_key_unavailable'), { code: 'recipient_key_unavailable', reason: 'plain_account' });
       }
       if (read.recipientContentKey.status === 'unavailable') throw Object.assign(new Error('recipient_key_unavailable'), { code: 'recipient_key_unavailable', reason: read.recipientContentKey.reason });
       if (!recipient.contentPublicKey || encodeBase64(recipient.contentPublicKey) !== read.recipientContentKey.contentPublicKey)
@@ -156,11 +158,13 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
       ...(encryptedDataKey === undefined ? {} : { encryptedDataKey }),
       ...(create.expiresAt === undefined ? {} : { expiresAt: create.expiresAt }),
       ...(create.maxUses === undefined ? {} : { maxUses: create.maxUses }),
-      ...(create.isConsentRequired === undefined ? {} : { isConsentRequired: create.isConsentRequired }) });
+      ...(create.isConsentRequired === undefined ? {} : { isConsentRequired: create.isConsentRequired }),
+      ...(create.networkOff === true ? { networkOff: true } : {}) });
     const response = await params.request({ method: 'POST',
       path: audience === 'signed_in' ? '/v1/artifact-signed-in-links' : '/v1/public-shares', body, signal: args.signal });
     const result = (create.preserveExisting ? ArtifactSignedInLinkEnsureResponseV1Schema : StoredContentPublicShareCreateResponseV1Schema).parse(response);
     if (result.publicShare.subject.kind !== 'artifact' || result.publicShare.subject.id !== create.artifactId || result.publicShare.keyDerivation !== 'fragment_v1') throw Object.assign(new Error('public_share_subject_mismatch'), { code: 'public_share_subject_mismatch' });
+    if (create.networkOff === true && result.publicShare.networkOff !== true) throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });
     if (audience === 'signed_in' && result.publicShare.audience !== 'signed_in') throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });
     // The server retained the current bearer; generated material was never published.
     if ('created' in result && !result.created) return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare });

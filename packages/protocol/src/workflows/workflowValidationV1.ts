@@ -48,8 +48,6 @@ import { projectActionWorkflowSelectionInputV1, readActionWorkflowTargetInputFie
  * validator: a disagreement here would be a split-brain, not a convenience.
  */
 
-const BLOCK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
-
 /**
  * Loose outer envelope for the ingress dialect. Its members are parsed against
  * their own canonical schemas below so each failure keeps its exact path and
@@ -388,10 +386,6 @@ type WalkState = {
 };
 
 function recordId(state: WalkState, id: string, path: string): void {
-  if (!BLOCK_ID_PATTERN.test(id)) {
-    state.issues.push(issue('invalid_id', path, `"${id}" is not a valid block id.`, id));
-    return;
-  }
   const existing = state.seenIds.get(id);
   if (existing !== undefined) {
     state.issues.push(issue('duplicate_id', path, `Block id "${id}" is already used at ${existing}.`, id));
@@ -400,14 +394,22 @@ function recordId(state: WalkState, id: string, path: string): void {
   state.seenIds.set(id, path);
 }
 
-function producerCandidatesAt(level: ScopeLevel, exclusivePosition: number): ReadonlySet<string> {
-  const candidates = new Set<string>();
-  const limit = Math.min(exclusivePosition, level.blocks.length);
-  for (let index = 0; index < limit; index += 1) {
-    candidates.add(level.blocks[index]!.id);
-    for (const branchId of level.branchIdsByIndex.get(index) ?? []) candidates.add(branchId);
+/** Earliest member position that exposes each id (a block's own, or a branch of a parallel block). */
+const producerPositionsByLevel = new WeakMap<ScopeLevel, ReadonlyMap<string, number>>();
+
+/** Whether `id` is produced by a member before `exclusivePosition`; one index per level, not a scan per reference. */
+function isProducerAvailableAt(level: ScopeLevel, exclusivePosition: number, id: string): boolean {
+  let positions = producerPositionsByLevel.get(level);
+  if (positions === undefined) {
+    const built = new Map<string, number>();
+    level.blocks.forEach((block, index) => {
+      if (!built.has(block.id)) built.set(block.id, index);
+      for (const branchId of level.branchIdsByIndex.get(index) ?? []) if (!built.has(branchId)) built.set(branchId, index);
+    });
+    producerPositionsByLevel.set(level, positions = built);
   }
-  return candidates;
+  const position = positions.get(id);
+  return position !== undefined && position < Math.min(exclusivePosition, level.blocks.length);
 }
 
 type ResolvedScope =
@@ -508,7 +510,7 @@ function validateValueReference(
       while (levelIndex >= 0 && state.levels[levelIndex]!.loop === undefined) levelIndex -= 1;
       const level = state.levels[levelIndex];
       if (!level || reference.producer.scope.kind !== 'current'
-        || !producerCandidatesAt(level, state.positions[levelIndex]!).has(reference.producer.blockId)) {
+        || !isProducerAvailableAt(level, state.positions[levelIndex]!, reference.producer.blockId)) {
         state.issues.push(issue('invalid_reference_scope', path,
           'Trailing counts require a preceding producer in the nearest loop body.', blockId));
         return;
@@ -528,8 +530,7 @@ function validateValueReference(
         ));
         return;
       }
-      const candidates = producerCandidatesAt(resolved.level, resolved.exclusivePosition);
-      if (!candidates.has(reference.producer.blockId)) {
+      if (!isProducerAvailableAt(resolved.level, resolved.exclusivePosition, reference.producer.blockId)) {
         const known = state.seenIds.has(reference.producer.blockId);
         state.issues.push(known
           ? issue(
@@ -629,8 +630,10 @@ function validateStepExecution(state: WalkState, step: WorkflowLeafV1, path: str
     const { engine: _engine, participant: _participant, executionTarget: _target, ...fields } = selection;
     return fields;
   };
+  // Value-only: validation reads the merged selection fields, never the admission baseline, which
+  // would rebuild and re-parse the shared Agent target key once per step.
   const effective = resolveWorkflowStepSelectionV1({ defaults: withoutEngine(state.workflowDefaults),
-    step: execution === undefined ? undefined : withoutEngine(execution) }).selection;
+    step: execution === undefined ? undefined : withoutEngine(execution), purpose: 'authoring' }).selection;
   const boundConversation = effective.conversation?.kind === 'origin_session' || effective.conversation?.kind === 'existing_session'
     || effective.conversation?.kind === 'input';
   if (effective.conversation?.kind === 'input') {
@@ -1137,8 +1140,7 @@ function validateFinalOutput(state: WalkState, definition: WorkflowDefinitionV1)
     return;
   }
   const rootLevel = buildScopeLevel(definition.blocks, null);
-  const candidates = producerCandidatesAt(rootLevel, rootLevel.blocks.length);
-  if (!candidates.has(finalOutput.producer.blockId)) {
+  if (!isProducerAvailableAt(rootLevel, rootLevel.blocks.length, finalOutput.producer.blockId)) {
     state.issues.push(state.seenIds.has(finalOutput.producer.blockId)
       ? issue(
         'invalid_reference_scope',

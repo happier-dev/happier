@@ -55,6 +55,7 @@ export {
 export {
   ACCOUNT_SETTING_ARTIFACTS,
   ACCOUNT_SETTING_DEFINITIONS,
+  accountDeploymentSettingDefinitions,
   ACCOUNT_SETTING_KEYS,
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
@@ -79,6 +80,7 @@ export {
   SESSION_PENDING_QUEUE_DELIVERY_TIMINGS,
   TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES,
   NEW_SESSION_PRESENTATION_MODES,
+  NEW_SESSION_BACKDROP_STRENGTHS,
   NEW_SESSION_WIZARD_SECTION_PRESENTATIONS,
   NEW_SESSION_WIZARD_SELECTION_SECTION_IDS,
   accountSettingsParse,
@@ -109,6 +111,7 @@ export {
   type NotificationsSettingsV1,
   type TranscriptMessageTimestampDisplayMode,
   type NewSessionPresentationModeV1,
+  type NewSessionBackdropStrengthV1,
   type NewSessionWizardSectionPresentation,
   type NewSessionWizardSelectionSectionId,
   type ResolveAttentionDeliveryPolicyDecisionParams,
@@ -343,3 +346,5 @@ export {
   type GlassSurfaceGroup,
   type GlassBlurStep,
 } from './glassSurfaceMaterials.js';
+
+export * from './themeProfiles.js';

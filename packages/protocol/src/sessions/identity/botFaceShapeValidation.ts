@@ -18,6 +18,7 @@ export const BotFaceShapeConstraintSchema = lazyZodSchema(() => z.union([
   z.strictObject({ rule: z.enum(['fill_closed', 'stroke_width', 'cut_closed', 'cut_stroke_width', 'mouth_scale', 'outline_extent', 'path_syntax']) }),
 ]));
 export type BotFaceShapeConstraint = z.infer<typeof BotFaceShapeConstraintSchema>;
+export const BOT_FACE_SHAPE_GEOMETRY_GUIDANCE = `The body after cuts must cover at least ${MINIMUM_BODY_COVERAGE * 100}% of the sampled geometry field (${2 * BOT_FACE_FIELD_EXTENT * BOT_FACE_UNIT} by ${2 * BOT_FACE_FIELD_EXTENT * BOT_FACE_UNIT} source units). Every sampled point of both the quiet and needsYou mouths must lie on the body (signed distance <= ${MAXIMUM_MOUTH_SIGNED_DISTANCE}); place the mouth safely inside the filled body, not in a handle opening or a cut. Rejected shapes return fixed repair facts in invalid_parameters.details.issues[].constraint; correct the named rule and retry in the same turn.`;
 
 export type BotFaceShapeValidation = Readonly<{ ok: true; shape: BotFaceShapeV1 } | {
   ok: false; errors: readonly string[]; constraints: readonly BotFaceShapeConstraint[];

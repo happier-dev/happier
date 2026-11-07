@@ -22,8 +22,19 @@ export const MachineProcessesPolicyPatchV1Schema = lazyZodSchema(() => z.strictO
   browserMaxConcurrent: z.optional(MachineProcessesPolicyV1Schema.shape.browserMaxConcurrent._zod.def.innerType),
 }));
 
+export const MachineMonitoringPolicyV1Schema = lazyZodSchema(() => z.strictObject({
+  mode: z._default(z.enum(['off', 'while_viewing', 'always']), 'always'),
+  intervalMs: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)), 2_000),
+}));
+export type MachineMonitoringPolicyV1 = z.infer<typeof MachineMonitoringPolicyV1Schema>;
+export const MachineMonitoringPolicyPatchV1Schema = lazyZodSchema(() => z.strictObject({
+  mode: z.optional(MachineMonitoringPolicyV1Schema.shape.mode._zod.def.innerType),
+  intervalMs: z.optional(MachineMonitoringPolicyV1Schema.shape.intervalMs._zod.def.innerType),
+}));
+
 export const MachineResourcesPolicyV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), alerts: z._default(MachineVitalsAlertsPolicyV1Schema, () => MachineVitalsAlertsPolicyV1Schema.parse({})),
+  monitoring: z._default(MachineMonitoringPolicyV1Schema, () => MachineMonitoringPolicyV1Schema.parse({})),
   processes: z._default(MachineProcessesPolicyV1Schema, () => MachineProcessesPolicyV1Schema.parse({})),
   storage: z._default(MachineStoragePolicyV1Schema, () => MachineStoragePolicyV1Schema.parse({})),
   guard: z._default(MachineGuardPolicyV1Schema, () => MachineGuardPolicyV1Schema.parse({})),
@@ -31,6 +42,7 @@ export const MachineResourcesPolicyV1Schema = lazyZodSchema(() => z.strictObject
 export type MachineResourcesPolicyV1 = z.infer<typeof MachineResourcesPolicyV1Schema>;
 export const MachineResourcesPolicyV1StoredSchema = createStoredReadSchema(MachineResourcesPolicyV1Schema);
 export const MachineResourcesPolicyPatchV1Schema = lazyZodSchema(() => z.strictObject({ alerts: z.optional(MachineVitalsAlertsPolicyPatchV1Schema),
+  monitoring: z.optional(MachineMonitoringPolicyPatchV1Schema),
   processes: z.optional(MachineProcessesPolicyPatchV1Schema),
   storage: z.optional(MachineStoragePolicyPatchV1Schema),
   guard: z.optional(MachineGuardPolicyPatchV1Schema),
@@ -73,6 +85,7 @@ export async function mutateMachineResourcesPolicyV1(input: unknown, port: Machi
   if (current.status !== 'ready') return { status: 'unavailable', reason: current.status };
   const patch = parsed.data.patch.alerts;
   const merged = MachineResourcesPolicyV1Schema.safeParse({ ...current.policy,
+    monitoring: { ...current.policy.monitoring, ...parsed.data.patch.monitoring },
     processes: { ...current.policy.processes, ...parsed.data.patch.processes },
     storage: { ...current.policy.storage, ...parsed.data.patch.storage },
     guard: mergeMachineGuardPolicyV1(current.policy.guard, parsed.data.patch.guard), alerts: {

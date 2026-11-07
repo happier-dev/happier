@@ -110,7 +110,6 @@ export function captureWorkflowDiscussionV1(request: WorkflowDefinitionCaptureRe
       unresolved.push({ messageId: step.messageId, reason: 'unlinked_message' });
     }
   }
-  executable.forEach((step, index) => { step.participantInputName = `participant_${index + 1}`; });
   if (!executable.length) unresolved.push({ messageId: selected[0]!.id, reason: 'no_steps' });
   const inputDefinitions: WorkflowInputDefinition[] = steps.filter(step => step.inputName).map(step => ({
     name: step.inputName!, valueType: 'string', required: step.perRun,
@@ -123,28 +122,51 @@ export function captureWorkflowDiscussionV1(request: WorkflowDefinitionCaptureRe
   executable.forEach(step => depths.set(step.messageId, Math.max(0, ...step.dependsOnMessageIds.map(id =>
     depths.has(id) ? depths.get(id)! + 1 : 0))));
   const levels = [...new Set(depths.values())].sort((a, b) => a - b);
+  let participantGroupIndex = 0;
   for (const level of levels) {
     const siblings = executable.filter(step => depths.get(step.messageId) === level);
-    const parallel = siblings.length > 1;
+    // The same authored role uses one roster. A parallel item body consumes
+    // every chosen participant, including a roster edited before a later run.
+    // Different instructions, dependencies or fixed/per-run choices remain distinct roles.
+    const rolesByKey = new Map<string, typeof siblings>();
+    for (const step of siblings) {
+      const key = JSON.stringify([step.instruction, step.perRun, step.dependsOnMessageIds]);
+      const role = rolesByKey.get(key);
+      if (role) role.push(step);
+      else rolesByKey.set(key, [step]);
+    }
+    const roles = [...rolesByKey.values()];
+    const parallel = roles.length > 1;
     const groupId = `exchange_${level + 1}`;
-    const leaves = siblings.map((step, branchIndex): WorkflowStep => {
+    const leaves = roles.map((role, branchIndex): WorkflowBlock => {
+      const step = role[0]!;
       const index = executable.indexOf(step) + 1;
       const id = `step_${index}`;
-      const participantName = `participant_${index}`;
-      const participantValue = step.participant ? projectNativeJsonValueForTransport(step.participant) : undefined;
-      inputDefinitions.push({ name: participantName, valueType: 'json', required: step.perRun, inputType: { hostType: 'agentParticipant' },
+      const multiple = role.length > 1;
+      const participantName = multiple ? ++participantGroupIndex === 1 ? 'participants' : `participants_${participantGroupIndex}` : `participant_${index}`;
+      role.forEach(member => { member.participantInputName = participantName; });
+      const participantValue = multiple
+        ? role.every(member => member.participant) ? projectNativeJsonValueForTransport(role.map(member => member.participant)) : undefined
+        : step.participant ? projectNativeJsonValueForTransport(step.participant) : undefined;
+      inputDefinitions.push({ name: participantName, valueType: 'json', ...(multiple ? { multiple: true } : {}),
+        required: step.perRun, inputType: { hostType: 'agentParticipant' },
         ...(!step.perRun && participantValue !== undefined ? { default: participantValue } : {}) });
       if (participantValue !== undefined) inputs[participantName] = participantValue;
+      const outerLevels = Number(parallel) + Number(multiple);
       const input = step.dependsOnMessageIds.flatMap(messageId => {
         const ref = references.get(messageId);
         if (!ref) return [];
-        return [ref.kind === 'result' && parallel ? { ...ref, producer: { ...ref.producer, scope: { kind: 'outer' as const, levels: 1 } } } : ref];
+        return [ref.kind === 'result' && outerLevels ? { ...ref, producer: { ...ref.producer, scope: { kind: 'outer' as const, levels: outerLevels } } } : ref];
       });
-      references.set(step.messageId, parallel
-        ? { kind: 'result', producer: { blockId: groupId, scope: { kind: 'current' } }, path: [branchIndex, 'results', id] }
-        : { kind: 'result', producer: { blockId: id, scope: { kind: 'current' } }, path: [] });
-      return { kind: 'step', id, document: { text: step.instruction!, references: [], attachments: [] },
-        execution: { participant: { kind: 'input', name: participantName } }, input, result: { kind: 'text' } };
+      const roleId = parallel ? `role_${index}` : groupId;
+      role.forEach((member, memberIndex) => references.set(member.messageId, {
+        kind: 'result', producer: { blockId: parallel ? groupId : multiple ? roleId : id, scope: { kind: 'current' } },
+        path: [...(parallel ? [branchIndex, 'results', multiple ? roleId : id] : []), ...(multiple ? [memberIndex, 'results', id] : [])],
+      }));
+      const leaf: WorkflowStep = { kind: 'step', id, document: { text: step.instruction!, references: [], attachments: [] },
+        execution: { participant: multiple ? { kind: 'item', field: 'value' } : { kind: 'input', name: participantName } }, input, result: { kind: 'text' } };
+      return multiple ? { kind: 'loop', id: roleId, repetition: { kind: 'items', items: { kind: 'input', name: participantName },
+        execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [leaf] } : leaf;
     });
     blocks.push(...(parallel ? [{ kind: 'parallel' as const, id: groupId, failurePolicy: 'collect_outcomes' as const,
       branches: leaves.map(leaf => ({ id: `branch_${leaf.id}`, blocks: [leaf] })) }] : leaves));

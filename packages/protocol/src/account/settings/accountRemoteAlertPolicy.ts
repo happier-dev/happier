@@ -8,7 +8,9 @@ import {
   type AttentionPreviewBehavior,
   type ResolveAttentionDeliveryPolicyDecisionParams,
 } from './attentionDeliveryPolicy.js';
-import { accountSettingsParse } from './accountSettings.js';
+import { ACCOUNT_SETTING_ARTIFACTS, type AccountSettings } from './accountSettings.js';
+import { isRecord } from '../../common/records.js';
+import { readAccountAttentionDeliveryPolicy } from './attentionPolicyIngress.js';
 import { resolveAttentionDeliveryPolicyDecision } from './attentionDeliveryPolicyDecision.js';
 import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
 import {
@@ -42,8 +44,19 @@ function projectEvent(event: AttentionDeliveryEventConfig) {
   };
 }
 
+/** The Account/device projections consume this admitted policy subset, not the full document. */
+export function readAccountRemoteAlertSettings(settings: unknown): Pick<AccountSettings,
+  'sessionRemoteAlertsEnabled' | 'machineOfflineAlertsV1' | 'attentionDeliveryPolicyV1'> {
+  const source = isRecord(settings) ? settings : {};
+  return {
+    sessionRemoteAlertsEnabled: ACCOUNT_SETTING_ARTIFACTS.shape.sessionRemoteAlertsEnabled.parse(source.sessionRemoteAlertsEnabled),
+    machineOfflineAlertsV1: ACCOUNT_SETTING_ARTIFACTS.shape.machineOfflineAlertsV1.parse(source.machineOfflineAlertsV1),
+    attentionDeliveryPolicyV1: readAccountAttentionDeliveryPolicy(source),
+  };
+}
+
 export function deriveAccountRemoteAlertPolicyV1(settings: unknown): AccountRemoteAlertPolicyV1 | null {
-  const parsed = accountSettingsParse(settings);
+  const parsed = readAccountRemoteAlertSettings(settings);
   const policy = parsed.attentionDeliveryPolicyV1;
   const machineOfflineEnabled = parsed.machineOfflineAlertsV1.machineIds.length > 0;
   // Wake muting and machine enrollment do not grant remote session consent.

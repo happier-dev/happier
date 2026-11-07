@@ -6,7 +6,7 @@ export type SessionEventDelivery = Readonly<{
 
 /** Audience and credential admission belong to the caller, before this policy. */
 export function classifySessionEventDelivery(params: Readonly<{
-  event: 'new-message' | 'message-updated' | 'checkpoint' | 'delta';
+  event: 'new-message' | 'message-updated' | 'checkpoint' | 'delta' | 'update-session';
   consumption: SessionEventConsumption;
 }>): SessionEventDelivery {
   if (params.consumption.liveSegments) return { delivery: 'full', materialization: 'full' };

@@ -1,5 +1,3 @@
-import { DiscussionIdSchema } from '../../discussions/content.js';
-import { PluginWebhookHeartbeatReceiptHintV1Schema } from '../webhooks/endpointV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -7,21 +5,25 @@ import { AutomationRunStateV3Schema } from '../../automations/automationRunState
 import { AutomationRunCauseSchema } from '../../automations/automationRunCause.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from '../../runtime/eventKindsV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
+import { DiscussionIdSchema } from '../../discussions/content.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+import { PluginWebhookHeartbeatReceiptHintV1Schema } from '../webhooks/endpointV1.js';
 
 export const HAPPIER_RUNTIME_HOST_EVENT_PREFIX_V1 = '@happier/runtime/' as const;
 export const HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1 =
   '@happier/automation/run-state-changed' as const;
 export const HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1 =
   '@happier/automation/event-sources-invalidated' as const;
-
 export const HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1 =
   '@happier/session/discussion-invalidated' as const;
 export const HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1 = '@happier/health-check/heartbeat-received' as const;
 export const HealthCheckHeartbeatReceivedHostEventV1Schema = PluginWebhookHeartbeatReceiptHintV1Schema;
 export type HealthCheckHeartbeatReceivedHostEventV1 = z.infer<typeof HealthCheckHeartbeatReceivedHostEventV1Schema>;
-
-
+export const HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1 = '@happier/deployment/receipt-invalidated' as const;
+export const DeploymentReceiptInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
+  environmentId: z.string().check(z.minLength(1)), deploymentId: z.string().check(z.minLength(1)),
+}));
+export type DeploymentReceiptInvalidatedHostEventV1 = z.infer<typeof DeploymentReceiptInvalidatedHostEventV1Schema>;
 /** Exact committed Account row routing; content stays behind its Action reader. */
 export const HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1 = '@happier/account/entities-invalidated' as const;
 export const AccountEntitiesInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
@@ -42,7 +44,9 @@ export type RuntimeHostEventIdV1 =
 export type HostEventIdV1 = RuntimeHostEventIdV1
   | typeof HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1
   | typeof HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1
+  | typeof HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1
   | typeof HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1
+  | typeof HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1
   | typeof HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1;
 
 /** Runtime Host Event author scopes deliberately remain separate from Account scope. */
@@ -146,6 +150,7 @@ export const HOST_EVENT_IDS_V1 = Object.freeze([
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
   HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
   HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
+  HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1,
   HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1,
 ] as const);
 
@@ -187,15 +192,16 @@ export const AutomationHostEventTargetV1Schema = lazyZodSchema(() => z.strictObj
   eventId: z.enum([
     HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
     HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
-  HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   ]),
   scope: AutomationHostEventScopeV1Schema,
 }));
 
 export const HostEventTargetV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ eventId: z.literal(HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1), scope: AutomationHostEventScopeV1Schema }),
   RuntimeHostEventTargetV1Schema,
   AutomationHostEventTargetV1Schema,
+  z.strictObject({ eventId: z.literal(HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1), scope: AutomationHostEventScopeV1Schema }),
+  z.strictObject({ eventId: z.literal(HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1),
+    scope: AutomationHostEventScopeV1Schema }),
   z.strictObject({
     eventId: z.literal(HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1),
     scope: z.strictObject({ kind: z.literal('account') }),
@@ -234,6 +240,12 @@ export type HostEventCatalogEntryV1 =
     canonicalProducer: 'account-change-feed'; sourceProducers: readonly ['account-change-feed'];
     payloadType: 'AccountEntitiesInvalidatedHostEventV1'; privacy: 'account';
     allowedScopes: readonly ['account']; realm: 'daemon'; disposition: 'public'; }>
+  | Readonly<{
+    id: typeof HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1;
+    canonicalProducer: 'deployment-receipt-transition'; sourceProducers: readonly ['account-change-feed'];
+    payloadType: 'DeploymentReceiptInvalidatedHostEventV1'; privacy: 'account';
+    allowedScopes: readonly ['account']; realm: 'daemon'; disposition: 'public';
+  }>
   | Readonly<{
     id: typeof HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1;
     canonicalProducer: 'webhook-receipt'; sourceProducers: readonly ['webhook-receipt'];
@@ -309,6 +321,11 @@ export const HOST_EVENT_CATALOG_V1: readonly HostEventCatalogEntryV1[] = Object.
     id: HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
     canonicalProducer: 'webhook-receipt', sourceProducers: Object.freeze(['webhook-receipt'] as const),
     payloadType: 'HealthCheckHeartbeatReceivedHostEventV1', privacy: 'account',
+    allowedScopes: Object.freeze(['account'] as const), realm: 'daemon', disposition: 'public',
+  }),
+  Object.freeze({ id: HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1,
+    canonicalProducer: 'deployment-receipt-transition', sourceProducers: Object.freeze(['account-change-feed'] as const),
+    payloadType: 'DeploymentReceiptInvalidatedHostEventV1', privacy: 'account',
     allowedScopes: Object.freeze(['account'] as const), realm: 'daemon', disposition: 'public',
   }),
   Object.freeze({ id: HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1,

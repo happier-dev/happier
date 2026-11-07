@@ -21,19 +21,19 @@ import {
 } from './configurationActionsV1.js';
 import type { ConnectedServiceQuotaGetInputV1 } from './providerAccountUsageHistory.js';
 import type { ConnectedServicePoolSelectionGetRequestV1 } from './connectedServicePoolSelection.js';
+import { classifyHomeDomainHttpMutationFailureV1 } from '../actions/homeDomainHttpBinding.js';
+import { isAccountDirectConnectedAccountModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
+import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
+import { QualifiedConnectedAccountCredentialPayloadV1Schema } from './qualifiedConnectedAccountContentEnvelope.js';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from './legacyConnectedServiceCompatibility.js';
+import { QualifiedConnectedAccountCredentialCreateV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from './qualifiedConnectedAccountsV4.js';
+import type { StoredJsonContentEnvelope } from '../storage/storedJsonContentEnvelope.js';
 import { normalizeConnectedAccountConfigurationV1, normalizeConnectedAccountConfigurationSecretValuesV1, replaceConnectedServiceConfigurationCatalogV1,
   type ConnectedServiceConfigurationCatalogHostV1 } from './connectedServiceConfigurationCatalogV1.js';
 export { normalizeConnectedAccountConfigurationV1, normalizeConnectedAccountConfiguredOrigin, replaceConnectedServiceConfigurationCatalogV1 } from './connectedServiceConfigurationCatalogV1.js';
 export type { ConnectedServiceConfigurationCatalogHostV1, ConnectedServiceConfigurationCatalogWriteV1 } from './connectedServiceConfigurationCatalogV1.js';
 
-import { isAccountDirectConnectedAccountModeV1, listAccountDirectSecretCredentialKeysV1, type PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
-import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
-import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
-
-import { QualifiedConnectedAccountCredentialPayloadV1Schema } from './qualifiedConnectedAccountContentEnvelope.js';
-import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from './legacyConnectedServiceCompatibility.js';
-import { QualifiedConnectedAccountCredentialCreateV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from './qualifiedConnectedAccountsV4.js';
-import type { StoredJsonContentEnvelope } from '../storage/storedJsonContentEnvelope.js';
 type QuotaResetInput = ReturnType<(typeof inputs)['connectedServices.quota.reset']['parse']>;
 /** One field admission for daemon authentication and declared Account-direct credentials. */
 export function areConnectedAccountManualFieldsValidV1(mode: Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }>,
@@ -54,8 +54,8 @@ export type ConnectedAccountPurposeMutationV1 = Readonly<{
 export type ConnectedAccountPurposeMutationIntentV1 = (purposeBindings: QualifiedConnectedAccountPurposeBindingsV1,
   legacySettings: AgentConnectedAccountDefaultSettings) => ConnectedAccountPurposeMutationV1 | null;
 export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
-  /** Held, admitted descriptors only: never activate or probe a Machine to enumerate setup. */
-  readSetupCatalog?(): Promise<ReturnType<(typeof outputs)['connectedServices.catalog.list']['parse']>>;
+  /** Held descriptors by default; explicit refresh invalidates existing demanded projections only. */
+  readSetupCatalog?(input: Readonly<{ refresh?: boolean }>): Promise<ReturnType<(typeof outputs)['connectedServices.catalog.list']['parse']>>;
   configurationCatalog?: ConnectedServiceConfigurationCatalogHostV1;
   /** Fresh Account-mode admission and the canonical credential envelope codec; no Machine or provider access. */
   sealAccountCredential?(payload: ReturnType<typeof projectQualifiedConnectedAccountCredentialPlaintextV1>): Promise<StoredJsonContentEnvelope>;
@@ -89,9 +89,10 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   setSubscriptionPrice?(input: ReturnType<(typeof inputs)['connectedServices.subscription.price.set']['parse']>): Promise<void>;
   /** Read the incumbent machine selector; never change its active account. */
   readPoolSelection?(input: ConnectedServicePoolSelectionGetRequestV1): Promise<unknown>;
-  controlCommand?(machineId: string, command: ConnectedAccountDaemonControlCommand): Promise<unknown>;
-  /** The incumbent daemon authentication owner; this adapter never owns attempts. */
-  authenticationCommand?(machineId: string, command: ConnectedAccountDaemonCommand): Promise<unknown>;
+  controlCommand?(machineId: string | undefined, command: ConnectedAccountDaemonControlCommand): Promise<unknown>;
+  /** The shared authentication owner resolves continuations from their addressed record. */
+  authenticationCommand?(machineId: string | undefined, command: ConnectedAccountDaemonCommand): Promise<unknown>;
+  listPendingAuthenticationAttempts?(input: ReturnType<(typeof inputs)['connectedServices.authentication.pending.list']['parse']>): Promise<unknown>;
   /** The executing client's OS/browser boundary, never an authenticated provider mutation. */
   openBillingDestination?(url: string): Promise<void>;
   setIdentityPrivacy?: (hidden: boolean) => void;
@@ -178,7 +179,8 @@ export async function executeConnectedServiceConfigurationActionV1(
   for (const [operation, id] of Object.entries(CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION)) {
     if (id !== actionId) continue;
     if (!host.authenticationCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-    const { machineId, ...operands } = inputs[id].parse(input);
+    const args = inputs[id].parse(input);
+    const { machineId, ...operands } = { ...args, machineId: 'machineId' in args ? args.machineId : undefined };
     const command = ConnectedAccountDaemonCommandSchema.parse({ ...operands, operation });
     const response = ConnectedAccountAttemptResponseSchema.parse(await host.authenticationCommand(machineId, command));
     host.assertCurrent();
@@ -303,16 +305,16 @@ export async function executeConnectedServiceConfigurationActionV1(
       return outputs[actionId].parse({ accounts, pools, source: { completeness: 'complete', observedAtMs: 'timestamp' in raw ? profile.timestamp : null }, healthBasis: 'credentials' });
     }
     case 'connectedServices.catalog.list': {
-      inputs[actionId].parse(input);
+      const selection = inputs[actionId].parse(input);
       if (!host.readSetupCatalog) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-      const result = await host.readSetupCatalog();
+      const result = await host.readSetupCatalog(selection);
       host.assertCurrent();
       return outputs[actionId].parse(result);
     }
     case 'connectedServices.authentication.pending.list': {
       const args = inputs[actionId].parse(input);
-      if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-      const response = outputs[actionId].parse(await host.controlCommand(args.machineId, { operation: 'listPendingAttempts', service: args.service }));
+      if (!host.listPendingAuthenticationAttempts) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      const response = outputs[actionId].parse(await host.listPendingAuthenticationAttempts(args));
       host.assertCurrent();
       return response;
     }
@@ -335,7 +337,7 @@ export async function executeConnectedServiceConfigurationActionV1(
                 .map(([key, value]) => [key, PluginJsonValueV2Schema.parse(value)])),
               secretValues: replacement.secretValues }
           : { operation: 'readConfiguration', target: args.target };
-        const response = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand(args.machineId, command));
+        const response = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand('machineId' in args ? args.machineId : undefined, command));
         if (response.status !== (actionId === 'connectedServices.configuration.get' ? 'configuration' : 'configurationCommitted')) {
           const code = 'code' in response ? response.code : 'connected_account_configuration_target_unavailable';
           return { ok: false, errorCode: code, error: code };
@@ -374,16 +376,19 @@ export async function executeConnectedServiceConfigurationActionV1(
       const replacement = actionId === 'connectedServices.configuration.replace'
         ? inputs['connectedServices.configuration.replace'].parse(input) : null;
       try {
+        const selectedSecrets = replacement && 'selectedSecrets' in replacement ? replacement.selectedSecrets : undefined;
         const secretValues = replacement
-          ? normalizeConnectedAccountConfigurationSecretValuesV1(mode, replacement.secretValues) : {};
+          ? normalizeConnectedAccountConfigurationSecretValuesV1(mode, replacement.secretValues, selectedSecrets) : {};
         const retainedSecretRefs = Object.fromEntries(Object.entries(entry?.secretRefs ?? {})
           .filter(([field]) => !Object.hasOwn(secretValues, field)));
         const normalized = await normalizeConnectedAccountConfigurationV1({ target, mode, record: entry, hasSecret: owner.hasSecret,
-          ...(replacement ? { replacement: { values: replacement.values, secretRefs: retainedSecretRefs } } : {}) });
+          ...(replacement ? { replacement: { values: replacement.values, secretRefs: retainedSecretRefs,
+            ...(selectedSecrets ? { selectedSecrets } : {}) } } : {}) });
         host.assertCurrent();
         if (actionId === 'connectedServices.configuration.get') return outputs[actionId].parse({ target, mode, configuration: {
           status: normalized.revision !== null && normalized.missingFieldIds.length === 0 ? 'ready' : 'configurationRequired',
           revision: normalized.revision, values: normalized.values, configuredSecretFieldIds: Object.keys(normalized.secretRefs).sort(),
+          secretRefs: normalized.secretRefs,
           missingFieldIds: normalized.missingFieldIds,
         } });
         if (!replacement) throw new TypeError('Configuration replacement input unavailable');
@@ -392,7 +397,8 @@ export async function executeConnectedServiceConfigurationActionV1(
         const write = replaceConnectedServiceConfigurationCatalogV1({ catalog, target, expectedRevision: replacement.expectedRevision,
           values: normalized.values, secretRefs: normalized.secretRefs, secretValues, createRevision: owner.createRevision });
         if (!write) return { ok: false, errorCode: 'connected_account_configuration_changed', error: 'connected_account_configuration_changed' };
-        const result = await owner.write(write);
+        const selected = Object.fromEntries(Object.entries(selectedSecrets ?? {}).flatMap(([field, selection]) => selection ? [[field, selection]] : []));
+        const result = await owner.write({ ...write, ...(Object.keys(selected).length ? { selectedSecrets: selected } : {}) });
         if (result.status !== 'updated' && result.status !== 'applied') {
           const code = result.status === 'conflict' || result.status === 'settings-conflict' ? 'connected_account_configuration_changed' : result.status;
           return { ok: false, errorCode: code, error: code };
@@ -574,7 +580,19 @@ export async function executeConnectedServiceConfigurationActionV1(
     case 'connectedServices.pools.reorder': {
       const args = inputs[actionId].parse(input);
       const encoded = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema, args.group));
-      const group = readGroup(await host.request({ method: 'GET', path: `/v4/connect/qualified/group?group=${encoded}` }), args.group);
+      let group: ReturnType<typeof readGroup>;
+      try {
+        group = readGroup(await host.request({ method: 'GET', path: `/v4/connect/qualified/group?group=${encoded}` }), args.group);
+      } catch (error) {
+        host.assertCurrent();
+        // No member write exists before this exact read. Do not lose that fact
+        // to an executor's generic failure or the carrier's coarse network code.
+        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null;
+        const errorCode = classifyHomeDomainHttpMutationFailureV1({ error, issued: false, aborted: false }) === 'cancelled'
+          ? 'cancelled'
+          : code && !['action_failed', 'server_unreachable', 'outcome_unknown'].includes(code) ? code : 'connect_group_read_failed';
+        return { ok: false, errorCode, error: errorCode };
+      }
       await reorderConnectedServicePoolMembersV1({ group, ...('move' in args ? { move: args.move } : { accountIds: args.accountIds }),
         members: (current) => current.members.map((member) => ({ accountId: member.connectedAccountId, priority: member.priority })),
         patch: async (current, connectedAccountId, priority) => {

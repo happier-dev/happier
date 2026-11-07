@@ -1,6 +1,6 @@
 import type { Tx } from "@/storage/inTx";
 import { TransactionReplayRequiredError } from "@/storage/inTx";
-import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
+import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 
 import {
     emitAutomationMutationAfterTx,
@@ -17,20 +17,14 @@ import { cancelWorkflowRunTx, WorkflowRunServiceError } from "@/app/workflows/wo
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import {
-    cancelAutomationRunRowTx,
-    publishCancelledAutomationRunsTx,
-    type CancelledAutomationRunTxResult,
-} from "./automationRunService";
-import {
     AUTOMATION_RUN_TERMINAL_STATES,
-    type AutomationRunItem,
 } from "./automationTypes";
 import { settleAutomationReplyHandoffsForRevokedMachineTx } from "./automationReplyHandoffService";
 
 export type AutomationMachineAssignmentRemovalResult = Readonly<{
-    /** Live Automations whose definition-level assignment rows for this machine were removed. */
+    /** Live definitions whose ordinary assignment was removed or derived controller became unavailable. */
     affectedAutomationIds: readonly string[];
-    /** Affected enabled Automations that lost their last enabled assignment and were atomically disabled. */
+    /** Enabled definitions that lost their last eligible assignment and were atomically disabled. */
     disabledAutomationIds: readonly string[];
 }>;
 
@@ -46,20 +40,28 @@ export type AutomationMachineAssignmentRemovalParams = Readonly<{
     markMachineUnavailableTx: (tx: Tx) => Promise<void>;
 }>;
 
-function machineAssignmentRemovalPublicationScope(params: Readonly<{ accountId: string; machineId: string }>): WorkflowPublicationScope {
-    return {
-        accountId: params.accountId, machineIds: [params.machineId],
-        automationWhere: { accountId: params.accountId, assignments: { some: { machineId: params.machineId } } },
-        runWhere: { accountId: params.accountId, assignments: { some: { machineId: params.machineId } },
-            state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } },
-    };
+async function machineAssignmentRemovalPublicationScope(tx: Tx,
+    params: Readonly<{ accountId: string; machineId: string }>,
+): Promise<Readonly<{ scope: WorkflowPublicationScope; contentAccountIds: readonly string[] }>> {
+    // Exact assigned definitions and open Runs determine their real content-fence owners.
+    const [definitions, runs] = await Promise.all([
+        tx.automation.findMany({ where: { assignments: { some: { machineId: params.machineId } } },
+            select: { id: true, accountId: true } }),
+        tx.automationRun.findMany({ where: { assignments: { some: { machineId: params.machineId } },
+            state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } }, select: { id: true, accountId: true } }),
+    ]);
+    const contentAccountIds = [...new Set([params.accountId, ...definitions.map(row => row.accountId), ...runs.map(row => row.accountId)])].sort();
+    return { contentAccountIds, scope: { accountId: params.accountId,
+        automationIds: definitions.map(row => row.id), runIds: runs.map(row => row.id),
+        machineTargets: contentAccountIds.map(accountId => ({ accountId, machineId: params.machineId })),
+    } };
 }
 
 /** Enclosing deletion admits the same definition/stranded-Run effects as revocation. */
 export async function readAutomationMachineAssignmentRemovalPublicationAudienceInTx(
     tx: Tx, params: Readonly<{ accountId: string; machineId: string }>,
 ): Promise<WorkflowPublicationAudience> {
-    return getWorkflowPublicationAudienceInTx(tx, machineAssignmentRemovalPublicationScope(params));
+    return getWorkflowPublicationAudienceInTx(tx, (await machineAssignmentRemovalPublicationScope(tx, params)).scope);
 }
 
 /**
@@ -95,10 +97,11 @@ export class AutomationMachineAssignmentRemovalFenceUnavailableError extends Err
  * enforce ("an enabled Automation requires at least one enabled execution
  * assignment"). Per affected Automation, in the caller's transaction:
  *
- * 1. remove the machine's AutomationAssignment rows; frozen
+ * 1. remove ordinary AutomationAssignment rows; Environment-derived placement
+ *    stays explicit until controller.set moves it, while its definition pauses. Frozen
  *    AutomationRunAssignment snapshots are never touched, rewritten, or
  *    transferred to another machine;
- * 2. when the enabled Automation has no remaining enabled assignment, disable
+ * 2. when the enabled Automation has no remaining eligible enabled assignment, disable
  *    it atomically (exact `enabled: true` CAS), clear its schedule cursors,
  *    and advance the Event source-definition catalog revision when an enabled
  *    Event definition left the visible projection, so watchers re-adopt
@@ -120,8 +123,8 @@ export class AutomationMachineAssignmentRemovalFenceUnavailableError extends Err
  * snapshot still names the machine after its definition assignments were
  * already removed or changed.
  *
- * The whole mutation is gated by the one Account encryption transition fence:
- * when the fence is unavailable, the composition throws
+ * The whole mutation fences each affected definition/Run Account before the
+ * Machine write. When any fence is unavailable, the composition throws
  * `AutomationMachineAssignmentRemovalFenceUnavailableError` before any write,
  * so the caller's transaction rolls back atomically instead of committing a
  * half-transition that would permanently strand the settlement.
@@ -129,7 +132,8 @@ export class AutomationMachineAssignmentRemovalFenceUnavailableError extends Err
 export async function removeAutomationMachineAssignmentsTx(
     params: AutomationMachineAssignmentRemovalParams,
 ): Promise<AutomationMachineAssignmentRemovalResult> {
-    const publicationScope = machineAssignmentRemovalPublicationScope(params);
+    const census = await machineAssignmentRemovalPublicationScope(params.tx, params);
+    const publicationScope = census.scope;
     await acquireWorkflowPublicationLocksInTx(params.tx, publicationScope);
     const admittedRunIds = new Set((await getWorkflowPublicationAudienceInTx(params.tx, publicationScope)).runIds);
     beforeAccountChangePublication(params.tx, [params.accountId], async tx => {
@@ -137,9 +141,12 @@ export async function removeAutomationMachineAssignmentsTx(
         // is uncommitted. Publication orders their shared Account, so replay rather
         // than miss assignments or stranded Runs enumerated before that commit.
         const [remainingAssignments, current] = await Promise.all([
-            tx.automationAssignment.count({ where: { machineId: params.machineId } }),
-            getWorkflowPublicationAudienceInTx(tx, publicationScope),
+            tx.automationAssignment.count({ where: { machineId: params.machineId, automation: { OR: [
+                { deploymentEnvironmentId: null }, { deploymentEnvironmentId: { not: null }, enabled: true, deletedAt: null },
+            ] } } }),
+            machineAssignmentRemovalPublicationScope(tx, params).then(current => getWorkflowPublicationAudienceInTx(tx, current.scope)),
         ]);
+        assertAccountChangePublicationAudienceInTx(tx, current.accountIds);
         if (remainingAssignments > 0 || current.runIds.some(runId => !admittedRunIds.has(runId))) {
             throw new TransactionReplayRequiredError("automation-assignment-admission-changed");
         }
@@ -149,16 +156,15 @@ export async function removeAutomationMachineAssignmentsTx(
     // unconditionally — including when no current definition assignment
     // remains — because stranded-Run settlement below is independent of
     // definition-assignment presence and is not optional.
-    const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
-        params.tx,
-        params.accountId, "content",
-    );
-    if (accountFence.status !== "ready") {
-        throw new AutomationMachineAssignmentRemovalFenceUnavailableError(
-            accountFence.status === "account_not_found"
-                ? "account_not_found"
-                : accountFence.reason,
-        );
+    const accountModes = new Map<string, "plain" | "e2ee">();
+    for (const accountId of census.contentAccountIds) {
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(params.tx, accountId, "content");
+        if (accountFence.status !== "ready") {
+            throw new AutomationMachineAssignmentRemovalFenceUnavailableError(
+                accountFence.status === "account_not_found" ? "account_not_found" : accountFence.reason,
+            );
+        }
+        accountModes.set(accountId, accountFence.account.currentness.encryptionMode);
     }
 
     // The canonical machine writer is deliberately invoked here rather than
@@ -176,6 +182,7 @@ export async function removeAutomationMachineAssignmentsTx(
             enabled: true,
             priority: true,
             updatedAt: true,
+            automation: { select: { accountId: true, deploymentEnvironmentId: true } },
         },
     });
 
@@ -188,7 +195,7 @@ export async function removeAutomationMachineAssignmentsTx(
 
     if (removedRows.length > 0) {
         await params.tx.automationAssignment.deleteMany({
-            where: { machineId: params.machineId },
+            where: { machineId: params.machineId, automation: { deploymentEnvironmentId: null } },
         });
     }
 
@@ -196,8 +203,10 @@ export async function removeAutomationMachineAssignmentsTx(
     const disabledAutomationIds: string[] = [];
     const now = new Date();
     for (const [automationId, removed] of removedRowsByAutomationId) {
+        const automationAccountId = removed[0]?.automation.accountId;
+        if (!automationAccountId) throw new Error('Machine assignment group has no Automation Account');
         const automation = await loadAutomationTx(params.tx, {
-            accountId: params.accountId,
+            accountId: automationAccountId,
             automationId,
         });
         // A soft-deleted Automation has no live definition to keep valid; its
@@ -206,7 +215,7 @@ export async function removeAutomationMachineAssignmentsTx(
         affectedAutomationIds.push(automationId);
 
         const hasRemainingEnabledAssignment = automation.assignments.some(
-            (assignment) => assignment.enabled,
+            (assignment) => assignment.enabled && assignment.machineId !== params.machineId,
         );
         let disabled = false;
         if (automation.enabled && !hasRemainingEnabledAssignment) {
@@ -217,7 +226,7 @@ export async function removeAutomationMachineAssignmentsTx(
             const updated = await params.tx.automation.updateMany({
                 where: {
                     id: automationId,
-                    accountId: params.accountId,
+                    accountId: automationAccountId,
                     enabled: true,
                     deletedAt: null,
                 },
@@ -240,7 +249,7 @@ export async function removeAutomationMachineAssignmentsTx(
                     // canonical catalog revision owner.
                     await ensureAutomationEventCatalogStateTx({
                         tx: params.tx,
-                        accountId: params.accountId,
+                        accountId: automationAccountId,
                         projectionChanged: true,
                     });
                 }
@@ -253,7 +262,7 @@ export async function removeAutomationMachineAssignmentsTx(
             await params.tx.automation.updateMany({
                 where: {
                     id: automationId,
-                    accountId: params.accountId,
+                    accountId: automationAccountId,
                     deletedAt: null,
                 },
                 data: { updatedAt: now },
@@ -261,37 +270,31 @@ export async function removeAutomationMachineAssignmentsTx(
         }
 
         const cursor = await markAutomationChangedTx(params.tx, {
-            accountId: params.accountId,
+            accountId: automationAccountId,
             automationId,
         });
         // Reload after the mutation so the post-commit publication carries the
         // committed definition state.
         const publishedAutomation = await loadAutomationTx(params.tx, {
-            accountId: params.accountId,
+            accountId: automationAccountId,
             automationId,
         });
         if (!publishedAutomation) continue;
         emitAutomationMutationAfterTx({
             tx: params.tx,
-            accountId: params.accountId,
+            accountId: automationAccountId,
             automation: publishedAutomation,
             cursor,
             previousAssignments: removed,
         });
     }
 
-    await settleRunsStrandedByDurableMachineLossTx({
-        tx: params.tx,
-        accountId: params.accountId,
-        machineId: params.machineId,
-        accountEncryptionMode: accountFence.account.currentness.encryptionMode,
-    });
-    await settleAutomationReplyHandoffsForRevokedMachineTx({
-        tx: params.tx,
-        accountId: params.accountId,
-        machineId: params.machineId,
-        now,
-    });
+    for (const [accountId, accountEncryptionMode] of accountModes) {
+        await settleRunsStrandedByDurableMachineLossTx({ tx: params.tx, accountId,
+            machineId: params.machineId, accountEncryptionMode });
+        await settleAutomationReplyHandoffsForRevokedMachineTx({ tx: params.tx, accountId,
+            machineId: params.machineId, now });
+    }
 
     return { affectedAutomationIds, disabledAutomationIds };
 }
@@ -319,7 +322,8 @@ async function settleRunsStrandedByDurableMachineLossTx(params: Readonly<{
     accountEncryptionMode: "plain" | "e2ee";
 }>): Promise<void> {
     const strandedRefs = await params.tx.automationRunAssignment.findMany({
-        where: { machineId: params.machineId },
+        where: { machineId: params.machineId,
+            run: { accountId: params.accountId, state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } } },
         select: { runId: true },
     });
     if (strandedRefs.length === 0) return;
@@ -359,17 +363,17 @@ async function settleRunsStrandedByDurableMachineLossTx(params: Readonly<{
     }
 
     // Settlement requires positive proof that the complete snapshot points
-    // only at permanently revoked machines belonging to this Account.
+    // only at permanently revoked Machines. The Run keeps its own Account custody;
+    // a Team-granted controller need not belong to that same Account.
     // Replacement is deliberately not enough: it is reversible, and undo can
     // make that exact frozen assignment usable again without rewriting it.
-    // Missing rows and foreign-Account rows are neither eligible execution
-    // authority nor evidence of durable local machine loss, so both
-    // fail closed and leave the Run for an explicit repair owner.
+    // Missing rows are not proof of durable Machine loss and fail closed.
+    // This physical-loss fact grants no claim or dispatch authority.
     const strandedRunIds = candidateRunIds.filter((runId) => {
         const runSnapshot = snapshotsByRunId.get(runId) ?? [];
         return runSnapshot.length > 0 && runSnapshot.every((row) => {
             const machine = machinesById.get(row.machineId);
-            if (!machine || machine.accountId !== params.accountId) return false;
+            if (!machine) return false;
             return classifyMachineAvailabilityState(machine) === "revoked";
         });
     });
@@ -390,34 +394,18 @@ async function settleRunsStrandedByDurableMachineLossTx(params: Readonly<{
     })))).flat();
     if (strandedRuns.length === 0) return;
 
-    const results: CancelledAutomationRunTxResult[] = [];
     for (const previousRun of strandedRuns) {
-        if (previousRun.workflowCustodyState !== null) {
-            try {
-                await cancelWorkflowRunTx(params.tx, {
-                    accountId: params.accountId,
-                    runId: previousRun.id,
-                    expectedRevision: previousRun.revision,
-                    cause: "permanent_target_loss",
-                });
-            } catch (error) {
-                if (error instanceof WorkflowRunServiceError && error.code === "currentness_conflict") continue;
-                throw error;
-            }
-            continue;
+        try {
+            await cancelWorkflowRunTx(params.tx, {
+                accountId: params.accountId,
+                runId: previousRun.id,
+                expectedRevision: previousRun.revision,
+                accountEncryptionMode: params.accountEncryptionMode,
+                cause: "permanent_target_loss",
+            });
+        } catch (error) {
+            if (error instanceof WorkflowRunServiceError && error.code === "currentness_conflict") continue;
+            throw error;
         }
-        const result = await cancelAutomationRunRowTx({
-            tx: params.tx,
-            accountId: params.accountId,
-            previousRun: previousRun as AutomationRunItem,
-            accountEncryptionMode: params.accountEncryptionMode,
-        });
-        if (result) results.push(result);
     }
-    if (results.length === 0) return;
-    await publishCancelledAutomationRunsTx({
-        tx: params.tx,
-        accountId: params.accountId,
-        results,
-    });
 }

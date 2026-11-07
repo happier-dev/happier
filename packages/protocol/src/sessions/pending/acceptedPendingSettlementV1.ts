@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { SessionMessageAcceptedDeliveryContentV1Schema, SessionMessageAcceptedTurnV1Schema, SessionMessageDeliveryResolutionV1Schema } from '../messages/sessionMessageDeliveryResolutionV1.js';
 import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
@@ -18,6 +19,8 @@ export const AcceptedPendingSettlementRequestV1Schema = lazyZodSchema(() => z.st
   sessionId: SettlementIdentityV1Schema,
   localId: PendingLocalIdSchema,
   acceptedDelivery: z.optional(SessionMessageAcceptedDeliveryContentV1Schema),
+  /** Added delivery component only; settlement merges with retained whole-message timing. */
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   /** Clear host-stamped projection; content may remain encrypted for the Account. */
   acceptedTurn: z.optional(SessionMessageAcceptedTurnV1Schema),
 }).check(z.superRefine((value, context) => {
@@ -69,6 +72,7 @@ const AcceptedPendingSettlementFailureErrorV1Schema = lazyZodSchema(() => z.enum
     'invalid-params',
     'not-found',
     'not-materialized',
+    'turn-publication-pending',
     'blocked-by-earlier-pending',
     'transcript-conflict',
     'internal',

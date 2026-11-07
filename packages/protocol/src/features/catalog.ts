@@ -1,9 +1,9 @@
 import type { FeatureCatalogDefinitionEntry, FeatureFailMode, FeatureRepresentation } from './catalogTypes.js';
 
-type FeatureCatalogDefinitionEntryBase = Omit<FeatureCatalogDefinitionEntry, 'dependencies'>;
+type FeatureCatalogDefinitionEntryBase = Omit<FeatureCatalogDefinitionEntry, 'dependencies' | 'aliasFor'>;
 
 function defineFeatureCatalog<
-  const T extends Record<string, FeatureCatalogDefinitionEntryBase & Readonly<{ dependencies: readonly (keyof T)[] }>>,
+  const T extends Record<string, FeatureCatalogDefinitionEntryBase & Readonly<{ dependencies: readonly (keyof T)[]; aliasFor?: keyof T }>>,
 >(catalog: T): T {
   return catalog;
 }
@@ -40,7 +40,14 @@ const FEATURE_CATALOG_DEFINITION = {
     representation: 'server',
   },
   automations: {
-    description: 'Automations feature surfaces and scheduling runtime.',
+    description: 'Released compatibility alias of workflows; not a separate switch.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+    aliasFor: 'workflows',
+  },
+  workflows: {
+    description: 'Structured Workflow authoring, execution, inspection, and Action surfaces.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
     representation: 'server',
@@ -49,12 +56,6 @@ const FEATURE_CATALOG_DEFINITION = {
     description: 'Deployment preparation, publishing, and new deployment work.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
-    representation: 'server',
-  },
-  workflows: {
-    description: 'Structured Workflow authoring, execution, inspection, and Action surfaces.',
-    defaultFailMode: 'fail_closed',
-    dependencies: ['automations'],
     representation: 'server',
   },
   bots: {
@@ -941,20 +942,42 @@ export function isFeatureId(value: unknown): value is FeatureId {
   return typeof value === 'string' && FEATURE_ID_SET.has(value);
 }
 
+export function getCanonicalFeatureId(featureId: FeatureId): FeatureId {
+  const entry = FEATURE_CATALOG[featureId];
+  return entry && 'aliasFor' in entry ? entry.aliasFor : featureId;
+}
+
+const NO_FEATURE_ALIASES: readonly FeatureId[] = Object.freeze([]);
+const ALIASES_BY_ID: ReadonlyMap<FeatureId, readonly FeatureId[]> = (() => {
+  const aliases = new Map<FeatureId, FeatureId[]>();
+  for (const id of FEATURE_IDS) {
+    const canonical = getCanonicalFeatureId(id);
+    if (canonical === id) continue;
+    const entries = aliases.get(canonical) ?? [];
+    entries.push(id);
+    aliases.set(canonical, entries);
+  }
+  return aliases;
+})();
+
+export function getFeatureAliases(featureId: FeatureId): readonly FeatureId[] {
+  return ALIASES_BY_ID.get(getCanonicalFeatureId(featureId)) ?? NO_FEATURE_ALIASES;
+}
+
 export function getFeatureDefinition(featureId: FeatureId): (typeof FEATURE_CATALOG)[FeatureId] {
-  return FEATURE_CATALOG[featureId];
+  return FEATURE_CATALOG[getCanonicalFeatureId(featureId)];
 }
 
 export function getFeatureDependencies(featureId: FeatureId): readonly FeatureId[] {
-  return FEATURE_CATALOG[featureId].dependencies;
+  return getFeatureDefinition(featureId).dependencies;
 }
 
 export function getFeatureRepresentation(featureId: FeatureId): FeatureRepresentation {
-  return FEATURE_CATALOG[featureId].representation;
+  return getFeatureDefinition(featureId).representation;
 }
 
 export function isFeatureServerRepresented(featureId: FeatureId): boolean {
-  return FEATURE_CATALOG[featureId].representation === 'server';
+  return getFeatureRepresentation(featureId) === 'server';
 }
 
 const REQUIRES_SERVER_SNAPSHOT_MEMO = new Map<FeatureId, boolean>();

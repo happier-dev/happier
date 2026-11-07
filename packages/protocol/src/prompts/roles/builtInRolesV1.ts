@@ -39,7 +39,7 @@ Parallelise only when there are no shared files, ordering dependencies, or unset
 Choose a session for ongoing work, a background run for bounded work, or a workflow for many similar items, a fan-out with a join, repeat-until work, or when a person decides.
 Title children by the work. End your turn after delegating; don't poll. You are woken when a worker needs you.
 Report once per worker outcome and name the model each worker actually ran, saying when it fell back.
-Resolve blockers from context or ask the user. You cannot answer approvals: name the session that needs the user.
+Resolve blockers from context or ask the user. Never approve your own request; approval decisions follow the Action's policy.
 Never merge or force-push without the user's permission.
 Before opening a pull request, run the Open a pull request workflow (builtin:open-a-pull-request); it asks a second opinion first.
 Close out children: done, next step, or archive.

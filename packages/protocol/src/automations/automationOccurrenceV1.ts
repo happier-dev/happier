@@ -4,6 +4,10 @@ import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js"
 import { sha256 } from '@noble/hashes/sha2';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { AutomationOccurrenceKeyV1Schema, AutomationOccurrenceEvidenceEqualityTagV1Schema,
+  type AutomationOccurrenceKeyV1, type AutomationOccurrenceEvidenceEqualityTagV1 } from './automationOccurrenceKeyV1.js';
+export { AutomationOccurrenceKeyV1Schema, AutomationOccurrenceEvidenceEqualityTagV1Schema } from './automationOccurrenceKeyV1.js';
+export type { AutomationOccurrenceKeyV1, AutomationOccurrenceEvidenceEqualityTagV1 } from './automationOccurrenceKeyV1.js';
 
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import {
@@ -107,20 +111,6 @@ export const AutomationConversationAdmissionCallerIdentityV1Schema = lazyZodSche
 export type AutomationConversationAdmissionCallerIdentityV1 = z.infer<
   typeof AutomationConversationAdmissionCallerIdentityV1Schema
 >;
-const BASE64_URL_SHA_256_SCHEMA = z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u), z.refine((value) => {
-    try {
-      const decoded = decodeBase64(value, 'base64url');
-      return decoded.byteLength === 32 && encodeBase64(decoded, 'base64url') === value;
-    } catch {
-      return false;
-    }
-  }, 'Expected one canonical unpadded base64url SHA-256 value'));
-
-export const AutomationOccurrenceKeyV1Schema = BASE64_URL_SHA_256_SCHEMA.brand<
-  'AutomationOccurrenceKeyV1'
->();
-export type AutomationOccurrenceKeyV1 = z.infer<typeof AutomationOccurrenceKeyV1Schema>;
-
 export const AutomationManualIdempotencyKeyV1Schema = boundedNfcString(
   191,
   'Manual idempotency keys',
@@ -145,12 +135,6 @@ export function deriveAutomationManualOccurrenceKeyV1(params: Readonly<{
     ),
   );
 }
-
-export const AutomationOccurrenceEvidenceEqualityTagV1Schema =
-  BASE64_URL_SHA_256_SCHEMA.brand<'AutomationOccurrenceEvidenceEqualityTagV1'>();
-export type AutomationOccurrenceEvidenceEqualityTagV1 = z.infer<
-  typeof AutomationOccurrenceEvidenceEqualityTagV1Schema
->;
 
 export const AutomationPluginEventOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),

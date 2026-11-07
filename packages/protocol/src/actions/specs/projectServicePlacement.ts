@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { ProjectServicePlacementGetV1Schema, ProjectServicePlacementSetV1Schema,
   ProjectServicePlacementGetResultV1Schema, ProjectServicePlacementMutationResultV1Schema,
   type ProjectServicePlacementGetV1, type ProjectServicePlacementSetV1,
@@ -37,7 +38,8 @@ const voiceInputs = {
   'projects.service.placement.set': { workspace: { serverId: 'home', refId: 'checkout' }, serviceName: 'web',
     expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: { kind: 'primary' }, unavailable: 'fail' } },
 } satisfies { 'projects.service.placement.get': ProjectServicePlacementGetV1; 'projects.service.placement.set': ProjectServicePlacementSetV1 };
-export const PROJECT_SERVICE_PLACEMENT_ACTION_SPECS = PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
+function createProjectServicePlacementActionSpecs() {
+  return PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
   const read = id.endsWith('.get');
   const title = read ? 'Read service placement' : 'Set service placement';
   return {
@@ -53,5 +55,8 @@ export const PROJECT_SERVICE_PLACEMENT_ACTION_SPECS = PROJECT_SERVICE_PLACEMENT_
     outputSchema: ProjectServicePlacementActionOutputSchemasV1[id],
   };
 });
+}
+
+export const PROJECT_SERVICE_PLACEMENT_ACTION_SPECS: ReturnType<typeof createProjectServicePlacementActionSpecs> = lazyActionSpecArray(createProjectServicePlacementActionSpecs);
 import { PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
 export { PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';

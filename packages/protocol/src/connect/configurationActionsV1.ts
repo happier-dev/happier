@@ -13,10 +13,10 @@ import { ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema, ConnectedSer
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
 import { ConnectedAccountRevokeCommandV1Schema, ConnectedAccountRevokeResponseV1Schema, ConnectedAccountRevokedResponseV1Schema,
   ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema } from './connectedAccountDaemonRpcV1.js';
-import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
-import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedAccountAuthenticationCommandSchemas } from './connectedAccountDaemonRpcV1.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
+import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
+import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedMetadataCleanupV1Schema } from './connectedAccountPresentationSchemasV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
 import { ConnectedServiceQuotaGetInputV1Schema, ConnectedServiceQuotaGetResultV1Schema } from './providerAccountUsageHistorySchemasV1.js';
@@ -29,6 +29,7 @@ import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from './connect
 import { QualifiedConnectedAccountProfileV4Schema, QualifiedConnectedAccountGroupV4Schema } from './qualifiedConnectedAccountProjectionsV4.js';
 import { ConnectedAccountUiProjectionEntryV1Schema } from './connectedAccountUiProjectionV1.js';
 import { ProviderGatewayContributionV1Schema } from '../providers/gatewayContributionsV1.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 export { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
 export { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './configurationActionIdsV1.js';
 
@@ -42,15 +43,19 @@ const RevokeActionResponse = lazyZodSchema(() => z.union([
   z.extend(ConnectedAccountRevokedResponseV1Schema, { metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema) }),
 ]));
 const ConfigurationTarget = lazyZodSchema(() => z.pick(ConnectedAccountServiceConfigurationEntryV1Schema, { service: true, modeId: true }));
-const MachineConfigurationTarget = lazyZodSchema(() => z.strictObject({
-  machineId: z.string().check(z.trim(), z.minLength(1)),
-  target: z.union([ConnectedAccountControlTargetSchema._zod.def.options[1], ConnectedAccountControlTargetSchema._zod.def.options[2]]),
+const AccountConfigurationTarget = lazyZodSchema(() => z.strictObject({
+  machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  target: ConnectedAccountControlTargetSchema._zod.def.options[1],
+}));
+const AttemptConfigurationTarget = lazyZodSchema(() => z.strictObject({
+  target: ConnectedAccountControlTargetSchema._zod.def.options[2],
 }));
 const ConfigurationReplacement = z.object({ expectedRevision: z.nullable(z.string().check(z.minLength(1), z.maxLength(256))),
   values: ConnectedAccountServiceConfigurationEntryV1Schema.shape.values,
   secretValues: z.record(z.string(), z.string().check(z.minLength(1), z.maxLength(64 * 1024))) });
 const ConfigurationView = z.strictObject({ status: z.enum(['ready', 'configurationRequired']), revision: z.nullable(z.string()),
   values: ConnectedAccountServiceConfigurationEntryV1Schema.shape.values, configuredSecretFieldIds: z.array(z.string()),
+  secretRefs: z.optional(ConnectedAccountServiceConfigurationEntryV1Schema.shape.secretRefs),
   missingFieldIds: z.array(z.string()) });
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   ...CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_INPUT_SCHEMAS,
@@ -63,11 +68,14 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
     /** Convert on edit: replace this exact existing credential with one held by its Saved Secret record. */
     expectedCredentialRevision: z.optional(ConnectedServiceCredentialRevisionV1Schema),
   }),
-  'connectedServices.catalog.list': z.strictObject({}),
-  'connectedServices.configuration.get': lazyZodSchema(() => z.union([ConfigurationTarget, MachineConfigurationTarget])),
+  'connectedServices.catalog.list': z.strictObject({ refresh: z.optional(z.boolean()) }),
+  'connectedServices.configuration.get': lazyZodSchema(() => z.union([ConfigurationTarget, AccountConfigurationTarget, AttemptConfigurationTarget])),
   'connectedServices.configuration.replace': lazyZodSchema(() => z.union([
-    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ConfigurationTarget, ConfigurationReplacement.shape)),
-    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineConfigurationTarget, ConfigurationReplacement.shape)),
+    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ConfigurationTarget, { ...ConfigurationReplacement.shape,
+      selectedSecrets: z.optional(z.record(z.string(), z.nullable(SharedSavedSecretReferenceSelectionV1Schema))),
+    })),
+    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountConfigurationTarget, ConfigurationReplacement.shape)),
+    (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AttemptConfigurationTarget, ConfigurationReplacement.shape)),
   ])),
   'connectedServices.billing.open': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.string().check(z.trim(), z.minLength(1)) }),
   'connectedServices.subscription.price.set': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), price: lazyZodSchema(() => z.nullable(z.omit(ProviderAccountSubscriptionMonthlyPriceV1Schema, { enteredAtMs: true }))) }),
@@ -163,11 +171,12 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   'connectedServices.disclosure.reset': Success,
 } as const;
 
-/** Service configuration is Account-owned; account/attempt targets stay on their exact daemon. */
+/** Only an explicitly selected native Account configuration requires a Machine. */
 export function isConnectedServiceConfigurationMachineRequiredV1(
   actionId: 'connectedServices.configuration.get' | 'connectedServices.configuration.replace', input: unknown,
 ): boolean {
-  return 'target' in CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
+  const args = CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
+  return 'machineId' in args && args.machineId !== undefined;
 }
 
 /** The member ladder shared by add, UI drag/keyboard reorder and Action reorder. */

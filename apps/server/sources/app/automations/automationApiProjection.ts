@@ -137,11 +137,20 @@ function readExistingSessionId(item: AutomationListItem): string | null {
 
 function definitionCommon(
     item: AutomationListItem,
+    lastRunAt: number | null,
     statuses: ReadonlyMap<string, AutomationEventStatusProjection>,
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>,
     includeDefinitions: boolean,
 ) {
     const observationOnly = parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext);
+    const workflow = item.deploymentEnvironmentId ? parseAutomationStoredWorkflowDefinitionRecipeV2(item.templateCiphertext) : null;
+    const deploymentEnvironment = observationOnly?.deploymentEnvironment
+        ?? (workflow?.kind === 'available' ? workflow.recipe.deploymentEnvironment : undefined);
+    if (item.deploymentEnvironmentId && (deploymentEnvironment?.environmentId !== item.deploymentEnvironmentId
+        || (deploymentEnvironment?.previewRole ?? null) !== (item.deploymentPreviewRole ?? null))
+        || item.deploymentPreviewRole != null && !item.deploymentEnvironmentId) {
+        throw new AutomationStoredContentReadError('contentInvalid');
+    }
     if (observationOnly && (item.targetType !== null || observationOnly.templateVersion !== item.templateVersion
         || item.assignments.length > 0)) throw new AutomationStoredContentReadError("contentInvalid");
     return {
@@ -149,12 +158,13 @@ function definitionCommon(
         id: item.id, name: item.name, description: item.description, enabled: item.enabled,
         targetType: targetTypeV3(item.targetType), existingSessionId: readExistingSessionId(item),
         workflowDefinitionId: item.workflowDefinitionId, scopeSessionId: item.scopeSessionId,
+        ...(deploymentEnvironment ? { deploymentEnvironment } : {}),
         ...(item.managedTargetIndexed === true ? {
             managedTarget: item.managedTargetHomeId != null && item.managedTargetManagedId != null
                 ? { homeId: item.managedTargetHomeId, managedId: item.managedTargetManagedId }
                 : null,
         } : {}),
-        templateVersion: item.templateVersion, lastRunAt: item.lastRunAt?.getTime() ?? null,
+        templateVersion: item.templateVersion, lastRunAt,
         createdAt: item.createdAt.getTime(), updatedAt: item.updatedAt.getTime(),
         assignments: item.assignments.map((assignment) => ({
             machineId: assignment.machineId, enabled: assignment.enabled, priority: assignment.priority,
@@ -171,11 +181,13 @@ function definitionCommon(
 
 export function toAutomationDefinitionListItemApiDto(
     item: AutomationListItem,
+    lastRunAt: number | null,
     statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
 ) {
     return AutomationDefinitionListItemSchema.parse(definitionCommon(
         item,
+        lastRunAt,
         statuses,
         lifecycleStatuses,
         false,
@@ -185,6 +197,7 @@ export function toAutomationDefinitionListItemApiDto(
 export function toAutomationDefinitionDetailApiDto(
     item: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
+    lastRunAt: number | null,
     statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
 ) {
@@ -204,7 +217,7 @@ export function toAutomationDefinitionDetailApiDto(
     }
     const observationOnly = parseAutomationObservationOnlyDefinitionV1(item.templateCiphertext);
     if (observationOnly) {
-        return AutomationDefinitionDetailSchema.parse(definitionCommon(item, statuses, lifecycleStatuses, true));
+        return AutomationDefinitionDetailSchema.parse(definitionCommon(item, lastRunAt, statuses, lifecycleStatuses, true));
     }
     const parsed = parseAutomationStoredDefinitionExecutionRecipeV1(item.templateCiphertext);
     let content: Readonly<{ executionRecipe: unknown }> | Readonly<{ templateCiphertext: string }>;
@@ -226,7 +239,7 @@ export function toAutomationDefinitionDetailApiDto(
             });
             content = { executionRecipe: workflow.recipe };
             return AutomationDefinitionDetailSchema.parse({
-                ...definitionCommon(item, statuses, lifecycleStatuses, true),
+                ...definitionCommon(item, lastRunAt, statuses, lifecycleStatuses, true),
                 ...content,
             });
         }
@@ -245,7 +258,7 @@ export function toAutomationDefinitionDetailApiDto(
         content = { templateCiphertext: item.templateCiphertext };
     }
     return AutomationDefinitionDetailSchema.parse({
-        ...definitionCommon(item, statuses, lifecycleStatuses, true),
+        ...definitionCommon(item, lastRunAt, statuses, lifecycleStatuses, true),
         ...content,
     });
 }
@@ -269,6 +282,7 @@ export function toAutomationRunV3ListApiDto(item: AutomationRunApiListInput) {
         id: item.id, automationId: item.automationId, revision: item.revision,
         triggerId: item.triggerId, triggerRetired,
         state: projectAutomationRunState(item.state), cause: toAutomationRunCauseApiDto(item), dueAt: item.dueAt.getTime(),
+        ...(item.workflowCustodyState != null ? { workflowRunState: item.state } : {}),
         claimedAt: item.claimedAt?.getTime() ?? null, startedAt: item.startedAt?.getTime() ?? null,
         finishedAt: item.finishedAt?.getTime() ?? null, claimedByMachineId: item.claimedByMachineId,
         leaseExpiresAt: item.leaseExpiresAt?.getTime() ?? null, attempt: item.attempt,

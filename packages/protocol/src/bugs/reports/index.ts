@@ -42,6 +42,15 @@ export { resolveBugReportServerDiagnosticsLines } from './serverDiagnostics.js';
 export { submitBugReportToService } from './submit.js';
 export { searchBugReportSimilarIssues, type BugReportSimilarIssue } from './similarIssues.js';
 export {
+  BUG_REPORT_LOG_SOURCE_KINDS,
+  BugReportLogSelectionSchema,
+  BugReportDiagnosticsRequestSchema,
+  BugReportSessionDiagnosticsSchema,
+  BugReportMachineDiagnosticsSnapshotSchema,
+  resolveBugReportLogSelection,
+  type BugReportLogSelection,
+  type BugReportDiagnosticsRequest,
+  type BugReportSessionDiagnostics,
   sanitizeBugReportDaemonDiagnosticsPayload,
   sanitizeBugReportStackContextPayload,
   type BugReportMachineDaemonLogLike,

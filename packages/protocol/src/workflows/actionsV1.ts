@@ -2,6 +2,7 @@ import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
+import { SessionManagedCreationV1Schema } from '../sessions/creation/sessionCreationCorrespondenceV1.js';
 import {
   WorkflowTriggerListRequestV1Schema, WorkflowTriggerAddRequestV1Schema,
   WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerRemoveRequestV1Schema,
@@ -15,6 +16,7 @@ import {
 import { OPAQUE_CURSOR_SCHEMA } from '../automations/automationActionSpecsV1.js';
 import { AutomationV3RunMutationResponseSchema } from '../automations/automationApiV3.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
+import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import {
   WORKFLOW_ACTION_IDS_V1,
@@ -160,6 +162,8 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
 ]));
 export const WorkflowRunStartRequestV1Schema = lazyZodSchema(() => z.strictObject({
   runId: WorkflowDirectRunAdmissionIdV1Schema,
+  /** Immutable, content-free relationship admitted with the durable Run. */
+  managedCreation: z.optional(SessionManagedCreationV1Schema),
   source: WorkflowRunSourceV1Schema,
   /** Optional authored display metadata; admission freezes its absence as null. */
   metadata: zMini.optional(WorkflowDefinitionMetadataV1Schema),
@@ -225,6 +229,7 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
   /** Server-proved root and readable descendants of this managed Session. */
   underSessionId: zMini.optional(preservedBoundedNfcString(191, 'Session ids')),
   automationId: zMini.optional(asProtocolZod(AutomationIdV1Schema)),
+  triggerId: zMini.optional(AutomationTriggerIdSchema),
   machineId: zMini.optional(WorkflowMachineIdV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.projection !== 'membership') return;
@@ -520,9 +525,21 @@ export const WorkflowInvocationCompleteReviewResultV1Schema = lazyZodSchema(() =
 export const WorkflowRunDeleteRequestV1Schema = WorkflowRunPauseRequestV1Schema;
 export const WorkflowRunDeleteResultV1Schema = lazyZodSchema(() => z.strictObject({ deleted: z.literal(true), runId: WorkflowRunIdV1Schema }));
 
-export const WorkflowDefinitionListRequestV1Schema = lazyZodSchema(() => z.strictObject({ cursor: zMini.optional(CursorSchema), limit: z.optional(PositivePagePreferenceSchema) }));
+export const WorkflowDefinitionListRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  cursor: zMini.optional(CursorSchema), limit: z.optional(PositivePagePreferenceSchema),
+  /** Exact saved identity, including retained non-UUID Artifact ids. */
+  definitionId: z.optional(WorkflowDefinitionIdV1Schema),
+  /** Exact saved/plugin demand does not traverse the saved-definition collection. */
+  workflow: z.optional(WorkflowDefinitionRefV1StringSchema.check(z.refine(value => {
+    const ref = parseWorkflowDefinitionRefV1(value);
+    return ref?.kind === 'artifact' || ref?.kind === 'plugin';
+  }))),
+}).check(z.refine(value => (value.workflow === undefined && value.definitionId === undefined)
+  || (value.cursor === undefined && value.limit === undefined && (value.workflow === undefined || value.definitionId === undefined)))));
 const WorkflowDefinitionLibraryHeaderV1Schema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(WorkflowDefinitionArtifactHeaderV1Schema, {
   ownerAccountId: z.optional(z.string().check(z.minLength(1))), access: zMini.optional(ArtifactCallerAccessV1Schema),
+  /** Effective direct Team grants visible to the admitted caller; absent on older readers. */
+  sharedTeamIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   /** Opened owner-private provenance, never attribution from the stored shared header. */
   savedBy: zMini.optional(WorkflowDefinitionSavedByV1Schema),
   /** Ordering fact from the admitted Artifact page; never requires a detail read. */
@@ -540,7 +557,7 @@ export const WorkflowDefinitionListResultV1Schema = lazyZodSchema(() => z.strict
     contentUnavailableReason: WorkflowDefinitionContentUnavailableReasonV1Schema })),
 ])), pluginWorkflows: z.optional(z.array(WorkflowPluginSourceV1Schema)), nextCursor: zMini.optional(CursorSchema) }));
 export const WorkflowDefinitionGetRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema }));
-export const WorkflowDefinitionGetResultV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, destinations: zMini.optional(WorkflowDestinationsV1Schema), metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: zMini.optional(WorkflowDefinitionSavedByV1Schema) }));
+export const WorkflowDefinitionGetResultV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, destinations: zMini.optional(WorkflowDestinationsV1Schema), metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: zMini.optional(WorkflowDefinitionSavedByV1Schema), savedAt: z.optional(z.number().check(z.int(), z.nonnegative())) }));
 // New definitions use the Artifact creation identity contract; readers retain the broader stored-id schema.
 export const WorkflowDefinitionCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: z.string().check(z.uuid()), definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }));
 export const WorkflowDefinitionCreateResultV1Schema = WorkflowDefinitionGetResultV1Schema;

@@ -18,6 +18,7 @@ import { SessionDataKeyEnvelopeBytesV1Schema } from '../sessions/encryption/sess
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from './replyTargets.js';
 import { DiscussionMessageAddressingV1Schema, DiscussionSessionParticipantRefV1Schema } from './references.js';
 import { DocEditProposalDispositionV1Schema } from './docEditProposalDispositionV1.js';
+import { SessionMessageReplyPublicationFailureV1Schema } from '../sessions/messages/sessionMessageReplyPublicationV1.js';
 export { DocEditProposalDispositionV1Schema } from './docEditProposalDispositionV1.js';
 export type { DocEditProposalDispositionV1 } from './docEditProposalDispositionV1.js';
 
@@ -65,15 +66,32 @@ export const DiscussionLatestMessageV1Schema = lazyZodSchema(() => z.strictObjec
 }).check(z.superRefine(refineDiscussionAccountActor)));
 export type DiscussionLatestMessageV1 = z.infer<typeof DiscussionLatestMessageV1Schema>;
 
+/** Content-free outcome of the most recently admitted built-in Discussion round. */
+export const DiscussionRoundOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
+  runId: z.string().check(z.minLength(1)),
+  pattern: z.enum(['fresh_opinions', 'answer_and_review']),
+  answerCount: SequenceSchema,
+  synthesized: z.boolean(),
+  settled: z.boolean(),
+}));
+export type DiscussionRoundOutcomeV1 = z.infer<typeof DiscussionRoundOutcomeV1Schema>;
+export const DiscussionRoundOutcomeV1StoredSchema = createStoredReadSchema(DiscussionRoundOutcomeV1Schema);
+
 export const DiscussionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   id: DiscussionIdSchema,
   ownerAccountId: DiscussionAccountIdSchema,
   encryptionMode: AccountEncryptionModeSchema,
   anchor: z.nullable(DiscussionAnchorV1Schema),
+  /** Absent on older responses; null means no known built-in round outcome. */
+  roundOutcomeV1: z.optional(z.nullable(DiscussionRoundOutcomeV1Schema)),
+  /** Active passage roots matching the Doc anchor; replies are not additional roots. */
+  openCommentCount: z.optional(z.nullable(SequenceSchema)),
   access: ResourceCallerAccessV1Schema,
   keyReadiness: z.boolean(),
   /** The caller's recipient envelope; plaintext Discussions have no client key. */
   dataEncryptionKey: z.nullable(SessionDataKeyEnvelopeBytesV1Schema),
+  /** Non-content demand projected only when this caller already holds the Discussion DEK. */
+  recipientKeyPreparationRequired: z.optional(z.boolean()),
   /** Projected only to the creating Account; other viewers receive null. */
   creationLocalId: z.nullable(DiscussionLocalIdSchema),
   titleContent: createStoredReadSchema(StrictSessionStoredMessageContentEnvelopeSchema),
@@ -96,11 +114,15 @@ export const DiscussionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
 export type DiscussionSummaryV1 = z.infer<typeof DiscussionSummaryV1Schema>;
 
 /** Read-only receiver admission fact; not authored content or another reply obligation. */
-export const DiscussionParticipantDeliveryV1Schema = lazyZodSchema(() => z.strictObject({
+export const DiscussionParticipantDeliveryV1Schema = lazyZodSchema(() => z.discriminatedUnion('disposition', [z.strictObject({
   participantSessionId: DiscussionSessionParticipantRefV1Schema.shape.sessionId,
   disposition: z.literal('held'),
   code: z.literal('session_input_target_unavailable'),
-}));
+}), z.strictObject({
+  participantSessionId: DiscussionSessionParticipantRefV1Schema.shape.sessionId,
+  disposition: z.literal('failed'),
+  failure: SessionMessageReplyPublicationFailureV1Schema,
+}).check(z.refine(value => !value.failure.retryable, 'Only terminal publication refusals are failed deliveries'))]));
 export type DiscussionParticipantDeliveryV1 = z.infer<typeof DiscussionParticipantDeliveryV1Schema>;
 
 export const DiscussionMessageV1Schema = lazyZodSchema(() => z.strictObject({

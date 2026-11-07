@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { z } from 'zod/mini';
 
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
@@ -41,7 +42,7 @@ export function createSessionActiveModelSelection(input: Readonly<{
 export const NativeSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({
   source: z.literal('native'),
   agentTargetKey: ProviderAgentTargetKeySchema,
-  modelId: ProviderModelIdSchema,
+  modelId: NonBlankOpaqueIdentifierSchema,
 }));
 
 export const AccountProviderConnectionSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({

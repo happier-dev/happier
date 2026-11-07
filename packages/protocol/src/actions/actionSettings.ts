@@ -16,6 +16,8 @@ import {
   type ActionToolExposureSurface,
 } from './metadata.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
+import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 
 const ActionSurfaceKeySchema = lazyZodSchema(() => z.keyof(ActionSurfaceSchema));
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
@@ -28,7 +30,26 @@ const CallerSurfacePoliciesV1Schema = lazyZodSchema(() => z.looseObject({
   foreign_session_html: z.optional(z.record(z.string(), z.catch(z.enum(['allowed', 'ask_first', 'off']), 'off'))),
 }));
 
+/** A Resource permission target in Settings, never a runnable Action identity. */
+export type QualifiedPluginResourcePolicyId = `${string}/resources/${string}`;
+export function formatQualifiedPluginResourcePolicyId(identity: PluginContributionIdentityV1): QualifiedPluginResourcePolicyId {
+  const parsed = PluginContributionIdentityV1Schema.parse(identity);
+  return `${parsed.pluginId}/resources/${parsed.localId}`;
+}
+export function parseQualifiedPluginResourcePolicyId(value: unknown): PluginContributionIdentityV1 | null {
+  if (typeof value !== 'string') return null;
+  const index = value.indexOf('/resources/');
+  if (index <= 0) return null;
+  const parsed = PluginContributionIdentityV1Schema.safeParse({ pluginId: value.slice(0, index), localId: value.slice(index + 11) });
+  return parsed.success && formatQualifiedPluginResourcePolicyId(parsed.data) === value ? parsed.data : null;
+}
 
+/** The policy audience's context, while transport routing remains unchanged. */
+export function actionPolicyAudienceContextV1(audience: ActionPolicyAudienceV1): Readonly<{
+  surface: ActionSurfaceKey; callerSurface?: ActionCallerSurfaceV1;
+}> {
+  return audience === 'foreign_session_html' ? { surface: 'ui', callerSurface: audience } : { surface: audience };
+}
 export const ActionApprovalScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('machine'), machineId: z.string().check(z.minLength(1)) }),
   z.strictObject({ kind: z.literal('environment'), environmentId: z.string().check(z.minLength(1)) }),
@@ -60,7 +81,6 @@ function normalizeScopedApprovalRows(rows: readonly ActionScopedApprovalPreferen
   }
   return [...keyed.values()];
 }
-
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
 const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
@@ -150,13 +170,15 @@ const ActionSettingsOverrideSchema = lazyZodSchema(() => (<I extends z.core.$Zod
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
 /** A host Action id or the canonical qualified contributed-Action identity. */
-export type ActionSettingsActionId = ActionId | QualifiedPluginActionId;
+export type ActionSettingsActionId = ActionId | QualifiedPluginActionId | QualifiedPluginResourcePolicyId;
 
 export function normalizeActionSettingsActionId(rawId: string): ActionSettingsActionId | null {
   const hostAction = ActionIdSchema.safeParse(normalizeLegacyActionId(rawId));
   if (hostAction.success) return hostAction.data;
   const contributedAction = parseQualifiedPluginActionId(rawId);
-  return contributedAction ? formatQualifiedPluginActionId(contributedAction) : null;
+  if (contributedAction) return formatQualifiedPluginActionId(contributedAction);
+  const resource = parseQualifiedPluginResourcePolicyId(rawId);
+  return resource ? formatQualifiedPluginResourcePolicyId(resource) : null;
 }
 
 function projectKnownActionSettings(
@@ -184,6 +206,7 @@ export const ActionsSettingsV1Schema = lazyZodSchema(() => z.pipe(z.looseObject(
     pluginHostCaptureApprovalWaived: z.catch(z.optional(z.array(z.string().check(z.minLength(1)))), undefined),
     scopedApprovalPreferences: z.optional(z.array(ActionScopedApprovalPreferenceV1Schema)),
     approvalProfiles: z.optional(z.pipe(z.unknown(), z.transform(normalizeStoredApprovalProfilesV1))),
+    // Root-only: predecessor Action rows are strict and must retain their Off/Require policy.
     callerSurfacePolicies: z.catch(z.optional(CallerSurfacePoliciesV1Schema), undefined),
   }), z.transform((value) => ({
     v: 1 as const,
@@ -279,8 +302,60 @@ export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1
     ...(Array.isArray(value.scopedApprovalPreferences) ? { scopedApprovalPreferences: normalizeScopedApprovalRows(scopedRows) } : {}) };
 }
 
-export function normalizeActionsSettingsV1(value: unknown): ActionsSettingsV1 {
-  return tryNormalizeActionsSettingsV1(value) ?? EMPTY_ACTIONS_SETTINGS_V1;
+export function normalizeActionsSettingsV1(value: unknown, previous?: ActionsSettingsV1): ActionsSettingsV1 {
+  const next = tryNormalizeActionsSettingsV1(value) ?? EMPTY_ACTIONS_SETTINGS_V1;
+  return previous ? reconcileActionsSettingsV1References(previous, next) : next;
+}
+
+/** Reuse unchanged admitted policy and scoped rows without repeating ingress validation. */
+export function reconcileActionsSettingsV1References(previous: ActionsSettingsV1, next: ActionsSettingsV1): ActionsSettingsV1 {
+  if (previous === next) return previous;
+  const priorRows = new Map(previous.scopedApprovalPreferences?.map(row => [actionScopedApprovalPreferenceKey(row.actionId, row.scope), row]));
+  const scopedApprovalPreferences = next.scopedApprovalPreferences?.map(row => {
+    const prior = priorRows.get(actionScopedApprovalPreferenceKey(row.actionId, row.scope));
+    return prior && pluginJsonValuesEqual(prior, row) ? prior : row;
+  });
+  if (pluginJsonValuesEqual(previous, next)) return previous;
+  return { ...next, ...(scopedApprovalPreferences ? { scopedApprovalPreferences } : {}) };
+}
+
+export function readScopedActionApprovalPreference(settings: ActionsSettingsV1, actionId: string,
+  scope: ActionApprovalScopeV1): ActionScopedApprovalPreferenceV1 | undefined {
+  const key = actionScopedApprovalPreferenceKey(actionId, scope);
+  return settings.scopedApprovalPreferences?.find(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) === key);
+}
+
+/** Only a deliberate scoped edit writes or clears this preference. */
+export function setScopedActionApprovalPreference(params: Readonly<{
+  settings: ActionsSettingsV1; actionId: string; scope: ActionApprovalScopeV1;
+  surface: ActionSurfaceKey; mode: 'inherit' | 'required' | 'waived';
+}>): ActionsSettingsV1 {
+  const settings = normalizeActionsSettingsV1(params.settings, params.settings);
+  const scope = ActionApprovalScopeV1Schema.parse(params.scope);
+  const actionId = normalizeActionSettingsActionId(params.actionId) ?? params.actionId;
+  const prior = readScopedActionApprovalPreference(settings, actionId, scope);
+  const required = prior?.approvalRequiredSurfaces.filter(surface => surface !== params.surface) ?? [];
+  const waived = prior?.approvalWaivedSurfaces.filter(surface => surface !== params.surface) ?? [];
+  if (params.mode === 'required') required.push(params.surface);
+  if (params.mode === 'waived') waived.push(params.surface);
+  const key = actionScopedApprovalPreferenceKey(actionId, scope);
+  const rows = [...settings.scopedApprovalPreferences ?? []];
+  const index = rows.findIndex(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) === key);
+  if (required.length || waived.length) {
+    const row = { actionId, scope, approvalRequiredSurfaces: required, approvalWaivedSurfaces: waived };
+    if (index < 0) rows.push(row);
+    else rows[index] = row;
+  } else if (index >= 0) rows.splice(index, 1);
+  // An explicit empty collection clears the last row; omission is reserved for old writers.
+  return normalizeActionsSettingsV1({ ...settings, scopedApprovalPreferences: rows }, settings);
+}
+
+/** Explicitly remove a retained orphan without authorizing that Action. */
+export function removeScopedActionApprovalPreference(settings: ActionsSettingsV1, actionId: string,
+  scope: ActionApprovalScopeV1): ActionsSettingsV1 {
+  const key = actionScopedApprovalPreferenceKey(actionId, scope);
+  return normalizeActionsSettingsV1({ ...settings, scopedApprovalPreferences: settings.scopedApprovalPreferences
+    ?.filter(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) !== key) ?? [] }, settings);
 }
 
 /** Edits one approval preference without changing Action enablement or other surfaces. */
@@ -303,7 +378,9 @@ export function setActionApprovalOverride(params: Readonly<{
   if (params.approvalRequired === false) waived.push(params.surface);
   if (waived.length > 0) waivers[params.actionId] = waived;
   else delete waivers[params.actionId];
+  const { approvalWaivedSurfaces: _previousWaivers, ...retained } = settings;
   return {
+    ...retained,
     v: 1,
     actions,
     ...(Object.keys(waivers).length > 0 ? { approvalWaivedSurfaces: waivers } : {}),
@@ -313,6 +390,7 @@ export function setActionApprovalOverride(params: Readonly<{
 
 export type ActionEnablementContext = Readonly<{
   surface?: keyof ActionSurfaces | null;
+  callerSurface?: ActionCallerSurfaceV1;
   placement?: ActionUiPlacement | null;
 }>;
 
@@ -327,6 +405,10 @@ export function isActionEnabledByActionsSettings(
 ): boolean {
   const override = settings.actions[actionId];
   if (override?.enabled === false) return false;
+  if (ctx?.callerSurface === 'foreign_session_html') {
+    const mode = settings.callerSurfacePolicies?.foreign_session_html?.[actionId];
+    if (mode !== 'allowed' && mode !== 'ask_first') return false;
+  }
   const surface = ctx?.surface ?? null;
   if (surface && override?.disabledSurfaces?.includes(surface)) return false;
   const placement = ctx?.placement ?? null;
@@ -337,10 +419,4 @@ export function isActionEnabledByActionsSettings(
   }
   if (placement && override?.disabledPlacements?.includes(placement)) return false;
   return true;
-}
-
-export function readScopedActionApprovalPreference(settings: ActionsSettingsV1, actionId: string,
-  scope: ActionApprovalScopeV1): ActionScopedApprovalPreferenceV1 | undefined {
-  const key = actionScopedApprovalPreferenceKey(actionId, scope);
-  return settings.scopedApprovalPreferences?.find(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) === key);
 }

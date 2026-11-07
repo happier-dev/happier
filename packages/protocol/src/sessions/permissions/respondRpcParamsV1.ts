@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { StructuredQuestionAnswersV1Schema } from '../../tools/structuredQuestionAnswersV1.js';
+import { StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswersV1 } from '../../tools/structuredQuestionAnswersV1.js';
 
 export const SessionPermissionRespondDecisionV1Schema = lazyZodSchema(() => z.enum([
   'approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort',
@@ -61,4 +61,19 @@ export function buildSessionPermissionRespondRpcParamsV1(input: Readonly<
     ...fields, approved: rpcDecision !== 'denied' && rpcDecision !== 'abort',
     ...(rpcDecision ? { decision: rpcDecision } : {}),
   });
+}
+
+/** The Action answer-array to RPC question-map projection, shared by all UI callers. */
+export function buildSessionUserActionAnswerMap(input: unknown): StructuredQuestionAnswersV1 {
+  const answers = Object.create(null) as Record<string, readonly string[]>;
+  if (!Array.isArray(input)) return answers;
+  const entries: readonly unknown[] = input;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || !('question' in entry) || !('values' in entry)) continue;
+    const question = String(entry.question ?? '');
+    if (!question.trim() || !Array.isArray(entry.values)) continue;
+    const values: readonly unknown[] = entry.values;
+    if (values.length > 0 && values.every((value): value is string => typeof value === 'string')) answers[question] = [...values];
+  }
+  return answers;
 }

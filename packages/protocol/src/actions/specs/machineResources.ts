@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './machineResourcesActionIdsV1.js';
 export { MACHINE_RESOURCES_ACTION_IDS } from './machineResourcesActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -5,6 +6,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineResourcesPolicyMutationV1Schema, MachineResourcesPolicyGetResultV1Schema, MachineResourcesPolicyMutationResultV1Schema } from '../../machines/resources/machineResourcesPolicyV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 export type MachineResourcesActionId = typeof MACHINE_RESOURCES_ACTION_IDS[number];
 export const MachineResourcesActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_RESOURCES_ACTION_IDS));
 export const MachineResourcesPolicyGetInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: z.optional(z.string().check(z.trim(), z.minLength(1))), machineId: z.string().check(z.trim(), z.minLength(1)) }));
@@ -26,7 +28,8 @@ export type MachineResourcesActionInput = z.infer<(typeof MACHINE_RESOURCES_ACTI
 const fields = [{ path: 'serverId', title: 'Home ID', widget: 'text', required: false },
   { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] as const;
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false } as const;
-export const MACHINE_RESOURCES_ACTION_SPECS = [
+function createMachineResourcesActionSpecs() {
+  return [
   {
     id: 'machines.resources.policy.get', approval: {result: 'required'}, title: 'Read resource settings',
     toolExposure: { agent: 'discoverable_only' },
@@ -35,6 +38,7 @@ export const MACHINE_RESOURCES_ACTION_SPECS = [
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'account', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_resources_policy_get', voiceClientToolName: 'getMachineResourcesPolicy' },
     inputSchema: MachineResourcesPolicyGetInputV1Schema, outputSchema: MachineResourcesPolicyGetResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineResourcesPolicyGetInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'resources', 'policy', 'get'], visibility: 'canonical' }] },
     inputHints: { fields },
   },
@@ -46,6 +50,7 @@ export const MACHINE_RESOURCES_ACTION_SPECS = [
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'machine', placements: [], surfaces: { ...surfaces, voice: false, rpc: true },
     bindings: { mcpToolName: 'machines_resources_policy_set', rpcMethod: RPC_METHODS.MACHINES_RESOURCES_POLICY_SET },
     inputSchema: MachineResourcesPolicySetInputV1Schema, outputSchema: MachineResourcesPolicyMutationResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineResourcesPolicySetInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [
       { path: ['machines', 'resources', 'policy', 'set'], visibility: 'canonical' },
       { path: ['machines', 'processes', 'all'], visibility: 'alias' },
@@ -58,3 +63,6 @@ export const MACHINE_RESOURCES_ACTION_SPECS = [
     inputHints: { fields: [...fields, { path: 'expectedRevision', title: 'Expected revision', widget: 'number', required: true }, { path: 'patch', title: 'Policy patch', widget: 'json', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_RESOURCES_ACTION_SPECS: ReturnType<typeof createMachineResourcesActionSpecs> = lazyActionSpecArray(createMachineResourcesActionSpecs);

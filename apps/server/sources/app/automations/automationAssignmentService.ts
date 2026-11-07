@@ -1,4 +1,3 @@
-import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 import { persistentMachineWhere } from "@/app/machines/machineSelection";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
@@ -6,8 +5,7 @@ import { db } from "@/storage/db";
 import type { Prisma } from "@prisma/client";
 
 import {
-    AUTOMATION_RUN_STATES,
-    isAutomationRunState,
+    projectAutomationRunState,
     isTerminalAutomationRunState,
     type AutomationAssignmentInput,
     type AutomationExecutionDispatchState,
@@ -20,6 +18,11 @@ import {
 } from "./automationValidation";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { admitAutomationDeploymentAssignmentsInTx } from './automationDeploymentEnvironment';
+import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
+import { readAutomationRunClaimEligibilityWhereInTx } from './automationRunClaimEligibility';
+import { resolveAutomationRecipeFeaturePolicy, type AutomationRecipeFeaturePolicy } from './automationRecipeFeaturePolicy';
+import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 
 type AutomationAssignmentWakeRun = Readonly<{
     triggerId: string | null;
@@ -58,11 +61,12 @@ const automationAssignmentWakeTriggerSelect = {
 
 function automationDaemonWakeAutomationSelect(
     machineId: string,
+    claimEligibility: Prisma.AutomationRunWhereInput | null,
 ) {
     return {
         id: true, name: true, enabled: true,
         targetType: true, templateCiphertext: true, templateVersion: true,
-        lastRunAt: true, updatedAt: true,
+        updatedAt: true,
         triggers: {
             where: { deletedAt: null },
             select: automationAssignmentWakeTriggerSelect,
@@ -70,16 +74,10 @@ function automationDaemonWakeAutomationSelect(
         },
         runs: {
             where: {
+                ...(claimEligibility ?? { id: { in: [] } }),
                 originKind: "automation",
                 automationId: { not: null },
                 causeKind: { not: null },
-                state: { in: [...AUTOMATION_RUN_STATES] },
-                OR: [
-                    { state: "queued" },
-                    { state: "claimed", leaseExpiresAt: { not: null } },
-                    { state: "running", leaseExpiresAt: { not: null } },
-                    { executionDispatchState: "retryWaiting" },
-                ],
             },
             select: {
                 ...automationAssignmentWakeRunSelect,
@@ -149,11 +147,23 @@ export function resolveAutomationAssignmentNextClaimAt(params: Readonly<{
 async function assertMachineAssignmentsCanBeWritten(params: {
     tx: Tx;
     accountId: string;
+    actorAccountId?: string;
+    authentication?: DeploymentAuthentication;
     automationId: string;
     templateCiphertext: string;
     machineIds: string[];
     requestedEnabledByMachineId: ReadonlyMap<string, boolean>;
 }): Promise<(tx: Tx) => Promise<void>> {
+    const assignments = params.machineIds.map(machineId => ({ machineId,
+        enabled: params.requestedEnabledByMachineId.get(machineId) ?? true }));
+    const derived = await admitAutomationDeploymentAssignmentsInTx(params.tx, {
+        accountId: params.accountId, actorAccountId: params.actorAccountId, authentication: params.authentication,
+        automationId: params.automationId, assignments,
+    });
+    if (derived) return async tx => {
+        await admitAutomationDeploymentAssignmentsInTx(tx, { accountId: params.accountId, actorAccountId: params.actorAccountId,
+            authentication: params.authentication, automationId: params.automationId, assignments });
+    };
     if (params.machineIds.length === 0) return async () => {};
 
     const recipe = parseAutomationStoredWorkflowDefinitionRecipeV2(params.templateCiphertext);
@@ -241,17 +251,46 @@ export function assertAutomationAssignmentLiveness(params: Readonly<{
     }
 }
 
+function automationAssignmentMatches(
+    existing: Readonly<{ enabled: boolean; priority: number }>,
+    requested: AutomationAssignmentInput,
+): boolean {
+    return existing.enabled === (requested.enabled ?? true)
+        && existing.priority === (requested.priority ?? 0);
+}
+
+/** Compare the persisted set with canonical last-write-wins assignment inputs. */
+export function automationAssignmentsMatch(
+    existing: ReadonlyArray<Readonly<{ machineId: string; enabled: boolean; priority: number }>>,
+    requested: ReadonlyArray<AutomationAssignmentInput> | undefined,
+): boolean {
+    const normalized = new Map((normalizeAutomationAssignments(requested) ?? [])
+        .map(assignment => [assignment.machineId, assignment] as const));
+    return existing.length === normalized.size && existing.every(assignment => {
+        const expected = normalized.get(assignment.machineId);
+        return expected !== undefined && automationAssignmentMatches(assignment, expected);
+    });
+}
+
+/** Admit the requested set, then persist only its semantic row changes. */
 export async function replaceAutomationAssignmentsTx(params: {
     tx: Tx;
     accountId: string;
+    actorAccountId?: string;
+    authentication?: DeploymentAuthentication;
     automationId: string;
     templateCiphertext: string;
     assignments: ReadonlyArray<AutomationAssignmentInput>;
-}): Promise<Array<{ machineId: string; enabled: boolean; priority: number; updatedAt: Date }>> {
+}): Promise<{
+    assignments: Array<{ machineId: string; enabled: boolean; priority: number; updatedAt: Date }>;
+    changed: boolean;
+}> {
     const normalizedAssignments = normalizeAutomationAssignments(params.assignments) ?? [];
     const recheckAdmission = await assertMachineAssignmentsCanBeWritten({
         tx: params.tx,
         accountId: params.accountId,
+        actorAccountId: params.actorAccountId,
+        authentication: params.authentication,
         automationId: params.automationId,
         templateCiphertext: params.templateCiphertext,
         machineIds: normalizedAssignments.map((item) => item.machineId),
@@ -272,22 +311,7 @@ export async function replaceAutomationAssignmentsTx(params: {
         });
     }
 
-    await params.tx.automationAssignment.deleteMany({
-        where: { automationId: params.automationId },
-    });
-
-    if (normalizedAssignments.length > 0) {
-        await params.tx.automationAssignment.createMany({
-            data: normalizedAssignments.map((assignment) => ({
-                automationId: params.automationId,
-                machineId: assignment.machineId,
-                enabled: assignment.enabled ?? true,
-                priority: assignment.priority ?? 0,
-            })),
-        });
-    }
-
-    const saved = await params.tx.automationAssignment.findMany({
+    const readAssignments = () => params.tx.automationAssignment.findMany({
         where: { automationId: params.automationId },
         select: {
             machineId: true,
@@ -297,16 +321,49 @@ export async function replaceAutomationAssignmentsTx(params: {
         },
         orderBy: [{ priority: "desc" }, { machineId: "asc" }],
     });
+    const existing = await readAssignments();
+    if (automationAssignmentsMatch(existing, normalizedAssignments)) {
+        return { assignments: existing, changed: false };
+    }
 
-    return saved;
+    const requestedByMachineId = new Map(normalizedAssignments.map(assignment => [assignment.machineId, assignment] as const));
+    const existingByMachineId = new Map(existing.map(assignment => [assignment.machineId, assignment] as const));
+    const removedMachineIds = existing.filter(assignment => !requestedByMachineId.has(assignment.machineId))
+        .map(assignment => assignment.machineId);
+    if (removedMachineIds.length > 0) {
+        await params.tx.automationAssignment.deleteMany({
+            where: { automationId: params.automationId, machineId: { in: removedMachineIds } },
+        });
+    }
+    const added = normalizedAssignments.filter(assignment => !existingByMachineId.has(assignment.machineId));
+    if (added.length > 0) {
+        await params.tx.automationAssignment.createMany({
+            data: added.map(assignment => ({ automationId: params.automationId, machineId: assignment.machineId,
+                enabled: assignment.enabled ?? true, priority: assignment.priority ?? 0 })),
+        });
+    }
+    for (const assignment of normalizedAssignments) {
+        const previous = existingByMachineId.get(assignment.machineId);
+        if (previous && !automationAssignmentMatches(previous, assignment)) {
+            await params.tx.automationAssignment.updateMany({
+                where: { automationId: params.automationId, machineId: assignment.machineId },
+                data: { enabled: assignment.enabled ?? true, priority: assignment.priority ?? 0 },
+            });
+        }
+    }
+    return { assignments: await readAssignments(), changed: true };
 }
 
 export async function listDaemonAssignments(params: {
     accountId: string;
     machineId: string;
     expectedTriggerKind?: AutomationTriggerKind;
+    scope?: 'session_scoped' | 'workflow' | 'execution';
+    recipeFeaturePolicy?: AutomationRecipeFeaturePolicy;
 
 }) {
+    const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy();
+    const claimEligibility = await readAutomationRunClaimEligibilityWhereInTx(db, { ...params, recipeFeaturePolicy });
     const [rows, admittedRunAssignments] = await Promise.all([
         db.automationAssignment.findMany({
             where: {
@@ -325,9 +382,7 @@ export async function listDaemonAssignments(params: {
                 priority: true,
                 updatedAt: true,
                 automation: {
-                    select: automationDaemonWakeAutomationSelect(
-                        params.machineId,
-                    ),
+                    select: automationDaemonWakeAutomationSelect(params.machineId, claimEligibility),
                 },
             },
             orderBy: [{ priority: "desc" }, { updatedAt: "desc" }],
@@ -336,17 +391,11 @@ export async function listDaemonAssignments(params: {
             where: {
                 machineId: params.machineId,
                 run: {
+                    ...(claimEligibility ?? { id: { in: [] } }),
                     originKind: "automation",
                     automationId: { not: null },
                     causeKind: { not: null },
-                    state: { in: [...AUTOMATION_RUN_STATES] },
                     accountId: params.accountId,
-                    OR: [
-                        { state: "queued" },
-                        { state: "claimed", leaseExpiresAt: { not: null } },
-                        { state: "running", leaseExpiresAt: { not: null } },
-                        { executionDispatchState: "retryWaiting" },
-                    ],
                 },
             },
             select: {
@@ -368,12 +417,13 @@ export async function listDaemonAssignments(params: {
     const activeAssignments = rows
         .map((row) => {
             const runs: AutomationAssignmentWakeRun[] = row.automation.runs.map((run) => {
-                if (run.causeKind === null || !isAutomationRunState(run.state)) {
+                const state = projectAutomationRunState(run.state);
+                if (run.causeKind === null || state === null) {
                     throw new Error("Stored Automation assignment Run has invalid origin correspondence");
                 }
                 return {
                     ...run,
-                    state: run.state,
+                    state,
                     causeKind: run.causeKind,
                     assignedToMachine: run.assignments.length > 0,
                 };
@@ -382,9 +432,9 @@ export async function listDaemonAssignments(params: {
                 ...row,
                 automation: { ...row.automation, runs },
                 nextClaimAt: resolveAutomationAssignmentNextClaimAt({
-                    schedules: row.automation.triggers
-                        .filter((trigger) => trigger.kind === "schedule" && trigger.enabled)
-                        .map((trigger) => ({ triggerId: trigger.id, nextRunAt: trigger.nextRunAt })),
+                    // Schedule cursors belong to server admission. Only its
+                    // admitted Run (and queued push) can wake a CLI claim.
+                    schedules: [],
                     runs,
                 }),
             };
@@ -396,7 +446,7 @@ export async function listDaemonAssignments(params: {
         if (
             assignment.run.automationId === null
             || assignment.run.causeKind === null
-            || !isAutomationRunState(assignment.run.state)
+            || projectAutomationRunState(assignment.run.state) === null
         ) {
             throw new Error("Stored Automation assignment Run has invalid origin correspondence");
         }
@@ -420,7 +470,7 @@ export async function listDaemonAssignments(params: {
             select: {
                 id: true, name: true, enabled: true,
                 targetType: true, templateCiphertext: true, templateVersion: true,
-                lastRunAt: true, updatedAt: true,
+                updatedAt: true,
                 triggers: {
                     where: { deletedAt: null },
                     select: automationAssignmentWakeTriggerSelect,
@@ -440,12 +490,13 @@ export async function listDaemonAssignments(params: {
                 : best
         ));
         const runs: AutomationAssignmentWakeRun[] = assignments.map((assignment) => {
-            if (assignment.run.causeKind === null || !isAutomationRunState(assignment.run.state)) {
+            const state = projectAutomationRunState(assignment.run.state);
+            if (assignment.run.causeKind === null || state === null) {
                 throw new Error("Stored Automation assignment Run has invalid origin correspondence");
             }
             return {
                 ...assignment.run,
-                state: assignment.run.state,
+                state,
                 causeKind: assignment.run.causeKind,
                 assignedToMachine: true,
             };
@@ -461,11 +512,12 @@ export async function listDaemonAssignments(params: {
         });
     }
 
-    return [...activeAssignments, ...admittedRunWakes].sort((left, right) => (
+    const assignments = [...activeAssignments, ...admittedRunWakes].sort((left, right) => (
         right.priority - left.priority
         || right.updatedAt.getTime() - left.updatedAt.getTime()
         || left.id.localeCompare(right.id)
-    )).map((assignment) => ({
+    ));
+    return assignments.map((assignment) => ({
         ...assignment,
         executionRecipeVersion: parseAutomationStoredWorkflowDefinitionRecipeV2(assignment.automation.templateCiphertext).kind === "available"
             ? 2 as const : null,

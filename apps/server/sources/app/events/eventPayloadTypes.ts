@@ -1,4 +1,5 @@
 import { Socket } from "socket.io";
+import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import type { EphemeralUpdate, SessionPersonalEventEphemeralV1 } from "@happier-dev/protocol/updates";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
@@ -9,7 +10,7 @@ import type { AutomationRunStateV3 } from '@happier-dev/protocol/automations/aut
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import type { ExternalSessionTranscriptInvalidationV1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ExecutionRunSessionUpdateState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -24,6 +25,8 @@ import type { PendingActivationRequestedEphemeralV1 } from '@happier-dev/protoco
 import type { SessionMessageReplyPendingHintV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import type { ExecutionRunMachineActivityEphemeralV1 } from '@happier-dev/protocol/execution/runs/activityV1';
+import type { ScmDiffSummaryResultUpdateEphemeral } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { PluginWebhookHeartbeatReceiptHintV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 
 // === CONNECTION TYPES ===
 
@@ -199,6 +202,10 @@ export type UpdateEvent = {
 } | {
     /** Content-free invalidation: catch up the canonical AccountChange feed. */
     type: 'account-change';
+    changeKinds?: readonly string[];
+    entityIds?: readonly string[];
+    artifactKinds?: readonly string[];
+    sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
 } | {
     type: 'update-account';
     userId: string;
@@ -354,7 +361,7 @@ export type UpdateEvent = {
 
 // === EPHEMERAL EVENT TYPES (Transient) ===
 
-export type EphemeralEvent = SessionPersonalEventEphemeralV1 | PendingActivationRequestedEphemeralV1 | SessionMessageReplyPendingHintV1 | UsageSourcesInvalidationV1 | ExecutionRunMachineActivityEphemeralV1 | {
+export type EphemeralEvent = ScmDiffSummaryResultUpdateEphemeral | SessionPersonalEventEphemeralV1 | PendingActivationRequestedEphemeralV1 | SessionMessageReplyPendingHintV1 | UsageSourcesInvalidationV1 | ExecutionRunMachineActivityEphemeralV1 | {
     type: 'activity';
     id: string;
     active: boolean;
@@ -369,7 +376,7 @@ export type EphemeralEvent = SessionPersonalEventEphemeralV1 | PendingActivation
 } & SessionDraftSocketUpdateV2) | {
     type: 'execution-run-updated';
     sessionId: string;
-    run: ExecutionRunPublicState;
+    run: ExecutionRunSessionUpdateState;
 } | {
     type: 'transcript-stream-segment';
     sessionId: string;
@@ -412,7 +419,7 @@ export type EphemeralEvent = SessionPersonalEventEphemeralV1 | PendingActivation
      */
     type: 'team-credential-usage-changed';
     resourceId: string;
-} | ActionOperationRevisionEphemeralV1 | {
+} | ActionOperationRevisionEphemeralV1 | (PluginWebhookHeartbeatReceiptHintV1 & { type: 'health-check-heartbeat-received' }) | {
     type: 'machine-status';
     machineId: string;
     online: boolean;

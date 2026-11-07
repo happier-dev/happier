@@ -34,3 +34,20 @@ export function stripMigratedSessionOrganizationSettings<TSettings extends Recor
     }
     return next;
 }
+
+/**
+ * One decider for whether an already-transferred destination still owes its
+ * legacy-source pass (source read, contraction and history normalization).
+ * Only a raw Account Settings document already admitted for this same Account
+ * can prove the pass finished; an unknown document always keeps the pass.
+ * Supported writers never re-add a transferred root, so an older document can
+ * only over-report the source.
+ */
+export function transferredAccountSettingsSourceNeedsCleanupV1(input: Readonly<{
+    rawSettings: Readonly<Record<string, unknown>> | null | undefined;
+    sourceRoots: readonly string[];
+    cleanupPending: boolean;
+}>): boolean {
+    const raw = input.rawSettings;
+    return input.cleanupPending || !raw || input.sourceRoots.some(root => Object.hasOwn(raw, root));
+}

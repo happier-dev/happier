@@ -26,7 +26,7 @@ export type ProcessOwnershipLevelV1 = z.infer<typeof ProcessOwnershipLevelV1Sche
 export const ProcessEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['fence', 'parent_chain', 'marker', 'group_and_port']),
   state: z.enum(['met', 'not_met', 'not_available']),
-  reason: z.enum(['linux_scope', 'windows_job', 'macos_no_fence', 'no_systemd_user_manager', 'job_join_failed',
+  reason: z.enum(['linux_scope', 'linux_container', 'windows_job', 'macos_no_fence', 'no_systemd_user_manager', 'job_join_failed',
     'outside_fence', 'live_root_chain', 'chain_broken_at_exit', 'no_live_root', 'marker_matches', 'marker_cleared',
     'foreign_home_marker', 'marker_owner_unknown', 'marker_predates_owner', 'same_group_port_opened_while_running',
     'no_group_or_port_match', 'principal_unreadable', 'other_principal', 'required_fields_unreadable']),
@@ -130,6 +130,9 @@ export const MachineProcessesCheckInputV1Schema = lazyZodSchema(() => z.strictOb
 export type MachineProcessesCheckInputV1 = z.infer<typeof MachineProcessesCheckInputV1Schema>;
 export const MachineProcessesCheckResultV1Schema = lazyZodSchema(() => z.strictObject({ checks: z.array(z.strictObject({
   ref: id(), present: z.boolean(), identityEqual: z.boolean(), level: z.optional(ProcessOwnershipLevelV1Schema), owner: z.optional(z.nullable(ProcessOwnerRefV1Schema)), memoryBytes: z.optional(z.nullable(bytes())),
+  // Presentation from the same authorized observation as the identity check.
+  // Omitted on older answers, absence, identity mismatch or inaccessible work.
+  row: z.optional(z.union([ProcessRowV1Schema, NotHappierRowV1Schema])),
 })) }));
 export type MachineProcessesCheckResultV1 = z.infer<typeof MachineProcessesCheckResultV1Schema>;
 export const MachineProcessesStopInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), targets: targets() }));

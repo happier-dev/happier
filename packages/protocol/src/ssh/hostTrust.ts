@@ -1,6 +1,11 @@
-import { encodeBase64 } from '../crypto/base64.js';
 import { sha256 } from '@noble/hashes/sha2';
-import { decodeBase64 } from '../crypto/base64.js';
+import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
+
+/** OpenSSH fingerprints hash the decoded RFC4253 key, never its base64 text. */
+export function computeSshHostKeyFingerprint(key: string): string {
+  return `SHA256:${encodeBase64(sha256(decodeBase64(key.trim()))).replace(/=+$/u, '')}`;
+}
+
 export type SshHostTrustPromptKind = 'ssh.trustHost' | 'ssh.replaceHostKey';
 
 export type SshTrustedHostKey = Readonly<{
@@ -74,8 +79,4 @@ export function resolveSshHostTrust(params: Readonly<{
     promptKind: 'ssh.replaceHostKey',
     existingFingerprintSha256: trustedFingerprint || undefined,
   };
-}
-
-export function computeSshHostKeyFingerprint(key: string): string {
-  return `SHA256:${encodeBase64(sha256(decodeBase64(key.trim()))).replace(/=+$/u, '')}`;
 }

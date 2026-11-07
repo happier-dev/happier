@@ -34,6 +34,7 @@ export const TodoIndexV1StoredSchema = createStoredReadSchema(TodoIndexV1Schema)
 export type TodoIndexV1 = z.infer<typeof TodoIndexV1Schema>;
 export const TodoCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), title: z.string(), ...taskFields,
+  state: z.optional(TodoStateV1Schema),
   createdBy: z.optional(z.string().check(z.minLength(1))),
 }));
 export type TodoCreateInputV1 = z.infer<typeof TodoCreateInputV1Schema>;
@@ -52,8 +53,9 @@ export function resolveTodoStateV1(todo: Pick<TodoItemV1, 'done' | 'state'>): To
   return terminal ? 'unstarted' : (todo.state ?? 'unstarted');
 }
 export function createTodoItemV1(input: TodoCreateInputV1, now: number): TodoItemV1 {
-  return TodoItemV1Schema.parse({ ...TodoCreateInputV1Schema.parse(input), state: 'unstarted', done: false,
-    createdAt: now, updatedAt: now, linkedSessions: {} });
+  const fields = TodoCreateInputV1Schema.parse(input);
+  return transitionTodoItemV1({ ...fields, state: 'unstarted', done: false,
+    createdAt: now, updatedAt: now, linkedSessions: {} }, fields.state ?? 'unstarted', now);
 }
 export function updateTodoItemV1(todo: TodoItemV1, patch: TodoItemPatchV1, now: number): TodoItemV1 {
   const updated = { ...TodoItemV1StoredSchema.parse(todo), updatedAt: now };

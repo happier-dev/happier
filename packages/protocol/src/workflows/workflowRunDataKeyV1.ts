@@ -1,4 +1,3 @@
-import type { AccountScopedCryptoMaterialSnapshotV1 } from '../crypto/accountScopedCipher.js';
 import tweetnacl from 'tweetnacl';
 import { prepareResourceRecipientKeyEnvelopesV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
 import { isAvailableE2eeAutomationAccountEncryptionV1, type AvailableAutomationAccountEncryptionV1,
@@ -8,6 +7,12 @@ import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelopeV1.js';
 import type { WorkflowRunRecipientCensusResponseV1, WorkflowRunRecipientKeyEnvelopeV1,
   WorkflowRunRecipientKeyEnvelopeCommitInputV1, WorkflowRunRecipientKeyEnvelopeCommitResponseV1 } from './workflowRunKeyV1.js';
+import type { AccountScopedCryptoMaterialSnapshotV1 } from '../crypto/accountScopedCipher.js';
+
+/** Reader material has no Account cursor and cannot authorize execution or sealing. */
+export type WorkflowRunReadEncryptionV1 =
+  | Readonly<{ witness: Readonly<{ mode: 'plain' }> }>
+  | Readonly<{ witness: Readonly<{ mode: 'e2ee' }>; material: AccountScopedCryptoMaterialSnapshotV1 }>;
 
 export type WorkflowRunDataKeyV1 = Readonly<{ mode: 'plain' }>
   | Readonly<{ mode: 'e2ee'; runDataKey: Uint8Array }>;
@@ -102,7 +107,3 @@ export async function runWorkflowRecipientKeyPreparationV1(params: Readonly<{
   params.signal?.throwIfAborted();
   return params.commit({ runId: params.runId, expectedDataEncryptionKey: census.dataEncryptionKey, recipientKeyEnvelopes });
 }
-
-export type WorkflowRunReadEncryptionV1 =
-  | Readonly<{ witness: Readonly<{ mode: 'plain' }> }>
-  | Readonly<{ witness: Readonly<{ mode: 'e2ee' }>; material: AccountScopedCryptoMaterialSnapshotV1 }>;

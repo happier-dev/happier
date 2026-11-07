@@ -116,6 +116,8 @@ function dropUnknownStoredPresentations(input: unknown): unknown {
     return children.length ? [{ ...group, children }] : [];
   }) };
 }
-const storedLayout = createStoredReadSchema(z.core.clone(PublicProfileLayoutV1Schema));
-defineStoredReadProjection(PublicProfileLayoutV1Schema, () => z.pipe(z.unknown(), z.pipe(z.transform(dropUnknownStoredPresentations), storedLayout)));
+defineStoredReadProjection(PublicProfileLayoutV1Schema, () => {
+  const storedLayout = createStoredReadSchema(z.core.clone(PublicProfileLayoutV1Schema));
+  return z.pipe(z.unknown(), z.pipe(z.transform(dropUnknownStoredPresentations), storedLayout));
+});
 export const PublicProfileLayoutV1StoredSchema = createStoredReadSchema(PublicProfileLayoutV1Schema);

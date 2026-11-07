@@ -7,7 +7,6 @@ import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1
 import { ProviderAccountGrantV1Schema, ProviderMachineGrantV1Schema } from '../grants/v1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { deserializeModelVisibilityRefV1, ProviderBoundModelRefSchema, SessionModelSelectionV1Schema } from '../selection/v1.js';
-import { PROVIDER_SETTINGS_LIMITS_V1 } from './limits.js';
 import { ProfileRecordIdV1Schema } from '../../profiles/v2/profileId.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { canonicalizeFingerprintValue } from '../fingerprints.js';
@@ -16,11 +15,10 @@ import { ProviderModelConfirmationSourceKeyV1Schema } from '../compatibility/sou
 import { ProviderReasoningEffortLevelsV1Schema } from '../catalog/reasoningEffort.js';
 export { PROVIDER_REASONING_EFFORT_LEVELS_V1, ProviderReasoningEffortLevelV1Schema, ProviderReasoningEffortLevelsV1Schema,
   type ProviderReasoningEffortLevelV1 } from '../catalog/reasoningEffort.js';
-export { PROVIDER_SETTINGS_LIMITS_V1 } from './limits.js';
 
 export const ProviderManualModelV1Schema = lazyZodSchema(() => z.strictObject({
   id: ProviderModelIdSchema,
-  name: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+  name: z.optional(z.string().check(z.trim(), z.minLength(1))),
   reasoningEffortLevels: z.optional(ProviderReasoningEffortLevelsV1Schema),
   addedAt: z.number().check(z.nonnegative()),
 }));
@@ -112,9 +110,9 @@ export type ProviderSettingsMigrationPendingConflictV1 = z.infer<typeof Provider
 
 export const ProviderSettingsMigrationStateV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  completedSources: z.array(ProviderSettingsMigrationSourceOutcomeV1Schema).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.migrationCompletedSources)),
-  pendingCustomProfileIds: z.array(ProviderMigrationSourceProfileIdSchema).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.migrationPendingCustomProfiles)),
-  pendingConflicts: z._default(z.array(ProviderSettingsMigrationPendingConflictV1Schema).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts)), []),
+  completedSources: z.array(ProviderSettingsMigrationSourceOutcomeV1Schema),
+  pendingCustomProfileIds: z.array(ProviderMigrationSourceProfileIdSchema),
+  pendingConflicts: z._default(z.array(ProviderSettingsMigrationPendingConflictV1Schema), []),
   migratedAt: z.optional(z.number().check(z.nonnegative())),
 }).check(z.superRefine((value, ctx) => {
   if (new Set(value.completedSources.map((entry) => entry.sourceProfileId)).size !== value.completedSources.length) {
@@ -203,11 +201,7 @@ export function isCanonicalProviderSavedSecretIdV1(value: unknown): value is str
 const SavedSecretSlotRecordV1Schema = lazyZodSchema(() => z.record(
   ProviderLocalIdSchema,
   z.string().apply((base) => base.check(z.refine<z.output<typeof base>>(isCanonicalProviderSavedSecretIdV1, 'Saved-secret id must be canonical')) as typeof base & z.ZodMiniType<string, z.input<typeof base>>),
-).check(z.superRefine((value, ctx) => {
-  if (Object.keys(value).length > PROVIDER_SETTINGS_LIMITS_V1.credentialSlotsPerScope) {
-    ctx.addIssue({ code: 'custom', message: 'Too many credential-slot bindings' });
-  }
-})));
+));
 
 export const SavedSecretSlotBindingsV1Schema = lazyZodSchema(() => z.strictObject({
   account: z.optional(SavedSecretSlotRecordV1Schema),
@@ -218,17 +212,17 @@ export type SavedSecretSlotBindingsV1 = Readonly<z.infer<typeof SavedSecretSlotB
 export const ProviderSettingsV1BaseSchema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   connections: z.array(ProviderConnectionV1Schema),
-  connectionTombstones: z.array(ProviderConnectionTombstoneV1Schema).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones)),
+  connectionTombstones: z.array(ProviderConnectionTombstoneV1Schema),
   accountGrants: z.array(ProviderAccountGrantV1Schema),
   machineGrants: z.array(ProviderMachineGrantV1Schema),
   secretBindingsByConnectionId: z.record(ProviderConnectionIdSchema, SavedSecretSlotBindingsV1Schema),
   manualModelsByConnectionId: z.record(
     ProviderConnectionIdSchema,
-    z.array(ProviderManualModelV1Schema).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection)),
+    z.array(ProviderManualModelV1Schema),
   ),
   modelVisibilityByRef: z.record(z.string().check(z.startsWith('mvr1:')), z.literal('hidden')),
   modelPickerVisibilityByConnectionId: z.optional(z.record(ProviderConnectionIdSchema, z.boolean())),
-  experimentalBindingConfirmations: z.array(ProviderExperimentalBindingConfirmationV1Schema).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.experimentalBindingConfirmations)),
+  experimentalBindingConfirmations: z.array(ProviderExperimentalBindingConfirmationV1Schema),
   defaultsByAgentTargetKey: z.record(ProviderAgentTargetKeySchema, SessionModelSelectionV1Schema),
   migration: z.optional(ProviderSettingsMigrationStateV1Schema),
 }));
@@ -275,22 +269,13 @@ export function refineProviderSettingsV1(value: z.infer<typeof ProviderSettingsV
   Object.keys(value.secretBindingsByConnectionId).forEach((connectionId) => assertConnectionRef(connectionId, ['secretBindingsByConnectionId', connectionId]));
   Object.keys(value.modelPickerVisibilityByConnectionId ?? {}).forEach((connectionId) => assertConnectionRef(connectionId, ['modelPickerVisibilityByConnectionId', connectionId]));
 
-  let manualModelsTotal = 0;
   for (const [connectionId, models] of Object.entries(value.manualModelsByConnectionId)) {
     assertConnectionRef(connectionId, ['manualModelsByConnectionId', connectionId]);
-    manualModelsTotal += models.length;
     if (new Set(models.map((model) => model.id)).size !== models.length) {
       ctx.addIssue({ code: 'custom', path: ['manualModelsByConnectionId', connectionId], message: 'Manual model ids must be unique per connection' });
     }
   }
-  if (manualModelsTotal > PROVIDER_SETTINGS_LIMITS_V1.manualModelsTotal) {
-    ctx.addIssue({ code: 'custom', path: ['manualModelsByConnectionId'], message: 'Too many manual models' });
-  }
-
   const visibilityEntries = Object.keys(value.modelVisibilityByRef);
-  if (visibilityEntries.length > PROVIDER_SETTINGS_LIMITS_V1.modelVisibilityExceptions) {
-    ctx.addIssue({ code: 'custom', path: ['modelVisibilityByRef'], message: 'Too many model visibility records' });
-  }
   for (const key of visibilityEntries) {
     try {
       const ref = deserializeModelVisibilityRefV1(key);
@@ -316,9 +301,6 @@ export function refineProviderSettingsV1(value: z.infer<typeof ProviderSettingsV
       ctx.addIssue({ code: 'custom', path: ['defaultsByAgentTargetKey', agentTargetKey], message: 'Default selection agent target does not match its key' });
     }
   }
-  if (Object.keys(value.defaultsByAgentTargetKey).length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
-    ctx.addIssue({ code: 'custom', path: ['defaultsByAgentTargetKey'], message: 'Too many per-agent defaults' });
-  }
 }
 export const ProviderSettingsV1Schema = lazyZodSchema(() => ProviderSettingsV1BaseSchema.check(z.superRefine(refineProviderSettingsV1)));
 export type ProviderSettingsV1 = z.infer<typeof ProviderSettingsV1Schema>;
@@ -336,63 +318,8 @@ export const DEFAULT_PROVIDER_SETTINGS_V1: ProviderSettingsV1 = Object.freeze({
   defaultsByAgentTargetKey: {},
 });
 
-export class ProviderSettingsLimitError extends Error {
-  readonly code = 'provider_settings_limit_exceeded';
-  constructor(message: string) { super(message); this.name = 'ProviderSettingsLimitError'; }
-}
-
 export function assertProviderSettingsV1WithinLimits(value: unknown): ProviderSettingsV1 {
-  const record = rawRecord(value);
-  const count = (key: string) => Array.isArray(record[key]) ? record[key].length : 0;
-  if (count('connectionTombstones') > PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones
-    || count('experimentalBindingConfirmations') > PROVIDER_SETTINGS_LIMITS_V1.experimentalBindingConfirmations
-    || Object.keys(rawRecord(record.modelVisibilityByRef)).length > PROVIDER_SETTINGS_LIMITS_V1.modelVisibilityExceptions
-    || Object.keys(rawRecord(record.defaultsByAgentTargetKey)).length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
-    throw new ProviderSettingsLimitError('Provider settings exceed a record-count limit');
-  }
-  const manualModelsByConnectionId = rawRecord(record.manualModelsByConnectionId);
-  let manualModelsTotal = 0;
-  for (const models of Object.values(manualModelsByConnectionId)) {
-    if (!Array.isArray(models)) continue;
-    if (models.length > PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection) {
-      throw new ProviderSettingsLimitError('Provider settings exceed the per-connection manual-model limit');
-    }
-    manualModelsTotal += models.length;
-    if (manualModelsTotal > PROVIDER_SETTINGS_LIMITS_V1.manualModelsTotal) {
-      throw new ProviderSettingsLimitError('Provider settings exceed the total manual-model limit');
-    }
-  }
-  for (const bindings of Object.values(rawRecord(record.secretBindingsByConnectionId))) {
-    const bindingRecord = rawRecord(bindings);
-    if (Object.keys(rawRecord(bindingRecord.account)).length > PROVIDER_SETTINGS_LIMITS_V1.credentialSlotsPerScope) {
-      throw new ProviderSettingsLimitError('Provider settings exceed the credential-slot limit');
-    }
-    const byMachineId = rawRecord(bindingRecord.byMachineId);
-    for (const machineBindings of Object.values(byMachineId)) {
-      if (Object.keys(rawRecord(machineBindings)).length > PROVIDER_SETTINGS_LIMITS_V1.credentialSlotsPerScope) {
-        throw new ProviderSettingsLimitError('Provider settings exceed the credential-slot limit');
-      }
-    }
-  }
-  const migration = rawRecord(record.migration);
-  if ((Array.isArray(migration.completedSources)
-      && migration.completedSources.length > PROVIDER_SETTINGS_LIMITS_V1.migrationCompletedSources)
-    || (Array.isArray(migration.pendingCustomProfileIds)
-      && migration.pendingCustomProfileIds.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingCustomProfiles)
-    || (Array.isArray(migration.pendingConflicts)
-      && migration.pendingConflicts.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts)) {
-    throw new ProviderSettingsLimitError('Provider settings exceed the migration-record limit');
-  }
-  let serialized: string | undefined;
-  try { serialized = JSON.stringify(value); } catch {
-    throw new ProviderSettingsLimitError('Provider settings must be serializable JSON');
-  }
-  if (serialized === undefined) throw new ProviderSettingsLimitError('Provider settings must be serializable JSON');
-  const bytes = new TextEncoder().encode(serialized).byteLength;
-  if (bytes > PROVIDER_SETTINGS_LIMITS_V1.decodedJsonBytes) throw new ProviderSettingsLimitError('Provider settings exceed the decoded-size limit');
-  const parsed = ProviderSettingsV1Schema.safeParse(value);
-  if (!parsed.success) throw parsed.error;
-  return parsed.data;
+  return ProviderSettingsV1Schema.parse(value);
 }
 
 export type ProviderSettingsParseDiagnosticV1 = Readonly<{ path: string; reason: string }>;
@@ -409,11 +336,9 @@ function rawRecord(value: unknown): Record<string, unknown> {
 export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsReadResultV1 {
   const diagnostics: ProviderSettingsParseDiagnosticV1[] = [];
   const raw = rawRecord(value);
-  const parseArray = <T>(key: string, schema: z.ZodMiniType<T>, max?: number): T[] => {
+  const parseArray = <T>(key: string, schema: z.ZodMiniType<T>): T[] => {
     const rawEntries = Array.isArray(raw[key]) ? raw[key] : [];
-    if (max !== undefined && rawEntries.length > max) diagnostics.push({ path: key, reason: 'limit_exceeded' });
-    const entries = max === undefined ? rawEntries : rawEntries.slice(0, max);
-    return entries.flatMap((entry, index) => {
+    return rawEntries.flatMap((entry, index) => {
       const parsed = schema.safeParse(entry);
       if (parsed.success) return [parsed.data];
       diagnostics.push({ path: `${key}[${index}]`, reason: 'invalid_record' });
@@ -476,7 +401,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
   );
 
   const connectionTombstones = uniqueFirst(
-    parseArray('connectionTombstones', ProviderConnectionTombstoneV1Schema, PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones)
+    parseArray('connectionTombstones', ProviderConnectionTombstoneV1Schema)
       .map((entry) => entry.contributionKey === null
         ? entry
         : {
@@ -501,14 +426,11 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
   }
 
   const manualModelsByConnectionId: ProviderSettingsV1['manualModelsByConnectionId'] = {};
-  let remainingManual = PROVIDER_SETTINGS_LIMITS_V1.manualModelsTotal;
   for (const [connectionId, entries] of Object.entries(rawRecord(raw.manualModelsByConnectionId))) {
     const parsedConnectionId = ProviderConnectionIdSchema.safeParse(connectionId);
     if (!connectionIds.has(connectionId) || !parsedConnectionId.success) { diagnostics.push({ path: `manualModelsByConnectionId.${connectionId}`, reason: 'unknown_connection' }); continue; }
     const rawModels = Array.isArray(entries) ? entries : [];
-    const modelLimit = Math.min(PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection, remainingManual);
-    if (rawModels.length > modelLimit) diagnostics.push({ path: `manualModelsByConnectionId.${connectionId}`, reason: 'limit_exceeded' });
-    const parsedModels = uniqueFirst(rawModels.slice(0, modelLimit)
+    const parsedModels = uniqueFirst(rawModels
       .flatMap((entry, index) => {
         const parsed = ProviderManualModelV1Schema.safeParse(entry);
         if (parsed.success) return [parsed.data];
@@ -519,7 +441,6 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
       `manualModelsByConnectionId.${connectionId}`,
     );
     manualModelsByConnectionId[parsedConnectionId.data] = parsedModels;
-    remainingManual -= parsedModels.length;
   }
 
   const modelPickerVisibilityByConnectionId: Record<string, boolean> = {};
@@ -534,8 +455,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
   }
   const modelVisibilityByRef: Record<string, 'hidden'> = {};
   const visibilityEntries = Object.entries(rawRecord(raw.modelVisibilityByRef));
-  if (visibilityEntries.length > PROVIDER_SETTINGS_LIMITS_V1.modelVisibilityExceptions) diagnostics.push({ path: 'modelVisibilityByRef', reason: 'limit_exceeded' });
-  for (const [key, state] of visibilityEntries.slice(0, PROVIDER_SETTINGS_LIMITS_V1.modelVisibilityExceptions)) {
+  for (const [key, state] of visibilityEntries) {
     try {
       const ref = deserializeModelVisibilityRefV1(key);
       if (state === 'hidden' && (ref.providerConnectionId === null || connectionIds.has(ref.providerConnectionId))) modelVisibilityByRef[key] = 'hidden';
@@ -544,7 +464,14 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
   }
 
   const experimentalBindingConfirmations = uniqueFirst(
-    parseArray('experimentalBindingConfirmations', ProviderExperimentalBindingConfirmationV1Schema, PROVIDER_SETTINGS_LIMITS_V1.experimentalBindingConfirmations)
+    // The retired development Team writer added sourceRevision. Stored reads
+    // discard that field; current personal writes retain their closed schema.
+    parseArray('experimentalBindingConfirmations', z.pipe(z.transform((entry: unknown) => {
+      const record = rawRecord(entry);
+      if (!Object.hasOwn(record, 'sourceRevision')) return entry;
+      const { sourceRevision: _retiredTeamRevision, ...personal } = record;
+      return personal;
+    }), ProviderExperimentalBindingConfirmationV1Schema))
       .filter((entry, index) => {
         if (entry.connectedAccountTarget ? !connectionIds.has(entry.connectionId)
           : entry.catalogSourceKey !== undefined || connectionIds.has(entry.connectionId)) return true;
@@ -557,13 +484,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
 
   const defaultsByAgentTargetKey: Record<string, z.infer<typeof SessionModelSelectionV1Schema>> = {};
   const defaultEntries = Object.entries(rawRecord(raw.defaultsByAgentTargetKey));
-  if (defaultEntries.length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
-    diagnostics.push({ path: 'defaultsByAgentTargetKey', reason: 'limit_exceeded' });
-  }
-  for (const [agentTargetKey, selection] of defaultEntries.slice(
-    0,
-    PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey,
-  )) {
+  for (const [agentTargetKey, selection] of defaultEntries) {
     const parsed = SessionModelSelectionV1Schema.safeParse(selection);
     if (parsed.success && parsed.data.ref.agentTargetKey === agentTargetKey) {
       defaultsByAgentTargetKey[agentTargetKey] = parsed.data;
@@ -581,13 +502,10 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
       if (!Array.isArray(rawMigration.completedSources)) diagnostics.push({ path: 'migration.completedSources', reason: 'invalid_record' });
       if (!Array.isArray(rawMigration.pendingCustomProfileIds)) diagnostics.push({ path: 'migration.pendingCustomProfileIds', reason: 'invalid_record' });
       if (rawMigration.pendingConflicts !== undefined && !Array.isArray(rawMigration.pendingConflicts)) diagnostics.push({ path: 'migration.pendingConflicts', reason: 'invalid_record' });
-      if (rawCompleted.length > 2_048) diagnostics.push({ path: 'migration.completedSources', reason: 'limit_exceeded' });
-      if (rawPending.length > 2_048) diagnostics.push({ path: 'migration.pendingCustomProfileIds', reason: 'limit_exceeded' });
-      if (rawPendingConflicts.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts) diagnostics.push({ path: 'migration.pendingConflicts', reason: 'limit_exceeded' });
 
       const completedSources: ProviderSettingsMigrationSourceOutcomeV1[] = [];
       const completedIds = new Set<string>();
-      for (const [index, entry] of rawCompleted.slice(0, 2_048).entries()) {
+      for (const [index, entry] of rawCompleted.entries()) {
         const parsed = ProviderSettingsMigrationSourceOutcomeV1Schema.safeParse(entry);
         if (!parsed.success) {
           diagnostics.push({ path: `migration.completedSources[${index}]`, reason: 'invalid_record' });
@@ -603,7 +521,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
 
       const pendingCustomProfileIds: string[] = [];
       const pendingIds = new Set<string>();
-      for (const [index, entry] of rawPending.slice(0, 2_048).entries()) {
+      for (const [index, entry] of rawPending.entries()) {
         const parsed = ProviderMigrationSourceProfileIdSchema.safeParse(entry);
         if (!parsed.success) {
           diagnostics.push({ path: `migration.pendingCustomProfileIds[${index}]`, reason: 'invalid_record' });
@@ -623,7 +541,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): ProviderSettingsR
 
       const pendingConflicts: ProviderSettingsMigrationPendingConflictV1[] = [];
       const conflictIds = new Set<string>();
-      for (const [index, entry] of rawPendingConflicts.slice(0, PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts).entries()) {
+      for (const [index, entry] of rawPendingConflicts.entries()) {
         const parsed = ProviderSettingsMigrationPendingConflictV1Schema.safeParse(entry);
         if (!parsed.success) {
           diagnostics.push({ path: `migration.pendingConflicts[${index}]`, reason: 'invalid_record' });

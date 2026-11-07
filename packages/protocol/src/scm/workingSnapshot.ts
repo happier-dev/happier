@@ -164,6 +164,9 @@ export const ScmRemoteInfoSchema = lazyZodSchema(() => z.object({
 }));
 export type ScmRemoteInfo = z.infer<typeof ScmRemoteInfoSchema>;
 
+export const ScmSnapshotDetailSchema = lazyZodSchema(() => z.enum(['summary', 'facts']));
+export type ScmSnapshotDetail = z.infer<typeof ScmSnapshotDetailSchema>;
+
 export const ScmWorkingSnapshotSchema = lazyZodSchema(() => z.object({
   projectKey: z.string(),
   fetchedAt: z.number().check(z.int()),
@@ -195,6 +198,17 @@ export const ScmWorkingSnapshotSchema = lazyZodSchema(() => z.object({
   pullRequestStatus: z.optional(z.nullable(ScmPullRequestStatusProjectionSchema)),
   hasConflicts: z.boolean(),
   entries: z.array(ScmWorkingEntrySchema),
+  // Present only on a reply to a `detail` read: `entries` is empty because it was not sent, never
+  // because the working copy is clean. 'summary' carries `summary`; 'facts' measured no working
+  // copy, so its `totals`, `hasConflicts` and `entries` say nothing and must not be read.
+  detail: z.optional(ScmSnapshotDetailSchema),
+  summary: z.optional(z.object({
+    changedFiles: z.number().check(z.int(), z.nonnegative()),
+    includedAdded: z.number().check(z.int()),
+    includedRemoved: z.number().check(z.int()),
+    pendingAdded: z.number().check(z.int()),
+    pendingRemoved: z.number().check(z.int()),
+  })),
   totals: z.object({
     includedFiles: z.number().check(z.int(), z.nonnegative()),
     pendingFiles: z.number().check(z.int(), z.nonnegative()),

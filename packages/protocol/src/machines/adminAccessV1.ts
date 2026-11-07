@@ -110,8 +110,10 @@ export const MachineElevatedNotAppliedResultV1Schema = lazyZodSchema(() =>
   z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.union([z.enum(['mode_none', 'not_preauthorized',
     'denied', 'platform_unsupported', 'plan_stale', 'cancelled', 'managed_cli_unavailable']), MachineElevationFailureKindV1Schema]),
     failure: z.optional(MachineElevationFailureV1Schema),
-    recovery: z.optional(z.strictObject({ kind: z.literal('install_managed_cli'),
-      executablePath: z.string().check(z.minLength(1)) })),
+    recovery: z.optional(z.discriminatedUnion('kind', [
+      z.strictObject({ kind: z.literal('install_managed_cli'), executablePath: z.string().check(z.minLength(1)) }),
+      z.strictObject({ kind: z.literal('configure_admin_access'), mode: z.literal('preauthorized') }),
+    ])),
     restoration: z.optional(MachineFirewallRestorationV1Schema) }));
 
 export const MachineElevatedResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [

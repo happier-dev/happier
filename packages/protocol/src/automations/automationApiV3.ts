@@ -1,7 +1,7 @@
-import { WorkflowTriggerSummaryV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
+import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import * as zMini from 'zod/mini';
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import {
@@ -11,6 +11,8 @@ import {
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { AutomationRunStateV3Schema } from './automationRunStateV3.js';
+import { WorkflowRunStateV1Schema } from '../workflows/workflowRunStateV1.js';
+import { AutomationOccurrenceKeyV1Schema } from './automationOccurrenceV1.js';
 import { AutomationIdV1Schema } from './automationIdV1.js';
 import {
   AutomationAccountCurrentnessWitnessV1Schema,
@@ -26,6 +28,7 @@ import {
 } from './automationActionSpecsV1.js';
 import {
   AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
+  AutomationStoredActionDefinitionRecipeV1Schema,
 } from './automationRunExecutionRecipeV1.js';
 import { AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema } from './automationWorkflowRecipeV2.js';
 import { ExecutionRunWaitResultSchema } from '../execution/runs/responseSchemas.js';
@@ -52,6 +55,7 @@ export * from './automationRunLifecycle.js';
 import type { AutomationTriggerDetail, AutomationTriggerListItem } from './automationTriggerProjectionV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListSelectionV1.js';
+import { WorkflowTriggerSummaryV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
 
 export {
   AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
@@ -87,8 +91,8 @@ export type {
   AutomationTriggerDefinitionInput,
 } from './automationTriggerDefinition.js';
 
-const TIMESTAMP_SCHEMA = z.number().check(z.int(), z.nonnegative(), z.int());
-const IDENTIFIER_SCHEMA = z.string().check(z.minLength(1));
+const TIMESTAMP_SCHEMA = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.int()));
+const IDENTIFIER_SCHEMA = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const UTF8_ENCODER = new TextEncoder();
 
 import { AutomationEventSourceCatalogStatusSchema, AutomationPluginEventRefSchema, AutomationCheckpointedPullObservationSchema, AutomationSocketObservationSchema, AutomationDurablePushObservationSchema, AutomationPluginEventTriggerSchema, AutomationScheduleTriggerProjectionSchema, AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerStatusSchema, AutomationSessionLifecycleTriggerProjectionSchema, AutomationTriggerListItemSchema, AutomationTriggerDetailSchema } from './automationTriggerProjectionV1.js';
@@ -146,7 +150,10 @@ export type AutomationAssignmentUpdateRequest = z.infer<typeof AutomationAssignm
  * adding kind-owned evidence only when the cause has private input. The rule
  * belongs to the recipe owner so every authoring surface shares it.
  */
-const AutomationDefinitionExecutionRecipeSchema = AutomationStoredWorkflowDefinitionRecipeV2Schema;
+const AutomationDefinitionExecutionRecipeSchema = lazyZodSchema(() => z.union([
+  AutomationStoredWorkflowDefinitionRecipeV2Schema,
+  AutomationStoredActionDefinitionRecipeV1Schema,
+]));
 
 export const AutomationTriggerCreateRequestSchema = lazyZodSchema(() => z.strictObject({
   triggerId: AutomationTriggerIdSchema,
@@ -353,7 +360,8 @@ const AutomationDefinitionBaseSchema = lazyZodSchema(() => z.strictObject({
   scopeSessionId: z.optional(z.nullable(IDENTIFIER_SCHEMA)),
   /** Omitted for unknown legacy indexing; null is an admitted unrelated definition. */
   managedTarget: z.optional(z.nullable(AutomationManagedTargetV1Schema)),
-  /** Null only for a strict V2 managed-workflow recipe, which has no single legacy target. */
+  deploymentEnvironment: z.optional(DeploymentEnvironmentRefV1Schema),
+  /** Null for a managed Workflow or observation-only definition, neither of which has a legacy target. */
   targetType: z.nullable(AutomationTargetTypeV3Schema),
   /**
    * Bounded existing-Session association projected by the definition owner
@@ -389,14 +397,14 @@ export const AutomationDefinitionListItemSchema = lazyZodSchema(() => (<T extend
 export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionListItemSchema>;
 
 /**
- * Direct authenticated definition detail. The private trigger envelope is
- * never returned from list/status/source projections.
+ * Authenticated definition detail, also available through explicit private-page
+ * demand. Ordinary summary/status/source projections omit its private envelopes.
  */
 export const AutomationDefinitionDetailSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationDefinitionBaseSchema, {
   triggers: z.array(AutomationTriggerDetailSchema),
   /** Predecessor bytes for direct reads and narrow retained-template recovery; ordinary writes use executionRecipe. */
   templateCiphertext: z.optional(z.string().check(z.minLength(1))),
-  /** Direct-reader-only current recipe; definition lists never disclose it. */
+  /** Private-reader current recipe; ordinary summary lists never disclose it. */
   executionRecipe: z.optional(z.union([AutomationStoredDefinitionExecutionRecipeV1ReadSchema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema])),
 })).check(z.superRefine(requireExactlyOneDefinitionContent)));
 export type AutomationDefinitionDetail = z.infer<typeof AutomationDefinitionDetailSchema>;
@@ -440,6 +448,7 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
 })));
 export type AutomationDefinitionListRequest = z.infer<typeof AutomationDefinitionListRequestSchema>;
 
+/** Explicit private-content demand; ordinary definition queries remain bodyless summaries. */
 export const AutomationDefinitionDetailsRequestSchema = lazyZodSchema(() => z.safeExtend(AutomationDefinitionListRequestSchema, {
   details: z.literal(true),
 }));
@@ -452,9 +461,9 @@ export const AutomationDefinitionDetailsResponseSchema = lazyZodSchema(() => z.s
 export type AutomationDefinitionDetailsResponse = z.infer<typeof AutomationDefinitionDetailsResponseSchema>;
 
 export const AutomationDefinitionListResponseSchema = lazyZodSchema(() => z.strictObject({
+  automations: z.array(AutomationDefinitionListItemSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
   /** Authorized Team facts only; never another Account's private trigger-set details. */
   sharedWorkflowSummaries: z.optional(z.array(WorkflowTriggerSummaryV1Schema)),
-  automations: z.array(AutomationDefinitionListItemSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
   nextCursor: zMini.nullable(OPAQUE_CURSOR_SCHEMA),
 }));
 export type AutomationDefinitionListResponse = z.infer<typeof AutomationDefinitionListResponseSchema>;
@@ -514,6 +523,11 @@ export type AutomationV3WorkerAssignment = z.infer<typeof AutomationV3WorkerAssi
 
 export const AutomationV3WorkerAssignmentsResponseSchema = lazyZodSchema(() => z.strictObject({
   assignments: z.array(AutomationV3WorkerAssignmentSchema),
+  /** Server-owned direct lease wake facts; older V3 omission means unknown, never a polling request. */
+  directRunClaimDeadlines: z.optional(z.array(z.strictObject({
+    runId: IDENTIFIER_SCHEMA,
+    nextClaimAt: TIMESTAMP_SCHEMA,
+  }))),
   settings: AutomationV3WorkerSettingsSchema,
 }));
 export type AutomationV3WorkerAssignmentsResponse = z.infer<
@@ -525,11 +539,13 @@ const AutomationV3WorkerMachineAttemptSchema = lazyZodSchema(() => z.strictObjec
   attempt: z.number().check(z.int(), z.positive(), z.int()),
 }));
 
+const AutomationV3WorkerLeaseDurationMsSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
+
 export const AutomationV3WorkerClaimRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: IDENTIFIER_SCHEMA,
-  leaseDurationMs: z.optional(z.number().check(z.int(), z.minimum(5_000), z.maximum(15 * 60_000))),
+  leaseDurationMs: z.optional(AutomationV3WorkerLeaseDurationMsSchema),
   /** At ordinary worker capacity, admit only session-scoped trigger runs. */
-  scope: z.optional(z.enum(['session_scoped', 'workflow'])),
+  scope: z.optional(z.enum(['session_scoped', 'workflow', 'execution'])),
 }));
 export type AutomationV3WorkerClaimRequest = z.infer<typeof AutomationV3WorkerClaimRequestSchema>;
 
@@ -541,6 +557,10 @@ const AutomationRunExecutionInputEnvelopeSchema = lazyZodSchema(() => z.string()
       });
     }
   })));
+
+// These bytes belong to an already-admitted Workflow, not an Automation input.
+// The Workflow stored-content codec owns their envelope; transport adds no cap.
+const WorkflowRunStoredEnvelopeStringSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 
 /** Exact physical provenance shape retained only inside the released V2 frozen-input adapter. */
 const AutomationRunExecutionInputV1OriginSchema = lazyZodSchema(() => z.union([
@@ -641,14 +661,14 @@ const AutomationV3WorkerClaimedAutomationRunBaseSchema = lazyZodSchema(() => z.s
   /** Boundary Resume request consumed by this claim; absent on unrelated claims. */
   workflowResumeRequestedRevision: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())),
   /** Explicit program epoch; workers never infer execution semantics from optional envelopes. */
-  recipeKind: z.enum(['legacy', 'workflow-v2']),
+  recipeKind: z.enum(['legacy', 'workflow-v2', 'action-v1']),
   // Retained predecessor Runs may lack a recipe. A V3 worker must fail those
   // closed rather than consulting the mutable Automation definition.
   executionInputEnvelope: z.nullable(AutomationRunExecutionInputEnvelopeSchema),
   /** Automation-origin workflow input evidence, kept separate from the immutable accepted definition. */
   automationEvidenceEnvelope: z.optional(z.nullable(AutomationRunExecutionInputEnvelopeSchema)),
   /** Absent before daemon materialization; subsequent claims reuse the admitted Run snapshot. */
-  workflowAcceptedSnapshotEnvelope: z.optional(AutomationRunExecutionInputEnvelopeSchema),
+  workflowAcceptedSnapshotEnvelope: z.optional(WorkflowRunStoredEnvelopeStringSchema),
   triggerId: zMini.nullable(AutomationTriggerIdSchema),
   triggerRetired: z.boolean(),
   /** Immutable Run-owned cause consumed by the strict recipe materializer. */
@@ -658,7 +678,7 @@ const AutomationV3WorkerClaimedAutomationRunBaseSchema = lazyZodSchema(() => z.s
   /** Scoped trigger only: the last succeeded run's final review checkpoint. */
   lastSucceededRun: z.optional(z.strictObject({
     runId: IDENTIFIER_SCHEMA,
-    checkpointEnvelope: AutomationRunExecutionInputEnvelopeSchema,
+    checkpointEnvelope: WorkflowRunStoredEnvelopeStringSchema,
   })),
   /** Omitted for ordinary claims. */
   resultDelivery: z.optional(AutomationV3WorkerResultDeliverySchema),
@@ -710,7 +730,7 @@ const AutomationV3WorkerClaimedDirectWorkflowRunSchema = lazyZodSchema(() => z.s
     kind: z.literal('direct'),
     originSessionId: z.optional(IDENTIFIER_SCHEMA),
   }),
-  workflowAcceptedSnapshotEnvelope: AutomationRunExecutionInputEnvelopeSchema,
+  workflowAcceptedSnapshotEnvelope: WorkflowRunStoredEnvelopeStringSchema,
   triggerId: z.null(),
   triggerRetired: z.literal(false),
 }));
@@ -729,7 +749,7 @@ export const AutomationV3WorkerClaimReceiptRunSchema = lazyZodSchema(() => z.uni
     })),
   }).check(z.superRefine(addRunTriggerCauseCorrespondenceIssue)),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationV3WorkerClaimedDirectWorkflowRunSchema, {
-    workflowAcceptedSnapshotEnvelope: z.nullable(AutomationRunExecutionInputEnvelopeSchema),
+    workflowAcceptedSnapshotEnvelope: z.nullable(WorkflowRunStoredEnvelopeStringSchema),
   })),
 ]));
 export type AutomationV3WorkerClaimReceiptRun = z.infer<typeof AutomationV3WorkerClaimReceiptRunSchema>;
@@ -755,7 +775,7 @@ export type AutomationV3WorkerClaimedAutomation = z.infer<
 export const AutomationV3WorkerClaimResponseSchema = lazyZodSchema(() => z.strictObject({
   run: z.nullable(AutomationV3WorkerClaimedRunSchema),
   automation: z.nullable(AutomationV3WorkerClaimedAutomationSchema),
-  /** C: exact Account witness observed atomically with the successful claim. */
+  /** Content identity observed under the claim fence; version is not revocation. */
   accountCurrentness: zMini.nullable(AutomationAccountCurrentnessWitnessV1Schema),
 }).check(z.superRefine((value, context) => {
   const runNeedsAutomation = value.run?.automationId !== null;
@@ -772,7 +792,7 @@ export const AutomationV3WorkerClaimResponseSchema = lazyZodSchema(() => z.stric
 export type AutomationV3WorkerClaimResponse = z.infer<typeof AutomationV3WorkerClaimResponseSchema>;
 
 export const AutomationV3WorkerHeartbeatRequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationV3WorkerMachineAttemptSchema, {
-  leaseDurationMs: z.optional(z.number().check(z.int(), z.minimum(5_000), z.maximum(15 * 60_000))),
+  leaseDurationMs: z.optional(AutomationV3WorkerLeaseDurationMsSchema),
 })));
 export type AutomationV3WorkerHeartbeatRequest = z.infer<typeof AutomationV3WorkerHeartbeatRequestSchema>;
 
@@ -860,7 +880,7 @@ export type AutomationReplyHandoffStateV3 = AutomationReplyHandoffStateV1;
  * error text, legacy summaries, request/result envelopes, reply context, and
  * receipt bytes.
  */
-const AutomationV3RunListItemShape = {
+const AutomationV3RunListItemShape = lazyDefinition(() => ({
   id: IDENTIFIER_SCHEMA,
   automationId: IDENTIFIER_SCHEMA,
   /** Exact persisted Run revision used by user-authorized lifecycle mutations. */
@@ -868,6 +888,8 @@ const AutomationV3RunListItemShape = {
   triggerId: zMini.nullable(AutomationTriggerIdSchema),
   triggerRetired: z.boolean(),
   state: AutomationRunStateV3Schema,
+  /** Canonical Workflow lifecycle when this retained row belongs to a Workflow Run. */
+  workflowRunState: z.optional(WorkflowRunStateV1Schema),
   cause: AutomationRunCauseSchema,
   dueAt: TIMESTAMP_SCHEMA,
   claimedAt: z.nullable(TIMESTAMP_SCHEMA),
@@ -885,7 +907,7 @@ const AutomationV3RunListItemShape = {
   replyHandoffDueAt: z.nullable(TIMESTAMP_SCHEMA),
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
-} as const;
+} as const));
 export const AutomationV3RunListItemSchema = lazyZodSchema(() => z.strictObject(AutomationV3RunListItemShape).check(z.superRefine(addRunTriggerCauseCorrespondenceIssue)));
 export type AutomationV3RunListItem = z.infer<typeof AutomationV3RunListItemSchema>;
 

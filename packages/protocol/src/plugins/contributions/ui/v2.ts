@@ -1,8 +1,8 @@
-import { PluginListFilterFieldV1Schema } from '../../../collections/filter/pluginListFilterFieldV1.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { PluginDefaultPlacementSchema } from './defaultPlacement.js';
+import { PluginListFilterFieldV1Schema } from '../../../collections/filter/pluginListFilterFieldV1.js';
 import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from './widgetAreas.js';
 export { PluginUiWidgetAreaDeclarationV1Schema, PluginUiWidgetAreaDeclarationsV1Schema } from './widgetAreas.js';
 export type { PluginUiWidgetAreaDeclarationV1 } from './widgetAreas.js';
@@ -43,6 +43,7 @@ import {
   PluginLocalizedStringV2Schema,
   PluginLocalizedMarkdownV2Schema,
   type PluginLocalizedStringV2,
+  PluginAvailabilityDescriptorV2Schema,
 } from '../publicTypes.js';
 import {
   PluginUiDestinationInstancePolicyV1Schema,
@@ -54,6 +55,7 @@ import {
 } from './surfaceRegistry.js';
 import { preflightPluginDeclarativeDocumentV1 } from './declarativeDocumentPreflightV1.js';
 import { PluginHostedHtmlSourceV1Schema } from './hostedHtmlSourceV1.js';
+import { PluginUiResourceLinkV1Schema, type PluginUiResourceLinkV1 } from './resourceLinks.js';
 import { PluginUiHostedHtmlRequestedCapabilitiesV1Schema } from './hostedHtmlCapabilitiesV1.js';
 import {
   PluginUiPageHeaderActionV1Schema,
@@ -421,6 +423,9 @@ export type PluginUiDestinationPlacementV1 = z.infer<typeof PluginUiDestinationP
 
 /** Automatic content placement belongs only to right-sidebar tabs. */
 export const PluginRightSidebarDefaultPlacementSchema = lazyZodSchema(() => z.union([PluginDefaultPlacementSchema, z.literal('auto')]));
+/** `pageItems`: an App side view reached only from its own page's navigation items, never listed App-wide. */
+export const PluginUiAppCompanionReachV1Schema = lazyZodSchema(() => z.literal('pageItems'));
+export type PluginUiAppCompanionReachV1 = z.infer<typeof PluginUiAppCompanionReachV1Schema>;
 export type PluginRightSidebarDefaultPlacement = z.infer<typeof PluginRightSidebarDefaultPlacementSchema>;
 
 /** Null is unknown; zero is known empty. Count Resources never supply presentation text. */
@@ -428,6 +433,22 @@ export const PluginRightSidebarCountV1Schema = lazyZodSchema(() => z.strictObjec
   count: z.nullable(z.number().check(z.int(), z.nonnegative())),
 }));
 export type PluginRightSidebarCountV1 = Readonly<z.infer<typeof PluginRightSidebarCountV1Schema>>;
+
+/** One atomic Resource value, with ordered declaration-owned labels. */
+export const PluginUiCountsBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  resourceId: asProtocolZod(PluginContributionLocalIdSchema),
+  items: z.array(z.strictObject({
+    field: z.string().check(z.minLength(1)),
+    label: PluginLocalizedStringV2Schema,
+  })).check(z.minLength(1), z.refine(items => new Set(items.map(item => item.field)).size === items.length,
+    'Count fields must be unique.')),
+}));
+export type PluginUiCountsBindingV1 = z.infer<typeof PluginUiCountsBindingV1Schema>;
+
+/** Reuse scalar count admission; declared fields close the atomic JSON object. */
+export function createPluginUiCountsValueV1Schema(binding: Readonly<{ items: readonly Pick<PluginUiCountsBindingV1['items'][number], 'field'>[] }>) {
+  return z.strictObject(Object.fromEntries(binding.items.map(item => [item.field, PluginRightSidebarCountV1Schema.shape.count] as const)));
+}
 
 export const PluginUiAppPageColumnV1Schema = lazyZodSchema(() => z.strictObject({
   renderer: asProtocolZod(PluginContributionLocalIdSchema),
@@ -450,8 +471,10 @@ const PluginUiViewDestinationCommonShapeV2 = {
   fallbackRenderers: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.maxLength(PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH - 1))),
   title: zMini.optional(PluginLocalizedStringV2Schema),
   icon: zMini.optional(PluginUiIconTokenV1Schema),
+  availability: zMini.optional(PluginAvailabilityDescriptorV2Schema),
   badge: z.optional(PluginUiDestinationBadgeV1Schema),
   rankHint: PluginUiDestinationRankHintV1Schema,
+  resourceLinks: z.optional(z.array(PluginUiResourceLinkV1Schema)),
   instancePolicy: zMini._default(PluginUiDestinationInstancePolicyV1Schema, 'singleton'),
 };
 
@@ -492,7 +515,8 @@ const PluginUiViewHeaderActionsSchemaV2 = Object.freeze({
 function createPluginUiViewBindingSchemaV2() {
   const destinationVariants = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1
     .filter((slot) => slot.container !== 'settingsPage')
-    .map((slot) => z.strictObject({
+    .flatMap((slot) => {
+      const shape = {
       ...PluginUiViewDestinationCommonShapeV2,
       // The generated authoring schema derives its policy from the same
       // registry row as parser/projection/wire validation. A singleton-only
@@ -508,15 +532,28 @@ function createPluginUiViewBindingSchemaV2() {
         ? { placement: z.optional(PluginUiDestinationPlacementV1Schema) }
         : {}),
       ...(slot.container === 'appPage'
-        ? { description: zMini.optional(PluginLocalizedStringV2Schema), headerStyle: z.optional(PluginUiAppPageHeaderStyleV1Schema), column: z.optional(PluginUiAppPageColumnV1Schema), widgetAreas: zMini.optional(PluginUiWidgetAreaDeclarationsV1Schema) }
+        ? { description: zMini.optional(PluginLocalizedStringV2Schema), headerStyle: z.optional(PluginUiAppPageHeaderStyleV1Schema) }
+        : {}),
+      ...(slot.container === 'appPage' && slot.targetKind === 'app'
+        ? { column: z.optional(PluginUiAppPageColumnV1Schema), widgetAreas: zMini.optional(PluginUiWidgetAreaDeclarationsV1Schema) }
         : {}),
       ...(slot.container === 'rightSidebarTab' ? {
         defaultPlacement: z.optional(PluginRightSidebarDefaultPlacementSchema),
         countResourceId: z.optional(asProtocolZod(PluginContributionLocalIdSchema)),
       } : {}),
+      // An App companion its own page opens from that page's navigation items (Plan T `both`/companion items); it
+      // is never listed among the App-wide side tabs, so it shows only where the page names it.
+      ...(slot.container === 'rightSidebarTab' && slot.targetKind === 'app'
+        ? { reach: z.optional(PluginUiAppCompanionReachV1Schema) }
+        : {}),
       container: z.literal(slot.container),
       target: PluginUiViewTargetSchemaByKindV1[slot.targetKind],
-    }));
+      };
+      const ordinary = z.strictObject(shape);
+      return slot.container === 'rightSidebarTab' || slot.container === 'appPage' && slot.targetKind === 'project'
+        ? [ordinary, z.strictObject({ ...shape, counts: PluginUiCountsBindingV1Schema, countResourceId: z.optional(z.never()) })]
+        : [ordinary];
+    });
   const inlineVariants = Object.values(PLUGIN_UI_INLINE_SURFACE_SLOTS_V1)
     .filter((slot) => isPluginUiAuthoredViewInlineSurfaceRoleV1(slot.role))
     .map((slot) => {
@@ -524,6 +561,7 @@ function createPluginUiViewBindingSchemaV2() {
         const role = slot.role;
         return Object.keys(slot.targets).map((targetKind) => z.strictObject({
           ...PluginUiViewInlineCommonShapeV2,
+          ...(role === 'scmPullRequest' ? { resourceLinks: z.optional(z.array(PluginUiResourceLinkV1Schema)) } : {}),
           container: z.literal(role),
           target: PluginUiViewTargetSchemaByKindV1[targetKind as keyof typeof PluginUiViewTargetSchemaByKindV1],
         }));
@@ -535,6 +573,7 @@ function createPluginUiViewBindingSchemaV2() {
         target: PluginUiViewTargetSchemaByKindV1[targetKind],
         home: z.optional(PluginUiWidgetHomeV1Schema),
         sizeDeclaration: WidgetSizeDeclarationV1Schema,
+        availability: zMini.optional(PluginAvailabilityDescriptorV2Schema),
         publicPresentation: z.optional(WidgetPublicSnapshotPresentationV1Schema),
         connectedAccountPurposeBindings: z.optional(z.array(WidgetConnectedAccountPurposeBindingV1Schema)),
         resources: z.optional(z.array(asProtocolZod(PluginContributionIdentityV1Schema))),
@@ -543,6 +582,7 @@ function createPluginUiViewBindingSchemaV2() {
         ...widgetShape('session'), inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema, sessionInputPath: InputPathSchema,
       });
       const app = widgetShape('app');
+      const project = widgetShape('project');
       // Preserve the value-schema requirement in authoring JSON Schema too:
       // an App widget either has no inputs or declares inputs plus their schema.
       const byTarget = {
@@ -550,6 +590,10 @@ function createPluginUiViewBindingSchemaV2() {
         app: z.union([
           z.strictObject({ ...app, inputs: z.optional(z.never()), inputSchema: zMini.optional(PluginJsonSchemaV2Schema) }),
           z.strictObject({ ...app, inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema }),
+        ]),
+        project: z.union([
+          z.strictObject({ ...project, inputs: z.optional(z.never()), inputSchema: zMini.optional(PluginJsonSchemaV2Schema) }),
+          z.strictObject({ ...project, inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema }),
         ]),
       } satisfies Record<keyof typeof slot.targets, z.core.$ZodType>;
       return Object.values(byTarget);
@@ -619,8 +663,9 @@ export type PluginUiViewDestinationBindingInputV2 = {
     container: TSlot['container'];
     target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
     instancePolicy?: TSlot['instancePolicies'][number];
+    resourceLinks?: PluginUiResourceLinkV1[];
     defaultPlacement?: TSlot['container'] extends 'rightSidebarTab' ? PluginRightSidebarDefaultPlacement : never;
-    countResourceId?: TSlot['container'] extends 'rightSidebarTab' ? string : never;
+    reach?: TSlot extends Readonly<{ container: 'rightSidebarTab'; targetKind: 'app' }> ? PluginUiAppCompanionReachV1 : never;
     headerActions?: TSlot['container'] extends 'appPage'
       ? PluginUiPageHeaderActionV1Input[]
       : [];
@@ -629,13 +674,17 @@ export type PluginUiViewDestinationBindingInputV2 = {
         ? PluginUiDestinationPlacementV1
         : never
       : never;
-    column?: TSlot['container'] extends 'appPage'
+    column?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }>
       ? PluginUiAppPageColumnV1
       : never;
     description?: TSlot['container'] extends 'appPage' ? PluginLocalizedStringV2 : never;
     headerStyle?: TSlot['container'] extends 'appPage' ? PluginUiAppPageHeaderStyleV1 : never;
-    widgetAreas?: TSlot['container'] extends 'appPage' ? PluginUiWidgetAreaDeclarationV1[] : never;
-  }>;
+    widgetAreas?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiWidgetAreaDeclarationV1[] : never;
+  }> & (TSlot['container'] extends 'rightSidebarTab'
+    ? Readonly<{ countResourceId?: string; counts?: never }> | Readonly<{ counts: PluginUiCountsBindingV1; countResourceId?: never }>
+    : TSlot extends Readonly<{ container: 'appPage'; targetKind: 'project' }>
+      ? Readonly<{ counts?: PluginUiCountsBindingV1; countResourceId?: never }>
+      : Readonly<{ counts?: never; countResourceId?: never }>);
 }[keyof {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
@@ -648,6 +697,7 @@ export type PluginUiViewInlineBindingInputV2 = {
   [TSlot in PluginUiViewInlineSlotV1 as TSlot['role']]: {
     [TTarget in keyof TSlot['targets'] & keyof typeof PluginUiViewTargetSchemaByKindV1]: Readonly<{
       container: TSlot['role'];
+      resourceLinks?: TSlot['role'] extends 'scmPullRequest' ? PluginUiResourceLinkV1[] : never;
       target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
       home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
       resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
@@ -670,8 +720,9 @@ export type PluginUiViewDestinationBindingV2 = z.output<typeof PluginUiViewV2Sch
     container: TSlot['container'];
     target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
     instancePolicy: TSlot['instancePolicies'][number];
+    resourceLinks?: PluginUiResourceLinkV1[];
     defaultPlacement?: TSlot['container'] extends 'rightSidebarTab' ? PluginRightSidebarDefaultPlacement : never;
-    countResourceId?: TSlot['container'] extends 'rightSidebarTab' ? string : never;
+    reach?: TSlot extends Readonly<{ container: 'rightSidebarTab'; targetKind: 'app' }> ? PluginUiAppCompanionReachV1 : never;
     headerActions: TSlot['container'] extends 'appPage'
       ? PluginUiPageHeaderActionV1[]
       : [];
@@ -682,11 +733,15 @@ export type PluginUiViewDestinationBindingV2 = z.output<typeof PluginUiViewV2Sch
         ? PluginUiDestinationPlacementV1
         : never
       : never;
-    column?: TSlot['container'] extends 'appPage'
+    column?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }>
       ? PluginUiAppPageColumnV1
       : never;
-    widgetAreas?: TSlot['container'] extends 'appPage' ? PluginUiWidgetAreaDeclarationV1[] : never;
-  }>;
+    widgetAreas?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiWidgetAreaDeclarationV1[] : never;
+  }> & (TSlot['container'] extends 'rightSidebarTab'
+    ? Readonly<{ countResourceId?: string; counts?: never }> | Readonly<{ counts: PluginUiCountsBindingV1; countResourceId?: never }>
+    : TSlot extends Readonly<{ container: 'appPage'; targetKind: 'project' }>
+      ? Readonly<{ counts?: PluginUiCountsBindingV1; countResourceId?: never }>
+      : Readonly<{ counts?: never; countResourceId?: never }>);
 }[keyof {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
@@ -697,6 +752,7 @@ export type PluginUiViewInlineBindingV2 = {
   [TSlot in PluginUiViewInlineSlotV1 as TSlot['role']]: {
     [TTarget in keyof TSlot['targets'] & keyof typeof PluginUiViewTargetSchemaByKindV1]: Readonly<{
       container: TSlot['role'];
+      resourceLinks?: TSlot['role'] extends 'scmPullRequest' ? PluginUiResourceLinkV1[] : never;
       target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
       home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
       resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
@@ -794,11 +850,22 @@ export const PluginUiTranslationBundleV2Schema = lazyZodSchema(() => z.union([
   }),
 ]));
 export type PluginUiTranslationBundleV2 = z.infer<typeof PluginUiTranslationBundleV2Schema>;
+/** Closed, data-only list extension; field semantics stay with the collection filter owner. */
+export const PluginCollectionListExtensionV1Schema = lazyZodSchema(() => z.strictObject({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  entity: z.union([z.literal('sessionWork'), z.literal('workflow'), z.literal('discussion'),
+    z.templateLiteral(['plugin:', z.string().check(z.minLength(1))])]),
+  filterFields: z.optional(z.array(PluginListFilterFieldV1Schema)),
+  rowMark: z.optional(z.strictObject({ fieldId: z.string().check(z.minLength(1)), slot: z.enum(['context', 'mark']) })),
+}));
+export type PluginCollectionListExtensionV1 = z.infer<typeof PluginCollectionListExtensionV1Schema>;
+
 export const PluginUiContributionsV2Schema = lazyZodSchema(() => z._default(z.strictObject({
   views: z._default(z.array(PluginUiViewV2Schema), []),
   renderers: z._default(z.array(PluginUiRendererV2Schema), []),
   settingsGroups: z._default(z.array(PluginUiSettingsGroupV1Schema), []),
   settingsPages: z._default(z.array(PluginUiSettingsPageV1Schema), []),
+  listExtensions: z.optional(z.array(PluginCollectionListExtensionV1Schema)),
   translations: z._default(z.array(PluginUiTranslationBundleV2Schema), []),
 }).check(z.superRefine((value, ctx) => {
   // Contribution ids and cross-contribution references are owned by manifest
@@ -812,12 +879,3 @@ export const PluginUiContributionsV2Schema = lazyZodSchema(() => z._default(z.st
   });
 })), { views: [], renderers: [], settingsGroups: [], settingsPages: [], translations: [] }));
 export type PluginUiContributionsV2 = z.infer<typeof PluginUiContributionsV2Schema>;
-
-export const PluginCollectionListExtensionV1Schema = lazyZodSchema(() => z.strictObject({
-  id: asProtocolZod(PluginContributionLocalIdSchema),
-  entity: z.union([z.literal('sessionWork'), z.literal('workflow'), z.literal('discussion'),
-    z.templateLiteral(['plugin:', z.string().check(z.minLength(1))])]),
-  filterFields: z.optional(z.array(PluginListFilterFieldV1Schema)),
-  rowMark: z.optional(z.strictObject({ fieldId: z.string().check(z.minLength(1)), slot: z.enum(['context', 'mark']) })),
-}));
-export type PluginCollectionListExtensionV1 = z.infer<typeof PluginCollectionListExtensionV1Schema>;

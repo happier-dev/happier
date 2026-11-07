@@ -1,6 +1,5 @@
-import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
-import type { ChangeKind } from '@happier-dev/protocol/changes';
 import { ExternalSessionStorageStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { projectAccountNameToLegacyFieldsV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { type SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { AccountProfile } from "@/types";
@@ -13,7 +12,7 @@ import { type AutomationRunStateV3 } from '@happier-dev/protocol/automations/aut
 import { type PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { type ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { type ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
-import { SessionMetadataRecipientProjectionV1Schema, type SessionMetadataRecipientProjectionV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { validateSessionMetadataRecipientProjectionWithAdmittedOwnerV1, type SessionMetadataRecipientProjectionV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { type PrimaryTurnStatusV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { type SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { type SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
@@ -27,7 +26,9 @@ import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineCo
 import type { ManagedMachineRefV1 } from "@happier-dev/protocol/machines/managed/managedMachineV1";
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { ChangeKind } from '@happier-dev/protocol/changes';
 import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import type { resolveAccountRemoteAlertPolicyCurrentness } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
 type UpdateMessagePayloadInput = Readonly<{
     id: string;
@@ -332,8 +333,7 @@ export function buildUpdateSessionUpdate(
 
 /**
  * Publishes the existing update-session event from the strict layout-v1
- * recipient projection. Parsing here keeps the wire builder from accepting a
- * partial owner tuple or an additive private field on the shared-only branch.
+ * recipient projection admitted by the canonical recipient projector.
  */
 export function buildSessionMetadataRecipientUpdate(
     sessionId: string,
@@ -341,10 +341,12 @@ export function buildSessionMetadataRecipientUpdate(
     updateId: string,
     projection: SessionMetadataRecipientProjectionV1,
     runtimeProjection?: Parameters<typeof buildUpdateSessionUpdate>[5],
+    /** Unchanged private parts are left out; shared metadata is always sent. */
     changed?: Readonly<{ ownerMetadata: boolean; agentState: boolean }>,
 ): UpdatePayload {
-    const recipientProjection =
-        SessionMetadataRecipientProjectionV1Schema.parse(projection);
+    const parsed = validateSessionMetadataRecipientProjectionWithAdmittedOwnerV1(projection);
+    if (!parsed.success) throw parsed.error;
+    const recipientProjection = parsed.data;
     const agentState =
         changed?.agentState !== false
         && "agentState" in recipientProjection
@@ -543,7 +545,9 @@ export function buildDeleteSessionUpdate(sessionId: string, updateSeq: number, u
     };
 }
 
-export function buildUpdateAccountUpdate(userId: string, profile: Partial<AccountProfile>, updateSeq: number, updateId: string, encryptionCurrentness?: AccountEncryptionCurrentnessResponse | null): UpdatePayload {
+export function buildUpdateAccountUpdate(userId: string, profile: Partial<AccountProfile> & {
+    remoteAlertPolicyStatus?: ReturnType<typeof resolveAccountRemoteAlertPolicyCurrentness>['status'];
+}, updateSeq: number, updateId: string, encryptionCurrentness?: AccountEncryptionCurrentnessResponse | null): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
@@ -561,12 +565,15 @@ export function buildUpdateAccountUpdate(userId: string, profile: Partial<Accoun
 
 /**
  * Content-free post-commit hint to read the canonical AccountChange feed.
- * The cursor remains the sole durable ordering authority; this wake carries no
- * changed entity, settings, availability, or plugin payload.
+ * The cursor remains the sole durable ordering authority. Optional committed
+ * kinds, entity ids and record addresses select readers without exposing changed
+ * content or other domain hint payloads.
+ * Producers without allocation metadata retain the coarse wake.
  */
 export function buildAccountChangeWakeUpdate(
     changeCursor: number, updateId: string,
     changes?: Readonly<{ changeKinds: readonly ChangeKind[]; entityIds: readonly string[];
+        artifactKinds?: readonly string[];
         sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[] }>,
 ): UpdatePayload {
     return {
@@ -574,19 +581,22 @@ export function buildAccountChangeWakeUpdate(
         seq: changeCursor,
         body: { t: 'account-change', ...(changes ? {
             changeKinds: [...changes.changeKinds], entityIds: [...changes.entityIds],
+            ...(changes.artifactKinds !== undefined ? { artifactKinds: [...changes.artifactKinds] } : {}),
             ...(changes.sessionSystemRecords !== undefined ? { sessionSystemRecords: [...changes.sessionSystemRecords] } : {}),
         } : {}) },
         createdAt: Date.now(),
     };
 }
 
-export function buildAccountSettingsChangedUpdate(settingsVersion: number, updateSeq: number, updateId: string): UpdatePayload {
+export function buildAccountSettingsChangedUpdate(settingsVersion: number, updateSeq: number, updateId: string,
+    remoteAlertPolicyStatus?: ReturnType<typeof resolveAccountRemoteAlertPolicyCurrentness>['status']): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
         body: {
             t: 'account-settings-changed',
             settingsVersion,
+            ...(remoteAlertPolicyStatus === undefined ? {} : { remoteAlertPolicyStatus }),
         },
         createdAt: Date.now(),
     };
@@ -685,13 +695,14 @@ export function buildUpdateMachineUpdate(
     };
 }
 
+/** An omitted `thinking` leaves the receiver's thinking state untouched (a pure liveness heartbeat). */
 export function buildSessionActivityEphemeral(sessionId: string, active: boolean, activeAt: number, thinking?: boolean): EphemeralPayload {
     return {
         type: 'activity',
         id: sessionId,
         active,
         activeAt,
-        thinking: thinking || false
+        ...(thinking === undefined ? {} : { thinking }),
     };
 }
 

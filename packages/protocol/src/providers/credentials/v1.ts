@@ -111,6 +111,7 @@ export const ProviderApiKeyCredentialRequirementV1Schema = lazyZodSchema(() => z
   slotId: z._default(z.literal('apiKey'), 'apiKey'),
   required: z._default(z.boolean(), true),
   keyUrl: z.optional(ProviderHttpsUrlSchema),
+  authorityDescription: z.optional(PluginLocalizedStringV2Schema),
   transports: z.array(ProviderCredentialTransportV1Schema).check(z.minLength(1), z.maxLength(16)),
 }).check(z.superRefine((value, ctx) => {
   addProviderCredentialTransportIssues(value.transports, ctx);

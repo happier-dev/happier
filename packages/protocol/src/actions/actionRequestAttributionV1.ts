@@ -1,18 +1,28 @@
-import type { ExternalActionExecutionAuthorizationBindingV1 } from './externalActionApi.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
 import { SessionMessageAccountActorV1Schema, deriveSessionMessageAuthorAccountIdV1 } from '../sessions/messages/sessionMessageAccountActorV1.js';
 import { SessionInputAdmissionReceiptV1Schema, SessionInputAuthoritySchema } from '../sessions/messages/sessionInputAdmission.js';
+import type { ExternalActionExecutionAuthorizationBindingV1 } from './externalActionApi.js';
+
+/** Authenticated requester identity is independent of terminal consent authority. */
+export function readAuthenticatedActionRequesterAccountIdV1(binding: ExternalActionExecutionAuthorizationBindingV1): string | null {
+  return 'authentication' in binding
+    && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
+    ? binding.accountId : null;
+}
+
+/** Qualified authenticated person, independent of the eventual executing persona. */
+export const ActionRequestRequesterV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: SessionMessageRefV1Schema.shape.session.shape.serverId,
+  accountId: SessionMessageAccountActorV1Schema.shape.accountId,
+}));
 
 /** Content-free host projection of one admitted cause. Never execution or approval authority. */
 export const ActionRequestAttributionV1Schema = lazyZodSchema(() => z.strictObject({
   requestRef: z.string().check(z.minLength(1)),
-  requester: z.nullable(z.strictObject({
-    serverId: SessionMessageRefV1Schema.shape.session.shape.serverId,
-    accountId: SessionMessageAccountActorV1Schema.shape.accountId,
-  })),
+  requester: z.nullable(ActionRequestRequesterV1Schema),
   persona: SessionMessageRefV1Schema.shape.session,
   origin: z.nullable(CoordinationMessageRefV1Schema),
 }));
@@ -66,10 +76,4 @@ export function deriveSessionInputActionRequestAttributionV1(params: Readonly<{
     persona: params.persona,
     origin: params.origin,
   });
-}
-
-export function readAuthenticatedActionRequesterAccountIdV1(binding: ExternalActionExecutionAuthorizationBindingV1): string | null {
-  return 'authentication' in binding
-    && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
-    ? binding.accountId : null;
 }

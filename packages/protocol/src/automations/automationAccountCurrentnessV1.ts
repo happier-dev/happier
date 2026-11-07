@@ -176,30 +176,12 @@ export function projectAutomationAccountCurrentnessWitnessV1(reading: Readonly<{
 }
 
 /**
- * Exact witness equality. Pre-effect Automation decisions — claim, start,
- * session-server-start authorization, and redispatch permission — must match
- * the server's current Account state exactly, including its Account change
- * version. A terminal settlement that reports an already-committed external
- * effect compares content identity instead (see
- * {@link sameAutomationAccountContentIdentityV1}): the reported effect itself,
- * and any unrelated Account write, may have advanced the change version after
- * the echoed start witness was minted.
- */
-export function sameAutomationAccountCurrentnessWitnessV1(
-  left: AutomationAccountCurrentnessWitnessV1,
-  right: AutomationAccountCurrentnessWitnessV1,
-): boolean {
-  return left.mode === right.mode
-    && left.version === right.version
-    && left.contentKeyFingerprint === right.contentKeyFingerprint;
-}
-
-/**
  * Account *content* identity: the mode and key under which Account-scoped
  * Automation content can be opened or sealed. The witness version is the
  * Account-wide change cursor and advances for unrelated Account writes, so a
- * reader that only has to prove "this content is still readable with the same
- * key" compares identity rather than the exact witness.
+ * content reader/writer compares identity at admission, start, dispatch and
+ * settlement. Domain permission and Run claim authority are separate facts;
+ * the transported change version does not revoke admitted work.
  */
 export function sameAutomationAccountContentIdentityV1(
   left: AutomationAccountCurrentnessWitnessV1,

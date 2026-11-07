@@ -31,5 +31,17 @@ export function bindRegistryMarketplaceCatalogV1(
   }
   assertRegistryMarketplaceCatalogSourceV1(source);
   if (catalog.source.id === source.id) return catalog;
-  return { ...catalog, source: { ...catalog.source, id: source.id } };
+  return {
+    ...catalog,
+    source: { ...catalog.source, id: source.id },
+    ...(catalog.discovery ? {
+      discovery: {
+        ...catalog.discovery,
+        items: catalog.discovery.items.map(item => item.reference.type === 'registryItem'
+          && item.reference.sourceId === catalog.source.id
+          ? { ...item, reference: { ...item.reference, sourceId: source.id } }
+          : item),
+      },
+    } : {}),
+  };
 }

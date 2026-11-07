@@ -6,11 +6,13 @@ import { Server } from 'socket.io';
 import { ExternalActionDaemonDispatchRequestSchema, type ExternalActionDaemonDispatchRequest } from '@happier-dev/protocol/actions/externalActionApi';
 import { createExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall } from '@/app/api/socket/externalActionDispatcher';
 import { forwardRpcCall, type RpcForwardResult } from '@/app/api/socket/rpc/forwardRpcCall';
-import { decodeBase64,
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainArtifactStoredContent,
     decodePlainMachineStoredContent, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
     MachineSetupDesiredV1Schema, type MachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { createArtifact } from '@/app/artifacts/artifactWriteService';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { auth } from '@/app/auth/auth';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { enableSchemaValidation } from '@/app/api/utils/enableSchemaValidation';
@@ -22,6 +24,10 @@ import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAc
 import { registerAccountSettingsRoutes } from '@/app/api/routes/account/registerAccountSettingsRoutes';
 import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
+import { mutateProjectAccountRows } from '@/app/projects/projectAccountRowService';
+import { ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import type { DeploymentPrepareInputV1 } from '@happier-dev/protocol';
+import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { startSocket } from '@/app/api/socket';
@@ -62,8 +68,11 @@ type WorkflowApprovedOperationReceiver = (request: ExternalActionDaemonDispatchR
 export async function startWorkflowApprovedOperationServer(input: Readonly<{
     /** Cross-owner Session-step tests retain the ordinary HTTP Session owners. */
     workflowSessions?: boolean;
+    /** Substitute the daemon socket boundary, including managed controller RPCs. */
+    forwardRpc?: ExternalActionForwardRpcCall;
     /** Full daemon journeys use actual sockets and the ordinary Home owners. */
     installedMachine?: Readonly<{ machineId: string; installation: MachineInstallationIdentityV1; happyHomeDir: string }>;
+    deploymentTeamOwned?: boolean;
     /** The owning client supplies codecs; Home stores only opaque Machine content. */
     e2ee?: Readonly<{ contentPublicKey: Uint8Array;
         encodeMachine(key: Uint8Array, value: unknown): string;
@@ -139,6 +148,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             registerPromptLibraryRoutes(app);
         }
         machinesRoutes(app);
+        registerDeploymentRoutes(app);
         projectSourceRoutes(app);
         artifactsRoutes(app);
         featuresRoutes(app);
@@ -151,7 +161,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
         if (!(machinePresence instanceof Server)) throw new Error('machine_daemon_presence_unavailable');
         if (input.installedMachine) registerExternalActionRoutes(app);
         else registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: machinePresence,
-            forwardRpc: async request => {
+            forwardRpc: input.forwardRpc ?? (async request => {
                 const packet = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
                 const receive = receivers.get(packet.placement.machineId);
                 if (!receive) return { ok: false, error: 'target_unavailable' };
@@ -169,10 +179,15 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                     request.onSubmittedUnknown?.();
                     throw error;
                 }
-            } }) });
+            }) }) });
         const account = await db.account.create({ data: input.e2ee
             ? { ...createSignedAccountContentBinding(input.e2ee.contentPublicKey), encryptionMode: 'e2ee' }
             : { publicKey: null, encryptionMode: 'plain' } });
+        const deploymentTeam = input.deploymentTeamOwned
+            ? await db.team.create({ data: { name: 'Publish deployment admission' } }) : null;
+        if (deploymentTeam) await db.teamMembership.create({ data: {
+            teamId: deploymentTeam.id, accountId: account.id, role: 'owner',
+        } });
         const machines = await Promise.all((input.installedMachine ? ['installed'] : ['parent', 'first', 'second']).map(async name => {
             const installed = input.installedMachine;
             const keys = installed ? { publicKey: decodeBase64(installed.installation.publicKey, 'base64url'),
@@ -192,12 +207,25 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             return { id: machine.id, installationId: machine.installationId!, keys, contentKey };
         }));
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        if (deploymentTeam) await db.machineTeamGrant.createMany({ data: machines.map(machine => ({
+            machineId: machine.id, teamId: deploymentTeam.id, accessLevel: 'view' as const, createdByAccountId: account.id,
+        })) });
         const installedToken = input.installedMachine
             ? await auth.createToken(account.id, undefined, { kind: 'terminal', authority: 'account_automation' }) : null;
         const currentness = deriveAutomationAccountCurrentnessWitness(await db.account.findUniqueOrThrow({
             where: { id: account.id }, select: automationAccountCurrentnessSelect }));
         const homeId = await getOrCreateServerIdentityId();
         const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+        const createDeploymentProjectSource = async () => {
+            const result = await inTx(tx => createProjectSourceInTx(tx, account.id, {
+                serverId: homeId, requestKey: randomUUID(), name: 'Publish host defaults', audience: [],
+                ...(deploymentTeam ? { owner: { kind: 'team' as const, teamId: deploymentTeam.id } } : {}),
+                repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'acme/publish-host', cloneUrl: 'https://github.com/acme/publish-host.git' }, protocol: 'https' },
+            }));
+            if (!result.ok) throw new Error(result.error);
+            return result.source;
+        };
         return {
             accountId: account.id, tokenEpoch: account.tokenEpoch, token, installedToken, homeId, baseUrl, currentness, machines,
             setCostPhase: (phase: string) => { costPhase = phase; },
@@ -245,9 +273,77 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                     select: { sessionId: true, turnId: true, status: true, transcriptAnchorsJson: true } }),
                 runs: await db.automationRun.findMany({ select: { id: true, accountId: true, state: true } }),
             }),
+            createPrepareWorkspace: async (input: Readonly<{ rootPath: string; machineId: string; baseCommit: string }>): Promise<DeploymentPrepareInputV1> => {
+                const source = await inTx(tx => createProjectSourceInTx(tx, account.id, {
+                    serverId: homeId, requestKey: randomUUID(), name: 'Prepare workspace', audience: [],
+                    repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                        repository: { nameWithOwner: 'prepare/app', cloneUrl: 'https://github.com/prepare/app.git' }, protocol: 'https' },
+                }));
+                if (!source.ok) throw new Error(source.error);
+                const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'prepare/app' };
+                const key = { kind: 'workspace-ref' as const, serverId: homeId, id: randomUUID() };
+                const graphKey = { kind: 'relationship-graph' as const };
+                const result = await mutateProjectAccountRows({ accountId: account.id,
+                    request: ProjectAccountRowMutationRequestV1Schema.parse({ topologyChange: true, expectedRefs: [], mutations: [
+                        { key, expectedRevision: 'absent', content: { t: 'plain', v: { key, value: {
+                            id: key.id, serverId: homeId, machineId: input.machineId, rootPath: input.rootPath, createdAtMs: 1,
+                            source: { sourceId: source.source.id, revision: source.source.revision }, repositoryIdentity: repository,
+                        } } } },
+                        { key: graphKey, expectedRevision: 'absent', content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } },
+                    ] }) });
+                if (result.status !== 'updated') throw new Error(`prepare_workspace_${result.status}`);
+                return { projectSourceId: source.source.id, sourceRevision: source.source.revision,
+                    repository, baseCommit: input.baseCommit, workspace: key };
+            },
+            createDeploymentArtifact: async (input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string }>) => {
+                const created = await createArtifact({ actorUserId: account.id, artifactId: randomUUID(),
+                    header: decodeBase64(encodePlainArtifactStoredContent(input.header)),
+                    body: decodeBase64(encodePlainArtifactStoredContent({ body: input.body })),
+                    dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!created.ok) throw new Error(created.error);
+                if (deploymentTeam) await db.artifactTeamGrant.create({ data: {
+                    artifactId: created.artifact.id, teamId: deploymentTeam.id, accessLevel: 'admin', createdByAccountId: account.id,
+                } });
+                return { contentArtifactId: created.artifact.id, contentHeaderVersion: created.artifact.headerVersion,
+                    contentBodyVersion: created.artifact.bodyVersion };
+            },
+            createDeploymentProject: async () => {
+                const source = await createDeploymentProjectSource();
+                const content = async (kind: string) => {
+                    const created = await createArtifact({ actorUserId: account.id, artifactId: randomUUID(),
+                        header: decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Publish host fixture' })),
+                        body: decodeBase64(encodePlainArtifactStoredContent({ name: 'Staging' })),
+                        dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                    if (!created.ok) throw new Error(created.error);
+                    if (deploymentTeam) await db.artifactTeamGrant.create({ data: {
+                        artifactId: created.artifact.id, teamId: deploymentTeam.id, accessLevel: 'admin', createdByAccountId: account.id,
+                    } });
+                    return { contentArtifactId: created.artifact.id, contentHeaderVersion: created.artifact.headerVersion,
+                        contentBodyVersion: created.artifact.bodyVersion };
+                };
+                return { projectSourceId: source.id, audience: source.audience,
+                    environmentContent: await content('deployment-environment.v1'),
+                    runtimeContent: await content('deployment-target-link.v1') };
+            },
+            createDeploymentProjectSource: async () => {
+                const source = await createDeploymentProjectSource();
+                return { projectSourceId: source.id, audience: source.audience };
+            },
             setReceiver: (machineId: string, receive: WorkflowApprovedOperationReceiver) => {
                 receivers.set(machineId, receive);
             },
+            demoteDeploymentCaller: async () => {
+                if (!deploymentTeam) throw new Error('team_deployment_fixture_required');
+                const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+                await db.teamMembership.create({ data: { teamId: deploymentTeam.id, accountId: owner.id, role: 'owner' } });
+                await db.teamMembership.update({ where: { teamId_accountId: {
+                    teamId: deploymentTeam.id, accountId: account.id,
+                } }, data: { role: 'member' } });
+            },
+            readDeploymentEffects: (environmentId: string) => db.deployment.findMany({
+                where: { environmentId }, orderBy: { id: 'asc' },
+                select: { id: true, requestedByAccountId: true, state: true, contentArtifactId: true },
+            }),
             publisherHeader: (input: { machineId: string; path: string; body: unknown }) => {
                 const machine = machines.find(item => item.id === input.machineId);
                 if (!machine) throw new Error('unknown_test_publisher');

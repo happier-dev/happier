@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './agentIsolationActionIdsV1.js';
 export { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './agentIsolationActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -36,7 +37,8 @@ const fields = [{ path: 'serverId', title: 'Home ID', widget: 'text', required: 
   { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
   { path: 'enabled', title: 'Enable separate Agent user', widget: 'boolean', required: true }] as const;
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: true } as const;
-export const MACHINE_AGENT_ISOLATION_ACTION_SPECS = [
+function createMachineAgentIsolationActionSpecs() {
+  return [
   { id: 'machines.agentIsolation.status', title: 'Read own execution protection',
     description: 'Reads your execution protection and setup readiness on the target Machine without provisioning or returning other members’ identities or paths.',
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
@@ -64,9 +66,18 @@ export const MACHINE_AGENT_ISOLATION_ACTION_SPECS = [
     prompting: { agentGuidance: 'Call machines.agentIsolation.preview first. Submit its exact policy, metadata version and plan digest. Changed effects require a fresh review; never silently approve new roots.' },
     bindings: { rpcMethod: 'machines.agentIsolation.set', mcpToolName: 'machines_agent_isolation_set', voiceClientToolName: 'setMachineAgentIsolation' },
     inputSchema: MachineAgentIsolationSetInputV1Schema, outputSchema: MachineAgentIsolationSetResultV1Schema,
+    approvalPresentation: { summary: () => null,
+      technicalInputPaths: ['expectedMetadataVersion', 'expectedPolicy', 'expectedPlanDigest'] },
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'agent-isolation', 'set'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields,
+      { path: 'memberProvisioning', title: 'Sharing', widget: 'select', options: [
+        { value: 'linuxUsersV1', label: 'Each person you share it with gets their own Linux user',
+          labelKey: 'managedMachines.identity.approvalSharedLinuxUser' },
+      ] },
       { path: 'expectedMetadataVersion', title: 'Reviewed metadata version', widget: 'number', required: true },
       { path: 'expectedPolicy', title: 'Reviewed isolation policy', widget: 'json', required: true },
       { path: 'expectedPlanDigest', title: 'Reviewed plan digest', widget: 'text', required: true }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_AGENT_ISOLATION_ACTION_SPECS: ReturnType<typeof createMachineAgentIsolationActionSpecs> = lazyActionSpecArray(createMachineAgentIsolationActionSpecs);

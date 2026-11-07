@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { EntityDragScopeV1Schema } from '../plugins/ui/entityDragDrop.js';
@@ -52,7 +53,8 @@ const fields = [
   { path: 'scope', title: 'Account scope', widget: 'json', required: true },
   { path: 'target', title: 'Picture occurrence', widget: 'json', required: true },
 ] as const;
-export const MEDIA_ANNOTATION_ACTION_SPECS = [{
+function createMediaAnnotationActionSpecs() {
+  return [{
   ...client, id: 'media.annotation.read', title: 'Read picture marks',
   description: 'Read the editable marks and original image dimensions of a picture occurrence without opening an annotator.',
   cli: { commands: [{ path: ['media', 'annotation', 'read'], visibility: 'canonical' }] },
@@ -71,3 +73,6 @@ export const MEDIA_ANNOTATION_ACTION_SPECS = [{
     { path: 'into', title: 'Copy destination', widget: 'json', required: false },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MEDIA_ANNOTATION_ACTION_SPECS: ReturnType<typeof createMediaAnnotationActionSpecs> = lazyActionSpecArray(createMediaAnnotationActionSpecs);

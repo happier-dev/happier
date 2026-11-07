@@ -10,6 +10,7 @@ export { SessionStateAcpSessionModeValueSchema } from './acpSessionMode.js';
 export { SessionStateAcpConfigOptionValueSchema } from './acpConfigOption.js';
 export { SessionStateTitleValueSchema } from './title.js';
 export { SessionStateWorkStateValueSchema } from './workState.js';
+export { SessionTurnProgressV1Schema, type SessionTurnProgressV1 } from './turnProgress.js';
 export { SessionStateRuntimeActivityValueSchema } from './runtimeActivity.js';
 export { SessionStateExternalAgentValueSchema } from './externalAgent.js';
 export {

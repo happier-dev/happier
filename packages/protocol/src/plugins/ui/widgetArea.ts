@@ -39,6 +39,7 @@ export const PluginUiWidgetAreaOperationV1Schema = z.union([
     z.strictObject(z.extend(z.omit(widgetSizeInput, { ref: true }), { actionId: z.literal('widgets.item.size.set'), instanceId }).shape),
     z.strictObject(z.extend(z.omit(groupWidthInput, { ref: true }), { actionId: z.literal('widgets.item.size.set'), instanceId }).shape),
     z.strictObject(z.extend(z.omit(input['widgets.item.frame.set'], { ref: true }), { actionId: z.literal('widgets.item.frame.set'), instanceId }).shape),
+    z.strictObject(z.extend(z.omit(input['widgets.item.network.set'], { ref: true }), { actionId: z.literal('widgets.item.network.set'), instanceId }).shape),
     z.strictObject(z.extend(z.omit(input['widgets.item.inputs.validate'], { ref: true }), { actionId: z.literal('widgets.item.inputs.validate'), instanceId }).shape),
     z.strictObject(z.extend(z.omit(input['widgets.item.inputs.set'], { ref: true }), { actionId: z.literal('widgets.item.inputs.set'), instanceId }).shape),
 ]);
@@ -76,7 +77,7 @@ const outwardEffects = {
     'widgets.item.add': true, 'widgets.item.remove': true, 'widgets.item.move': true,
     'widgets.group.add': true, 'widgets.group.create': true, 'widgets.group.ungroup': true,
     'widgets.group.set': true, 'widgets.group.inputs.set': true,
-    'widgets.item.rename': true, 'widgets.item.size.set': true, 'widgets.item.frame.set': true,
+    'widgets.item.rename': true, 'widgets.item.size.set': true, 'widgets.item.frame.set': true, 'widgets.item.network.set': true,
     'widgets.item.inputs.get': false, 'widgets.item.inputs.validate': false,
     'widgets.item.inputs.set': true, 'widgets.item.inputs.reset': true, 'widgets.item.refresh': false,
 } satisfies Record<PluginUiWidgetAreaOperationV1['actionId'], boolean>;

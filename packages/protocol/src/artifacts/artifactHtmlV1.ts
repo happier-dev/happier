@@ -33,15 +33,6 @@ export const GeneratedArtifactHtmlBundleV1Schema = lazyZodSchema(() => defineHtm
 ));
 export type ArtifactHtmlBundleV1 = z.infer<typeof ArtifactHtmlBundleV1Schema>;
 
-function readArtifactHtmlPreviewUrl(value: string): URL | null {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && /^\/a\/[^/]+$/u.test(url.pathname) ? url : null;
-  } catch { return null; }
-}
-
-export const ArtifactHtmlPreviewResponseV1Schema = lazyZodSchema(() => z.strictObject({ url: z.string().check(z.refine(value => readArtifactHtmlPreviewUrl(value) !== null, 'Invalid isolated HTML preview URL')) }));
-
 export function isArtifactHtmlHeaderV1(header: unknown): boolean {
   return header !== null && typeof header === 'object' && !Array.isArray(header) && Reflect.get(header, 'kind') === 'html';
 }

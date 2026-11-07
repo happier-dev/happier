@@ -1,8 +1,10 @@
 import * as z from 'zod/mini';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import type { MachineVitalsSnapshotV1 } from '../vitals/machineVitalsRpcV1.js';
-import { MachineMemoryPressureSourceV1Schema, MachineVitalsHostFactsV1Schema } from '../vitals/machineVitalsSampleV1.js';
+import { MachineMemoryPressureSourceV1Schema, MachineVitalsHostFactsV1Schema, type MachineVitalsHostFactsV1 } from '../vitals/machineVitalsSampleV1.js';
 import { MachineGuardStateV1Schema } from '../guard/guardStateV1.js';
+import { projectMachineVitalsSeriesV1 } from '../vitals/machineVitalsSeriesV1.js';
+export { appendMachineVitalsSeriesV1, projectMachineVitalsSeriesV1 } from '../vitals/machineVitalsSeriesV1.js';
 
 // V1 published summary and attention boundaries are closed; facts cannot grant authority.
 export const MachineResourceReasonV1Schema = lazyDefinition(() => {
@@ -54,10 +56,14 @@ const resourceTone = () => z.enum(['calm', 'warn', 'crit']);
 const nullableValue = () => z.nullable(z.number().check(z.gte(0)));
 const resourceSeries = () => z.array(z.strictObject({ t: z.number().check(z.gte(0)), y: nullableValue() }));
 
-/** Transient value projection: memory presentation is additive-open/drop; other boundaries are closed. No values are published in daemonState. */
+/** Transient CPU/memory presentation is additive-open/drop; other boundaries are closed. No values are published in daemonState. */
 export const MachineResourceSummaryV1Schema = lazyDefinition(() => z.strictObject({
     sampledAt: z.number().check(z.gte(0)), stepMs: z.literal(15_000), seriesFrom: nullableValue(),
-    cpu: z.strictObject({ busyPct: z.nullable(z.number().check(z.gte(0), z.lte(100))), tone: resourceTone(), series: resourceSeries() }),
+    cpu: z.object({
+        busyPct: z.nullable(z.number().check(z.gte(0), z.lte(100))), tone: resourceTone(), series: resourceSeries(),
+        load1: z.optional(z.number().check(z.gte(0))), logicalCores: z.optional(z.number().check(z.gte(0))),
+        effectiveCores: z.optional(z.number().check(z.gte(0))),
+    }),
     memory: z.object({
         availableBytes: nullableValue(), totalBytes: nullableValue(),
         // The summary line is percent available; daemon snapshot/history values remain bytes.
@@ -75,9 +81,10 @@ export type MachineResourceSummaryV1 = z.infer<typeof MachineResourceSummaryV1Sc
 const EMPTY_DISK_SERIES: MachineResourceSummaryV1['disk']['series'] = [];
 
 /** Values and lines come from the sample; only the canonical daemon attention owns tone. */
-export function projectMachineResourceSummaryV1(snapshot: MachineVitalsSnapshotV1): MachineResourceSummaryV1 | null {
+export function projectMachineResourceSummaryV1(snapshot: MachineVitalsSnapshotV1, host?: MachineVitalsHostFactsV1): MachineResourceSummaryV1 | null {
     const sample = snapshot.sample;
     if (!sample) return null;
+    const series = projectMachineVitalsSeriesV1(snapshot.series5m, sample.sampledAt);
     const reasons = snapshot.attention?.reasons ?? [];
     const tone = (metric: 'cpu' | 'memory' | 'disk' | 'network'): MachineResourceSummaryV1['cpu']['tone'] => {
         const matching = reasons.filter(reason => reason.metric === metric);
@@ -88,22 +95,29 @@ export function projectMachineResourceSummaryV1(snapshot: MachineVitalsSnapshotV
     const homeVolumeId = disk?.homeVolumeId ?? null;
     const volumeId = attentionVolume && 'volumeId' in attentionVolume ? attentionVolume.volumeId : homeVolumeId;
     const volume = disk?.volumes.find(candidate => candidate.id === volumeId);
-    const times = Object.values(snapshot.series5m).flatMap(series => series.map(point => point.t));
+    const times = Object.values(series).flatMap(points => points.map(point => point.t));
     const memoryTotal = sample.memory.reported ? sample.memory.totalBytes : null;
     return {
         sampledAt: sample.sampledAt, stepMs: 15_000, seriesFrom: times.length > 0 ? Math.min(...times) : null,
-        cpu: { busyPct: sample.cpu.reported ? sample.cpu.busyPct : null, tone: tone('cpu'), series: snapshot.series5m.cpu },
+        cpu: {
+            busyPct: sample.cpu.reported ? sample.cpu.busyPct : null, tone: tone('cpu'), series: series.cpu,
+            // The display reads two decimals; sub-display jitter is not a new summary fact.
+            ...(sample.cpu.reported && sample.cpu.load1 !== undefined ? { load1: Math.round(sample.cpu.load1 * 100) / 100 } : {}),
+            // Static host facts stay on their transition-published path, never in samples.
+            ...(host ? { logicalCores: host.logicalCores,
+                ...(host.effectiveCores !== undefined ? { effectiveCores: host.effectiveCores } : {}) } : {}),
+        },
         memory: {
             availableBytes: sample.memory.reported ? sample.memory.availableBytes : null,
             totalBytes: memoryTotal,
             pressure: sample.memory.reported ? sample.memory.pressure.level : 'not_reported', tone: tone('memory'),
             ...(sample.memory.reported ? { pressureSource: sample.memory.pressure.source } : {}),
-            series: snapshot.series5m.memory.map(point => ({ t: point.t,
+            series: series.memory.map(point => ({ t: point.t,
                 y: point.y !== null && memoryTotal !== null && memoryTotal > 0 ? point.y / memoryTotal * 100 : null })),
         },
         disk: { volumeId: volume?.id ?? null, volumeLabel: volume?.label ?? null, availableBytes: volume?.availableBytes ?? null,
             totalBytes: volume?.totalBytes ?? null, tone: tone('disk'), series: EMPTY_DISK_SERIES },
         network: { rxBps: sample.network.reported ? sample.network.rxBps : null, txBps: sample.network.reported ? sample.network.txBps : null,
-            tone: tone('network'), rxSeries: snapshot.series5m.networkRx, txSeries: snapshot.series5m.networkTx },
+            tone: tone('network'), rxSeries: series.networkRx, txSeries: series.networkTx },
     };
 }

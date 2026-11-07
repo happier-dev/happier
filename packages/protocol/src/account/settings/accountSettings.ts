@@ -1,5 +1,4 @@
-import { CollectionSpacesEnabledV1Schema } from '../../collections/spaces/collectionSpaceEnablementV1.js';
-import { DeploymentCreationDefaultsV1Schema } from '../../projects/deploymentCreationDefaultsV1.js';
+import { ThemeProfileLibrarySchema } from './themeProfiles.js';
 import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
 export { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS, resolveIdleCompactionPreference, type IdleCompactionPreference } from './idleCompactionPreferences.js';
 import { backfillClaudeUnifiedTerminalResponseLocations } from '../../agents/claude/settingsPolicy.js';
@@ -11,11 +10,14 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { GlassSurfaceMaterialsSchema, GlassSurfaceMaterialsStoredSchema } from './glassSurfaceMaterials.js';
 import { DEFAULT_GLASS_TINT_INTENSITY, GlassTintIntensitySchema } from './glassTint.js';
 import { HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE } from './homeAtmosphere.js';
-export { ATMOSPHERE_PLACES, AtmosphereShowOnSchema, defaultAtmosphereShowOn, applyAtmosphereLayoutDefault, type AtmospherePlace, HomeAtmosphereSchema, ProjectAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation, type AtmosphereLookOverride } from './homeAtmosphere.js';
+import { FilesEditorAiSuggestionsV1Schema, DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1 } from './filesEditorAiSuggestionsV1.js';
+export { FilesEditorAiSuggestionsV1Schema, DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1, resolveFilesEditorAiSuggestionDelayMs, resolveFilesEditorAiSuggestionPolicy, resolveFilesEditorAiSuggestionModelId, type FilesEditorAiSuggestionsV1, type FilesEditorAiSuggestionOperation } from './filesEditorAiSuggestionsV1.js';
+export { ATMOSPHERE_PLACES, AtmosphereShowOnSchema, defaultAtmosphereShowOn, applyAtmosphereLayoutDefault, type AtmospherePlace, HomeAtmosphereSchema, ProjectAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, recordAtmospherePictureSelection, DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation, type AtmosphereLookOverride } from './homeAtmosphere.js';
 import { DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, MachineRetentionDefaultsV1Schema } from './machineRetentionDefaultsV1.js';
+import { DeploymentCreationDefaultsV1Schema } from '../../projects/deploymentCreationDefaultsV1.js';
 import { DEFAULT_MACHINE_OFFLINE_ALERTS_V1, MachineOfflineAlertsV1Schema } from './machineOfflineAlertsV1.js';
 import { UsagePacingTargetsV1Schema, UsageQuotaNotificationsV1Schema, DEFAULT_USAGE_QUOTA_NOTIFICATIONS_V1 } from './usagePacingPreferencesV1.js';
-import { UsageCoachPreferencesV1Schema, DEFAULT_USAGE_COACH_PREFERENCES_V1 } from './usageCoachPreferencesV1.js';
+import { UsageCoachPreferencesV1Schema, UsageCoachPreferenceMutationV1Schema, DEFAULT_USAGE_COACH_PREFERENCES_V1 } from './usageCoachPreferencesV1.js';
 import { UsageModelPriceOverridesV1Schema } from '../../usage/usageModelPriceSchemas.js';
 import { UsageNightHoursV1Schema } from '../../usage/usageWorkIntervals.js';
 import { PetAccountReferenceV1Schema } from '../../pets/selection.js';
@@ -25,7 +27,6 @@ import { BotFaceStyleSchema } from '../../sessions/identity/sessionBotFaceV1.js'
 
 export const BotMotionSchema = z.enum(['lively', 'reactions', 'still']);
 export type BotMotion = z.infer<typeof BotMotionSchema>;
-
 
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -75,7 +76,6 @@ import {
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../../plugins/pluginId.js';
 
 import {
-  ActionsSettingsV1Schema,
   tryNormalizeActionsSettingsV1,
   type ActionSettingsOverride,
   type ActionsSettingsV1,
@@ -108,6 +108,11 @@ import {
 } from './attentionDeliveryPolicy.js';
 import { resolveAttentionDeliveryPolicyDecision } from './attentionDeliveryPolicyDecision.js';
 import { deriveAttentionDeliveryPolicyFromLegacySettings } from './attentionDeliveryPolicyLegacy.js';
+import { readAccountAttentionDeliveryPolicy } from './attentionPolicyIngress.js';
+export { readAccountAttentionDeliveryPolicy } from './attentionPolicyIngress.js';
+import { NotificationsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1, type NotificationsSettingsV1 } from './legacyNotifications.js';
+export { ForegroundBehaviorSchema, NotificationsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1 } from './legacyNotifications.js';
+export type { ForegroundBehavior, NotificationsSettingsV1 } from './legacyNotifications.js';
 import {
   DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
   PeerMediationPreferencesV1Schema,
@@ -148,6 +153,7 @@ import { BoundedLegacyJsonValueSchema } from './catalog/legacyJson.js';
 import { ClientEncryptionRequirementSchema } from '../../encryption/clientEncryptionRequirement.js';
 import { ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema } from '../../providers/selection/v1.js';
 import { CollectionSpacesV1Schema } from '../../collections/spaces/collectionSpacesV1.js';
+import { CollectionSpacesEnabledV1Schema } from '../../collections/spaces/collectionSpaceEnablementV1.js';
 export { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
 export type { AccountSettingsPersistedObject } from './accountSettingsPersistedObject.js';
 export {
@@ -193,54 +199,6 @@ export type FavoriteBackendTargetKeysV1 = z.infer<typeof FavoriteBackendTargetKe
 export function normalizeAttachmentsUploadsWorkspaceRelativeDir(input: string): string | null {
   return normalizeAttachmentRelativePathV1(input);
 }
-
-export const ForegroundBehaviorSchema = lazyZodSchema(() => classicZ.enum(['full', 'silent', 'off']));
-export type ForegroundBehavior = z.infer<typeof ForegroundBehaviorSchema>;
-
-function normalizeNotificationsSettingsV1Input(raw: unknown): unknown {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-  const record = raw as Record<string, unknown>;
-  if (
-    !Object.prototype.hasOwnProperty.call(record, 'connectedServiceQuotaRecovered')
-    && record.connectedServiceQuotaBlocked === false
-  ) {
-    return {
-      ...record,
-      connectedServiceQuotaRecovered: false,
-    };
-  }
-  return raw;
-}
-export const NotificationsSettingsV1Schema = lazyZodSchema(() => classicZ.catch((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeNotificationsSettingsV1Input), z.object({
-    v: z._default(z.literal(1), 1),
-    pushEnabled: z._default(z.boolean(), true),
-    mutePhoneWhenComputerFocused: z.catch(z.optional(z.boolean()), undefined),
-    ready: z._default(z.boolean(), true),
-    readyIncludeMessageText: z._default(z.boolean(), true),
-    requestIncludeMessageText: z._default(z.boolean(), true),
-    permissionRequest: z._default(z.boolean(), true),
-    userActionRequest: z._default(z.boolean(), true),
-    connectedServiceAccountSwitch: z._default(z.boolean(), true),
-    connectedServiceQuotaBlocked: z._default(z.boolean(), true),
-    connectedServiceQuotaRecovered: z._default(z.boolean(), true),
-    foregroundBehavior: z._default(ForegroundBehaviorSchema, 'full'),
-})), {
-    v: 1,
-    pushEnabled: true,
-    ready: true,
-    readyIncludeMessageText: true,
-    requestIncludeMessageText: true,
-    permissionRequest: true,
-    userActionRequest: true,
-    connectedServiceAccountSwitch: true,
-    connectedServiceQuotaBlocked: true,
-    connectedServiceQuotaRecovered: true,
-    foregroundBehavior: 'full',
-}));
-
-export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Schema>;
-
-export const DEFAULT_NOTIFICATIONS_SETTINGS_V1: NotificationsSettingsV1 = NotificationsSettingsV1Schema.parse({});
 
 function defaultAgentDisabledActionSettings(): ActionSettingsOverride {
   return {
@@ -468,6 +426,7 @@ export const RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS = Object.freeze(
 export const RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS = Object.freeze([
   ...RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
   ...RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
+  'composerPromptLibraryButtonEnabled',
   'defaultPermissionModeClaude',
   'defaultPermissionModeCodex',
   'defaultPermissionModeGemini',
@@ -589,32 +548,7 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
     if (Object.hasOwn(next, key)) next[key] = canonicalizeStoredBackendTargetMap(next[key]);
   }
 
-  const parsedAttentionDeliveryPolicy = next.attentionDeliveryPolicyV1 === undefined
-    ? null
-    : AttentionDeliveryPolicyV1Schema.safeParse(next.attentionDeliveryPolicyV1);
-  if (parsedAttentionDeliveryPolicy?.success === true) {
-    next.attentionDeliveryPolicyV1 = parsedAttentionDeliveryPolicy.data;
-    if (!Object.prototype.hasOwnProperty.call(next.attentionDeliveryPolicyV1, 'mutePhoneWhenComputerFocused')
-      && !Object.prototype.hasOwnProperty.call(source.attentionDeliveryPolicyV1, 'mutePhoneWhenComputerFocused')) {
-      const predecessor = NotificationsSettingsV1Schema.safeParse(source.notificationsSettingsV1);
-      if (predecessor.success && predecessor.data.mutePhoneWhenComputerFocused === true) {
-        next.attentionDeliveryPolicyV1 = { ...parsedAttentionDeliveryPolicy.data, mutePhoneWhenComputerFocused: true };
-      }
-    }
-  }
-
-  if (next.attentionDeliveryPolicyV1 === undefined || parsedAttentionDeliveryPolicy?.success === false) {
-    next.attentionDeliveryPolicyV1 = deriveAttentionDeliveryPolicyFromLegacySettings({
-      notificationsSettings: NotificationsSettingsV1Schema.parse(source.notificationsSettingsV1),
-    });
-  }
-
-  if (next.actionsSettingsV1 && typeof next.actionsSettingsV1 === 'object' && !Array.isArray(next.actionsSettingsV1)) {
-    const parsed = tryNormalizeActionsSettingsV1(next.actionsSettingsV1);
-    if (parsed) {
-      next.actionsSettingsV1 = migrateLegacyDefaultActionsSettingsV1(parsed);
-    }
-  }
+  next.attentionDeliveryPolicyV1 = readAccountAttentionDeliveryPolicy(source);
 
   return next;
 }
@@ -739,11 +673,16 @@ function accountPolicy<TSchema extends z.core.$ZodType>(schema: TSchema, default
     });
 }
 
+const AgentInputActionBarLayoutSchema = z.enum(['auto', 'wrap', 'scroll']);
 export const AvatarStyleSchema = z.enum(['pixelated', 'gradient', 'brutalist', 'planet']);
 export const SessionListIdentityDisplaySchema = z.enum([
     'auto', 'agentLogo', 'project', 'projectWithAgent', 'agentWithTrailingProject', 'avatar', 'none',
 ]);
 export type SessionListIdentityDisplay = z.infer<typeof SessionListIdentityDisplaySchema>;
+defineStoredReadProjection(AgentInputActionBarLayoutSchema, () => z.pipe(
+    z.transform((raw) => raw === 'collapsed' ? 'auto' : raw),
+    AgentInputActionBarLayoutSchema,
+));
 function accountLegacy<TSchema extends z.core.$ZodType>(schema: TSchema, defaultValue: z.input<TSchema>, semanticDomain: string, maximumSerializedValueBytes = 64 * 1024, recoverMalformed = true) {
     return accountCatalogDefinition(schema, defaultValue, {
         semanticDomain,
@@ -912,7 +851,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     contextGaugeStyle: accountPreference(z.enum(['gauge', 'text', 'hidden']), 'gauge', 'composer presentation'),
     animatedNumbers: accountPreference(z.boolean(), true, 'motion presentation'),
     agentInputHistoryScope: accountPreference(z.enum(['perSession', 'global']), 'perSession', 'composer history presentation'),
-    agentInputActionBarLayout: accountPreference(z.enum(['auto', 'wrap', 'scroll', 'collapsed']), 'auto', 'composer presentation'),
+    agentInputActionBarLayout: accountPreference(AgentInputActionBarLayoutSchema, 'auto', 'composer presentation'),
     agentInputChipDensity: accountPreference(z.enum(['auto', 'labels', 'icons']), 'auto', 'composer presentation'),
     sessionListDensity: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw): unknown => raw === 'compact' ? 'cozy' : raw), z.enum(['detailed', 'cozy', 'narrow'])), 'narrow', 'session list presentation'),
     collectionSpacesV1: accountPreference(CollectionSpacesV1Schema, { v: 1, spaces: [] }, 'collection saved filters', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
@@ -922,19 +861,22 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     discussionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionListLayoutV1: accountPreference(z.enum(['projects', 'recent_activity']), 'projects', 'session list presentation'),
     sessionListAttentionPlacementV1: accountPreference(z.enum(['both', 'top', 'inPlace']), 'both', 'session list presentation'),
-    sessionListStatusWords: accountPreference(z.boolean(), false, 'work status presentation'),
     sessionListRowContextV1: accountPreference(z.boolean(), true, 'session list presentation'),
+    sessionListStatusWords: accountPreference(z.boolean(), false, 'work status presentation'),
+    // Restored 0.2 choices (owner amendment 2026-11-01): the working row mark as a spinner or a pulsing dot, and
+    // a playful working word when status words are on.
+    sessionListNarrowWorkingIndicatorStyle: accountPreference(z.enum(['spinner', 'pulse']), 'spinner', 'work status presentation'),
+    sessionListWorkingStatusAnimatedTextEnabled: accountPreference(z.boolean(), true, 'work status presentation'),
     sessionListIdentityDisplay: accountPreference(SessionListIdentityDisplaySchema, 'auto', 'session list presentation'),
     sessionHeaderIdentityDisplay: accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'avatar', 'session header presentation'),
     sessionListBackgroundWorkAttentionModeV1: accountPreference(z.enum(SESSION_LIST_BACKGROUND_WORK_ATTENTION_MODE_VALUES), 'keepWorking', 'session list presentation'),
     sessionListAttentionStandingDefaultV1: accountPreference(z.boolean(), false, 'session list presentation'),
-    sessionListNarrowWorkingIndicatorStyle: accountPreference(z.enum(['spinner', 'pulse']), 'spinner', 'session list presentation'),
     workspaceFaviconsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
-    workspaceMachineSubtitlesEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     showFlavorIcons: accountPreference(z.boolean(), true, 'application chrome'),
     avatarStyle: accountPreference(AvatarStyleSchema, 'brutalist', 'avatar presentation'),
     botFaceStyle: accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'),
     botMotion: accountPreference(BotMotionSchema, 'lively', 'Bot motion presentation'),
+    homeBotFacesEnabled: accountPreference(z.boolean(), true, 'Home presentation'),
     hideInactiveSessions: accountPreference(z.boolean(), false, 'session list presentation'),
     sessionListActiveColorModeV1: accountPreference(z.enum(['activityAndAttention', 'attentionOnly', 'allActive']), 'activityAndAttention', 'session list presentation'),
     sessionMessageSendMode: accountPolicy(z.enum(['agent_queue', 'interrupt', 'server_pending']), 'server_pending', 'message delivery'),
@@ -978,7 +920,6 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
     sessionTagsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     // Tag ids belong to a Home; identical ids on another Home do not inherit this choice.
     sessionListHiddenTagIdsWhileRecording: accountPreference(z.record(z.string(), z.array(z.string())), {}, 'session list presentation'),
-    sessionListWorkingStatusAnimatedTextEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     mobileWorkspaceExperienceV1: accountPreference(z.enum(['classic', 'cockpit']), 'cockpit', 'mobile workspace presentation'),
     workspaceTabsSyncEnabled: accountPreference(z.boolean(), true, 'workspace open tabs'),
     sessionCockpitSwipeNavigationEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
@@ -1003,6 +944,7 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
         semanticDomain: 'application chrome', classification: 'preference', maximumSerializedValueBytes: 4 * 1024,
         mutationSchema: z.nullable(GlassSurfaceMaterialsSchema),
     }),
+    themeProfiles: accountCatalogDefinition(z._default(ThemeProfileLibrarySchema, []), [], { semanticDomain: 'theme library', classification: 'preference', maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES, structuralBoundsOwner: 'domainOwned', recoverMalformed: false }),
     homeAtmosphere: accountCatalogDefinition(HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE, {
         semanticDomain: 'Home atmosphere', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
@@ -1050,7 +992,7 @@ const RETIRED_SESSION_LIST_SETTING_KEYS = new Set([
     'sessionListOrderingModeV1', 'sessionListAttentionPromotionModeV1', 'sessionListWorkingPlacementModeV1',
     'sessionFolderViewModeV1', 'sessionListFolderSortModeV1', 'groupInactiveSessionsByProject',
     'sessionListSeparateBackgroundWorkV1', 'sessionListSeparateBackgroundWork',
-    'workspacePathDisplayModeV1',
+    'workspaceMachineSubtitlesEnabled', 'workspacePathDisplayModeV1',
 ]);
 
 function projectSessionListPreferenceIngress(raw: Record<string, unknown>): Record<string, unknown> {
@@ -1187,15 +1129,24 @@ export const NEW_SESSION_PRESENTATION_MODES = [
   'docked',
 ] as const;
 
+export const NEW_SESSION_BACKDROP_STRENGTHS = ['subtle', 'soft', 'medium', 'rich'] as const;
+
 export const NEW_SESSION_DRAFT_ENTRY_MODES = [
   'resumePrevious',
   'alwaysFresh',
 ] as const;
 
+export const NEW_SESSION_AFTER_SEND_MODES = [
+  'open',
+  'startAnother',
+] as const;
+
 export type NewSessionWizardSelectionSectionId = typeof NEW_SESSION_WIZARD_SELECTION_SECTION_IDS[number];
 export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECTION_PRESENTATIONS[number];
 export type NewSessionPresentationModeV1 = typeof NEW_SESSION_PRESENTATION_MODES[number];
+export type NewSessionBackdropStrengthV1 = typeof NEW_SESSION_BACKDROP_STRENGTHS[number];
 export type NewSessionDraftEntryMode = typeof NEW_SESSION_DRAFT_ENTRY_MODES[number];
+export type NewSessionAfterSendMode = typeof NEW_SESSION_AFTER_SEND_MODES[number];
 const NewSessionWizardSectionIdSchema = lazyDefinition(() => z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS));
 const NewSessionWizardSectionPresentationSchema = lazyDefinition(() => z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS));
 
@@ -1225,9 +1176,12 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     newSessionDefaultPersistenceModeV1: accountPreference(z.enum(['direct', 'persisted']), 'persisted', 'session authoring'),
     newSessionDefaultPersistenceModeByTargetKeyV1: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.enum(['direct', 'persisted'])), {}, 'session authoring', 32 * 1024),
     newSessionDraftEntryMode: accountPreference(z.enum(NEW_SESSION_DRAFT_ENTRY_MODES), 'resumePrevious', 'session authoring'),
+    // null until the person chooses: the Docked composer then stays, every other presentation opens.
+    newSessionAfterSendV1: accountPreference(z.nullable(z.enum(NEW_SESSION_AFTER_SEND_MODES)), null, 'session authoring'),
     rememberLastProjectSessionSelections: accountPreference(z.boolean(), true, 'session authoring'),
     rememberLastEngineSelectionsV1: accountPreference(z.boolean(), true, 'session authoring'),
     newSessionPresentationModeV1: accountPreference(z.enum(NEW_SESSION_PRESENTATION_MODES), 'docked', 'session authoring'),
+    newSessionBackdropStrengthV1: accountPreference(z.enum(NEW_SESSION_BACKDROP_STRENGTHS), 'soft', 'session authoring'),
     newSessionWizardSectionPresentationV1: accountPreference(NewSessionWizardSectionPresentationByIdSchema, {}, 'session authoring'),
     newSessionWizardColumnsEnabled: accountPreference(z.boolean(), false, 'session authoring'),
     commandPaletteEnabled: accountPreference(z.boolean(), false, 'keyboard shortcuts'),
@@ -1283,6 +1237,8 @@ const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     scmChangedFilesLayout: accountPreference(z.enum(['list', 'tree']), 'list', 'file presentation'),
     /** Where a new pull request form opens: in the Git sidebar, or as a Details pane. */
     scmPullRequestPlacement: accountPreference(z.enum(['sidebar', 'details']), 'sidebar', 'file presentation'),
+    /** Preferred destination for supported forge resource links; core owns external fallback. */
+    scmResourceOpenLocation: accountPreference(z.enum(['happier', 'github']), 'happier', 'source control'),
     filesDiffFoldingEnabled: accountPreference(z.boolean(), true, 'file presentation'),
     filesDiffFoldingContextThreshold: accountPreference(accountNonNegativeInteger(), 12, 'file presentation'),
     filesDiffFoldingContextRadius: accountPreference(accountNonNegativeInteger(), 3, 'file presentation'),
@@ -1299,6 +1255,10 @@ const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     filesImagePreviewCacheMaxTotalBytes: accountPreference(accountNonNegativeInteger(), 96 * 1024 * 1024, 'file presentation'),
     filesImagePreviewMaxBytes: accountPreference(accountNonNegativeInteger(), 16 * 1024 * 1024, 'file presentation'),
     filesEditorAutoSave: accountPreference(z.boolean(), false, 'file editing'),
+    filesEditorFormatOnSave: accountPreference(z.boolean(), false, 'file editing'),
+    filesEditorInlayHints: accountPreference(z.enum(['off', 'parameters', 'all']), 'off', 'file editing'),
+    filesEditorSemanticHighlighting: accountPreference(z.boolean(), true, 'file editing'),
+    filesEditorAiSuggestionsV1: accountPolicy(FilesEditorAiSuggestionsV1Schema, DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1, 'file editing'),
     markdownDefaultEditMode: accountPreference(z.enum(['raw', 'rich']), 'rich', 'file editing'),
     filesMarkdownRichEditorMaxBytes: accountPreference(accountNonNegativeInteger(), 256000, 'file editing'),
     filesMarkdownRichEditorHtmlRoundTripMaxBytes: accountPreference(accountNonNegativeInteger(), 50000, 'file editing'),
@@ -1333,7 +1293,6 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     transcriptMessageSavePromptActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptMessageMakeRepeatableActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptMessagePluginActionsEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    composerPromptLibraryButtonEnabled: accountPreference(z.boolean(), true, 'composer presentation'),
     transcriptMessageSendToSessionEnabled: accountPreference(z.boolean(), false, 'transcript presentation'),
     transcriptMessageSendToSessionTemplate: accountPreference(accountBoundedString(2000), '{{MESSAGES}}', 'transcript presentation'),
     transcriptBulkCopyFormat: accountPreference(z.enum(['markdown_labeled', 'plain']), 'markdown_labeled', 'transcript presentation'),
@@ -1410,7 +1369,7 @@ const ACCOUNT_SETTING_CANDIDATES = {
     backendEnabledByTargetKey: accountCatalogDefinition(z._default(BackendEnabledByTargetKeySchema, {}), {}, { semanticDomain: 'backend availability', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
     backendCliSourcePreferenceByTargetKey: accountCatalogDefinition(BackendCliSourcePreferenceByTargetKeySchema, {}, { semanticDomain: 'backend installation policy', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
     scmIncludeCoAuthoredBy: accountCatalogDefinition(z.catch(z.optional(z.boolean()), undefined), undefined, { semanticDomain: 'source control', classification: 'preference', maximumSerializedValueBytes: 8 }),
-    actionsSettingsV1: accountCatalogDefinition((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value): unknown => tryNormalizeActionsSettingsV1(value) ?? DEFAULT_ACTIONS_SETTINGS_V1), ActionsSettingsV1Schema), DEFAULT_ACTIONS_SETTINGS_V1, { semanticDomain: 'action policy', classification: 'policy', maximumSerializedValueBytes: 64 * 1024 }),
+    actionsSettingsV1: accountCatalogDefinition(z.transform((value) => migrateLegacyDefaultActionsSettingsV1(tryNormalizeActionsSettingsV1(value) ?? DEFAULT_ACTIONS_SETTINGS_V1)), DEFAULT_ACTIONS_SETTINGS_V1, { semanticDomain: 'action policy', classification: 'policy', structuralBoundsOwner: 'domainOwned', maximumSerializedValueBytes: 64 * 1024 }),
     notificationsSettingsV1: accountCatalogDefinition(z._default(NotificationsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1), DEFAULT_NOTIFICATIONS_SETTINGS_V1, {
         semanticDomain: 'legacy notification preferences',
         classification: 'legacy',
@@ -1430,6 +1389,7 @@ const ACCOUNT_SETTING_CANDIDATES = {
     usageRoutingHintsEnabled: accountPreference(z.catch(z._default(z.boolean(), true), true), true, 'usage routing hints', 8),
     usageCoachPreferencesV1: accountCatalogDefinition(UsageCoachPreferencesV1Schema, DEFAULT_USAGE_COACH_PREFERENCES_V1, {
         semanticDomain: 'usage coach preferences', classification: 'preference',
+        mutationSchema: UsageCoachPreferenceMutationV1Schema,
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
     }),
     usageModelPriceOverridesV1: accountPreference(UsageModelPriceOverridesV1Schema, {}, 'usage model price overrides', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
@@ -1559,7 +1519,7 @@ export function getNotificationsSettingsV1FromAccountSettings(settingsLike: unkn
  * a user can see cannot diverge from the behavior it describes.
  */
 export function isExpoPushNotificationChannelEnabled(settingsLike: unknown): boolean {
-  return accountSettingsParse(settingsLike).attentionDeliveryPolicyV1.channels.expo_push.enabled !== false;
+  return readAccountAttentionDeliveryPolicy(settingsLike).channels.expo_push.enabled !== false;
 }
 
 export { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID };

@@ -1,14 +1,16 @@
-import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
+import { DECISION_ACTION_IDS } from './actionIds.js';
+export { DECISION_ACTION_IDS } from './actionIds.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { isProjectSetupTrustRequestV1 } from './projectActionFamily.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 /** Safe Session relocation can contain an explicitly chosen workspace-writing effect. */
 export function isActionWorkspaceWriteV1(
@@ -41,7 +43,6 @@ export function resolveWorkspaceWriteActionAdmissionV1(input: Readonly<{
   return { ok: true };
 }
 
-export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
 export const TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS = ['session.user_action.answer'] as const;
 
 function isLegacyWorkflowConversionInputV1(spec: Pick<ActionSpec, 'id'> | undefined, input: unknown): boolean {
@@ -83,7 +84,10 @@ export function computeActionInputApprovalDigestV1(actionId: ActionId, input: un
   return computeCanonicalDomainSeparatedDigest('action.present-user-approval.v1', parts);
 }
 
-/** Requestability follows the Action owner, not a second mutation allowlist. */
+/**
+ * Person-class Actions default to Ask for automation callers (agent, MCP, plugin).
+ * That default is ordinary user-changeable approval policy, never a floor.
+ */
 export function canRequestPresentUserApprovalForActionInputV1(
   spec: Pick<ActionSpec, 'id' | 'requiredAuthority' | 'approvalInputCustody'>,
   input?: unknown,
@@ -101,7 +105,11 @@ export function isPublicLinkCreationActionV1(actionId: string): boolean {
   return actionId === 'artifact.public_link.create' || actionId === 'session.public_link.create';
 }
 
-/** Execution authority is separate from who may decide a requested approval. */
+/**
+ * Person-class Actions: scoped external credentials (API tokens, embeds) never
+ * run them, and automation callers default to Ask. A host caller whose Ask the
+ * user waived runs them like any other Action.
+ */
 export function requiresPresentUserExecutionAuthorityForActionInputV1(
   spec: Pick<ActionSpec, 'id' | 'requiredAuthority'>,
   input?: unknown,
@@ -113,23 +121,6 @@ export function requiresPresentUserExecutionAuthorityForActionInputV1(
     || isSessionMessageHumanReturnInputV1(spec, input)
     || (spec.id === 'session.open' && typeof input === 'object' && input !== null
       && 'approvedNewDirectoryCreation' in input && input.approvedNewDirectoryCreation === true);
-}
-
-/** Agent-callable control/recovery requests remain human-decided, including rejection. */
-const HUMAN_DECIDED_SURFACE_ACTION_IDS = [
-  'browser.control.takeControl', 'browser.control.handBack',
-  'computer.targets.list', 'computer.target.select',
-  'computer.control.interrupt', 'computer.control.handBack',
-  'computer.permissions.openSettings', 'browser.sandbox.install',
-] as const satisfies readonly ActionId[];
-
-export function requiresPresentUserDecisionForActionInputV1(
-  spec: Pick<ActionSpec, 'id' | 'requiredAuthority'>,
-  input?: unknown,
-  decision: 'approve' | 'reject' = 'approve',
-): boolean {
-  return (HUMAN_DECIDED_SURFACE_ACTION_IDS as readonly string[]).includes(spec.id)
-    || (decision === 'approve' && requiresPresentUserExecutionAuthorityForActionInputV1(spec, input));
 }
 
 /** Decisions are opt-in; they never grant token, security, trust or policy authority. */
@@ -162,11 +153,9 @@ export function resolveCredentialActionAdmissionV1(input: Readonly<{
       : { ok: false, errorCode: 'present_user_required' };
   }
   if (!requiresPresentUserExecutionAuthorityForActionInputV1(input.spec, input.actionInput) || input.authority === 'present_user') return { ok: true };
-  // Admission here permits requesting consent, never automatic execution.
-  // Approval defaults are user-waivable. The executor still proves human
-  // authority before preparation/effects when no approval proposal is requested.
-  if (isAutomationApprovalRequestSurface(input.surface, input.spec, input.actionInput) && !input.hasExternalCredential && !input.grant
-    && canRequestPresentUserApprovalForActionInputV1(input.spec, input.actionInput)) return { ok: true };
+  // Host automation reaches the ordinary, user-waivable approval policy.
+  // Scoped external credentials (the API surface) are never a person.
+  if (!input.hasExternalCredential && !input.grant && input.surface !== 'api') return { ok: true };
   if ((DECISION_ACTION_IDS as readonly string[]).includes(input.spec.id) && canCredentialDecideV1(input)) return { ok: true };
   if (input.grant && (TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS as readonly string[]).includes(input.spec.id)
     && evaluateApiTokenGrantV1({ grant: { ...input.grant, targets: null }, actionId: input.spec.id }).ok) return { ok: true };

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
 export { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -113,7 +114,8 @@ function row<const T extends SessionTerminalActionId>(actionId: T, title: string
     examples: { voice: { argsExample: voiceExamples[actionId] } },
   } satisfies PreNormalizedActionSpec;
 }
-export const SESSION_TERMINAL_ACTION_SPECS = [
+function createSessionTerminalActionSpecs() {
+  return [
   row('session.terminals.list', 'List session terminal tabs'), row('session.terminals.open', 'Open session terminal tab'),
   row('session.terminals.split', 'Split session terminal tab'), row('session.terminals.focus', 'Focus session terminal'),
   row('session.terminals.restart', 'Restart mounted session terminal'), row('session.terminals.open_in_details', 'Open session terminal in Details'),
@@ -123,6 +125,9 @@ export const SESSION_TERMINAL_ACTION_SPECS = [
   row('session.terminals.run_script', 'Run package script in a new terminal tab'),
   row('session.terminals.detach', 'Move split terminal to its own tab'), row('session.terminals.reorder', 'Reorder terminal tab'),
 ] as const;
+}
+
+export const SESSION_TERMINAL_ACTION_SPECS: ReturnType<typeof createSessionTerminalActionSpecs> = lazyActionSpecArray(createSessionTerminalActionSpecs);
 export function isSessionTerminalActionId(value: string): value is SessionTerminalActionId {
   return (SESSION_TERMINAL_ACTION_IDS as readonly string[]).includes(value);
 }

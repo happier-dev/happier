@@ -8,13 +8,15 @@ import { ReviewLaunchFailureSchema } from '../reviews/reviewLaunchFailure.js';
 import { ReviewPublicationEvidenceSchema } from '../reviews/reviewPublicationEvidence.js';
 import { ExecutionRunTransportErrorCodeSchema } from '../execution/runs/runPrimitives.js';
 import { AGENT_START_REFUSAL_CODES_V1 } from '../account/settings/admitAgentStartV1.js';
+import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
+import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 export * from './comparison.js';
 export * from './reviewedMarks.js';
 
 export const ScmDiffSummarySourceKindSchema = lazyZodSchema(() => z.enum([
   'turnCheckpoint',
   'workingTree',
-  'session', 'branch', 'commit', 'pullRequest',
+  'session', 'branch', 'commit', 'pullRequest', 'revisionRange',
 ]));
 export type ScmDiffSummarySourceKind =
   z.infer<typeof ScmDiffSummarySourceKindSchema>;
@@ -35,21 +37,22 @@ export const ScmDiffSummaryModelSelectorSchema = lazyZodSchema(() => z.strictObj
     profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     modelId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     backendTargetKey: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  }).check(z.refine((value) => Boolean(value.profileId || value.modelId || value.backendTargetKey), { message: 'modelSelector requires profileId, modelId, or backendTargetKey' })));
+    modelSelection: z.optional(ProviderBoundModelRefSchema),
+    connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
+  }).check(z.refine((value) => Boolean(value.profileId || value.modelId || value.backendTargetKey || value.modelSelection), { message: 'modelSelector requires a profile, model, or Agent target' }),
+    z.superRefine((value, context) => {
+      if (value.modelSelection && ((value.modelId !== undefined && value.modelId !== value.modelSelection.modelId)
+        || (value.backendTargetKey !== undefined && value.backendTargetKey !== value.modelSelection.agentTargetKey))) {
+        context.addIssue({ code: 'custom', path: ['modelSelection'], message: 'Model selection must match the selected Agent and model' });
+      }
+    })));
 export type ScmDiffSummaryModelSelector =
   z.infer<typeof ScmDiffSummaryModelSelectorSchema>;
 
 export const SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION = 1;
 
-export const ScmDiffSummaryResolvedSelectorSchema = lazyZodSchema(() => z.strictObject({
-  catalogId: z.string().check(z.trim(), z.minLength(1)),
-}));
-export type ScmDiffSummaryResolvedSelector =
-  z.infer<typeof ScmDiffSummaryResolvedSelectorSchema>;
-
 export const ScmDiffSummaryCachePolicySchema = lazyZodSchema(() => z.strictObject({
-  mode: z.enum(['read_write', 'bypass']),
-  reason: z.optional(z.string().check(z.minLength(1))),
+  mode: z.literal('bypass'),
 }));
 export type ScmDiffSummaryCachePolicy =
   z.infer<typeof ScmDiffSummaryCachePolicySchema>;
@@ -143,28 +146,6 @@ export const ScmComparisonCaptureInputSchema = lazyZodSchema(() => z.strictObjec
 })));
 export type ScmComparisonCaptureInput = z.infer<typeof ScmComparisonCaptureInputSchema>;
 
-export const ScmDiffSummaryTruncationReasonSchema = lazyZodSchema(() => z.enum([
-  'fileBudget',
-  'diffBytes',
-  'fileCount',
-]));
-export type ScmDiffSummaryTruncationReason =
-  z.infer<typeof ScmDiffSummaryTruncationReasonSchema>;
-
-export const ScmDiffSummaryTruncationSchema = lazyZodSchema(() => z.looseObject({
-  reason: ScmDiffSummaryTruncationReasonSchema,
-  droppedFiles: z.optional(z.number().check(z.int(), z.nonnegative())),
-}));
-export type ScmDiffSummaryTruncation =
-  z.infer<typeof ScmDiffSummaryTruncationSchema>;
-
-export const ScmDiffSummaryGenerationStateSchema = lazyZodSchema(() => z.enum([
-  'complete',
-  'partial',
-]));
-export type ScmDiffSummaryGenerationState =
-  z.infer<typeof ScmDiffSummaryGenerationStateSchema>;
-
 export const ScmDiffSummaryCostMetadataSchema = lazyZodSchema(() => z.looseObject({
   inputTokens: z.optional(z.number().check(z.int(), z.nonnegative())),
   outputTokens: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -256,7 +237,7 @@ export const ScmDiffSummaryFailureReasonCodeSchema = lazyZodSchema(() => z.union
   ExecutionRunTransportErrorCodeSchema,
   z.enum(AGENT_START_REFUSAL_CODES_V1),
   z.enum(['generation_cancelled', 'RPC_CLIENT_NOT_AVAILABLE', 'DIFF_UNAVAILABLE', 'MODEL_UNAVAILABLE', 'SUMMARY_FAILED',
-    'action_failed', 'approval_required']),
+    'action_failed', 'approval_required', 'provider_input_too_large', 'provider_request_rejected', 'agent_context_window_exceeded']),
 ]));
 
 function progress<T extends z.ZodMiniType>(value: T) {
@@ -273,7 +254,7 @@ export type ScmDiffSummaryOutputs = z.infer<typeof ScmDiffSummaryOutputsSchema>;
 export const ScmDiffSummaryAnalysisCoverageSchema = lazyZodSchema(() => z.strictObject({
   suppliedChangeRefs: z.array(z.string().check(z.minLength(1))), analysedChangeRefs: z.array(z.string().check(z.minLength(1))),
   remainingChangeRefs: z.array(z.string().check(z.minLength(1))),
-  parts: z.optional(z.strictObject({ admitted: z.number().check(z.int(), z.nonnegative()), completed: z.number().check(z.int(), z.nonnegative()),
+  parts: z.optional(z.strictObject({ completed: z.number().check(z.int(), z.nonnegative()),
     total: z.number().check(z.int(), z.nonnegative()), phase: z.enum(['evidence', 'merge', 'done']),
   })),
 }));
@@ -380,8 +361,6 @@ export const ScmDiffSummaryGenerateSuccessSchema = lazyZodSchema(() => z.strictO
   sourceKey: z.string().check(z.minLength(1)),
   checkpointReceiptId: z.optional(z.string().check(z.minLength(1))),
   metadata: ScmDiffSummaryMetadataSchema,
-  truncation: z.optional(ScmDiffSummaryTruncationSchema),
-  generationState: z.optional(ScmDiffSummaryGenerationStateSchema),
   cost: z.optional(ScmDiffSummaryCostMetadataSchema),
   risks: z.optional(z.array(z.string().check(z.minLength(1)))),
   testImpact: z.optional(z.string().check(z.minLength(1))),
@@ -463,80 +442,7 @@ export const ScmComparisonCaptureOutputSchema = lazyZodSchema(() => z.discrimina
 ]));
 export type ScmComparisonCaptureOutput = z.infer<typeof ScmComparisonCaptureOutputSchema>;
 
-export const ScmDiffSummaryCacheKeyDescriptorSchema = lazyZodSchema(() => z.strictObject({
-    source: ScmDiffSummarySourceSchema,
-    checkpointReceiptId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    checkpointRef: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    volatileSourceVersion: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    comparisonId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    outputs: z.optional(z.array(ScmDiffSummaryOutputKindSchema).check(z.minLength(1))),
-    outputLanguage: z.optional(ScmDiffSummaryOutputLanguageSchema),
-    turnEvidenceMode: z.optional(ScmDiffSummaryTurnEvidenceModeSchema),
-    investigateSurroundingFiles: z.optional(z.boolean()),
-    summarySchemaVersion: z.number().check(z.int(), z.positive()),
-    resolvedSelector: ScmDiffSummaryResolvedSelectorSchema,
-  }).check(z.superRefine((value, ctx) => {
-    if (value.source.kind !== 'turnCheckpoint' && value.source.kind !== 'workingTree' && !value.comparisonId) {
-      ctx.addIssue({ code: "custom", path: ['comparisonId'], message: 'Historical sources require a captured comparison identity' });
-    }
-    if (value.source.kind === 'turnCheckpoint') {
-      if (!value.checkpointReceiptId) {
-        ctx.addIssue({
-          code: "custom",
-          path: ['checkpointReceiptId'],
-          message: 'turnCheckpoint cache descriptors require checkpointReceiptId',
-        });
-      }
-      if (!value.checkpointRef) {
-        ctx.addIssue({
-          code: "custom",
-          path: ['checkpointRef'],
-          message: 'turnCheckpoint cache descriptors require checkpointRef',
-        });
-      }
-      if (value.volatileSourceVersion) {
-        ctx.addIssue({
-          code: "custom",
-          path: ['volatileSourceVersion'],
-          message: 'turnCheckpoint cache descriptors must not use volatileSourceVersion',
-        });
-      }
-    }
-
-    if (value.source.kind === 'workingTree') {
-      if (!value.volatileSourceVersion) {
-        ctx.addIssue({
-          code: "custom",
-          path: ['volatileSourceVersion'],
-          message: 'workingTree cache descriptors require volatileSourceVersion',
-        });
-      }
-      if (value.checkpointReceiptId) {
-        ctx.addIssue({
-          code: "custom",
-          path: ['checkpointReceiptId'],
-          message: 'workingTree cache descriptors must not use checkpointReceiptId',
-        });
-      }
-    }
-  })));
-export type ScmDiffSummaryCacheKeyDescriptor =
-  z.infer<typeof ScmDiffSummaryCacheKeyDescriptorSchema>;
-
-export const ScmDiffSummaryCacheEntrySchema = lazyZodSchema(() => z.looseObject({
-  key: ScmDiffSummaryCacheKeyDescriptorSchema,
-  checkpointRef: z.optional(z.string().check(z.minLength(1))),
-  value: ScmDiffSummaryGenerateOutputSchema,
-  createdAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
-  updatedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
-}));
-export type ScmDiffSummaryCacheEntry =
-  z.infer<typeof ScmDiffSummaryCacheEntrySchema>;
-
-export type ScmDiffSummaryCacheSource =
-  | Readonly<{ kind: 'turnCheckpoint'; checkpointReceiptId: string; checkpointRef: string; turnEvidenceMode?: string }>
-  | Readonly<{ kind: 'workingTree'; volatileSourceVersion: string }>
-  | Readonly<{ kind: 'comparison'; comparisonId: string }>;
+export type ScmDiffSummaryCacheSource = Readonly<{ kind: 'comparison'; comparisonId: string }>;
 export type ScmDiffSummaryResolvedSelectorInput = Readonly<{ catalogId?: string; label?: string }>;
 export type ScmDiffSummaryCacheKeyInput = Readonly<{
   source: ScmDiffSummaryCacheSource; summarySchemaVersion: number;
@@ -545,7 +451,6 @@ export type ScmDiffSummaryCacheKeyInput = Readonly<{
   outputLanguage?: string;
   scopeKey?: string;
   investigateSurroundingFiles?: boolean;
-  volatileDiffDigest?: string;
 }>;
 
 export function buildScmDiffSummaryCacheKey(input: ScmDiffSummaryCacheKeyInput): string {
@@ -564,12 +469,6 @@ export function buildScmDiffSummaryCacheKey(input: ScmDiffSummaryCacheKeyInput):
   const outputSuffix = outputs.length === 1 && outputs[0] === 'summary' ? '' : `:outputs:${outputs.join(',')}`;
   const scopeSuffix = input.scopeKey ? `:scope:${part(input.scopeKey, 'scopeKey')}` : '';
   switch (input.source.kind) {
-    case 'turnCheckpoint': return `checkpoint:${part(input.source.checkpointRef, 'checkpointRef')}:receipt:${part(input.source.checkpointReceiptId, 'checkpointReceiptId')}:evidence:${part(input.source.turnEvidenceMode ?? 'reconciled', 'turnEvidenceMode')}:${suffix}${outputSuffix}${scopeSuffix}`;
-    case 'workingTree': return `volatile-working-tree:${part(input.source.volatileSourceVersion, 'volatileSourceVersion')}:${suffix}${outputSuffix}${scopeSuffix}`;
     case 'comparison': return `comparison:${part(input.source.comparisonId, 'comparisonId')}:${suffix}${outputSuffix}${scopeSuffix}`;
   }
-}
-
-export function isDurableScmDiffSummaryCacheKey(key: string): boolean {
-  return key.startsWith('checkpoint:') || key.startsWith('comparison:');
 }

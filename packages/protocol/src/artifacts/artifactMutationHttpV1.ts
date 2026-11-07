@@ -5,6 +5,7 @@ import { ArtifactBlobWriteV1Schema } from './artifactBinaryV1.js';
 import { ArtifactStoredKindV1Schema } from './artifactKindV1.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { ArtifactIdScopeV1Schema } from './idScope.js';
+import { ApprovalTranscriptVisualPublicationV1Schema } from '../sessions/messages/transcriptObservationV1.js';
 export { ArtifactIdScopeV1Schema, deriveAccountScopedArtifactIdV1, resolveAccountScopedArtifactIdV1, artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from './idScope.js';
 
 /** Canonical JSON wire grammar shared by Artifact routes and atomic domain transactions. */
@@ -38,6 +39,7 @@ export function createArtifactUpdateHttpInputV1Schema(input: Readonly<{
     requiresMemoryDecisionSource: boolean;
 }>) {
     return z.strictObject({
+        transcriptVisualPublication: z.optional(ApprovalTranscriptVisualPublicationV1Schema),
         header: z.optional(z.string()),
         kind: z.optional(ArtifactStoredKindV1Schema),
         approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),

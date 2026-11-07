@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -46,15 +47,21 @@ export const ProviderBrokerConsumerV1Schema = lazyZodSchema(() => z.discriminate
 ]));
 
 /**
- * Exact managed Provider application selected by the Session/Run owner.
- * Credential-resource source identity and purpose bindings remain separate:
- * the target daemon resolves those only from current Home admission.
+ * Exact executable Provider source application. External clients need no
+ * consuming Agent. Worker authorities additionally require the target below.
+ * Source credentials and purpose bindings still resolve from Home admission.
  */
-export const ProviderBrokerApplicationBindingV1Schema = lazyZodSchema(() => z.strictObject({
-  agentTargetKey: ProviderAgentTargetKeySchema,
+export const ProviderBrokerSourceApplicationBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  agentTargetKey: z.optional(ProviderAgentTargetKeySchema),
   implementationIdentity: asProtocolZod(PluginContributionIdentityV1Schema),
   endpointTemplateId: ProviderLocalIdSchema,
   protocol: ProviderWireProtocolSchema,
+}));
+export type ProviderBrokerSourceApplicationBindingV1 = z.infer<typeof ProviderBrokerSourceApplicationBindingV1Schema>;
+
+/** Session and Run authorities additionally bind the consuming Agent. */
+export const ProviderBrokerApplicationBindingV1Schema = lazyZodSchema(() => z.extend(ProviderBrokerSourceApplicationBindingV1Schema, {
+  agentTargetKey: ProviderAgentTargetKeySchema,
 }));
 
 /** Dedicated, recursively closed machine/1 authority. Mutable request policy is
@@ -106,11 +113,8 @@ export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.str
   if (payload.initiator.accountId === payload.target.custodianAccountId) {
     context.addIssue({ code: 'custom', path: ['target', 'custodianAccountId'], message: 'Broker Accounts must be distinct' });
   }
-  if (payload.initiator.machineId === payload.target.machineId) {
-    context.addIssue({ code: 'custom', path: ['target', 'machineId'], message: 'Broker Machines must be distinct' });
-  }
-  if (payload.initiator.endpointId === payload.target.endpointId) {
-    context.addIssue({ code: 'custom', path: ['target', 'endpointId'], message: 'Broker endpoints must be distinct' });
+  if ((payload.initiator.machineId === payload.target.machineId) !== (payload.initiator.endpointId === payload.target.endpointId)) {
+    context.addIssue({ code: 'custom', path: ['target'], message: 'Broker Machine and endpoint identities must agree' });
   }
   if ((payload.consumer.kind === 'execution_run') !== (payload.executionRunOccurrenceId !== undefined)) {
     context.addIssue({
@@ -141,7 +145,7 @@ export const ProviderBrokerOpenRequestV1Schema = lazyZodSchema(() => z.strictObj
   v: z.literal(1),
   resourceId: IdentitySchema,
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-  modelId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  modelId: z.string().check(z.trim(), z.minLength(1)),
   sourceRevision: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   initiatorMachineId: IdentitySchema,
   consumer: ProviderBrokerConsumerV1Schema,
@@ -181,6 +185,7 @@ export const ProviderBrokerModelCatalogAuthorizationV1Schema = lazyZodSchema(() 
 }));
 
 export const ProviderBrokerAdmissionFailureCodeV1Schema = lazyZodSchema(() => z.enum([
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
   'invalid_request',
   'resource_forbidden',
   'resource_unavailable',

@@ -121,13 +121,6 @@ export function applyScmReviewedMarkIntent(comparison: ScmComparison, value: unk
   }
   return applyScmReviewedKeysIntent(record.scopeId, record, [...new Set(refs.flatMap(ref => keysByRef.get(ref) ?? []))], reviewed);
 }
-export function isScmSelectionReviewed(record: ScmReviewedMarksRecord | null, comparison: ScmComparison, refs: readonly string[]): boolean {
-  if (!record || record.scopeId !== buildScmReviewScopeId({ repositoryRootPath: comparison.repository.rootPath, source: comparison.source }) || refs.length === 0) return false;
-  const marked = new Set(record.reviewedChangeKeys);
-  const keysByRef = buildScmChangeKeys(comparison);
-  return refs.every(ref => { const keys = keysByRef.get(ref); return keys !== undefined && keys.length > 0 && keys.every(key => marked.has(key)); });
-}
-
 export function applyScmReviewedKeysIntent(scopeId: string, value: unknown, keys: readonly string[], reviewed: boolean): ScmReviewedMarksRecord {
   const record = parseScmReviewedMarksRecordForId(scopeId, value);
   if (new Set(keys).size !== keys.length || keys.some(key => typeof key !== 'string' || key.length === 0)) {

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 export { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -26,7 +27,8 @@ export const AppUpdateActionOutputSchemas = {
   'app.updates.check': OperationResultSchema, 'app.updates.update': OperationResultSchema,
   'app.updates.retry': OperationResultSchema, 'app.updates.restart': OperationResultSchema, 'app.updates.skip': OperationResultSchema,
 } as const;
-export const APP_UPDATE_ACTION_SPECS = APP_UPDATE_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
+function createAppUpdateActionSpecs() {
+  return APP_UPDATE_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   id, approval: { result: 'required' }, title: {
     'app.updates.get': 'Get app update status', 'app.updates.check': 'Check for app updates',
     'app.updates.update': 'Update this app', 'app.updates.retry': 'Retry app update',
@@ -43,3 +45,6 @@ export const APP_UPDATE_ACTION_SPECS = APP_UPDATE_ACTION_IDS.map((id): PreNormal
   inputSchema: AppUpdateActionInputSchemas[id], outputSchema: AppUpdateActionOutputSchemas[id],
   inputHints: { fields: id === 'app.updates.skip' ? [{ path: 'version', title: 'Offered version', widget: 'text', required: true }] : [] },
 }));
+}
+
+export const APP_UPDATE_ACTION_SPECS: ReturnType<typeof createAppUpdateActionSpecs> = lazyActionSpecArray(createAppUpdateActionSpecs);

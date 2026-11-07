@@ -14,7 +14,6 @@ import {
   type ModelVisibilityRefV1,
 } from '../selection/v1.js';
 import {
-  PROVIDER_SETTINGS_LIMITS_V1,
   ProviderSettingsV1Schema,
   assertProviderSettingsV1WithinLimits,
   type ProviderSettingsV1,
@@ -392,13 +391,10 @@ export function deleteProviderConnectionV1(
       deletedAt,
     },
   ].sort((a, b) => a.deletedAt - b.deletedAt || compareProviderCanonicalStringsV1(a.id, b.id));
-  const retainedTombstones = connectionTombstones.slice(
-    Math.max(0, connectionTombstones.length - PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones),
-  );
   return ProviderSettingsV1Schema.parse({
     ...settings,
     connections: settings.connections.filter((candidate) => candidate.id !== connectionId),
-    connectionTombstones: retainedTombstones,
+    connectionTombstones,
     accountGrants: settings.accountGrants.filter((grant) => grant.connectionId !== connectionId),
     machineGrants: settings.machineGrants.filter((grant) => grant.connectionId !== connectionId),
     secretBindingsByConnectionId,

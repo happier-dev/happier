@@ -1,3 +1,5 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
+import { PushNotificationTestResultSchema } from '../push/pushNotificationTest.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -40,6 +42,7 @@ export const NotificationConfigurationActionInputSchemas = {
   'notifications.webhooks.signingSecret.clear': ChannelTargetSchema,
   'notifications.expoPush.update': z.strictObject({ patch: ExpoPushPatchSchema }),
   'notifications.sounds.preview': z.strictObject({}),
+  'notifications.push.test': z.strictObject({ tokenId: ChannelIdSchema }),
   'notifications.desktop.permission.read': z.strictObject({}),
   'notifications.desktop.permission.request': z.strictObject({}),
   'notifications.push.tokens.list': z.strictObject({}),
@@ -67,6 +70,7 @@ export const NotificationConfigurationActionOutputSchemas = {
   'notifications.webhooks.signingSecret.clear': MutationOutputSchema,
   'notifications.expoPush.update': MutationOutputSchema,
   'notifications.sounds.preview': z.strictObject({ notificationId: ChannelIdSchema }),
+  'notifications.push.test': PushNotificationTestResultSchema,
   'notifications.desktop.permission.read': z.strictObject({ status: z.enum(['granted', 'notGranted']) }),
   'notifications.desktop.permission.request': z.strictObject({ status: z.enum(['granted', 'notGranted']) }),
   'notifications.push.tokens.list': z.strictObject({ tokens: z.array(PushTokenRegistrationDiagnosticsSchema) }),
@@ -82,7 +86,8 @@ export const NotificationConfigurationActionOutputSchemas = {
   'notifications.push.register': z.strictObject({ status: z.literal('reconciled') }),
 } as const;
 
-export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
+function createNotificationConfigurationActionSpecs() {
+  return NOTIFICATION_CONFIGURATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   ...({
     'notifications.webhooks.add': { confirmVerb: { key: 'common.add', fallback: 'Add' } },
     'notifications.webhooks.test': { confirmVerb: { key: 'common.send', fallback: 'Send' } },
@@ -104,6 +109,7 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
     'notifications.webhooks.signingSecret.clear': 'Clear notification webhook signing secret',
     'notifications.expoPush.update': 'Configure built-in push notifications',
     'notifications.sounds.preview': 'Preview notification sound',
+    'notifications.push.test': 'Send a remote push test',
     'notifications.desktop.permission.read': 'Read desktop notification permission',
     'notifications.desktop.permission.request': 'Request desktop notification permission',
     'notifications.push.tokens.list': 'List push notification registrations',
@@ -115,21 +121,25 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
   description: id === 'notifications.expoPush.update'
     ? 'Update the existing built-in Expo push endpoint and its corresponding Account attention preferences together. Topic and preview delivery still intersect global topic and privacy rules; absent or deleted endpoints are not recreated.'
     : id === 'notifications.webhooks.test' ? 'Send one fixed diagnostic payload to a configured channel through the Account daemon’s existing signed webhook delivery. Reports receiver acceptance, refusal or unreachability. Does not change notification preferences or validate automatic delivery policy. Ask first by default; retry only on another invocation.'
-    : id === 'notifications.sounds.preview' ? 'Send one native local preview notification using the captured Account sound preset and this device’s current sound preference. Available on native mobile clients only.'
+    : id === 'notifications.push.test' ? 'Submit one fixed diagnostic notification to an addressed push registration on the captured Account Home using its ordinary remote push transport. Service acceptance does not confirm phone receipt or display and does not validate mute, quiet-hour or enrollment policy.'
+    : id === 'notifications.sounds.preview' ? 'Preview the captured Account sound preset using this device’s current sound preference: a bundled sound on desktop, or a local notification on native mobile clients. Desktop playback follows operating-system volume and mute.'
     : id.startsWith('notifications.desktop.') ? 'Read or request this desktop’s operating-system notification permission. Automation asks first by default; the OS still owns the permission decision.'
     : id.startsWith('notifications.push.tokens.') ? 'Read or remove the addressed captured Account push registration. Native token material is resolved privately and is never an Action operand or receipt.'
     : id === 'notifications.push.register' ? 'Run the existing device-wide push reconciler for all locally credentialed Homes. Reconciled means the recovery attempt settled; unsupported, denied and unreachable registrations retain the reconciler’s existing skip behavior.'
     : id.startsWith('notifications.push.permission.') ? 'Read or request this device’s native push permission through the existing OS access and priming flow. The local_notifications purpose requests device permission independently of remote push consent without changing that consent. Automation asks first by default; the OS still owns the permission decision.'
     : 'Configure notification webhooks through the captured Account notification catalog. Signing secret values are write-only.',
   safety: id === 'notifications.webhooks.list' || id === 'notifications.push.tokens.list' || id.startsWith('notifications.desktop.')
-    || id.startsWith('notifications.push.permission.') || id === 'notifications.push.register' || id === 'notifications.sounds.preview' ? 'safe' : 'danger',
+    || id.startsWith('notifications.push.permission.') || id === 'notifications.push.register' || id === 'notifications.sounds.preview' || id === 'notifications.push.test' ? 'safe' : 'danger',
   sideEffectClass: id === 'notifications.webhooks.list' || id === 'notifications.push.tokens.list' || id === 'notifications.desktop.permission.read'
     || id === 'notifications.push.permission.read' ? 'read'
     : id === 'notifications.desktop.permission.request' || id === 'notifications.push.permission.request' || id === 'notifications.push.register'
-      || id === 'notifications.sounds.preview' ? 'write' : 'danger',
+      || id === 'notifications.sounds.preview' || id === 'notifications.push.test' ? 'write' : 'danger',
   requiredAuthority: 'account_automation', executionPlacement: id === 'notifications.webhooks.test' ? 'account' : 'client', placements: [],
-  bindings: { mcpToolName: id.replace(/[.]/g, '_').replace('signingSecret', 'signing_secret') },
-  surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+  bindings: { mcpToolName: id.replace(/[.]/g, '_').replace('signingSecret', 'signing_secret'),
+    voiceClientToolName: id.replace(/[.]/g, '_').replace('signingSecret', 'signing_secret') },
+  cli: { acceptsServerId: true, commands: [{ path: id.split('.').map(segment =>
+    segment.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)), visibility: 'canonical' }] },
+  surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
   toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
   inputSchema: NotificationConfigurationActionInputSchemas[id], outputSchema: NotificationConfigurationActionOutputSchemas[id],
   inputHints: { fields: [
@@ -139,7 +149,7 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
     ...(id === 'notifications.webhooks.add' ? [{ path: 'url', title: 'Webhook URL', widget: 'text' as const, required: true }] : []),
     ...(id === 'notifications.webhooks.update' ? [{ path: 'patch', title: 'Webhook configuration', widget: 'json' as const, required: true }] : []),
     ...(id === 'notifications.expoPush.update' ? [{ path: 'patch', title: 'Push endpoint and Account attention preferences', widget: 'json' as const, required: true }] : []),
-    ...(id === 'notifications.push.tokens.remove' ? [{ path: 'tokenId', title: 'Push registration id', widget: 'text' as const, required: true }] : []),
+    ...(id === 'notifications.push.tokens.remove' || id === 'notifications.push.test' ? [{ path: 'tokenId', title: 'Push registration id', widget: 'text' as const, required: true }] : []),
     ...(id === 'notifications.webhooks.signingSecret.set' ? [{ path: 'secret', title: 'Signing secret', widget: 'secret' as const, required: true }] : []),
   ] },
   ...(id === 'notifications.webhooks.signingSecret.set' ? {
@@ -151,3 +161,6 @@ export const NOTIFICATION_CONFIGURATION_ACTION_SPECS = NOTIFICATION_CONFIGURATIO
       clientServerUrl: row.clientServerUrl === null ? null : '[redacted]' })) } : {};
   } } : {}),
 }));
+}
+
+export const NOTIFICATION_CONFIGURATION_ACTION_SPECS: ReturnType<typeof createNotificationConfigurationActionSpecs> = lazyActionSpecArray(createNotificationConfigurationActionSpecs);

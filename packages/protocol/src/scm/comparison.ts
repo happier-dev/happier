@@ -3,6 +3,8 @@ import { z } from 'zod/mini';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { ActionInvokeInputProtocolSchema } from '../actions/actionInvokeInput.js';
+export { ScmFileViewedStateV1Schema, ScmFileViewedReadResultV1Schema, ScmFileViewedSetResultV1Schema } from './fileViewed.js';
+export type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from './fileViewed.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolJsonValue, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '../plugins/actions/protocolComposableSchema.js';
@@ -43,6 +45,8 @@ export const ScmComparisonSourceProtocolSchema = defineProtocolUnion([
     /** Base branch tip selector, distinct from the captured diff-before merge base. */
     baseOid: sourceIdentity.optional(), headOid: sourceIdentity.optional(),
     sourceAction: ActionInvokeInputProtocolSchema.optional(),
+    fileViewedActions: defineProtocolObject({ read: ActionInvokeInputProtocolSchema,
+      set: ActionInvokeInputProtocolSchema }, { policy: 'closed' }).optional(),
   }, { policy: 'closed' }) }, { policy: 'closed' }),
 ]);
 // The portable parser omits absent optional values; its admitted output is JSON even when

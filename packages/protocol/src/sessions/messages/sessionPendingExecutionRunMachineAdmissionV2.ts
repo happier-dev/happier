@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../../messages/structured/participantMessageV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -22,6 +23,7 @@ export const SessionExecutionRunPendingEnqueueRequestV1Schema = lazyZodSchema(()
   localId: PendingLocalIdSchema,
   targetMachineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
   content: StrictSessionStoredMessageContentEnvelopeSchema,
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   messageRole: z.optional(z.unknown()),
   requestedAction: z.optional(PendingRequestedActionV1Schema),
   reply: z.optional(SessionMessageReplyAdmissionV1Schema),
@@ -67,6 +69,8 @@ export const SessionPendingExecutionRunAcceptedRequestV2Schema = lazyZodSchema((
   ...executionRunTargetFields,
   localId: PendingLocalIdSchema,
   acceptedDelivery: z.optional(SessionMessageAcceptedDeliveryContentV1Schema),
+  /** Added delivery component only; settlement merges with retained whole-message timing. */
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   acceptedTurn: z.optional(SessionMessageAcceptedTurnV1Schema),
 }));
 export type SessionPendingExecutionRunAcceptedRequestV2 = z.infer<typeof SessionPendingExecutionRunAcceptedRequestV2Schema>;

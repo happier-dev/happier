@@ -88,6 +88,8 @@ export const PublicProfileMetadataV1Schema = lazyZodSchema(() => z.strictObject(
 export type PublicProfileMetadataV1 = z.infer<typeof PublicProfileMetadataV1Schema>;
 export const PublicProfileIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   name: z.optional(z.string()), sinceMs: z.optional(count), avatarUrl: z.optional(PublicProfileHttpsUrlV1Schema),
+  /** Account media has no admitted anonymous URL; the producer explains the safe Brand fallback. */
+  avatar: z.optional(z.strictObject({ kind: z.literal('planet'), reason: z.literal('account_image_unavailable') })),
 }));
 export type PublicProfileIdentityV1 = z.infer<typeof PublicProfileIdentityV1Schema>;
 export const PublicProfilePolicyV1StoredSchema = createStoredReadSchema(PublicProfilePolicyV1Schema);

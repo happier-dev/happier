@@ -118,7 +118,7 @@ export const ScmRepositoryCloneInputSchema = lazyZodSchema(() => z.strictObject(
     destinationParentPath: z.string().check(z.trim(), z.minLength(1), z.refine((value) => !hasUnsafePathInput(value), 'Destination parent path must not use home expansion or traversal segments')),
     destinationDirectoryName: z.string().check(z.trim(), z.minLength(1), z.refine((value) => value !== '.' && value !== '..' && !/[\/\\]/.test(value) && !hasUnsafePathInput(value), 'Destination directory name must be a single safe path segment')),
     protocol: SourceControlCloneProtocolSchema,
-    initialCheckout: z.optional(z.strictObject({ branch: z.literal('main'), commit: ScmCommitOidSchema })),
+    initialCheckout: z.optional(z.strictObject({ branch: z.nullable(z.literal('main')), commit: ScmCommitOidSchema })),
     confirmed: z.literal(true),
     authorizationToken: ScmRepositoryCloneAuthorizationTokenSchema,
   }));

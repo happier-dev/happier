@@ -4,9 +4,11 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionIdSchema } from '../idsV1.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
-import { normaliseAndValidateBotFaceShape } from './botFaceShapeValidation.js';
+import { BOT_FACE_SHAPE_GEOMETRY_GUIDANCE, normaliseAndValidateBotFaceShape } from './botFaceShapeValidation.js';
+import { generateBotFaceShape } from './botFaceShapeGenerator.js';
 export * from './botFaceGeometry.js';
 export { normaliseAndValidateBotFaceShape } from './botFaceShapeValidation.js';
+export { generateBotFaceShape, BOT_FACE_SHAPE_PARTS, type BotFaceShapeParts, type BotFaceShapeGeneratorOptions } from './botFaceShapeGenerator.js';
 
 /** Cosmetic choices shared with every authorized viewer; never work or authority. */
 export const BotFaceStyleSchema = lazyZodSchema(() => z.enum(['dither', 'pixel', 'solid', 'dots', 'planet']));
@@ -32,7 +34,7 @@ export const BotFaceShapeV1Schema = lazyZodSchema(() => z.strictObject({
   cut: z.optional(z.array(z.union([z.string(), z.tuple([z.string(), z.number()])]))),
   mouth: z.tuple([z.number(), z.number(), z.number()]),
   origin: z.optional(z.enum(['surprise', 'custom'])),
-}));
+}).check(z.meta({ description: BOT_FACE_SHAPE_GEOMETRY_GUIDANCE })));
 export type BotFaceShapeV1 = z.infer<typeof BotFaceShapeV1Schema>;
 
 export const SessionBotFaceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -77,21 +79,23 @@ export function readSessionBotFaceV1(value: unknown): SessionBotFaceV1 | null {
   return parsed.success ? parsed.data : null;
 }
 
-export const BotFaceSetInputSchema = lazyZodSchema(() => z.pipe(z.strictObject({
+const GeneratedBotFaceInputSchema = lazyZodSchema(() => z.extend(SessionBotFaceV1Schema, {
+  shape: z.strictObject({ generate: z.literal('surprise'), seed: z.number().check(z.int()) }),
+}));
+const BotFaceSetRequestSchema = lazyZodSchema(() => z.strictObject({
   sessionId: asProtocolZod(SessionIdSchema),
-  face: z.nullable(SessionBotFaceV1Schema),
+  face: z.nullable(z.union([SessionBotFaceV1Schema, GeneratedBotFaceInputSchema])),
 }).check(z.superRefine((input, ctx) => {
   // Reuse the public Action request owner, including for local CLI/UI ingress. No new shape/path cap.
   if (input.face?.shape && new TextEncoder().encode(JSON.stringify(input)).byteLength > EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES) {
     ctx.addIssue({ code: 'custom', path: ['face', 'shape'], message: 'Face exceeds the existing Action request payload limit' });
   }
-})), z.transform((input, ctx) => {
-  if (!input.face?.shape) return input;
-  const result = normaliseAndValidateBotFaceShape(input.face.shape);
-  if (!result.ok) {
-    for (const message of result.errors) ctx.issues.push({ code: 'custom', input, path: ['face', 'shape'], message });
-    return z.NEVER;
-  }
-  return { ...input, face: { ...input.face, shape: result.shape } };
+})));
+export const BotFaceSetInputSchema = lazyZodSchema(() => z.pipe(BotFaceSetRequestSchema, z.strictObject({
+  sessionId: asProtocolZod(SessionIdSchema),
+  face: z.nullable(z.union([
+    SessionBotFaceV1AuthoringSchema,
+    z.pipe(GeneratedBotFaceInputSchema, z.transform(({ shape, ...face }) => ({ ...face, shape: generateBotFaceShape(shape.seed) }))),
+  ])),
 })));
 export type BotFaceSetInput = z.infer<typeof BotFaceSetInputSchema>;

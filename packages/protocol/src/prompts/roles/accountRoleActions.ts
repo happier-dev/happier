@@ -57,7 +57,7 @@ export type RoleArtifactRetentionReceiptV1 = Readonly<{ artifactId: string; expe
 
 /** Typed domain refusal shared by Account and Session Role Action owners. */
 export class RoleActionRefusalV1 extends Error {
-  constructor(readonly code: string) {
+  constructor(readonly code: string, readonly details?: ActionExecuteFailure['details']) {
     super(code);
   }
 }
@@ -66,15 +66,45 @@ function refuse(code: string): never {
   throw new RoleActionRefusalV1(code);
 }
 
-/** Current guidance remains re-importable until its actual Settings source is cleaned. */
-export async function assertAccountRoleArtifactDeletionV1(params: Readonly<{
+export type RawRoleSettingsMutationV1 = (mutate: (
+  raw: Readonly<Record<string, unknown>>,
+) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>, signal?: AbortSignal) => Promise<void>;
+
+/** Remove a retained Role's predecessor source through the Account Settings CAS before deleting it. */
+export async function prepareAccountRoleArtifactDeletionV1(params: Readonly<{
   artifactId: string;
   readTargetArtifactKind: () => string | undefined | Promise<string | undefined>;
   accountId: string;
   rawSettings: Readonly<Record<string, unknown>>;
+  mutateRawAccountSettings?: RawRoleSettingsMutationV1;
+  expectedRevision?: WorkflowArtifactRevisionV1;
+  readTargetArtifactRevision?: () => WorkflowArtifactRevisionV1 | undefined | Promise<WorkflowArtifactRevisionV1 | undefined>;
+  signal?: AbortSignal;
 }>): Promise<void> {
   const inventory = readLegacyRoleInventoryV1(params.rawSettings, params.accountId);
-  if (inventory.sourceArtifactIds.includes(params.artifactId)) refuse('role_source_incomplete');
+  if (inventory.sourceArtifactIds.includes(params.artifactId)) {
+    if (!params.mutateRawAccountSettings) refuse('role_source_incomplete');
+    if (params.expectedRevision) {
+      const current = await params.readTargetArtifactRevision?.();
+      if (!current || current.headerVersion !== params.expectedRevision.headerVersion
+        || current.bodyVersion !== params.expectedRevision.bodyVersion) refuse('currentness_conflict');
+    }
+    await params.mutateRawAccountSettings(raw => {
+      const current = readLegacyRoleInventoryV1(raw, params.accountId);
+      if (!current.sourceArtifactIds.includes(params.artifactId)) {
+        if (!current.sourceIdentitiesComplete) refuse('role_source_incomplete');
+        return raw;
+      }
+      if (!Array.isArray(raw.executionRunsGuidanceEntries)) refuse('role_source_incomplete');
+      // Use the migration's stable Account/entry identity, including entries whose
+      // payload became malformed after their Artifact was retained. Preserve all neighbors.
+      const remaining = raw.executionRunsGuidanceEntries.filter(entry => !readLegacyRoleInventoryV1({
+        executionRunsGuidanceEntries: [entry],
+      }, params.accountId).sourceArtifactIds.includes(params.artifactId));
+      return { ...raw, executionRunsGuidanceEntries: remaining };
+    }, params.signal);
+    return;
+  }
   if (inventory.sourceIdentitiesComplete) return;
   const targetArtifactKind = await params.readTargetArtifactKind();
   if (targetArtifactKind === undefined || targetArtifactKind === 'role.v1') {
@@ -85,7 +115,8 @@ export async function assertAccountRoleArtifactDeletionV1(params: Readonly<{
 /** Internal Action adapter: transport exceptions are not Role-owner refusals. */
 export function projectAccountRoleActionRefusalV1(error: unknown): ActionExecuteFailure | null {
   return error instanceof RoleActionRefusalV1 || error instanceof LegacyRolesInventoryIncompleteError
-    ? { ok: false, errorCode: error.code, error: error.message }
+    ? { ok: false, errorCode: error.code, error: error.message,
+        ...(error instanceof RoleActionRefusalV1 && error.details !== undefined ? { details: error.details } : {}) }
     : null;
 }
 
@@ -236,6 +267,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
   artifactStore?: RoleArtifactStoreV1;
   readRoleSources?: RoleSourceReaderV1;
   generateId: () => string;
+  mutateRawAccountSettings?: RawRoleSettingsMutationV1;
   mutateAccountRoleOverrides?: (mutation: RoleOverrideMutationV1, context: ActionExecutorContext) => Promise<void>;
 }>): NonNullable<ActionExecutorDeps['roleActionExecute']> {
   const listEntries = params.readRoleSources ?? createRoleSourceReaderV1(params);
@@ -274,7 +306,10 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
     if (!params.artifactStore) refuse('not_authenticated');
     const request = RoleActionInputSchemasV1[actionId].parse(input);
     if ('roleId' in request && request.roleId && (Object.hasOwn(BUILT_IN_ROLES_V1, request.roleId) || request.roleId.startsWith('plugin:'))) refuse('role_read_only');
-    const retainedRawSettings = await retainLegacy(context);
+    // Deletion requires the retained target, not an import of every neighboring
+    // guidance entry. Incomplete unrelated payloads must not prevent its removal.
+    const retainedRawSettings = actionId === 'roles.delete' && params.accountId && params.readRawAccountSettings
+      ? await params.readRawAccountSettings() : await retainLegacy(context);
     if (actionId === 'roles.create') {
       const request = RoleActionInputSchemasV1[actionId].parse(input);
       const roleId = request.roleId ?? params.generateId();
@@ -285,11 +320,16 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
     }
     if (actionId === 'roles.delete') {
       const request = RoleActionInputSchemasV1[actionId].parse(input);
-      if (retainedRawSettings && params.accountId) await assertAccountRoleArtifactDeletionV1({
-        artifactId: request.roleId, readTargetArtifactKind: () => 'role.v1', accountId: params.accountId, rawSettings: retainedRawSettings,
-      });
       const existing = await params.artifactStore.read(request.roleId, context.signal ? { signal: context.signal } : undefined);
       if (!existing || existing.header.kind !== 'role.v1') refuse('role_target_unavailable');
+      if (existing.revision.headerVersion !== request.expectedRevision.headerVersion
+        || existing.revision.bodyVersion !== request.expectedRevision.bodyVersion) refuse('currentness_conflict');
+      if (retainedRawSettings && params.accountId) await prepareAccountRoleArtifactDeletionV1({
+        artifactId: request.roleId, readTargetArtifactKind: () => 'role.v1', accountId: params.accountId, rawSettings: retainedRawSettings,
+        expectedRevision: request.expectedRevision, readTargetArtifactRevision: () => existing.revision,
+        mutateRawAccountSettings: params.mutateRawAccountSettings,
+        signal: context.signal,
+      });
       const deleted = await params.artifactStore.delete(request.roleId, { expectedRevision: request.expectedRevision,
         ...(context.signal ? { signal: context.signal } : {}) });
       if (!deleted.ok) refuse(deleted.errorCode === 'version_mismatch' ? 'currentness_conflict' : deleted.errorCode);
@@ -307,7 +347,3 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
     return refuse('unsupported_action');
   };
 }
-
-export type RawRoleSettingsMutationV1 = (mutate: (
-  raw: Readonly<Record<string, unknown>>,
-) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>, signal?: AbortSignal) => Promise<void>;

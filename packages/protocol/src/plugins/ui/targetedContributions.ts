@@ -24,6 +24,9 @@ import {
 } from '../runtime/sourceCustody.js';
 import type { PluginUiInstanceKeyV1 } from './semanticCommands.js';
 import type { JsonValue } from '../../json/strictJsonValue.js';
+import { PluginUiRuntimeOccurrenceIdV1Schema } from './runtimeOccurrenceV1.js';
+export { PluginUiImmutableGenerationIdV1Schema, PluginUiRuntimeOccurrenceIdV1Schema } from './runtimeOccurrenceV1.js';
+export type { PluginUiImmutableGenerationIdV1, PluginUiRuntimeOccurrenceIdV1 } from './runtimeOccurrenceV1.js';
 
 /** One mounted target can expose at most this many admitted contributors. */
 export const PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 = 256;
@@ -42,21 +45,6 @@ export const PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 = 4;
  * have no runtime materialization, while their committed generation remains
  * the authority that selection and later execution must preserve.
  */
-const NO_OUTER_WHITESPACE_PATTERN = /^(?!\s)[\s\S]*\S$(?![\s\S])/u;
-
-export const PluginUiImmutableGenerationIdV1Schema = defineProtocolString({
-  minLength: 1,
-  maxLength: 256,
-  pattern: NO_OUTER_WHITESPACE_PATTERN.source,
-});
-export type PluginUiImmutableGenerationIdV1 = ReturnType<typeof PluginUiImmutableGenerationIdV1Schema.parse>;
-
-export const PluginUiRuntimeOccurrenceIdV1Schema = defineProtocolString({
-  minLength: 1,
-  maxLength: 512,
-  pattern: NO_OUTER_WHITESPACE_PATTERN.source,
-});
-export type PluginUiRuntimeOccurrenceIdV1 = ReturnType<typeof PluginUiRuntimeOccurrenceIdV1Schema.parse>;
 
 export const PluginUiTargetedContributionTargetV1Schema = defineProtocolObject({
   pluginId: PluginIdSchema,
@@ -327,9 +315,13 @@ export const PluginUiTargetedContributionProtocolSnapshotV1Schema = lazyZodSchem
     previousContributorKey = key;
   });
 })));
-export type PluginUiTargetedContributionProtocolSnapshotV1 = z.infer<
+/**
+ * The published projection is immutable: readers keep row identity across re-reads (frozen,
+ * structurally shared rows), and no consumer mutates it. Parsed wire values assign to it.
+ */
+export type PluginUiTargetedContributionProtocolSnapshotV1 = Readonly<Omit<z.infer<
   typeof PluginUiTargetedContributionProtocolSnapshotV1Schema
->;
+>, 'contributions'> & { contributions: readonly PluginUiTargetedContributionV1[] }>;
 
 /**
  * One target-declared point and all of its accepted protocol epochs. Grouping
@@ -386,9 +378,9 @@ export const PluginUiTargetedContributionPointSnapshotV1Schema = lazyZodSchema((
     });
   }
 })));
-export type PluginUiTargetedContributionPointSnapshotV1 = z.infer<
+export type PluginUiTargetedContributionPointSnapshotV1 = Readonly<Omit<z.infer<
   typeof PluginUiTargetedContributionPointSnapshotV1Schema
->;
+>, 'protocols'> & { protocols: readonly PluginUiTargetedContributionProtocolSnapshotV1[] }>;
 
 /**
  * The immutable, target-filtered admission projection carried in a Host API
@@ -414,9 +406,9 @@ export const PluginUiTargetedContributionsV1Schema = lazyZodSchema(() => z.stric
     previousPointId = point.pointId;
   });
 })));
-export type PluginUiTargetedContributionsV1 = z.infer<
+export type PluginUiTargetedContributionsV1 = Readonly<Omit<z.infer<
   typeof PluginUiTargetedContributionsV1Schema
->;
+>, 'points'> & { points: readonly PluginUiTargetedContributionPointSnapshotV1[] }>;
 
 type TargetedContributorIdentity = Readonly<{
   pluginId: string;

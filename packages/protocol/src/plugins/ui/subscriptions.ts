@@ -1,14 +1,15 @@
-import { ActionOperationSnapshotV1Schema } from '../../actions/operations/v1.js';
-import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
-import { lazyDefinition } from '../../lazyZodSchema.js';
-import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
-import type { ActionId } from '../../actions/actionIds.js';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { PluginUiArtifactDigestV1Schema } from './artifactIntegrity.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
+import { ActionOperationSnapshotV1Schema } from '../../actions/operations/v1.js';
+import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
+import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
+import { ManagedListInputV1Schema } from '../../machines/managed/actionsV1.js';
+import type { ActionId } from '../../actions/actionIds.js';
+export { PluginUiMachineServiceLogsReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
 
 /** Closed, invocation-qualified authority observation; it never returns credential material. */
 export const PluginUiReadAuthorityReferenceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -20,10 +21,13 @@ export const PluginUiReadAuthorityReferenceV1Schema = lazyZodSchema(() => z.stri
 }));
 export type PluginUiReadAuthorityReferenceV1 = z.infer<typeof PluginUiReadAuthorityReferenceV1Schema>;
 
-/** Closed host-read identity. Action admission still owns caller policy and input validation. */
 export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.union([z.strictObject({
-  hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get', 'action.operations.get']),
+  hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get', 'discussion.get', 'action.operations.get']),
   input: PluginUiJsonValueV1Schema,
+}), z.strictObject({
+  hostRead: z.literal('machines.managed.list'),
+  // This observation borrows the canonical active inventory, not a second query/selector owner.
+  input: z.strictObject({ homeId: ManagedListInputV1Schema.shape.homeId }),
 }), PluginUiMachineServiceReadReferenceV1Schema]));
 export type PluginUiHostReadReferenceV1 = z.infer<typeof PluginUiHostReadReferenceV1Schema>;
 
@@ -37,7 +41,6 @@ export function resolvePluginUiHostReadActionIdV1(hostRead: PluginUiHostReadRefe
   }
 }
 
-
 /** Existing qualified operation and transport evidence, without reclassifying acceptance or settlement. */
 export const PluginUiActionOperationHostReadResultV1Schema = lazyZodSchema(() => z.strictObject({
   operation: z.nullable(ActionOperationSnapshotV1Schema),
@@ -48,10 +51,11 @@ export const PluginUiActionOperationHostReadResultV1ProtocolSchema = lazyDefinit
   projectZodProtocolSchema(PluginUiActionOperationHostReadResultV1Schema));
 
 /**
- * The resource a subscription observes: a **resource contribution** reference,
+ * The subject a subscription observes: a **resource contribution** reference,
  * spelled exactly as `readResource` spells it — a bare local id bound to the
  * calling plugin, a qualified `{ pluginId, localId }`, or a closed host-read
- * reference admitted by the canonical Action executor.
+ * reference admitted by the canonical Action executor. An authority-only target
+ * instead observes its exact admitted read consumer/purpose and has no snapshot.
  *
  * It deliberately does NOT reuse `PluginSessionResourceTargetV1`, which is the
  * declarative UI target selector of a different bounded context (§3.6.1). Using
@@ -92,9 +96,10 @@ export type PluginUiDisposeHostResourceRequestV1 =
  * The canonical plugin UI subscription event (§3.6).
  *
  * It is a **bounded invalidation signal, not a payload channel**: `readResource`
- * remains the single snapshot authority, so an observer re-reads through it
- * after an `invalidated` event rather than receiving resource bytes here. The
- * predecessor `snapshot` arm carried a full `PluginUiResourceSnapshotV1` — a
+ * remains the single Resource snapshot authority, so an observer re-reads through it
+ * after an `invalidated` event rather than receiving resource bytes here.
+ * Authority-only watches carry terminal withdrawal, never a credential digest.
+ * The predecessor `snapshot` arm carried a full `PluginUiResourceSnapshotV1` — a
  * second data path bound to the declarative session-resource-target vocabulary —
  * and is retired with its `resourceSnapshots.ts` owner; it had no producer.
  *

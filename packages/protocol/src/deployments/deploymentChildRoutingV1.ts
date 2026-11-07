@@ -4,6 +4,7 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import type { DeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
 import { DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRpcV1Schema } from './deploymentChildRpcV1.js';
+import { DeploymentTeardownStepV1Schema } from './deploymentActionsV1.js';
 
 const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deployments.rollback', 'deployments.promote']),
     machineId: id, installationId: id,
@@ -16,6 +17,9 @@ const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deplo
 /** Non-content admission references beside E2EE params, authenticated by the incumbent source signature. */
 export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRpcV1Schema,
+    z.strictObject({ v: z.literal(1), kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
+        machineId: id, installationId: id, input: common.input, deploymentId: id, actionOperationId: id,
+        step: DeploymentTeardownStepV1Schema, mode: z.enum(['observe', 'execute']) }),
     z.strictObject({ v: z.literal(1), kind: z.literal('prepare'), actionId: z.literal('deployments.deploy'),
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id }),
         expectedRevision: revision, expectedTargetLinkRevision: revision }),
@@ -26,8 +30,8 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => z.discriminate
     z.strictObject({ ...common, kind: z.literal('member'), deploymentId: id, actionOperationId: id,
         phase: z.enum(['activate', 'restore', 'observe', 'cleanup']), selectedDeploymentId: id }),
 ]).check(z.refine(value => value.kind !== 'member' || value.phase !== 'cleanup' || value.selectedDeploymentId === value.deploymentId),
-    z.refine(value => value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
-    z.refine(value => value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined))));
+    z.refine(value => value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
+    z.refine(value => value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined))));
 export type DeploymentChildRoutingV1 = z.infer<typeof DeploymentChildRoutingV1Schema>;
 
 /** The sender and receiver derive one tuple from admitted work; callers cannot author another routing basis. */
@@ -43,6 +47,11 @@ export function projectDeploymentChildRoutingV1(job: DeploymentChildRpcV1): Depl
         expectedRevision: job.expectedRevision, expectedTargetLinkRevision: job.expectedTargetLinkRevision };
     const { serverId, environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision, requestKey,
         contentArtifactId, contentHeaderVersion, contentBodyVersion } = job.input;
+    if (job.kind === 'teardown') return { v: job.v, kind: job.kind, actionId: job.actionId,
+        machineId: job.machineId, installationId: job.installationId,
+        input: { serverId, environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision, requestKey,
+            contentArtifactId, contentHeaderVersion, contentBodyVersion },
+        deploymentId: job.deploymentId, actionOperationId: job.actionOperationId, step: job.step, mode: job.mode };
     const common = { v: job.v, actionId: job.actionId, machineId: job.machineId, installationId: job.installationId,
         ...(job.actionId === 'deployments.promote' ? { promotion: { sourceEnvironmentId: job.input.sourceEnvironmentId,
             sourceDeploymentId: job.input.sourceDeploymentId, artifact: job.input.artifact,

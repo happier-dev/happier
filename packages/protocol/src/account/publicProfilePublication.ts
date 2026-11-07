@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { UsageQuerySchema } from '../inputs/usageQuery.js';
+import { UsageQuerySchema, UsageRelativePeriodSchema } from '../inputs/usageQuery.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema } from '../scm/repositoryClone.js';
 import { WidgetSnapshotDocumentV1Schema } from '../sessions/board/declarative/snapshot.js';
 import { WidgetGridSizeV1Schema, WidgetGroupWidthV1Schema } from '../widgets/widgetPresentationV1.js';
@@ -14,6 +14,8 @@ import { normalizePublicProfileReportUrlV1 } from './publicProfileReportUrl.js';
 
 export { PublicProfileLayoutV1Schema } from '../widgets/widgetPublicSnapshotV1.js';
 export type { PublicProfileLayoutV1 } from '../widgets/widgetPublicSnapshotV1.js';
+export { PUBLIC_PROFILE_PAGE_COPY_EN, PUBLIC_PROFILE_FIELD_COPY_EN, PUBLIC_USAGE_CHART_COPY_EN,
+  PUBLIC_USAGE_PLANET_COPY_EN, PUBLIC_USAGE_ORIGINAL_COPY_EN } from './publicProfilePresentationCopy.js';
 const theme = z.enum(['auto', 'light', 'dark']);
 const serviceUrl = z.string().check(z.url(), z.refine(value => {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
@@ -48,6 +50,7 @@ export const PublicProfileViewLayoutV1Schema = lazyZodSchema(() => z.strictObjec
 }));
 export const PublicProfileViewV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(1), handle: z.string(),
   indexable: z.boolean(),
+  relativePeriod: z.optional(UsageRelativePeriodSchema),
   service: PublicProfileServiceV1Schema, state: z.literal('published'), identity: PublicProfileIdentityV1Schema,
   metadata: PublicProfileMetadataV1Schema, snapshot: PublicProfileSnapshotV1Schema, layout: PublicProfileViewLayoutV1Schema,
   appearance: PublicProfileAppearanceV1Schema, urls: PublicProfileUrlsV1Schema,
@@ -94,7 +97,8 @@ export const PublicProfilePublishBodyV1Schema = lazyZodSchema(() => z.strictObje
 }));
 export const PublicProfileUpdateBodyV1Schema = lazyZodSchema(() => z.strictObject({
   policy: z.optional(PublicProfilePolicyV1Schema), metadata: z.optional(PublicProfileMetadataV1Schema), projectSelections: z.optional(selections),
-  query: z.optional(preparedQuery), layout: z.optional(PublicProfileLayoutV1Schema), appearance: z.optional(PublicProfilePreparedAppearanceV1Schema),
+  query: z.optional(preparedQuery), snapshot: z.optional(PublicProfileSnapshotV1Schema),
+  layout: z.optional(PublicProfileLayoutV1Schema), appearance: z.optional(PublicProfilePreparedAppearanceV1Schema),
 }).check(z.refine(value => Object.values(value).some(value => value !== undefined))));
 export const PublicProfileRefreshBodyV1Schema = lazyZodSchema(() => z.strictObject({
   query: preparedQuery, snapshot: PublicProfileSnapshotV1Schema, projectLinks: z.optional(z.array(PublicProfileLinkV1Schema)),

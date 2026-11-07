@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import type { PromptFoldersV1 } from '../prompts/library/promptFoldersV1.js';
 
 /** Generic library metadata. Personal placement is stored in the existing private folders row. */
 export const ArtifactOrganizationHeaderV1Schema = lazyZodSchema(() => z.strictObject({
@@ -28,15 +29,18 @@ export function normalizeArtifactTagsV1(value: readonly string[] | null | undefi
 /** A received Artifact never imports its owner's private folder or tags. */
 export function resolveArtifactOrganizationHeaderV1(input: Readonly<{
   artifactId: string;
-  artifactHeadersById?: Readonly<Record<string, ArtifactOrganizationHeaderV1>>;
+  organization?: Pick<PromptFoldersV1, 'artifactHeadersById' | 'deletedLegacyFolderIds'>;
   header: Readonly<Record<string, unknown>>;
   owned: boolean;
 }>): ArtifactOrganizationHeaderV1 {
-  const personal = input.artifactHeadersById && Object.hasOwn(input.artifactHeadersById, input.artifactId)
-    ? ArtifactOrganizationHeaderV1Schema.parse(input.artifactHeadersById[input.artifactId]) : {};
+  const artifactHeadersById = input.organization?.artifactHeadersById;
+  const personal = artifactHeadersById && Object.hasOwn(artifactHeadersById, input.artifactId)
+    ? ArtifactOrganizationHeaderV1Schema.parse(artifactHeadersById[input.artifactId]) : {};
   const legacy = input.owned ? StoredArtifactOrganizationHeaderV1Schema.parse({
     ...(!Object.hasOwn(personal, 'folderId') && Object.hasOwn(input.header, 'folderId') ? { folderId: input.header.folderId } : {}),
     ...(!Object.hasOwn(personal, 'tags') && Object.hasOwn(input.header, 'tags') ? { tags: input.header.tags } : {}),
   }) : {};
-  return { ...legacy, ...personal };
+  return { ...legacy,
+    ...(legacy.folderId && input.organization?.deletedLegacyFolderIds?.includes(legacy.folderId) ? { folderId: null } : {}),
+    ...personal };
 }

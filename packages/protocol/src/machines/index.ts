@@ -53,6 +53,7 @@ export {
 } from './machineStoredContent.js';
 
 export * from './machineFinitePolicyV1.js';
+export * from './adminAccessV1.js';
 export * from './machineReachabilityV1.js';
 export * from './machineContentKeyTransitionV1.js';
 
@@ -169,3 +170,4 @@ export * from './managed/actionsV1.js';
 export * from './managed/managedMachinePresetV1.js';
 export * from './managed/machinePresetActionsV1.js';
 export * from './managed/managedConfigurationV1.js';
+export * from './machineAuthorityV1.js';

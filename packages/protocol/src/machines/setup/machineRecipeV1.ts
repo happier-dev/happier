@@ -1,3 +1,4 @@
+import '../../zodRuntimePolicy.js';
 import { z } from 'zod';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';

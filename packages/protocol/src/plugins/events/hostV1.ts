@@ -5,6 +5,8 @@ import {
 import {
   HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1, AccountEntitiesInvalidatedHostEventV1Schema,
   type AccountEntitiesInvalidatedHostEventV1,
+  HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1, DeploymentReceiptInvalidatedHostEventV1Schema,
+  type DeploymentReceiptInvalidatedHostEventV1,
   HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   HealthCheckHeartbeatReceivedHostEventV1Schema,
   type HealthCheckHeartbeatReceivedHostEventV1,
@@ -36,13 +38,15 @@ import {
 } from './hostReferencesV1.js';
 
 export {
-  AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
-  AUTOMATION_RUN_CANCELLED_WHILE_RUNNING_CAUSE_V1,
   HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1, AccountEntitiesInvalidatedHostEventV1Schema,
   type AccountEntitiesInvalidatedHostEventV1,
+  HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1, DeploymentReceiptInvalidatedHostEventV1Schema,
+  type DeploymentReceiptInvalidatedHostEventV1,
   HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   HealthCheckHeartbeatReceivedHostEventV1Schema,
   type HealthCheckHeartbeatReceivedHostEventV1,
+  AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
+  AUTOMATION_RUN_CANCELLED_WHILE_RUNNING_CAUSE_V1,
   AutomationHostEventScopeV1Schema,
   DiscussionInvalidatedHostEventV1Schema,
   HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
@@ -78,6 +82,7 @@ type RuntimeHostEventPayloadByIdV1 = {
 
 export type HostEventPayloadByIdV1 = RuntimeHostEventPayloadByIdV1 & Readonly<{
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AccountEntitiesInvalidatedHostEventV1;
+  [HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1]: DeploymentReceiptInvalidatedHostEventV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: HealthCheckHeartbeatReceivedHostEventV1;
   [HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1]: DiscussionInvalidatedHostEventV1;
   [HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1]: AutomationRunStateChangedHostEventV1;
@@ -88,6 +93,7 @@ export type HostEventScopeByIdV1 = {
   readonly [Id in RuntimeHostEventIdV1]: HostEventScopeV1;
 } & Readonly<{
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
+  [HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
@@ -98,6 +104,7 @@ type HostEventDeliveryScopeByIdV1 = {
   readonly [Id in RuntimeHostEventIdV1]: Readonly<{ kind: 'session'; sessionId: string }>;
 } & Readonly<{
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
+  [HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
@@ -141,6 +148,9 @@ export function parseHostEventPayloadV1<Id extends HostEventIdV1>(
 ): HostEventPayloadByIdV1[Id] {
   if (eventId === HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1) {
     return AccountEntitiesInvalidatedHostEventV1Schema.parse(payload) as HostEventPayloadByIdV1[Id];
+  }
+  if (eventId === HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1) {
+    return DeploymentReceiptInvalidatedHostEventV1Schema.parse(payload) as HostEventPayloadByIdV1[Id];
   }
   if (!isHostEventIdV1(eventId)) {
     throw new Error(`Unknown Host Event id '${eventId}'`);

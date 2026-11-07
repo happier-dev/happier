@@ -20,6 +20,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { AutomationEventSourceDisplayLabelV1Schema, MAX_AUTOMATION_SOURCE_DISPLAY_LABEL_CODE_POINTS } from '../automations/automationEventJsonBoundsV1.js';
 import { ExecutionRunResumeHandleProviderSessionV1Schema } from '../execution/runs/startRequest.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
+import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import {
   WorkflowDefinitionIdV1Schema,
   WorkflowInvocationRecordIdSchema,
@@ -66,6 +67,7 @@ export const WORKFLOW_INVOCATION_LIFECYCLES_V1 = [
 ] as const;
 export const WorkflowInvocationLifecycleV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_INVOCATION_LIFECYCLES_V1));
 export type WorkflowInvocationLifecycleV1 = z.infer<typeof WorkflowInvocationLifecycleV1Schema>;
+
 /** Indexed custody that must resolve before a terminal Run may settle. */
 export const WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 = [
   'pending', 'waiting_for_capacity', 'admitting', 'running', 'waiting_for_approval',
@@ -167,6 +169,8 @@ export type WorkflowInvocationRecoveryAvailabilityV1 = z.infer<typeof WorkflowIn
 
 export const WorkflowRunStepProgressV1Schema = lazyZodSchema(() => z.strictObject({
   completed: z.number().check(z.int(), z.nonnegative(), z.int()),
+  /** Authored leaves proven skipped by settled execution; omitted history is unknown. */
+  skipped: z.optional(z.number().check(z.int(), z.nonnegative())),
   total: z.number().check(z.int(), z.nonnegative(), z.int()),
   /** Accepted writers and their exact last observed facts; absence never means pending or completed. */
   destinations: z.optional(z.array((<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(WorkflowDestinationsV1Schema.shape.leaves._zod.def.element, {
@@ -183,7 +187,7 @@ export const WorkflowRunStepProgressV1Schema = lazyZodSchema(() => z.strictObjec
     completed: z.number().check(z.int(), z.nonnegative(), z.int()),
     total: z.number().check(z.int(), z.nonnegative(), z.int()),
   }).check(z.refine((value) => value.completed <= value.total))),
-}).check(z.refine((value) => value.completed <= value.total)));
+}).check(z.refine((value) => value.completed + (value.skipped ?? 0) <= value.total)));
 export type WorkflowRunStepProgressV1 = z.infer<typeof WorkflowRunStepProgressV1Schema>;
 
 /** Existing root row observation; counts can decrease when the current attempt changes. */
@@ -195,8 +199,9 @@ export const WorkflowRunStepProgressCurrentnessV1Schema = lazyZodSchema(() => z.
 export type WorkflowRunStepProgressCurrentnessV1 = z.infer<typeof WorkflowRunStepProgressCurrentnessV1Schema>;
 
 export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
-  startedBy: zMini.optional(zMini.nullable(WorkflowRunStartedByV1Schema)),
+  /** Display-only attribution from this occurrence's opened, frozen accepted source. */
   sourceSavedBy: z.optional(WorkflowDefinitionSavedByV1Schema),
+  startedBy: zMini.optional(zMini.nullable(WorkflowRunStartedByV1Schema)),
   stepProgress: z.optional(z.nullable(WorkflowRunStepProgressV1Schema)),
   stepProgressCurrentness: z.optional(z.nullable(WorkflowRunStepProgressCurrentnessV1Schema)),
   /** Authorized attention-list projection; null clears a hold, omission preserves a prior observation. */
@@ -370,8 +375,15 @@ export function projectWorkflowLoopItemDisplayLabelV1(value: unknown): string | 
   if (value === null || typeof value !== 'object') return scalar(value);
   if (Array.isArray(value)) return undefined;
   const fields = value as Record<string, unknown>;
-  const title = Object.prototype.hasOwnProperty.call(fields, 'title') ? scalar(fields.title) : undefined;
-  if (title !== undefined) return title;
+  // Participant identity is not a name. The Run reader resolves Sessions through
+  // its Home-qualified title owner; a model may already carry an authored title.
+  const participant = fields.kind === 'session' || fields.kind === 'bot' || fields.kind === 'model'
+    ? normalizeExecutableParticipantSelectionV1(value) : null;
+  if (participant !== null) return participant.kind === 'model' ? scalar(participant.launch.title) : undefined;
+  for (const key of ['title', 'displayName', 'name']) {
+    const label = Object.prototype.hasOwnProperty.call(fields, key) ? scalar(fields[key]) : undefined;
+    if (label !== undefined) return label;
+  }
   for (const field of Object.values(fields)) {
     const label = scalar(field);
     if (label !== undefined) return label;
@@ -472,18 +484,22 @@ export const WorkflowContainerResultSelectorV1Schema = lazyZodSchema(() => z.str
 }));
 export type WorkflowContainerResultSelectorV1 = z.infer<typeof WorkflowContainerResultSelectorV1Schema>;
 
+export const WorkflowAuthoredInputV1Schema = lazyZodSchema(() => z.strictObject({
+  document: WorkflowStepComposerDocumentSchema,
+  input: z._default(z.array(StrictJsonValueSchema), []),
+  /** Producer-rendered origin input, frozen atomically with its admitting correspondence. */
+  renderedText: z.optional(z.string()),
+}));
+export type WorkflowAuthoredInputV1 = z.infer<typeof WorkflowAuthoredInputV1Schema>;
+
+const WorkflowRecoveryInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('original') }),
+  z.strictObject({ kind: z.literal('replacement'), value: WorkflowAuthoredInputV1Schema }),
+]));
+
 export const WorkflowInvocationRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
   conversation: z.enum(['same_conversation', 'fresh_agent']),
-  input: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('original') }),
-    z.strictObject({
-      kind: z.literal('replacement'),
-      value: z.strictObject({
-        document: WorkflowStepComposerDocumentSchema,
-        input: z._default(z.array(StrictJsonValueSchema), []),
-      }),
-    }),
-  ]),
+  input: WorkflowRecoveryInputV1Schema,
   acknowledgeUncertainPriorEffects: z.optional(z.literal(true)),
 }));
 export type WorkflowInvocationRecoveryV1 = z.infer<typeof WorkflowInvocationRecoveryV1Schema>;
@@ -794,19 +810,7 @@ export const WorkflowInvocationDetailV1Schema = lazyZodSchema(() => z.strictObje
 }));
 export type WorkflowInvocationDetailV1 = z.infer<typeof WorkflowInvocationDetailV1Schema>;
 
-export const WorkflowAuthoredInputV1Schema = lazyZodSchema(() => z.strictObject({
-  document: WorkflowStepComposerDocumentSchema,
-  input: z._default(z.array(StrictJsonValueSchema), []),
-  /** Producer-rendered origin input, frozen atomically with its admitting correspondence. */
-  renderedText: z.optional(z.string()),
-}));
-export type WorkflowAuthoredInputV1 = z.infer<typeof WorkflowAuthoredInputV1Schema>;
-
 export const WorkflowInvocationRefV1Schema = lazyZodSchema(() => z.strictObject({ recordId: WorkflowInvocationRecordIdSchema }));
-const WorkflowRecoveryInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('original') }),
-  z.strictObject({ kind: z.literal('replacement'), value: WorkflowAuthoredInputV1Schema }),
-]));
 export const WorkflowRecoveryChoiceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('reattach'), invocation: WorkflowInvocationRefV1Schema }),
   z.strictObject({
@@ -846,6 +850,8 @@ export type WorkflowInvocationRetryInputV1 = z.infer<typeof WorkflowInvocationRe
 
 export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
   'invalid_input', 'run_not_found', 'not_authenticated', ...AGENT_START_REFUSAL_CODES_V1,
+  'admission_unavailable', 'invalid_token',
+  'approval_required',
   'currentness_conflict', 'missing_reference', 'invalid_reference_scope',
   'workflow_input_too_large', 'workflow_outcome_unresolved',
   'workflow_http_error',
@@ -853,7 +859,7 @@ export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
   'workflow_conversation_unavailable', 'continuation_unavailable',
   'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
   'workflow_wait_self_dependency',
-  'ineligible_state', 'custody_pending', 'content_unavailable', 'source_unavailable', 'legacy_conversion_unsupported',
+  'ineligible_state', 'custody_pending', 'requester_custody_unavailable', 'content_unavailable', 'source_unavailable', 'legacy_conversion_unsupported',
   'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
   'native_goal_owner', 'session_already_started',
 ] as const;
@@ -873,13 +879,15 @@ export const WorkflowHttpErrorDetailsV1Schema = lazyZodSchema(() => z.strictObje
 
 const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
   'not_authenticated',
+  'admission_unavailable', 'invalid_token',
   'run_not_found',
+  'approval_required',
   'missing_reference', 'invalid_reference_scope',
   'workflow_input_too_large', 'workflow_outcome_unresolved',
   'workflow_interaction_capacity_exceeded',
   'continuation_unavailable',
   'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
-  'ineligible_state', 'custody_pending',
+  'ineligible_state', 'custody_pending', 'requester_custody_unavailable',
   'source_unavailable',
   'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
   'native_goal_owner', 'session_already_started',

@@ -15,7 +15,7 @@ import { ProfileRecordV1Schema, StoredProfileRecordV1Schema, ProfileSecretBindin
 export { resolveEffectiveProfileSecretBindingsV1 } from './profileRecordSchemaV1.js';
 import { PromptStackEntryV1Schema, type PromptStackEntryV1 } from '../prompts/library/promptStacksV1.js';
 import { CodingPromptBehaviorOverridesV1Schema, HistoricalCodingPromptBehaviorProfileOverrideV1Schema } from '../prompts/codingPromptBehaviorV1.js';
-import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
+import { ArtifactRevisionV1Schema } from '../artifacts/artifactRevisionV1.js';
 import { listSavedSecretReferenceCarrierPathsV1 } from '../account/settings/savedSecretReferenceV1.js';
 import type { ProfileTransferControlV1 } from './profileTransferV1.js';
 import type { ProviderContributionV1 } from '../providers/contributions/v1.js';

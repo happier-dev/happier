@@ -1,13 +1,14 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { z } from 'zod/mini';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
+import { z } from 'zod/mini';
 import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../../sessions/context/sessionContextV1.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { ActionSessionAddressV1Schema } from '../../actions/sessionTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
+import { SessionDirectoryIntentV1Schema } from '../../sessions/creation/sessionDirectoryIntentV1.js';
 
 import {
   PluginContributionIdentityV1Schema,
@@ -71,9 +72,9 @@ import {
   SessionAwarenessRuntimeV1Schema,
   SessionAwarenessWorkspaceV1Schema,
 } from '../../sessions/awareness/projectionV1.js';
-import { ProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { ProjectKeyV1Schema, SessionAcceptedWorkspaceV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { PluginUiNewSessionSeedOriginV1Schema } from './newSessionSeedOrigin.js';
-import { VoiceTrackedSessionAddressV1Schema } from '../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { InboxItemAttentionTypeV1Schema } from '../../sessions/follow/sessionFollowPolicyV1.js';
 import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
 export { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema,
@@ -182,7 +183,7 @@ export type PluginUiPublishCurrentUiContextRequestV1 =
 
 const ComposerRefV1ZodSchema = lazyZodSchema(() => asProtocolZod(ComposerRefV1Schema));
 
-/** `activeComposer` has no request payload; an absent focused composer is null. */
+/** No request payload: resolve the mounted opener, otherwise the focused Composer; absence is null. */
 export const PluginUiActiveComposerResultV1Schema = lazyZodSchema(() => zMini.nullable(ComposerRefV1ZodSchema));
 export type PluginUiActiveComposerResultV1 =
   z.infer<typeof PluginUiActiveComposerResultV1Schema>;
@@ -303,6 +304,10 @@ export const PluginUiSessionStateV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.trim(), z.minLength(1)),
   // Exact mounted Account scope, not the client's currently focused Home.
   serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /** Canonical Session selection, independent of catalog presentation and installed availability. */
+  agentTarget: z.optional(AgentExecutionTargetV1Schema),
+  /** Private accepted checkout facts; unknown or ambiguous correspondence remains absent. */
+  acceptedWorkspace: z.optional(SessionAcceptedWorkspaceV1Schema),
   title: z.optional(z.string().check(z.minLength(1))),
   /** Catalog presentation only; unknown identity stays absent rather than selecting a default Agent. */
   agent: z.optional(z.strictObject({
@@ -512,6 +517,13 @@ export const PluginUiOpenSurfaceRequestV1Schema = lazyZodSchema(() => z.strictOb
 export type PluginUiOpenSurfaceRequestV1 =
   z.infer<typeof PluginUiOpenSurfaceRequestV1Schema>;
 
+/** Open the existing managed-Machine draft from this mount's exact Machine target. */
+export const PluginUiOpenManagedMachineConfigurationRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  provisioner: asProtocolZod(PluginContributionIdentityV1Schema),
+}));
+export type PluginUiOpenManagedMachineConfigurationRequestV1 =
+  z.infer<typeof PluginUiOpenManagedMachineConfigurationRequestV1Schema>;
+
 /**
  * Open Happier's canonical Connected Accounts experience.
  *
@@ -563,6 +575,13 @@ export type PluginUiOpenConnectedAccountsResultV1 =
 export const PluginUiReplacePageLocationRequestV1Schema = lazyZodSchema(() => z.strictObject({
   subPath: PluginUiSubPathV1Schema,
   backLocation: zMini.optional(PluginUiSubPathV1Schema),
+  preserveUnsavedChanges: zMini.optional(z.boolean()),
+  /**
+   * The caller's own declared page this location presents, when the page shows several of its declared
+   * views a lens apart (Tasks and PRs & Issues on one page). The host titles its chrome with that view;
+   * absent means the mounted page itself.
+   */
+  view: zMini.optional(asProtocolZod(PluginContributionLocalIdSchema)),
 }));
 export type PluginUiReplacePageLocationRequestV1 =
   z.infer<typeof PluginUiReplacePageLocationRequestV1Schema>;
@@ -581,10 +600,19 @@ export const PluginUiReplacePageLocationResultV1Schema = lazyZodSchema(() => z.s
 export type PluginUiReplacePageLocationResultV1 =
   z.infer<typeof PluginUiReplacePageLocationResultV1Schema>;
 
+/** A mount-local fact; the host alone decides whether a departure may continue. */
+export const PluginUiSetUnsavedChangesRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  isDirty: z.boolean(),
+}));
+export type PluginUiSetUnsavedChangesRequestV1 = z.infer<typeof PluginUiSetUnsavedChangesRequestV1Schema>;
+
 /** Action dispatch is distinct from navigation and has no destination arm. */
 export const PluginUiExecuteActionRequestV1Schema = lazyZodSchema(() => z.strictObject({
   action: PluginUiMountedActionReferenceV1Schema,
-  input: zMini.optional(PluginUiLaunchInputV1Schema),
+  // Action data is admitted by its Action schema and containing transport;
+  // the surface-navigation launch budget does not bound an invocation.
+  input: zMini.optional(PluginUiJsonValueV1Schema),
+  sessionAddress: zMini.optional(ActionSessionAddressV1Schema),
 }));
 export type PluginUiExecuteActionRequestV1 =
   z.infer<typeof PluginUiExecuteActionRequestV1Schema>;
@@ -606,6 +634,14 @@ export const PluginUiJsonObjectV1Schema = lazyZodSchema(() => asProtocolZod(defi
   parse: (value) => isPluginUiJsonObject(value) ? value : null,
 })));
 
+/** The host alone chooses the opaque receiving destination; bytes never ride Action JSON. */
+export const PluginUiDownloadFileRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  action: asProtocolZod(PluginContributionIdentityV1Schema),
+  input: PluginUiJsonObjectV1Schema.check(z.refine(value => !Object.prototype.hasOwnProperty.call(value, 'destination'),
+    { message: 'Download destination is host-owned' })),
+}));
+export type PluginUiDownloadFileRequestV1 = z.infer<typeof PluginUiDownloadFileRequestV1Schema>;
+
 /**
  * No-invoke selection names one exact operation already admitted into the
  * mounted target's Host API context. The host matches this JSON value back
@@ -622,7 +658,7 @@ export type PluginUiSelectActionInputTargetedRequestV1 =
 /** Exact host-owned no-invoke selection literals. */
 const PluginUiSelectActionInputSessionHostActionV1Schema = lazyZodSchema(() => z.strictObject({
   action: z.literal('session.spawn_new'),
-  projection: z.literal('serverStartDraft'),
+  projection: z.enum(['serverStartDraft', 'sessionPlacement']),
 }));
 const PluginUiSelectActionInputReviewHostActionV1Schema = lazyZodSchema(() => z.strictObject({
   action: z.literal('review.start'),
@@ -757,6 +793,8 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
    */
   checkoutIntent: z.optional(PluginUiSessionCheckoutIntentV1Schema),
   placement: z.optional(PluginUiNewSessionPlacementV1Schema),
+  /** Only the target Session owner allocates a managed path. */
+  directoryIntent: z.optional(SessionDirectoryIntentV1Schema),
   /**
    * Exact candidate placements stay candidates. In particular, a caller with
    * two matching checkouts must not convert the first array item into the
@@ -779,7 +817,10 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
    */
   attachments: z.optional(z.readonly(z.array(PluginUiNewSessionSeedAttachmentV1Schema).check(z.minLength(1), z.maxLength(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)))),
 }).check(z.refine(seed => (seed.attachments?.length ?? 0) + (seed.currentUiContext ? 1 : 0) <= MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
-  { message: 'Seeded attachments must fit the Composer attachment instance contract.' })));
+  { message: 'Seeded attachments must fit the Composer attachment instance contract.' }),
+  z.refine(seed => !seed.directoryIntent || seed.placement?.directory === undefined
+    && (seed.directoryIntent.kind !== 'managed' || seed.checkoutIntent === undefined || seed.checkoutIntent === 'none'),
+  { message: 'A directory intent cannot compete with a placement path or request a managed checkout.' })));
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
 
 const SessionNewSessionSeedFailureV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -841,8 +882,12 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
     hostAction: PluginUiSelectActionInputSessionAddressHostActionV1Schema,
   }),
   z.strictObject({
-    hostAction: PluginUiSelectActionInputSessionHostActionV1Schema,
+    hostAction: z.strictObject({ action: z.literal('session.spawn_new'), projection: z.literal('serverStartDraft') }),
     draft: zMini.optional(PluginUiJsonObjectV1Schema),
+  }),
+  z.strictObject({
+    hostAction: z.strictObject({ action: z.literal('session.spawn_new'), projection: z.literal('sessionPlacement') }),
+    candidates: z.array(PluginUiSessionPlacementCandidateV1Schema),
   }),
   z.strictObject({
     hostAction: PluginUiSelectActionInputReviewHostActionV1Schema,
@@ -914,6 +959,7 @@ const PluginUiSelectActionInputExecutionRunLaunchV1Schema = lazyZodSchema(() => 
 
 /** Exact no-invoke settlements, targeted submission, or cancellation. */
 export const PluginUiSelectActionInputResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('sessionPlacement'), candidate: PluginUiSessionPlacementCandidateV1Schema }),
   z.strictObject({ kind: z.literal('sessionAddress'), session: ActionSessionAddressV1Schema }),
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,

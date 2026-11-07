@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '../../connect/qualifiedConnectedAccountProjectionsV4.js';
 import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageHistoryWitnessV1Schema } from '../../connect/providerAccountUsagePrimitives.js';
@@ -29,6 +30,8 @@ const PendingOrdinaryRequestedActionV1Schema = lazyZodSchema(() => z.strictObjec
 export const PendingRequestedActionV1Schema = lazyZodSchema(() => z.union([
   PendingOrdinaryRequestedActionV1Schema,
   z.strictObject({ v: z.literal(1), kind: z.literal('reset_start'), reset: PendingResetStartBindingV1Schema }),
+  // Recovery changes execution authority and cannot be ignored by a V1 reader.
+  z.strictObject({ v: z.literal(2), kind: z.literal('recover_execution_run') }),
 ]));
 export const PendingRequestedActionV1StoredSchema = createStoredReadSchema(PendingRequestedActionV1Schema);
 
@@ -37,6 +40,7 @@ export const PendingResetStartSetInputV1Schema = lazyZodSchema(() => (<T extends
   // Absence binds existing custody; presence admits one new input, already
   // sealed in the Session's canonical Pending envelope, with no ordinary-send state.
   initialInput: z.optional(z.strictObject({ content: StrictSessionStoredMessageContentEnvelopeSchema,
+    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
     targetMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))) })),
 })));
 export const PendingResetStartCancelInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.omit(SessionPendingWithdrawInputV1Schema, { targetExecutionRunId: true })));

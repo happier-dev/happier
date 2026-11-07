@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { STORAGE_OPERATION_INPUT_FIELDS } from './storageInputHints.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
 export { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
@@ -20,6 +21,7 @@ import { MachineResourcesPolicyMutationResultV1Schema } from '../../machines/res
 import { subsetNarrowing } from '../../approvals/approvalNarrowing.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 export type MachineStorageActionId = typeof MACHINE_STORAGE_ACTION_IDS[number];
 export const MachineStorageActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_STORAGE_ACTION_IDS));
 export const MACHINE_STORAGE_ACTION_INPUT_SCHEMAS = {
@@ -121,6 +123,7 @@ function cleanupSpec<const Id extends MachineStorageActionId>([id, title, descri
     surfaces: { ...surfaces, voice: id !== 'machines.storage.deleteNow' && id !== 'machines.storage.trash.empty', rpc: true },
     bindings: { rpcMethod, mcpToolName: id.replaceAll('.', '_') },
     inputSchema: MACHINE_STORAGE_ACTION_INPUT_SCHEMAS[id], outputSchema: MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS[id],
+    invocationServerIdForInput: actionInputServerId<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[MachineStorageActionId]>(MACHINE_STORAGE_ACTION_INPUT_SCHEMAS[id], input => input.serverId),
     cli: { acceptsServerId: true as const, commands: [{ path: id === 'machines.storage.deleteNow' ? ['machines', 'storage', 'delete-now'] : id.split('.'), visibility: 'canonical' as const }] },
     inputHints: { fields: [...fields, ...STORAGE_OPERATION_INPUT_FIELDS[id]] },
     ...(voiceArgs ? { examples: { voice: { argsExample: JSON.stringify(voiceArgs) } } } : {}),
@@ -151,7 +154,8 @@ const cleanupSpecs = [
   cleanupSpec(['machines.storage.protected.add', 'Protect a folder', 'Marks a folder as Keep, excluding it from suggestions and automatic cleanup. Removing it requires confirmation of what is lost or the agent Action’s approval; Forbidden paths remain refused.', RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD, 'write', 'safe', { machineId: '{{machineId}}', path: '/tmp/cache' }]),
   cleanupSpec(['machines.storage.protected.remove', 'Stop protecting a folder', 'Removes a folder you protected. Built-in protection stays.', RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE, 'write', 'safe', { machineId: '{{machineId}}', path: '/tmp/cache' }]),
 ] as const;
-export const MACHINE_STORAGE_ACTION_SPECS = [
+function createMachineStorageActionSpecs() {
+  return [
   {
     ...base, id: 'machines.storage.summary.get', approval: {result: 'required'}, title: 'Read Happier storage',
     toolExposure: { agent: 'direct' },
@@ -159,6 +163,7 @@ export const MACHINE_STORAGE_ACTION_SPECS = [
     description: 'How much space Happier uses on a machine, by kind, and how full the disk is.',
     bindings: { rpcMethod: RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, mcpToolName: 'machines_storage_summary_get', voiceClientToolName: 'getMachineStorageSummary' },
     inputSchema: MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.summary.get'], outputSchema: MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS['machines.storage.summary.get'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.summary.get'], input => input.serverId),
     cli: { acceptsServerId: true as const, commands: [{ path: ['machines', 'storage', 'summary', 'get'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields] },
   },
@@ -170,6 +175,7 @@ export const MACHINE_STORAGE_ACTION_SPECS = [
     description: 'The items in one kind of Happier storage, with their sizes.',
     bindings: { rpcMethod: RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, mcpToolName: 'machines_storage_category_list', voiceClientToolName: 'listMachineStorageCategory' },
     inputSchema: MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.category.list'], outputSchema: MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS['machines.storage.category.list'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.category.list'], input => input.serverId),
     cli: { acceptsServerId: true as const, commands: [{ path: ['machines', 'storage', 'category', 'list'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'categoryId', title: 'Category', widget: 'text', required: true }, { path: 'cursor', title: 'Next page', widget: 'text' }] },
   },
@@ -181,7 +187,11 @@ export const MACHINE_STORAGE_ACTION_SPECS = [
     sideEffectClass: 'write', surfaces: { ...surfaces, voice: false },
     bindings: { rpcMethod: RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH, mcpToolName: 'machines_storage_size_refresh' },
     inputSchema: MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.size.refresh'], outputSchema: MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS['machines.storage.size.refresh'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.size.refresh'], input => input.serverId),
     cli: { acceptsServerId: true as const, commands: [{ path: ['machines', 'storage', 'size', 'refresh'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'categoryId', title: 'Category', widget: 'text' }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_STORAGE_ACTION_SPECS: ReturnType<typeof createMachineStorageActionSpecs> = lazyActionSpecArray(createMachineStorageActionSpecs);

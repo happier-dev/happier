@@ -17,6 +17,8 @@ import { isAppUpdateActionId } from './appUpdateActionFamily.js';
 import { isAccountLifecycleActionId } from './accountLifecycleActionFamily.js';
 import { isVoiceConversationActionId } from './voiceConversationActionFamily.js';
 import type { SocketRpcAnsweringClientCandidateV1 } from '../rpc/socket.js';
+import { AdmittedHostReviewedChildrenV1Schema, type AdmittedHostReviewedChildrenV1 } from './executor/hostReviewedChildrenV1.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 export { withoutClientActionInput } from './clientActionInput.js';
 
 /** One deterministic recovery contract for every client-placed Action family. */
@@ -102,6 +104,7 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
       grant: ApiTokenGrantV1Schema,
     })),
     externalActionTarget: z.optional(ExternalActionTargetV1Schema),
+    admittedHostReviewedChildren: z.optional(AdmittedHostReviewedChildrenV1Schema),
   }),
 }).check(z.superRefine((request, ctx) => {
   const spec = getActionSpec(request.actionId);
@@ -109,16 +112,24 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
   if (!Object.hasOwn(request, 'input') || !input.success || resolveActionExecutionPlacementForInput(spec, input.data) !== 'client') {
     ctx.addIssue({ code: 'custom', message: 'Invalid client Action', path: ['input'] });
   }
+  const children = request.context.admittedHostReviewedChildren;
+  if (children && (children.parentActionId !== request.actionId
+    || children.parentInputDigest !== computeActionInputApprovalDigestV1(request.actionId, request.input))) {
+    ctx.addIssue({ code: 'custom', message: 'Reviewed children belong to another parent input', path: ['context', 'admittedHostReviewedChildren'] });
+  }
 })));
 export type UiActionDispatchRequestV1 = z.infer<typeof UiActionDispatchRequestV1Schema>;
 
+/** Serialize only the wire owner's context fields; local callbacks and runtime facts stay in their realm. */
 export function buildUiActionDispatchRequestV1(request: Readonly<{
   actionId: ActionId; input: unknown; context: ActionExecutorContext;
+  admittedHostReviewedChildren?: AdmittedHostReviewedChildrenV1;
 }>): UiActionDispatchRequestV1 {
   const shape = UiActionDispatchRequestV1Schema.shape.context.shape;
   // Only the executor's closed admission supplies these facts, never a caller's context projection.
   const context = { ...Object.fromEntries(Object.entries(request.context)
-    .filter(([key]) => Object.hasOwn(shape, key))) };
+    .filter(([key]) => key !== 'admittedHostReviewedChildren' && Object.hasOwn(shape, key))),
+    ...(request.admittedHostReviewedChildren ? { admittedHostReviewedChildren: request.admittedHostReviewedChildren } : {}) };
   return UiActionDispatchRequestV1Schema.parse({ v: 1, actionId: request.actionId, input: request.input, context });
 }
 
@@ -166,7 +177,7 @@ export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult
     details: { reason: 'client_unavailable', recovery: { kind: 'connect_client', rpcMethod: RPC_METHODS.UI_ACTION_EXECUTE,
       instruction: 'Open a signed-in Happier client connected to the target Machine, then request draft deletion again.' } } };
   if (isWorkspaceActionId(actionId) || isUpdatesActionId(actionId) || isAppUpdateActionId(actionId)
-    || isAccountLifecycleActionId(actionId) || actionId === 'bugreport.submit') {
+    || isAccountLifecycleActionId(actionId) || actionId === 'bugreport.submit' || actionId === 'desktop.windows.open') {
     return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
   }
   if (isAppShellActionId(actionId) && actionId !== 'inbox.mark_all_read') return { ok: true, result: { status: 'unavailable' } };
@@ -175,11 +186,12 @@ export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult
   if (actionId === 'session.authoring.open') {
     return { ok: true, result: { kind: 'unavailable', reason: 'client_unavailable' } };
   }
-  if (actionId === 'ui.find' || actionId === 'ui.prompts.picker.open') {
+  if (actionId === 'ui.find' || actionId === 'ui.prompts.picker.open' || actionId === 'ui.prompts.picker.select'
+    || actionId === 'ui.prompts.picker.apply' || actionId === 'ui.prompts.history' || actionId === 'session.messages.pins') {
     return { ok: true, result: { status: 'unavailable', reason: 'noClient' } };
   }
   if (actionId === 'session.pending.next') return { ok: true, result: { status: 'unavailable', reason: 'noClient' } };
-  if (isSettingsDeclarationActionIdV1(actionId) || isVoiceConversationActionId(actionId)) return { ok: false, errorCode: 'unavailable', error: 'noClient',
+  if (isSettingsDeclarationActionIdV1(actionId) || isVoiceConversationActionId(actionId) || actionId === 'projects.sources.moveToTeam') return { ok: false, errorCode: 'unavailable', error: 'noClient',
     details: { reason: 'client_unavailable', recovery: { kind: 'connect_client', rpcMethod: RPC_METHODS.UI_ACTION_EXECUTE,
       instruction: 'Open a signed-in Happier client connected to the target Machine, then retry this Action.' } } };
   return { ok: false, errorCode: 'unavailable', error: 'noClient' };

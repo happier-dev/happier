@@ -80,3 +80,4 @@ export const ACCOUNT_SETTING_DECLARATIONS_V1 = {
 export function readAccountSettingDeclarationV1(anchor: unknown) {
   return Object.values(ACCOUNT_SETTING_DECLARATIONS_V1).find(declaration => declaration.anchor === anchor) ?? null;
 }
+

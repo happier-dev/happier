@@ -12,11 +12,19 @@ import { addProviderConnectionV1, addOrUpdateProviderManualModelV1, bindProvider
 import { readOwnRecordValue } from '../ownRecordValue.js';
 import { parseSavedSecretRefV1 } from '../../account/settings/savedSecretReferenceV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { transferredAccountSettingsSourceNeedsCleanupV1 } from '../../account/settings/accountSettingsLegacyCleanup.js';
 
 export { listProviderConnectionsCatalogSavedSecretRefsV1, rewriteProviderConnectionsCatalogSavedSecretRefsV1 } from './connectionRowsV1.js';
 export { readRetainedProviderConnectionsCatalogV1 } from './connectionRowsV1.js';
+const PROVIDER_CONNECTIONS_SOURCE_ROOTS_V1 = ['providerSettingsV1'] as const;
+/** Every host decides a ready catalog's remaining source pass from its admitted raw Settings document. */
+export function providerConnectionsSourceNeedsCleanupV1(input: Readonly<{
+  rawSettings: Readonly<Record<string, unknown>> | null | undefined; cleanupPending: boolean;
+}>): boolean {
+  return transferredAccountSettingsSourceNeedsCleanupV1({ ...input, sourceRoots: PROVIDER_CONNECTIONS_SOURCE_ROOTS_V1 });
+}
 export type ProviderConnectionsSourceTransferV1 = Readonly<{
-  /** A current source owner can prove cleanup unnecessary; absent rows still initialize. */
+  /** A current source owner can prove cleanup unnecessary (see providerConnectionsSourceNeedsCleanupV1); absent rows still initialize. */
   needsSourceCleanup?(): boolean;
   readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
   initializeCatalog(input: Readonly<{ catalog: ProviderConnectionsCatalogV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>):
@@ -248,7 +256,7 @@ async function loadTransferredCatalog(input: LoadInput): Promise<ProviderConnect
   if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
   if (!transfer.normalizeHistory) return { ...catalog, cleanup: { status: 'cleanup-pending', reason: 'history-incomplete' } };
   let history: Awaited<ReturnType<NonNullable<ProviderConnectionsSourceTransferV1['normalizeHistory']>>>;
-  try { history = await transfer.normalizeHistory({ activeTransferredRoots: ['providerSettingsV1'] }); }
+  try { history = await transfer.normalizeHistory({ activeTransferredRoots: PROVIDER_CONNECTIONS_SOURCE_ROOTS_V1 }); }
   catch {
     return input.signal?.aborted ? { status: 'unavailable', reason: 'cancelled' }
       : { ...catalog, cleanup: { status: 'cleanup-pending', reason: 'history-incomplete' } };

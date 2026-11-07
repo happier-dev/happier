@@ -1,25 +1,44 @@
+export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export type { ConnectedAccountInvocationPurposeBinding } from './connect/connectedAccountInvocationPurposeBinding.js';
+export * from './sessions/media/imageMarksV1.js';
+export * from './machines/reachability/actionIdsV1.js';
+export * from './machines/reachability/actionsV1.js';
+export * from './actions/specs/machineReachability.js';
+export * from './machines/reachability/machineReachabilityPostureV1.js';
+export * from './local/services/nativeLogsV1.js';
+export * from './actions/specs/machine/services.js';
+export { BackupDestinationContributionV1Schema, type BackupDestinationContributionV1 } from './plugins/contributions/backupDestinations.js';
+export { MachineSetupPresetContributionV1Schema, type MachineSetupPresetContributionV1 } from './plugins/contributions/machineSetupPresets.js';
+export * from './machines/setup/machineRecipeV1.js';
+export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, MachinePresetItemV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1, type MachinePresetItemV1 } from './machines/managed/machineSetupV1.js';
+export * from './machines/setup/machineSetupObservationV1.js';
+export * from './machines/setup/machineSetupSourcesV1.js';
+export * from './deployments/deploymentActionsV1.js';
 export { buildDeploymentTargetLinkInputV1 } from './deployments/targetLinkInput.js';
 export { DeploymentInvalidV1Schema, type DeploymentInvalidV1 } from './deployments/deploymentInvalidV1.js';
-export type { ConnectedAccountInvocationPurposeBinding } from './connect/connectedAccountInvocationPurposeBinding.js';
-export { projectPluginStoreKindDeclarationV1, PluginStoreKindContributionV1Schema, PluginStoreItemReferenceV1Schema, PluginStoreItemReferenceV1ProtocolSchema,
-  PluginStoreItemV1Schema, PluginStoreItemV1ProtocolSchema, type PluginStoreKindContributionV1,
-  type PluginStoreItemReferenceV1, type PluginStoreItemV1 } from './plugins/contributions/storeKinds.js';
-export * from './actions/specs/machine/reboot.js';
-export * from './machines/reachability/actionIdsV1.js';
+export * from './deployments/deploymentChildRpcV1.js';
 export * from './deployments/deploymentChildRoutingV1.js';
 export * from './deployments/deploymentArchiveRpcV1.js';
+export { createDeploymentApprovalScopeResolverV1, resolveInitialDeploymentApprovalV1 } from './deployments/deploymentApprovalScopeV1.js';
+export * from './deployments/storedAppInputV1.js';
 export * from './deployments/deploymentBindingSelectionNarrowing.js';
-export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1, type DeploymentTargetContributionV1 } from './plugins/contributions/deploymentTargets.js';
-export * from './local/services/nativeLogsV1.js';
-export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
-export * from './actions/specs/machine/services.js';
+export * from './deployments/deploymentBindingPatchV1.js';
+export { CanonicalHttpOriginSchema } from './http/canonicalHttpOrigin.js';
+export * from './artifacts/artifactMutationHttpV1.js';
+export { ScmCommitOidSchema } from './scm/commitPublication.js';
 export * from './account/publicProfile.js';
 export * from './account/publicProfilePublication.js';
 export * from './account/publicProfileEmbeds.js';
 export * from './account/projectPublicProfile.js';
 export * from './widgets/widgetPublicSnapshotV1.js';
 export * from './machines/machineMetadataFieldV1.js';
-export * from './machines/setup/machineSetupObservationV1.js';
+export * from './machines/machineServiceWatchesV1.js';
+export * from './machines/agentIsolationV1.js';
+export * from './machines/adminAccessV1.js';
+export * from './machines/machineAuthorityV1.js';
+export * from './actions/specs/machine/agentIsolation.js';
+export * from './actions/specs/machine/adminAccess.js';
+export * from './actions/specs/machine/reboot.js';
 export * from './machines/resources/machineResourcesPolicyV1.js';
 export * from './machines/vitals/machineVitalsAlertsV1.js';
 export * from './machines/vitals/machineVitalsSampleV1.js';
@@ -1105,8 +1124,6 @@ export {
   PluginActionPlacementV2Schema,
   PluginActionScopeV2Schema,
   PluginActionSurfaceV2Schema,
-  PluginToolSurfaceV2Schema,
-  PluginToolContributionV2Schema,
   normalizePluginActionInputHintsV2,
   hasValidPluginConnectedAccountPurposeBindingsV2,
   normalizePluginActionSlashV2,
@@ -1123,8 +1140,6 @@ export {
   type PluginActionPlacementV2,
   type PluginActionScopeV2,
   type PluginActionSurfaceV2,
-  type PluginToolSurfaceV2,
-  type PluginToolContributionV2,
 } from './plugins/actions/v2.js';
 export {
   evaluatePluginFinalPolicy,
@@ -1243,8 +1258,6 @@ export {
   PluginBrowserActionContributionV1Schema,
   PluginBrowserTargetContributionV1Schema,
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
-  PluginCommandContributionV2Schema,
-  PluginCommandVisibilityV2Schema,
   PluginContributionPointProtocolV1Schema,
   PluginContributionPointV1Schema,
   PluginContributesV2Schema,
@@ -1311,8 +1324,6 @@ export {
   type PluginAgentRuntimeV2,
   type PluginBrowserActionContributionV1,
   type PluginBrowserTargetContributionV1,
-  type PluginCommandContributionV2,
-  type PluginCommandVisibilityV2,
   type PluginContributionPointProtocolV1,
   type PluginContributionPointV1,
   type PluginContributesV2,
@@ -1360,6 +1371,11 @@ export {
   type PluginWorkflowContributionV1,
 } from './plugins/contributions/v2.js';
 export * from './plugins/contributions/entityDragDrop.js';
+export { HealthCheckKindContributionV1Schema, type HealthCheckKindContributionV1 } from './plugins/contributions/healthCheckKinds.js';
+export { projectPluginStoreKindDeclarationV1, PluginStoreKindContributionV1Schema, PluginStoreItemReferenceV1Schema, PluginStoreItemReferenceV1ProtocolSchema,
+  PluginStoreItemV1Schema, PluginStoreItemV1ProtocolSchema, type PluginStoreKindContributionV1,
+  type PluginStoreItemReferenceV1, type PluginStoreItemV1 } from './plugins/contributions/storeKinds.js';
+export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1, type DeploymentTargetContributionV1 } from './plugins/contributions/deploymentTargets.js';
 export {
   PluginInputTypeContributionV1Schema,
   type PluginInputTypeContributionV1,
@@ -1929,6 +1945,7 @@ export {
   PluginUiSettingsHostGroupIdV1Schema,
   PluginUiSettingsGroupReferenceV1Schema,
   PluginUiSettingsGroupV1Schema,
+  PluginCollectionListExtensionV1Schema,
   PluginUiSettingsPageV1Schema,
   PluginUiTranslationBundleV2Schema,
   PluginUiContributionsV2Schema,
@@ -1951,6 +1968,7 @@ export {
   type PluginUiSettingsHostGroupIdV1,
   type PluginUiSettingsGroupReferenceV1,
   type PluginUiSettingsGroupV1,
+  type PluginCollectionListExtensionV1,
   type PluginUiSettingsPageV1,
   type PluginUiTranslationBundleV2,
 } from './plugins/contributions/ui/v2.js';
@@ -2378,15 +2396,18 @@ export {
 
 export {
   isExpoPushNotificationChannelEnabled,
+  AvatarStyleSchema,
   COORDINATOR_KEEP_DEFAULT_VALUES,
   resolveCoordinatorKeepDefault,
   type CoordinatorKeepDefault,
   NEW_SESSION_DRAFT_ENTRY_MODES,
+  NEW_SESSION_AFTER_SEND_MODES,
   SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES,
   SessionPendingQueueDeliveryTimingSchema,
   SessionPendingQueueDrainModeSchema,
   SessionInactiveResumePolicySchema,
   type NewSessionDraftEntryMode,
+  type NewSessionAfterSendMode,
   UsageLimitRecoverySettingsV1Schema,
   MAX_IDLE_COMPACTION_CACHE_WINDOW_MS,
   resolveIdleCompactionPreference,
@@ -3123,8 +3144,6 @@ export {
   SessionSystemRecordPageResponseSchema,
   SessionSystemRecordPayloadSchema,
   SessionSystemRecordSchema,
-  SessionSystemRecordCreatorV1Schema,
-  type SessionSystemRecordCreatorV1,
   SessionSystemRecordUpsertRequestSchema,
   SessionSystemRecordUpsertResponseSchema,
   getSessionSystemRecordKindPolicy,
@@ -3346,7 +3365,7 @@ export {
 } from './crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 export { redactPublicShareCapabilityUrl } from './crypto/publicShareCapabilityUrl.js';
 export * from './sharing/storedContentPublicShareV1.js';
-export * from './machines/peer/mediation/peerApplicationEncryptionV1.js';
+export { createSpeechTranscriptionApplicationAuthorityDigestV1 } from './machines/peer/mediation/voiceMediaV1.js';
 export {
   CRYPTO_GOLDEN_VECTORS,
   type CryptoGoldenVectors,
@@ -3561,7 +3580,6 @@ export {
   DaemonWorkspaceFileListResponseSchema,
   WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS,
   WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES,
-  WORKSPACE_FILE_LIST_MAX_RESULTS,
   WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES,
   type DaemonWorkspaceFileListErrorCode,
   type DaemonWorkspaceFileListRequest,
@@ -3848,8 +3866,6 @@ export {
   DaemonVoiceInferenceSttStreamCancelRequestSchema,
   DaemonVoiceInferenceSttStreamCancelResponseSchema,
   DaemonVoiceInferenceSttStreamStateSchema,
-  DaemonVoiceInferenceSttStreamStatusRequestSchema,
-  DaemonVoiceInferenceSttStreamStatusResponseSchema,
   type LocalNeuralExecution,
   type DaemonVoiceInferenceServiceState,
   type DaemonVoiceInferenceAudioCodec,
@@ -3923,8 +3939,6 @@ export {
   type DaemonVoiceInferenceSttStreamCancelRequest,
   type DaemonVoiceInferenceSttStreamCancelResponse,
   type DaemonVoiceInferenceSttStreamState,
-  type DaemonVoiceInferenceSttStreamStatusRequest,
-  type DaemonVoiceInferenceSttStreamStatusResponse,
 } from './daemon/voiceInference.js';
 export * from './voice/providerOperations.js';
 export type {
@@ -4249,6 +4263,7 @@ export {
   PluginDomainWebhookChangeHintSchema,
   HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
   TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+  TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1,
   EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1,
   buildPluginDomainAccountChangeEntityId,
   type ChangeEntry,
@@ -4659,11 +4674,13 @@ export {
 export {
   SESSION_EXPLICIT_STOP_METADATA_KEY,
   SessionExplicitStopV1Schema,
+  buildSessionStopHoldV1,
   resolveSessionAutoResumeAdmissionV1,
   readSessionExplicitStopV1FromMetadata,
   writeSessionExplicitStopV1ToMetadata,
   clearSessionExplicitStopV1FromMetadata,
   type SessionExplicitStopV1,
+  type SessionStopIntent,
   type SessionAutoResumeAdmissionV1,
 } from './sessions/metadata/sessionExplicitStopV1.js';
 export {
@@ -4969,6 +4986,8 @@ export {
   SessionStateAcpConfigOptionValueSchema,
   SessionStateTitleValueSchema,
   SessionStateWorkStateValueSchema,
+  SessionTurnProgressV1Schema,
+  type SessionTurnProgressV1,
   SessionStateRuntimeActivityValueSchema,
   SessionStateExternalAgentValueSchema,
   SessionStateReadStateValueSchema,
@@ -5379,7 +5398,6 @@ export {
   type SessionWorkingTreeMatchedFile,
   type SessionWorkingTreeProjection,
   type TurnChangeSet,
-  type WorkspaceTouchedFileEvidence,
 } from './sessions/changes/index.js';
 export {
   ServerAddEnvelopeSchema,
@@ -5650,6 +5668,7 @@ export {
 export {
   SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
   ScmComparisonSourceSchema, ScmComparisonSourceProtocolSchema, ScmComparisonSchema, ScmComparisonFileSchema, ScmChangeOccurrenceSchema,
+  ScmRevisionRangeV1Schema, ScmRevisionRangeV1ProtocolSchema, type ScmRevisionRangeV1,
   buildScmComparisonSourceKey, buildScmComparisonIdentity, classifyScmChangePath,
   ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema,
   type ScmComparisonCaptureInput, type ScmComparisonCaptureOutput,
@@ -5658,13 +5677,11 @@ export {
   ScmDiffSummaryModelOutputSchema, ScmDiffSummaryOutputsSchema, ScmDiffSummaryAnalysisCoverageSchema,
   ScmReviewFindingIdentitySchema, ScmReviewExplanationRequesterSchema, ScmReviewExplanationTargetsSchema, ScmReviewExplanationSchema,
   type ScmReviewExplanationRequester,
-  normalizeScmDiffSummaryModelOutput, buildScmDiffSummaryCacheKey, isDurableScmDiffSummaryCacheKey,
+  normalizeScmDiffSummaryModelOutput, buildScmDiffSummaryCacheKey,
   type ScmComparisonSource, type ScmComparison, type ScmComparisonFile, type ScmChangeOccurrence,
   type ScmDiffSummaryOutputKind, type ScmDiffSummaryOutputState, type ScmDiffSummaryWalkthrough,
   type ScmDiffSummaryCommitPlan, type ScmDiffSummaryModelOutput, type ScmDiffSummaryOutputs, type ScmDiffSummaryAnalysisCoverage,
   type ScmDiffSummaryCacheSource, type ScmDiffSummaryResolvedSelectorInput, type ScmDiffSummaryCacheKeyInput,
-  ScmDiffSummaryCacheEntrySchema,
-  ScmDiffSummaryCacheKeyDescriptorSchema,
   ScmDiffSummaryCachePolicySchema,
   ScmDiffSummaryCostMetadataSchema,
   ScmDiffSummaryErrorCodeSchema,
@@ -5672,18 +5689,12 @@ export {
   ScmDiffSummaryGenerateInputSchema,
   ScmDiffSummaryGenerateOutputSchema,
   ScmDiffSummaryGenerateSuccessSchema,
-  ScmDiffSummaryGenerationStateSchema,
   ScmDiffSummaryMetadataSchema,
   ScmDiffSummaryModelSelectorSchema,
-  ScmDiffSummaryResolvedSelectorSchema,
   ScmDiffSummaryReviewRunSchema,
   ScmDiffSummaryReviewProvenanceSchema,
   ScmDiffSummarySourceKindSchema,
   ScmDiffSummarySourceSchema,
-  ScmDiffSummaryTruncationReasonSchema,
-  ScmDiffSummaryTruncationSchema,
-  type ScmDiffSummaryCacheEntry,
-  type ScmDiffSummaryCacheKeyDescriptor,
   type ScmDiffSummaryCachePolicy,
   type ScmDiffSummaryCostMetadata,
   type ScmDiffSummaryErrorCode,
@@ -5691,16 +5702,12 @@ export {
   type ScmDiffSummaryGenerateInput,
   type ScmDiffSummaryGenerateOutput,
   type ScmDiffSummaryGenerateSuccess,
-  type ScmDiffSummaryGenerationState,
   type ScmDiffSummaryMetadata,
   type ScmDiffSummaryModelSelector,
-  type ScmDiffSummaryResolvedSelector,
   type ScmDiffSummaryReviewRun,
   type ScmDiffSummaryReviewProvenance,
   type ScmDiffSummarySource,
   type ScmDiffSummarySourceKind,
-  type ScmDiffSummaryTruncation,
-  type ScmDiffSummaryTruncationReason,
 } from './scm/diffSummary.js';
 export * from './scm/diffSummaryResult.js';
 export * from './scm/diffSummaryCommitPlan.js';
@@ -6125,6 +6132,7 @@ export {
   DaemonContributionRegistryProjectionMountedTargetV1Schema,
   DaemonContributionRegistryProjectionDescribeRequestSchema,
   DaemonContributionRegistryProjectionDescribeResponseSchema,
+  DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema,
   DaemonPluginUiTargetedContributionsReadRequestSchema,
   DaemonPluginUiTargetedContributionsReadResponseSchema,
   DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
@@ -6186,8 +6194,6 @@ export {
   readDaemonPluginUiTargetedSurfaceMountV1,
   PluginProjectedActionInputHintsV2Schema,
   PluginProjectedActionV2Schema,
-  PluginProjectedCommandSurfaceV2Schema,
-  PluginProjectedCommandV2Schema,
   PluginProjectedContributionBaseV2Schema,
   PluginProjectedAccountCollectionEntryV1Schema,
   PluginProjectedComposerAttachmentEntryV1Schema,
@@ -6208,7 +6214,6 @@ export {
   PluginProjectedSettingsV2Schema,
   PluginSettingsProjectionError,
   projectPluginSettingsContributionV2,
-  PluginProjectedToolV2Schema,
   PluginProjectionBrandAssetV2Schema,
   PluginProjectionInstalledPackageV2Schema,
   PluginProjectionSourceV2Schema,
@@ -6219,6 +6224,7 @@ export {
   type DaemonContributionRegistryProjectionMountedTargetV1,
   type DaemonContributionRegistryProjectionDescribeRequest,
   type DaemonContributionRegistryProjectionDescribeResponse,
+  type DaemonContributionRegistryProjectionDescribeUnchangedResponse,
   type DaemonPluginUiTargetedContributionsReadRequest,
   type DaemonPluginUiTargetedContributionsReadResponse,
   type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
@@ -6274,8 +6280,6 @@ export {
   type DaemonPluginUiResourceWatchCloseResponse,
   type PluginProjectedActionInputHintsV2,
   type PluginProjectedActionV2,
-  type PluginProjectedCommandSurfaceV2,
-  type PluginProjectedCommandV2,
   type PluginProjectedContributionBaseV2,
   type PluginProjectedAccountCollectionEntryV1,
   type PluginProjectedComposerAttachmentEntryV1,
@@ -6292,7 +6296,6 @@ export {
   type PluginProjectedSettingsFieldV2,
   type PluginProjectedSettingsScopeV2,
   type PluginProjectedSettingsV2,
-  type PluginProjectedToolV2,
   type PluginProjectionBrandAssetV2,
   type PluginProjectionInstalledPackageV2,
   type PluginProjectionSourceV2,
@@ -6813,6 +6816,8 @@ export {
   WorkspaceSyncRelationshipsListRpcResultV1Schema,
   WorkspaceSyncDestinationIntentV1Schema,
   WorkspaceSyncRelationshipCreateActionInputV1Schema,
+  WorkspaceSyncRelationshipReplaceActionInputV1Schema,
+  WorkspaceSyncRelationshipWriteActionInputV1Schema,
   WorkspaceSyncRelationshipCreateResultV1Schema,
   WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
   WorkspaceSyncTargetEntryObserveV1Schema,
@@ -6879,6 +6884,8 @@ export {
   type WorkspaceSyncRelationshipsListRpcResultV1,
   type WorkspaceSyncDestinationIntentV1,
   type WorkspaceSyncRelationshipCreateActionInputV1,
+  type WorkspaceSyncRelationshipReplaceActionInputV1,
+  type WorkspaceSyncRelationshipWriteActionInputV1,
   type WorkspaceSyncRelationshipCreateResultV1,
   type WorkspaceSyncRelationshipCreateRpcRequestV1,
   type WorkspaceSyncTargetEntryObserveV1,
@@ -7181,6 +7188,7 @@ export {
   ReviewCommentSetDispositionResponseV1Schema,
   ReviewCommentTransitionResponseV1Schema,
   formatReviewCommentPublicationMarkerV1,
+  hasReviewCommentPublicationMarkerV1,
   createReviewCommentPublicationSettlementRequestV1,
   matchReviewCommentPublicationMarkerV1,
   stringifyReviewCommentPrincipalCanonicalJsonV1,
@@ -7677,7 +7685,8 @@ export {
   ApprovalRequestV1Schema,
   ApprovalRequestV2Schema,
   ApprovalRequesterConfirmationV1Schema,
-  requiresExactDaemonApprovalReplay,
+  resolveApprovalExecutor,
+  type ApprovalExecutor,
   type ApprovalExecutionOriginCallerV1,
   type ApprovalExecutionOriginV1,
   type ApprovalRequest,
@@ -7789,6 +7798,8 @@ export { SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1, SKILL_MACHINE_ACTION_OUTPUT_SCHE
 export { SkillListItemV1Schema, SkillProvenanceV1Schema, SkillLockV1Schema, SkillRevisionV1Schema, readSkillLockV1, isSkillModifiedV1,
   encodeSkillRevisionV1, decodeSkillRevisionV1, type SkillListItemV1, type SkillLockV1, type SkillProvenanceV1 } from './prompts/library/skills/skillLibraryItemV1.js';
 export { deriveSkillTrustV1, SkillTrustV1Schema, type SkillTrustV1 } from './prompts/library/skills/skillTrustV1.js';
+export { SkillListSummaryV1Schema, buildSkillListSummaryV1, readSkillListSummaryV1, type SkillListSummaryV1 } from './prompts/library/skills/skillListSummaryV1.js';
+export { preserveSkillCreatorV1 } from './prompts/library/skills/skillCreatorV1.js';
 export { estimateSkillCostV1, SkillCostV1Schema, type SkillCostV1 } from './prompts/library/skills/skillCostV1.js';
 export { deriveSkillAccountStatusesV1, type SkillAccountStatusV1 } from './prompts/library/skills/skillStatusV1.js';
 export { createSkillActionExecuteV1, type SkillActionPortV1, type SkillActionCallerV1 } from './prompts/library/skills/skillActionOperations.js';
@@ -8023,9 +8034,7 @@ export {
   DEFAULT_MACHINE_TUNNEL_DIRECT_ALLOWED_PORTS,
   DEFAULT_MACHINE_TUNNEL_DIRECT_PEER_CAPABILITIES,
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_CAPABILITIES,
-  DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET,
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_BINARY_HEADER_BYTES,
-  DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS,
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES,
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAMED_MESSAGE_BYTES,
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES,
@@ -8083,7 +8092,6 @@ export {
   AccountDirectoryCapabilitiesSchema,
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX,
-  MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX,
   MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX,
   MachineLiveStreamCapabilitiesSchema,
   MachineLiveStreamRelayDisabledReasonSchema,
@@ -8487,6 +8495,7 @@ export {
   SESSION_PENDING_QUEUE_DELIVERY_TIMINGS,
   TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES,
   NEW_SESSION_PRESENTATION_MODES,
+  NEW_SESSION_BACKDROP_STRENGTHS,
   NEW_SESSION_WIZARD_SECTION_PRESENTATIONS,
   NEW_SESSION_WIZARD_SELECTION_SECTION_IDS,
   accountSettingsParse,
@@ -8629,6 +8638,7 @@ export {
   type NotificationsSettingsV1,
   type TranscriptMessageTimestampDisplayMode,
   type NewSessionPresentationModeV1,
+  type NewSessionBackdropStrengthV1,
   type NewSessionWizardSectionPresentation,
   type NewSessionWizardSelectionSectionId,
   type MachineAdministrationSelectionsV1,
@@ -8774,6 +8784,14 @@ export {
   resolveBugReportServerDiagnosticsLines,
   sanitizeBugReportArtifactFileSegment,
   sanitizeBugReportArtifactPath,
+  BUG_REPORT_LOG_SOURCE_KINDS,
+  BugReportLogSelectionSchema,
+  BugReportDiagnosticsRequestSchema,
+  BugReportSessionDiagnosticsSchema,
+  resolveBugReportLogSelection,
+  type BugReportLogSelection,
+  type BugReportDiagnosticsRequest,
+  type BugReportSessionDiagnostics,
   sanitizeBugReportDaemonDiagnosticsPayload,
   sanitizeBugReportStackContextPayload,
   sanitizeBugReportUrl,
@@ -8803,6 +8821,7 @@ export {
 } from './bugs/reports/index.js';
 
 export {
+  BugReportMachineDiagnosticsSnapshotSchema,
   type BugReportMachineDiagnosticsSnapshot,
 } from './diagnostics/bugReportMachineDiagnostics.js';
 
@@ -9772,6 +9791,7 @@ export * from './ephemeralRunner/consent.js';
 export * from './ephemeralRunner/machineContentKeyBinding.js';
 export * from './ephemeralRunner/bootstrap.js';
 export * from './ephemeralRunner/readiness.js';
+export * from './projects/readinessV1.js';
 export * from './ephemeralRunner/review.js';
 export * from './ephemeralRunner/materialization.js';
 export * from './ephemeralRunner/endpointProjection.js';
@@ -9840,6 +9860,8 @@ export {
 } from './sessions/control/sessionProviderCliAttachPrepareV1.js';
 export * from './reviews/reviewPublicationEvidence.js';
 export * from './projects/openProjectV1.js';
+export * from './projects/starters/projectStarterV1.js';
+export * from './projects/starters/bundledProjectStartersV1.js';
 export * from './projects/openProjectDraftV1.js';
 export {
   GlassSurfaceMaterialSchema,
@@ -9862,6 +9884,7 @@ export { PluginAtmospherePictureContributionV1Schema, type PluginAtmospherePictu
 export { PluginRegistrySourceContributionV1Schema, type PluginRegistrySourceContributionV1 } from './plugins/contributions/registrySources.js';
 export { PluginSkillContributionV1Schema, projectPluginSkillDeclarationV1, type PluginSkillContributionV1 } from './plugins/contributions/skills.js';
 export { PluginProjectedSkillEntryV1Schema, type PluginProjectedSkillEntryV1 } from './daemon/contributionRegistryProjection.js';
+export { PluginProjectedStoreKindEntryV1Schema, type PluginProjectedStoreKindEntryV1 } from './daemon/contributionRegistryProjection.js';
 export { SKILL_ACTION_IDS_V1, type SkillActionIdV1 } from './prompts/library/skills/skillActionIdsV1.js';
 export { SkillReadInputV1Schema, SkillReadResultV1Schema, type SkillReadInputV1, type SkillReadResultV1,
   type SessionSkillReadItemV1 } from './prompts/library/skills/skillReadV1.js';
@@ -9884,44 +9907,12 @@ export {
   type ActionResolvedSessionTargetsV1,
   type ActionSessionFanoutResultV1,
 } from './actions/sessionTargetV1.js';
-export { MachineSetupPresetContributionV1Schema, type MachineSetupPresetContributionV1 } from './plugins/contributions/machineSetupPresets.js';
-export * from './machines/setup/machineRecipeV1.js';
-export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, MachinePresetItemV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1, type MachinePresetItemV1 } from './machines/managed/machineSetupV1.js';
-export * from './deployments/storedAppInputV1.js';
-export * from './machines/agentIsolationV1.js';
-export * from './actions/specs/machine/agentIsolation.js';
-export * from './machines/adminAccessV1.js';
-export * from './deployments/deploymentChildRpcV1.js';
-
-export * from './deployments/deploymentActionsV1.js';
-
-export { createDeploymentApprovalScopeResolverV1, resolveInitialDeploymentApprovalV1 } from './deployments/deploymentApprovalScopeV1.js';
-
-export { ScmCommitOidSchema } from './scm/commitPublication.js';
-
-export * from './machines/machineServiceWatchesV1.js';
-
-export * from './local/services/serviceIdentityV1.js';
-
-export * from './projects/projectDeploymentDefaultsV1.js';
-
-export * from './projects/deploymentCreationDefaultsV1.js';
-
 export * from './artifacts/deploymentArtifactKindsV1.js';
+export * from './projects/deploymentCreationDefaultsV1.js';
+export * from './projects/projectDeploymentDefaultsV1.js';
+export { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from './local/services/actionIdsV1.js';
 
-export * from './deployments/deploymentBindingPatchV1.js';
-
-export * from './plugins/contributions/backupDestinations.js';
-
-export * from './plugins/contributions/deploymentTemplates.js';
-export * from './machines/setup/machineSetupSourcesV1.js';
-export * from './machines/machineAuthorityV1.js';
-export * from './actions/specs/machine/adminAccess.js';
-export * from './machines/reachability/actionsV1.js';
-export * from './machines/reachability/machineReachabilityPostureV1.js';
-export * from './artifacts/artifactMutationHttpV1.js';
-export { type PluginCollectionListExtensionV1 } from './plugins/contributions/ui/v2.js';
-export { type DeploymentRestartInputV1 } from './deployments/deploymentRestartV1.js';
-export { type HealthCheckKindContributionV1 } from './plugins/contributions/healthCheckKinds.js';
-
-export * from './sessions/media/imageMarksV1.js';
+export * from './account/settings/themeProfiles.js';
+export * from './bots/templates/botTemplateV1.js';
+export * from './bots/templates/botTemplateArtifactSharingV1.js';
+export * from './mcp/servers/portableMcpDefinitionV1.js';

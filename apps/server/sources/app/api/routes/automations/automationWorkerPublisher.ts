@@ -107,3 +107,14 @@ export async function resolveWorkflowAutomationWorkerPublisher(params: Parameter
     }, select: { runId: true } });
     return assignment ? publisher : null;
 }
+
+/** Legacy recipes retain their incumbent worker boundary; Workflows use their admitted assignment. */
+export async function resolveAutomationRunWorkerPublisher(params: Parameters<typeof resolveExactAutomationWorkerPublisher>[0] & Readonly<{
+    runId: string;
+}>): Promise<ExactAutomationWorkerPublisher | null> {
+    const run = await db.automationRun.findFirst({ where: { id: params.runId, accountId: params.accountId },
+        select: { workflowCustodyState: true } });
+    return run?.workflowCustodyState !== null && run !== null
+        ? resolveWorkflowAutomationWorkerPublisher(params)
+        : resolveExactAutomationWorkerPublisher(params);
+}

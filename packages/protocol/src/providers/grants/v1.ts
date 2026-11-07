@@ -1,8 +1,8 @@
-import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '../ids.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 
 const FingerprintSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 

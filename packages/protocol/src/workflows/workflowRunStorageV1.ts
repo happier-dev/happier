@@ -37,3 +37,4 @@ export type WorkflowRunStorageOperation = Readonly<Record<string, unknown> & {
     | 'invocations.publish_draft' | 'invocations.complete_review' | 'transition' | 'invocations.recover'
     | 'delivery.pull' | 'delivery.ack' | 'origin-input.withdrawn' | 'run-key.census' | 'run-key.commit';
 }>;
+

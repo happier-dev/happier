@@ -3,6 +3,20 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ExecutableParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { WorkflowBlockIdSchema } from './workflowReferenceV1.js';
+import { DiscussionIdSchema } from '../discussions/content.js';
+import { DiscussionRoundOutcomeV1Schema, type DiscussionRoundOutcomeV1 } from '../discussions/models.js';
+
+export type WorkflowDiscussionRoundBindingV1 = Readonly<{
+  discussionId: string; pattern: DiscussionRoundOutcomeV1['pattern'];
+}>;
+
+/** Private installed-worker projection. Identity and settlement stay with admission and the Run owner. */
+export const WorkflowDiscussionRoundProgressV1Schema = lazyZodSchema(() => z.strictObject({
+  discussionId: DiscussionIdSchema,
+  answerCount: DiscussionRoundOutcomeV1Schema.shape.answerCount,
+  synthesized: DiscussionRoundOutcomeV1Schema.shape.synthesized,
+}));
+export type WorkflowDiscussionRoundProgressV1 = z.infer<typeof WorkflowDiscussionRoundProgressV1Schema>;
 
 export const WorkflowDiscussionRoundProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   collections: z.array(WorkflowBlockIdSchema).check(z.minLength(1)),

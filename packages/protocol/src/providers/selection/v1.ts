@@ -8,12 +8,12 @@ import {
   type ModelOverrideV1,
 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
-import { PROVIDER_SETTINGS_LIMITS_V1 } from '../settings/limits.js';
+import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 
 const NativeModelRefSchema = lazyZodSchema(() => z.strictObject({
   agentTargetKey: ProviderAgentTargetKeySchema,
   providerConnectionId: z.null(),
-  modelId: ProviderModelIdSchema,
+  modelId: NonBlankOpaqueIdentifierSchema,
 }));
 const ConnectionModelRefSchema = lazyZodSchema(() => z.strictObject({
   agentTargetKey: ProviderAgentTargetKeySchema,
@@ -34,9 +34,6 @@ export type SessionModelSelectionV1 = z.infer<typeof SessionModelSelectionV1Sche
 export const ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema = lazyZodSchema(() => z.record(
   ProviderAgentTargetKeySchema, SessionModelSelectionV1Schema,
 ).check(z.superRefine((defaults, context) => {
-  if (Object.keys(defaults).length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
-    context.addIssue({ code: 'custom', message: 'Too many per-agent defaults' });
-  }
   for (const [key, selection] of Object.entries(defaults)) {
     if (selection.ref.agentTargetKey !== key) context.addIssue({ code: 'custom', path: [key], message: 'Default selection Agent target must match its key' });
   }
@@ -83,12 +80,13 @@ export type SessionActiveModelSelectionV1 = z.infer<
 export const SESSION_APPLIED_MODEL_V1_METADATA_KEY = 'sessionAppliedModelV1';
 
 /**
- * Last model attached to an exact provider-accepted new-turn input.
+ * Retained applied-model history from predecessor Session metadata.
  *
- * `provider` + `modelId` are the Remote Dev predecessor projection. Dev adds the
- * structured selection so provider-connection identity is not lost. Remote Dev
- * readers ignore the additive field and Dev readers accept predecessor records
- * without it.
+ * Current runtimes publish observed models through sessionModelsV1 and its exact
+ * active-selection fact. Readers retain this carrier for older Session data;
+ * prompt acceptance does not establish model-application proof.
+ * `provider` + `modelId` are the predecessor projection. The optional structured
+ * selection preserves provider-connection identity when it is present.
  */
 export const SessionAppliedModelV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -221,8 +219,8 @@ export function isNativeAutomaticModelSelectionInputV1(input: Readonly<{
   modelId?: string | null;
 }>): boolean {
   if (input.providerConnectionId != null) return false;
-  const modelId = input.modelId?.trim() ?? '';
-  return modelId.length === 0 || modelId === 'default';
+  const modelId = readNonBlankOpaqueIdentifier(input.modelId);
+  return modelId === null || modelId === 'default';
 }
 
 /**
@@ -239,7 +237,7 @@ export function resolveSessionModelSelectionInputRefV1(input: Readonly<{
   const providerConnectionId = input.providerConnectionId == null
     ? null
     : ProviderConnectionIdSchema.parse(input.providerConnectionId);
-  const normalizedModelId = input.modelId.trim();
+  const normalizedModelId = providerConnectionId === null ? input.modelId : input.modelId.trim();
   if (
     isNativeAutomaticModelSelectionInputV1({ providerConnectionId, modelId: normalizedModelId })
     || !normalizedModelId
@@ -269,16 +267,16 @@ type NormalizedLegacyModelSelectionIntentV1 = Readonly<{
 function readUsableLegacyModelOverrideV1(value: unknown): ModelOverrideV1 | null {
   const legacy = ModelOverrideV1Schema.safeParse(value);
   if (!legacy.success || legacy.data.updatedAt < 0) return null;
-  const modelId = legacy.data.modelId?.trim() ?? null;
+  const modelId = legacy.data.modelId ?? null;
   if (modelId === null || modelId === 'default') return legacy.data;
   if (!modelId) return null;
-  return ProviderModelIdSchema.safeParse(modelId).success ? legacy.data : null;
+  return NonBlankOpaqueIdentifierSchema.safeParse(modelId).success ? legacy.data : null;
 }
 
 function normalizeUsableLegacyModelOverrideV1(
   legacy: ModelOverrideV1,
 ): NormalizedLegacyModelSelectionIntentV1 {
-  const modelId = legacy.modelId?.trim() ?? null;
+  const modelId = legacy.modelId ?? null;
   return {
     updatedAt: legacy.updatedAt,
     modelId: modelId === null || modelId === 'default' ? null : modelId,
@@ -438,7 +436,6 @@ export type ModelVisibilityRefV1 = z.infer<typeof ModelVisibilityRefV1Schema>;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const SESSION_MODEL_SELECTION_V1_TRANSPORT_PREFIX = 'sms1:';
-const SESSION_MODEL_SELECTION_V1_TRANSPORT_MAX_LENGTH = 4096;
 
 /**
  * Canonical non-secret transport for carrying a complete model selection through
@@ -455,7 +452,6 @@ export function serializeSessionModelSelectionV1(selection: SessionModelSelectio
 export function deserializeSessionModelSelectionV1(value: string): SessionModelSelectionV1 {
   if (
     !value.startsWith(SESSION_MODEL_SELECTION_V1_TRANSPORT_PREFIX)
-    || value.length > SESSION_MODEL_SELECTION_V1_TRANSPORT_MAX_LENGTH
   ) {
     throw new Error('Invalid session model selection transport');
   }

@@ -1,6 +1,6 @@
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { createRpcCallError } from '../../rpc/errors.js';
-import { TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema,
+import { TERMINAL_STREAM_MAX_READ_BYTES, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema,
   type TerminalStreamReadResponse } from '../../terminal/stream.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, ActionOperationListV1ResponseSchema,
   ActionOperationGetV1ResponseSchema, ActionOperationCancelV1ResponseSchema,
@@ -8,6 +8,7 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, Actio
 import { ActionOperationActionInputSchemasV1, type ActionOperationActionIdV1,
   type ActionOperationActionInputV1 } from '../specs/actionOperations.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { selectOperationOutput } from './selectedOutput.js';
 import type { ActionExecuteFailure } from './types.js';
 
 export type QualifiedActionOperationV1 = Readonly<{
@@ -29,8 +30,17 @@ export async function executeActionOperationActionV1(args: Readonly<{
   openOutput?: (target: QualifiedActionOperationV1 & Readonly<{ operation: ActionOperationSnapshotV1 }>) => Promise<void>;
   copyOutput?: (output: TerminalStreamReadOkResponse) => Promise<void | ActionExecuteFailure>;
 }>): Promise<unknown> {
-  const input = ActionOperationActionInputSchemasV1[args.actionId].parse(args.input);
-  const { serverId, machineId, ...payload } = input;
+  const copyInput = args.actionId === 'projects.execution.output.copy'
+    ? ActionOperationActionInputSchemasV1['projects.execution.output.copy'].parse(args.input) : undefined;
+  const input = copyInput ?? ActionOperationActionInputSchemasV1[args.actionId].parse(args.input);
+  const selection = copyInput?.selection;
+  if (selection?.kind === 'rendered') return failure('operation_output_selection_mapping_unavailable');
+  const { serverId, machineId, ...operands } = input;
+  // The signed Action header owns resource admission. Ordinary RPC input stays
+  // unchanged and cannot manufacture a managed observation scope.
+  const { managed: _managed, ...operationOperands } = 'managed' in operands ? operands : { ...operands, managed: undefined };
+  const { environmentId: _environmentId, ...payload } = 'environmentId' in operationOperands
+    ? operationOperands : { ...operationOperands, environmentId: undefined };
   const invoke: ActionOperationMachineTransportV1 = async request => {
     const raw = await args.transport(request);
     if (raw && typeof raw === 'object' && 'error' in raw && typeof raw.error === 'string'
@@ -79,13 +89,16 @@ export async function executeActionOperationActionV1(args: Readonly<{
     return { kind: 'opened' };
   }
   if (!attachment.terminalId) return failure('operation_output_pending');
-  const readInput = ActionOperationActionInputSchemasV1['projects.execution.output.read'].parse(input);
+  const { selection: _selection, ...readOperands } = 'selection' in input ? input : { ...input, selection: undefined };
+  const readInput = ActionOperationActionInputSchemasV1['projects.execution.output.read'].parse(readOperands);
   const { serverId: _serverId, machineId: _machineId, operationId: _operationId, ...cursor } = readInput;
   const rawOutput = await invoke({
     // Operation custody and execution destination are separate qualified addresses.
     serverId: attachment.serverId, machineId: attachment.machineId,
     method: RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
-    payload: TerminalStreamReadRequestSchema.parse({ ...cursor, terminalId: attachment.terminalId }),
+    payload: TerminalStreamReadRequestSchema.parse({ ...cursor, terminalId: attachment.terminalId,
+      ...(selection?.kind === 'bytes' ? { maxBytes: Math.min(selection.endByteOffset - readInput.byteOffset,
+        cursor.maxBytes ?? TERMINAL_STREAM_MAX_READ_BYTES) } : {}) }),
     ...(args.signal ? { signal: args.signal } : {}),
   });
   const outputFailure = readActionFailureEnvelope(rawOutput, { treatReturnedErrorEnvelopeAsFailure: true });
@@ -94,7 +107,9 @@ export async function executeActionOperationActionV1(args: Readonly<{
   if (!output.ok) return { ok: false, errorCode: output.code, error: output.message };
   if (output.terminalId !== attachment.terminalId) return failure('operation_output_scope_mismatch');
   if (args.actionId === 'projects.execution.output.read') return output;
-  if (!args.copyOutput) return { kind: 'bytes', output };
-  const copied = await args.copyOutput(output);
-  return readActionFailureEnvelope(copied) ?? { kind: 'copied', output };
+  const selected = selection?.kind === 'bytes'
+    ? selectOperationOutput(output, { ...readInput, selection }) : { output };
+  if (!args.copyOutput) return { kind: 'bytes', ...selected };
+  const copied = await args.copyOutput(selected.output);
+  return readActionFailureEnvelope(copied) ?? { kind: 'copied', ...selected };
 }

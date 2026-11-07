@@ -1,13 +1,14 @@
-import { readSharedWorkflowTriggerSummaries } from '@/app/automations/automationSharedWorkflowSummaries';
-import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { z } from "zod/mini";
 import type { FastifyReply } from "fastify";
+import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { AUTOMATION_V3_RUN_LIST_MAX_ITEMS, AutomationAssignmentUpdateRequestSchema, AutomationV3SettingsSchema, AutomationV3SettingsUpdateRequestSchema, AutomationV3WorkerClaimRequestSchema, AutomationV3WorkerAssignmentsResponseSchema, AutomationV3WorkerExecutionDispatchSettlementRequestSchema, AutomationV3WorkerFailRequestSchema, AutomationV3WorkerHeartbeatRequestSchema, AutomationV3WorkerHeartbeatResponseSchema, AutomationV3WorkerStartRequestSchema, AutomationV3WorkerStartResponseSchema, AutomationV3WorkerSucceedRequestSchema, AutomationV3ClearRunHistoryResponseSchema, AutomationDeleteResponseSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDefinitionPatchRequestSchema, AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationTriggerCreateRequestSchema, AutomationTriggerDeleteRequestSchema, AutomationTriggerPatchRequestSchema, AutomationV3RunMutationResponseSchema, AutomationV3RunReplyHandoffRedeliverRequestSchema, AutomationV3RunListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationExecutionRunLifecycleReportRequestSchema, AutomationExecutionRunLifecycleSourcesResponseSchema } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { type Fastify } from "../../types";
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
+import { summarizeWorkflowRuns } from '@/app/workflows/workflowRunService';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { admitExecutionRunLifecycleAutomationRunsTx } from "@/app/automations/automationRunLifecycleAdmission";
@@ -40,9 +41,11 @@ import {
 import {
     claimAutomationRun,
     heartbeatAutomationRun,
+    listDirectRunClaimDeadlines,
     toAutomationV3WorkerClaimResponse,
 } from "@/app/automations/automationClaimService";
 import { listDaemonAssignments } from "@/app/automations/automationAssignmentService";
+import { resolveAutomationRecipeFeaturePolicy } from '@/app/automations/automationRecipeFeaturePolicy';
 import {
     getAutomationSettings,
     updateAutomationSettings,
@@ -56,6 +59,7 @@ import {
 import { loadAutomationEventStatusProjections } from "@/app/automations/automationEventStatusProjection";
 import { loadAutomationSessionLifecycleStatusProjections } from "@/app/automations/automationSessionLifecycleStatusProjection";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
+import { readSharedWorkflowTriggerSummaries } from '@/app/automations/automationSharedWorkflowSummaries';
 import { AutomationValidationError } from "@/app/automations/automationValidation";
 import { AutomationSessionLifecycleRegistrationValidationError } from "@/app/automations/automationSessionLifecycleRegistration";
 import {
@@ -71,13 +75,14 @@ import {
 } from "@/app/automations/automationReplyHandoffService";
 import type { AutomationListItem, AutomationPatchInput, AutomationRunItem } from "@/app/automations/automationTypes";
 import { requirePresentUser } from "../../utils/requirePresentUser";
+import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
     resolveExactAutomationWorkerPublisher,
-    resolveWorkflowAutomationWorkerPublisher,
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
+import { resolveWorkflowAutomationWorkerPublisher, resolveAutomationRunWorkerPublisher } from './automationWorkerPublisher';
 
 async function getCurrentAutomationAccountCurrentness(accountId: string) {
     const account = await db.account.findUnique({
@@ -113,16 +118,33 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
     automation: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
-    const [eventProjections, lifecycleProjections] = await Promise.all([
+    const [eventProjections, lifecycleProjections, lastRunAt] = await Promise.all([
         loadAutomationEventStatusProjections({ automations: [automation] }),
         loadAutomationSessionLifecycleStatusProjections({ automations: [automation] }),
+        loadAutomationLastRunAtProjections(automation.accountId, [automation.id]),
     ]);
     return toAutomationDefinitionDetailApiDto(
         automation,
         accountCurrentness,
+        lastRunAt.get(automation.id) ?? null,
         eventProjections,
         lifecycleProjections.get(automation.id),
     );
+}
+
+/** The legacy definition field consumes the same Run summary as Library; it is not persisted. */
+async function loadAutomationLastRunAtProjections(accountId: string, automationIds: readonly string[]) {
+    const result = new Map<string, number | null>();
+    let remaining = [...automationIds];
+    while (remaining.length > 0) {
+        const page = await summarizeWorkflowRuns({ accountId, automationIds: remaining,
+            pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
+        for (const summary of page.automationSummaries) {
+            result.set(summary.automationId, summary.lastRun ? Date.parse(summary.lastRun.startedAt) : null);
+        }
+        remaining = page.remainingAutomationIds;
+    }
+    return result;
 }
 
 function automationDefinitionValidationMessage(error: AutomationValidationError | z.core.$ZodError): string {
@@ -162,15 +184,16 @@ export function registerAutomationV3Routes(
                 ...('details' in query ? { details: true as const } : {}),
             });
             const rows = page.automations;
-            const [eventProjections, lifecycleProjections] = await Promise.all([
+            const [eventProjections, lifecycleProjections, lastRunAt] = await Promise.all([
                 loadAutomationEventStatusProjections({ automations: rows }),
                 loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
+                loadAutomationLastRunAtProjections(accountId, rows.map(row => row.id)),
             ]);
             if ('details' in query) {
                 const accountCurrentness = await getCurrentAutomationAccountCurrentness(accountId);
                 if (!accountCurrentness) return sendStoredContentFailure(reply);
                 return AutomationDefinitionDetailsResponseSchema.parse({
-                    automations: rows.map(row => toAutomationDefinitionDetailApiDto(row, accountCurrentness,
+                    automations: rows.map(row => toAutomationDefinitionDetailApiDto(row, accountCurrentness, lastRunAt.get(row.id) ?? null,
                         eventProjections, lifecycleProjections.get(row.id))),
                     nextCursor: page.nextCursor,
                 });
@@ -181,6 +204,7 @@ export function registerAutomationV3Routes(
                         workflowDefinitionIds: query.workflowDefinitionIds ?? [query.workflowDefinitionId!] }) } : {}),
                 automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
                     row,
+                    lastRunAt.get(row.id) ?? null,
                     eventProjections,
                     lifecycleProjections.get(row.id),
                 )),
@@ -257,6 +281,7 @@ export function registerAutomationV3Routes(
             }
             const automation = await createAutomation({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 input: {
                     automationId: body.automationId,
                     name: body.name,
@@ -313,6 +338,7 @@ export function registerAutomationV3Routes(
                     : { ...commonInput, ...(body.templateCiphertext !== undefined ? { templateCiphertext: body.templateCiphertext } : {}) };
             const automation = await updateAutomation({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 input,
                 expectedTemplateVersion: body.expectedTemplateVersion,
@@ -355,6 +381,7 @@ export function registerAutomationV3Routes(
             }
             const automation = await reconcileAutomationDefinition({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 input: body,
             });
@@ -396,6 +423,7 @@ export function registerAutomationV3Routes(
             }
             const automation = await createAutomationTrigger({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 triggerId: body.triggerId,
                 trigger: body.trigger,
@@ -435,6 +463,7 @@ export function registerAutomationV3Routes(
             }
             const automation = await updateAutomationTrigger({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 triggerId: body.triggerId,
                 expectedRevision: body.expectedRevision,
@@ -474,6 +503,7 @@ export function registerAutomationV3Routes(
             const body = AutomationTriggerDeleteRequestSchema.parse(request.body);
             const automation = await deleteAutomationTrigger({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 triggerId: body.triggerId,
                 expectedRevision: body.expectedRevision,
@@ -499,12 +529,15 @@ export function registerAutomationV3Routes(
         preHandler: [app.authenticate, requirePresentUser],
         schema: { params: z.object({ id: z.string() }) },
     }, async (request, reply) => {
-        const deleted = await deleteAutomation({
-            accountId: request.userId,
-            automationId: request.params.id,
-        });
-        if (!deleted) return reply.code(404).send({ error: "automation_not_found" });
-        return reply.send(AutomationDeleteResponseSchema.parse({ ok: true, removedRevision: deleted.removedRevision }));
+        try {
+            const deleted = await deleteAutomation({ accountId: request.userId, automationId: request.params.id,
+                authentication: readTeamOperationAuthenticationFromRequest(request) });
+            if (!deleted) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(AutomationDeleteResponseSchema.parse({ ok: true, removedRevision: deleted.removedRevision }));
+        } catch (error) {
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
     });
 
     app.post("/v3/automations/:id/pause", {
@@ -513,16 +546,15 @@ export function registerAutomationV3Routes(
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
         if (!accountCurrentness) return sendStoredContentFailure(reply);
-        const automation = await setAutomationEnabled({
-            accountId: request.userId,
-            automationId: request.params.id,
-            enabled: false,
-        });
-        if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-        return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
-            automation,
-            accountCurrentness,
-        ));
+        try {
+            const automation = await setAutomationEnabled({ accountId: request.userId, automationId: request.params.id,
+                authentication: readTeamOperationAuthenticationFromRequest(request), enabled: false });
+            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness));
+        } catch (error) {
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
     });
 
     app.post("/v3/automations/:id/resume", {
@@ -531,16 +563,15 @@ export function registerAutomationV3Routes(
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
         if (!accountCurrentness) return sendStoredContentFailure(reply);
-        const automation = await setAutomationEnabled({
-            accountId: request.userId,
-            automationId: request.params.id,
-            enabled: true,
-        });
-        if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-        return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
-            automation,
-            accountCurrentness,
-        ));
+        try {
+            const automation = await setAutomationEnabled({ accountId: request.userId, automationId: request.params.id,
+                authentication: readTeamOperationAuthenticationFromRequest(request), enabled: true });
+            if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness));
+        } catch (error) {
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
     });
 
     app.post("/v3/automations/:id/assignments", {
@@ -557,6 +588,7 @@ export function registerAutomationV3Routes(
             const automation = await updateAutomation({
                 accountId: request.userId,
                 automationId: request.params.id,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 input: { assignments: body.assignments },
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
@@ -592,6 +624,7 @@ export function registerAutomationV3Routes(
                 ]) : headers['idempotency-key'];
             const run = await runAutomationNow({
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 ...(key
                     ? { idempotencyKey: key }
@@ -631,11 +664,20 @@ export function registerAutomationV3Routes(
             path: "/v3/automations/worker/assignments",
             machineId: request.query.machineId,
         })) return reply.code(401).send(null);
-        const assignments = await listDaemonAssignments({
-            accountId: request.userId,
-            machineId: request.query.machineId,
-        });
-        const settings = await getAutomationSettings({ accountId: request.userId });
+        const recipeFeaturePolicy = await resolveAutomationRecipeFeaturePolicy({ request });
+        const [assignments, directRunClaimDeadlines, settings] = await Promise.all([
+            listDaemonAssignments({
+                accountId: request.userId,
+                machineId: request.query.machineId,
+                recipeFeaturePolicy,
+            }),
+            listDirectRunClaimDeadlines({
+                accountId: request.userId,
+                machineId: request.query.machineId,
+                recipeFeaturePolicy,
+            }),
+            getAutomationSettings({ accountId: request.userId }),
+        ]);
         if (!settings) return reply.code(404).send(null);
         return AutomationV3WorkerAssignmentsResponseSchema.parse({
             assignments: assignments.map((assignment) => ({
@@ -644,6 +686,7 @@ export function registerAutomationV3Routes(
                 nextClaimAt: assignment.nextClaimAt?.getTime() ?? null,
                 executionRecipeVersion: assignment.executionRecipeVersion,
             })),
+            directRunClaimDeadlines,
             settings: {
                 maxActiveRunsPerMachine: settings.maxActiveRunsPerMachine,
             },
@@ -728,12 +771,13 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerHeartbeatRequestSchema.parse(request.body);
-        if (!await resolveExactAutomationWorkerPublisher({
+        if (!await resolveAutomationRunWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/heartbeat`,
             machineId: body.machineId,
+            runId: request.params.runId,
         })) return reply.code(401).send(null);
         const result = await heartbeatAutomationRun({
             accountId: request.userId,
@@ -759,12 +803,13 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerStartRequestSchema.parse(request.body);
-        if (!await resolveExactAutomationWorkerPublisher({
+        if (!await resolveAutomationRunWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/start`,
             machineId: body.machineId,
+            runId: request.params.runId,
         })) return reply.code(401).send(null);
         const started = await startAutomationRun({
             accountId: request.userId,
@@ -788,12 +833,13 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerExecutionDispatchSettlementRequestSchema.parse(request.body);
-        if (!await resolveExactAutomationWorkerPublisher({
+        if (!await resolveAutomationRunWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/execution-dispatch/settle`,
             machineId: body.machineId,
+            runId: request.params.runId,
         })) return reply.code(401).send(null);
         const run = await settleAutomationExecutionDispatch({
             accountId: request.userId,
@@ -817,12 +863,13 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerSucceedRequestSchema.parse(request.body);
-        if (!await resolveExactAutomationWorkerPublisher({
+        if (!await resolveAutomationRunWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/succeed`,
             machineId: body.machineId,
+            runId: request.params.runId,
         })) return reply.code(401).send(null);
         const run = await succeedAutomationRun({
             accountId: request.userId,
@@ -847,12 +894,13 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerFailRequestSchema.parse(request.body);
-        if (!await resolveExactAutomationWorkerPublisher({
+        if (!await resolveAutomationRunWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/fail`,
             machineId: body.machineId,
+            runId: request.params.runId,
         })) return reply.code(401).send(null);
         const run = await failAutomationRun({
             accountId: request.userId,

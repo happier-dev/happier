@@ -5,7 +5,6 @@ import type { ProviderManualModelV1, ProviderSettingsV1 } from '../settings/v1.j
 import type { ProviderSettingsMigrationPendingConflictV1 } from '../settings/v1.js';
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
-  ProviderSettingsLimitError,
   ProviderSettingsMigrationPendingConflictV1Schema,
   ProviderMigrationSourceProfileIdSchema,
   ProviderSettingsV1Schema,
@@ -386,14 +385,12 @@ export function migrateProviderAccountSettingsV1(
       nextProviderSettings = reconcileProviderMigrationSourcesV1(nextProviderSettings, context.retainedSourceProfileIds);
     }
     changed = !sameStrictJsonValue(nextProviderSettings, providerSettings);
-  } catch (error) {
+  } catch {
     return {
       ok: false,
       changed: false,
       providerSettings,
-      reason: error instanceof ProviderSettingsLimitError
-        ? 'provider_settings_limit_exceeded'
-        : 'provider_settings_invalid',
+      reason: 'provider_settings_invalid',
     };
   }
   const outcomes = [...outcomesBySourceProfileId.values()]

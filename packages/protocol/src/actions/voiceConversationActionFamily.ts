@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 export { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -62,13 +63,14 @@ export const VoiceDictationActionResultSchema = lazyZodSchema(() => z.discrimina
 ]));
 export type VoiceDictationActionResult = z.infer<typeof VoiceDictationActionResultSchema>;
 export const VoiceConversationActionInputSchemas = {
-  'ui.voice_global.conversations.list': z.strictObject({ conversationSessionAddress: z.optional(AddressSchema), cursor: z.optional(ConversationHistoryCursorSchema) }),
   'ui.voice_global.say.start': z.strictObject({ text: z.string().check(z.trim(), z.minLength(1)) }),
   'ui.voice_global.say.stop': z.strictObject({}),
   'ui.voice_global.get': z.strictObject({ target: z.optional(VoiceConversationTargetSchema) }),
   'ui.voice_global.start': z.strictObject({ target: VoiceConversationTargetSchema, expectedAttempt: z.null() }),
   'ui.voice_global.new_conversation': z.strictObject({ target: VoiceConversationTargetSchema, expectedAttempt: z.null() }),
   'ui.voice_global.continue_conversation': z.strictObject({ conversationSessionAddress: AddressSchema, expectedAttempt: z.null() }),
+  'ui.voice_global.conversations.list': z.strictObject({ conversationSessionAddress: z.optional(AddressSchema),
+    cursor: z.optional(ConversationHistoryCursorSchema) }),
   'ui.voice_global.conversations.open': z.strictObject({ conversationSessionAddress: AddressSchema }),
   'ui.voice_global.end': AttemptInputSchema,
   'ui.voice_global.set_muted': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AttemptInputSchema, { muted: z.boolean() }))),
@@ -142,13 +144,13 @@ export const VoiceSayActionResultSchema = lazyZodSchema(() => z.discriminatedUni
 ]));
 export type VoiceSayActionResult = z.infer<typeof VoiceSayActionResultSchema>;
 export const VoiceConversationActionOutputSchemas = {
-  'ui.voice_global.conversations.list': VoiceConversationHistoryListSchema,
   'ui.voice_global.say.start': VoiceSayActionResultSchema,
   'ui.voice_global.say.stop': VoiceSayActionResultSchema,
   'ui.voice_global.get': VoiceConversationActionResultSchema,
   'ui.voice_global.start': VoiceConversationActionResultSchema,
   'ui.voice_global.new_conversation': VoiceConversationActionResultSchema,
   'ui.voice_global.continue_conversation': VoiceConversationActionResultSchema,
+  'ui.voice_global.conversations.list': VoiceConversationHistoryListSchema,
   'ui.voice_global.conversations.open': VoiceConversationActionResultSchema,
   'ui.voice_global.end': VoiceConversationActionResultSchema,
   'ui.voice_global.set_muted': VoiceConversationActionResultSchema,
@@ -219,7 +221,7 @@ const VOICE_CONVERSATION_ACTION_SUMMARIES = {
   'ui.voice_global.dictation.start': 'Dictate into the exact focused editable field. Requires microphone consent and never submits the field.',
   'ui.voice_global.dictation.finish': 'Finish Dictation and insert recognized words into the same editable field without sending.',
   'ui.voice_global.dictation.retry': 'Retry the same retained failed recording and insert recognized words into the same editable field without sending or recording again.',
-  'ui.voice_global.dictation.cancel': 'Cancel Dictation for the exact mounted field without inserting words.',
+  'ui.voice_global.dictation.cancel': 'Cancel Dictation or discard its retained failed recording for the exact mounted field without inserting words.',
   'ui.voice_global.dictation.dismiss': 'Dismiss the exact mounted field’s Dictation failure.',
   'ui.voice_global.history.search': 'Search ordinary text in the person’s owned Voice conversations, including archived conversations, at this Home. Discovers conversations on first use; refresh explicitly reloads them. Warm search filters loaded rows.',
   'ui.voice_global.history.load_older': 'Load older transcript pages from owned Voice conversations, optionally filtering the loaded rows.',
@@ -227,7 +229,8 @@ const VOICE_CONVERSATION_ACTION_SUMMARIES = {
   'ui.voice_global.history.clear': 'Delete the discovered owned Voice conversations at this Home and retire their local rows. Requires confirmation.',
 } as const satisfies Record<(typeof VOICE_CONVERSATION_ACTION_IDS)[number], string>;
 
-export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
+function createVoiceConversationActionSpecs() {
+  return VOICE_CONVERSATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   id, approval: { result: 'required' },
   approvalPolicy: { uiConfirmation: 'direct' },
   ...(id === 'ui.voice_global.set_muted' ? { safetyForInput: (input: unknown) => {
@@ -235,11 +238,11 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
     return parsed.success && parsed.data.muted === true ? 'safe' as const : undefined;
   } } : {}),
   title: {
-    'ui.voice_global.conversations.list': 'List Voice conversations',
     'ui.voice_global.say.start': 'Say this now', 'ui.voice_global.say.stop': 'Stop read-aloud',
     'ui.voice_global.get': 'Read current Voice attempt', 'ui.voice_global.start': 'Start Voice conversation',
     'ui.voice_global.new_conversation': 'New Voice conversation',
     'ui.voice_global.continue_conversation': 'Continue Voice conversation',
+    'ui.voice_global.conversations.list': 'List Voice conversations',
     'ui.voice_global.conversations.open': 'Open Voice conversation as a Session',
     'ui.voice_global.end': 'End Voice conversation', 'ui.voice_global.set_muted': 'Set Voice microphone mute',
     'ui.voice_global.recover': 'Recover Voice conversation', 'ui.voice_global.dismiss': 'Dismiss ended or failed Voice attempt',
@@ -263,7 +266,7 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
     'ui.voice_global.history.export': 'Export Voice History', 'ui.voice_global.history.clear': 'Clear Voice History',
   }[id],
   description: id === 'ui.voice_global.say.start' || id === 'ui.voice_global.say.stop' || isVoiceHistoryActionId(id) || id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
-    || id === 'ui.voice_global.conversations.open' ? VOICE_CONVERSATION_ACTION_SUMMARIES[id]
+    || id.startsWith('ui.voice_global.conversations.') ? VOICE_CONVERSATION_ACTION_SUMMARIES[id]
     : 'Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Local Voice and host-tool realtime may decide pending requests when Voice agent can approve requests is enabled (the default); when off, a tap is required. Native Codex Realtime cannot decide: tap the request or switch to Local Voice. Confirm outcomes only from canonical request state.',
   safety: id === 'ui.voice_global.start' || id === 'ui.voice_global.recover' || id === 'ui.voice_global.hold_begin'
     || id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
@@ -292,6 +295,7 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
       { path: 'expectedAttempt', title: 'Current Voice conversation', description: 'Empty when none is running.', widget: 'json', required: true },
     ] : id === 'ui.voice_global.continue_conversation' || id === 'ui.voice_global.conversations.open'
       ? [{ path: 'conversationSessionAddress', title: 'Exact Voice conversation', widget: 'json', required: true }]
+    : id === 'ui.voice_global.conversations.list' ? []
     : id.startsWith('ui.voice_global.brief.') ? [{ path: 'expectedAttemptId', title: 'Voice conversation', widget: 'text' }]
     : id === 'ui.voice_global.position.set' ? [
       { path: 'x', title: 'Horizontal position', widget: 'number', required: true },
@@ -305,3 +309,6 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
       ...(id === 'ui.voice_global.turn_control' ? [{ path: 'control', title: 'Turn control', widget: 'text' as const, required: true }] : []),
     ] },
 }));
+}
+
+export const VOICE_CONVERSATION_ACTION_SPECS: ReturnType<typeof createVoiceConversationActionSpecs> = lazyActionSpecArray(createVoiceConversationActionSpecs);

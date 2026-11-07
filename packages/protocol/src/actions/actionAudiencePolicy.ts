@@ -1,27 +1,31 @@
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
-import { isActionApprovalWaivable } from './actionApprovalPolicy.js';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, setActionApprovalOverride,
-  normalizeActionSettingsActionId, isActionSettingsOptInPlacement,
+  normalizeActionSettingsActionId, isActionSettingsOptInPlacement, readScopedActionApprovalPreference,
+  setScopedActionApprovalPreference, removeScopedActionApprovalPreference, actionPolicyAudienceContextV1, type ActionPolicyAudienceV1, type ActionApprovalScopeV1,
   type ActionsSettingsV1, type ActionSettingsActionId, type ActionSettingsOverride, type ActionSurfaceKey } from './actionSettings.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { ActionAudiencePolicyMode, ActionAudiencePolicyResult, ActionPolicySetInput, ActionPolicySetResult } from './actionPolicyActionFamily.js';
 
 /** One audience preference; global enablement and every neighbouring preference remain intact. */
 export function setActionAudiencePolicy(settings: ActionsSettingsV1, actionId: string,
-  audience: ActionSurfaceKey, mode: ActionAudiencePolicyMode): ActionsSettingsV1 {
+  audience: ActionPolicyAudienceV1, mode: ActionAudiencePolicyMode): ActionsSettingsV1 {
   const admittedId = normalizeActionSettingsActionId(actionId);
   if (!admittedId || admittedId !== actionId) throw new Error('invalid_action_id');
+  if (audience === 'foreign_session_html') {
+    const policies = { ...settings.callerSurfacePolicies?.foreign_session_html };
+    if (mode === 'default') delete policies[actionId];
+    else policies[actionId] = mode;
+    return { ...settings, callerSurfacePolicies: { ...settings.callerSurfacePolicies, foreign_session_html: policies } };
+  }
   const selected = setActionAudienceEnabled(settings, admittedId, audience, mode !== 'off');
   return setActionAudienceApproval(selected, admittedId, audience, mode);
 }
 
 function setActionAudienceApproval(settings: ActionsSettingsV1, admittedId: ActionSettingsActionId,
   audience: ActionSurfaceKey, mode: ActionAudiencePolicyMode): ActionsSettingsV1 {
-  const host = ActionIdSchema.safeParse(admittedId);
-  const waivable = !host.success || isActionApprovalWaivable(getActionSpec(host.data));
   return setActionApprovalOverride({ settings, actionId: admittedId, surface: audience,
-    approvalRequired: mode === 'allowed' && waivable ? false : mode === 'ask_first' ? true : null });
+    approvalRequired: mode === 'allowed' ? false : mode === 'ask_first' ? true : null });
 }
 
 function setActionPlacementEnabled(settings: ActionsSettingsV1, actionId: ActionSettingsActionId,
@@ -46,10 +50,25 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
   settings: ActionsSettingsV1;
   result: ActionPolicySetResult;
 }> {
-  if (!('change' in input)) {
-    const next = setActionAudiencePolicy(settings, input.actionId, input.audience, input.mode);
-    return { settings: next, result: readActionAudiencePolicy(next, input.actionId, input.audience) };
+  if ('profileChange' in input) {
+    const normalized = normalizeActionsSettingsV1(settings);
+    const change = input.profileChange;
+    const id = change.kind === 'upsert' ? change.profile.id : change.id;
+    const remaining = normalized.approvalProfiles?.filter(profile => profile.id !== id) ?? [];
+    return { settings: { ...normalized, approvalProfiles: change.kind === 'upsert'
+      ? [...remaining, change.profile] : remaining }, result: input };
   }
+  if (!('change' in input)) {
+    const scope = 'scope' in input ? input.scope : undefined;
+    const next = scope ? setScopedActionApprovalPreference({ settings, actionId: input.actionId, scope,
+      surface: actionPolicyAudienceContextV1(input.audience).surface, mode: input.mode === 'ask_first' ? 'required'
+        : input.mode === 'allowed' ? 'waived' : 'inherit' })
+      : setActionAudiencePolicy(settings, input.actionId, input.audience, input.mode);
+    return { settings: next, result: readActionAudiencePolicy(next, input.actionId, input.audience, scope) };
+  }
+  if (input.change.kind === 'scoped_approval_remove') return {
+    settings: removeScopedActionApprovalPreference(settings, input.actionId, input.change.scope), result: input,
+  };
   const actionId = normalizeActionSettingsActionId(input.actionId);
   if (!actionId || actionId !== input.actionId) throw new Error('invalid_action_id');
   const normalized = normalizeActionsSettingsV1(settings);
@@ -93,7 +112,8 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
 
 /** The Settings switch and the policy Action share the same audience enablement writer. */
 export function setActionAudienceEnabled(settings: ActionsSettingsV1, actionId: ActionSettingsActionId,
-  audience: ActionSurfaceKey, enabled: boolean): ActionsSettingsV1 {
+  audience: ActionPolicyAudienceV1, enabled: boolean): ActionsSettingsV1 {
+  if (audience === 'foreign_session_html') return setActionAudiencePolicy(settings, actionId, audience, enabled ? 'allowed' : 'off');
   const normalized = normalizeActionsSettingsV1(settings);
   const prior = normalized.actions[actionId];
   const disabledSurfaces = prior?.disabledSurfaces.filter(surface => surface !== audience) ?? [];
@@ -105,14 +125,25 @@ export function setActionAudienceEnabled(settings: ActionsSettingsV1, actionId: 
   } };
 }
 
-export function readActionAudiencePolicy(settings: ActionsSettingsV1, actionId: string, audience: ActionSurfaceKey): ActionAudiencePolicyResult {
+export function readActionAudiencePolicy(settings: ActionsSettingsV1, actionId: string, audience: ActionPolicyAudienceV1,
+  scope?: ActionApprovalScopeV1): ActionAudiencePolicyResult {
   const admittedId = normalizeActionSettingsActionId(actionId);
   if (!admittedId || admittedId !== actionId) throw new Error('invalid_action_id');
   const normalized = normalizeActionsSettingsV1(settings);
   const row = normalized.actions[actionId];
-  const mode: ActionAudiencePolicyMode = row?.disabledSurfaces.includes(audience) ? 'off'
+  if (audience === 'foreign_session_html') {
+    if (scope) throw new Error('invalid_policy_scope');
+    return { actionId, audience, mode: normalized.callerSurfacePolicies?.foreign_session_html?.[actionId] ?? 'default',
+      actionEnabled: row?.enabled !== false,
+      enabled: isActionEnabledByActionsSettings(admittedId, normalized, actionPolicyAudienceContextV1(audience)) };
+  }
+  const scoped = scope ? readScopedActionApprovalPreference(normalized, actionId, scope) : undefined;
+  const mode: ActionAudiencePolicyMode = scope
+    ? scoped?.approvalRequiredSurfaces.includes(audience) ? 'ask_first'
+      : scoped?.approvalWaivedSurfaces.includes(audience) ? 'allowed' : 'default'
+    : row?.disabledSurfaces.includes(audience) ? 'off'
     : row?.approvalRequiredSurfaces.includes(audience) ? 'ask_first'
     : normalized.approvalWaivedSurfaces?.[actionId]?.includes(audience) ? 'allowed' : 'default';
-  return { actionId, audience, mode, actionEnabled: row?.enabled !== false,
+  return { actionId, audience, ...(scope ? { scope } : {}), mode, actionEnabled: row?.enabled !== false,
     enabled: isActionEnabledByActionsSettings(admittedId, normalized, { surface: audience }) };
 }

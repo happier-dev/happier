@@ -160,6 +160,16 @@ export const ProviderAccountUsageSnapshotV1Schema = lazyZodSchema(() => z.strict
   }
 })));
 export type ProviderAccountUsageSnapshotV1 = z.infer<typeof ProviderAccountUsageSnapshotV1Schema>;
+/** Failure clocks describe a refresh attempt, never a provider observation. */
+export function getProviderAccountUsageRefreshErrorAt(
+  snapshot: Pick<ProviderAccountUsageSnapshotV1, 'state' | 'diagnostics'>,
+): number | undefined {
+  if (snapshot.state !== 'error_last_known_good') return undefined;
+  return snapshot.diagnostics?.reduce<number | undefined>((latest, diagnostic) =>
+    diagnostic.observedAtMs === undefined ? latest
+      : Math.max(latest ?? 0, diagnostic.observedAtMs), undefined);
+}
+
 /** Typed projection after retained Account content has been opened. */
 export const ProviderAccountUsageSnapshotV1StoredSchema = createStoredReadSchema(ProviderAccountUsageSnapshotV1Schema);
 

@@ -21,7 +21,6 @@ import {
   ProviderCatalogProbeV1Schema,
   type ProviderCatalogParserV1,
 } from './catalog/descriptorV1.js';
-import { PROVIDER_CATALOG_LIMITS_V1 } from './catalog/limits.js';
 import type {
   ProviderManagedRuntimeDeclarationV1,
   ProviderModelLoadDescriptorV1,
@@ -30,6 +29,7 @@ import type {
 import {
   ProviderManagedRuntimeDeclarationV1Schema,
   ProviderModelLoadDescriptorV1Schema,
+  ProviderInlineCompletionOperationV1Schema,
   ProviderUsageSourceV1Schema,
   resolveProviderManagedRuntimeDeclarationV1,
 } from './contributions/v1.js';
@@ -232,6 +232,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   catalogFallback?: ProviderCatalogCommandFallbackV1;
   credentialTransports: readonly ProviderCredentialTransportV1[];
   modelLoad?: ProviderModelLoadDescriptorV1;
+  inlineCompletion?: readonly import('./contributions/v1.js').ProviderInlineCompletionOperationV1[];
   usageSources?: readonly import('./contributions/v1.js').ProviderUsageSourceV1[];
   managedDeployment?: Readonly<{
     gatewayPlacement?: ProviderGatewayPlacementV1;
@@ -263,6 +264,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
       : null,
     credentialTransports,
     modelLoad: input.modelLoad ? ProviderModelLoadDescriptorV1Schema.parse(input.modelLoad) : null,
+    ...(input.inlineCompletion?.length ? { inlineCompletion: input.inlineCompletion.map(operation => ProviderInlineCompletionOperationV1Schema.parse(operation)) } : {}),
     ...(input.usageSources?.length ? { usageSources: input.usageSources.map(projectUsageSourceSecurityFacts)
       .sort((left, right) => compareProviderCanonicalStringsV1(left.id, right.id)) } : {}),
   };
@@ -275,6 +277,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
       catalogFallback: normalizedSharedFacts.catalogFallback,
       credentialTransports: normalizedSharedFacts.credentialTransports,
       modelLoad: normalizedSharedFacts.modelLoad,
+      ...('inlineCompletion' in normalizedSharedFacts ? { inlineCompletion: normalizedSharedFacts.inlineCompletion } : {}),
       ...('usageSources' in normalizedSharedFacts ? { usageSources: normalizedSharedFacts.usageSources } : {}),
     });
   }
@@ -560,6 +563,7 @@ export function createProviderObservationAuthorizationFingerprintV1(input: Reado
     selectedProtocol: ProviderWireProtocol;
     selectedUse: 'probe' | 'runtime' | 'management';
     destination: ProviderCredentialDestinationV1;
+    additionalCredentials?: readonly Readonly<{ slotId: string; destination: ProviderCredentialDestinationV1 }>[];
   }> | null = null;
   if (input.credential) {
     const transport = normalizeTransport(input.credential.transport);
@@ -573,6 +577,7 @@ export function createProviderObservationAuthorizationFingerprintV1(input: Reado
       selectedProtocol,
       selectedUse,
       destination: transport.destination,
+      ...(transport.additionalCredentials?.length ? { additionalCredentials: transport.additionalCredentials.map(({slotId, destination}) => ({slotId, destination})) } : {}),
     };
   }
   return ProviderObservationAuthorizationFingerprintV1Schema.parse(createProviderFingerprintV1('observation-authorization', {
@@ -599,9 +604,6 @@ export function createProviderProbeObservationIdentityV1(input: Readonly<{
   const observationAuthorizationFingerprints = input.observationAuthorizationFingerprints
     .map((fingerprint) => ProviderObservationAuthorizationFingerprintV1Schema.parse(fingerprint))
     .sort();
-  if (observationAuthorizationFingerprints.length > PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes) {
-    throw new TypeError('Probe observation authorization fingerprint set exceeds the catalog probe limit');
-  }
   if (new Set(observationAuthorizationFingerprints).size !== observationAuthorizationFingerprints.length) {
     throw new TypeError('Probe observation authorization fingerprints must be unique');
   }
@@ -634,11 +636,6 @@ export function createProviderProbeObservationIdentityV1(input: Readonly<{
 export const PROVIDER_PROBE_REQUEST_CONTRACT_V1 = Object.freeze({
   safetyContractVersion: 1,
   parserContractVersion: 1,
-  maxDecodedResponseBytes: PROVIDER_CATALOG_LIMITS_V1.maxCatalogResponseBytes,
-  maxModels: PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection,
-  maxModelIdLength: PROVIDER_CATALOG_LIMITS_V1.maxModelIdLength,
-  maxModelNameLength: PROVIDER_CATALOG_LIMITS_V1.maxModelNameLength,
-  maxModelDescriptionLength: PROVIDER_CATALOG_LIMITS_V1.maxModelDescriptionLength,
 } as const);
 
 export function createProviderProbeRequestFingerprintV1(input: Readonly<{
@@ -764,9 +761,8 @@ export function createProviderCatalogFingerprintV1(input: Readonly<{
    */
   managedCatalogFallback?: ProviderCatalogCommandFallbackV1;
 }>): ProviderCatalogFingerprintV1 {
-  if (input.probeRequestFingerprints.length < 1
-    || input.probeRequestFingerprints.length > PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes) {
-    throw new TypeError('Catalog observations require one to three ordered probe requests');
+  if (input.probeRequestFingerprints.length < 1) {
+    throw new TypeError('Catalog observations require ordered probe requests');
   }
   if (input.catalogFallback && input.managedCatalogFallback) {
     throw new TypeError('Catalog observations cannot mix external and managed command fallback identity');

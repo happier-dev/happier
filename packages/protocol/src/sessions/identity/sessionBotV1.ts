@@ -29,5 +29,6 @@ export const SessionIdentityAdditionsV1StoredSchema = createStoredReadSchema(Ses
 export const BotSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: asProtocolZod(SessionIdSchema),
   bot: z.nullable(SessionBotV1Schema),
+  expectedBot: z.optional(z.nullable(SessionBotV1Schema)),
 }));
 export type BotSetInput = z.infer<typeof BotSetInputSchema>;

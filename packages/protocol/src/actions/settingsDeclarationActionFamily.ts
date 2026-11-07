@@ -7,8 +7,6 @@ import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connec
 import { VoiceCredentialSlotIdSchema } from '../plugins/contributions/voiceProviders.js';
 import { CollectionSpaceOperationV1Schema } from '../collections/spaces/collectionSpacesV1.js';
 import { PersistedConnectedServiceBindingsV1Schema } from '../connect/connectedServiceBindings.js';
-
-
 export type SettingsDeclarationActionIdV1 = typeof SETTINGS_DECLARATION_ACTION_IDS_V1[number];
 
 export function isSettingsDeclarationActionIdV1(value: string): value is SettingsDeclarationActionIdV1 {

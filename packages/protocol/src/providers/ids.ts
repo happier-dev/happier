@@ -17,4 +17,4 @@ export const ProviderMachineIdSchema = canonicalBoundedRecordKeySchema(256);
 
 export const ProviderAgentTargetKeySchema = canonicalBoundedRecordKeySchema(256);
 
-export const ProviderModelIdSchema = canonicalBoundedStringSchema(512).check(z.refine((value) => !/\s/u.test(value), 'Model id must not contain whitespace'));
+export const ProviderModelIdSchema = canonicalBoundedStringSchema().check(z.refine((value) => !/\s/u.test(value), 'Model id must not contain whitespace'));

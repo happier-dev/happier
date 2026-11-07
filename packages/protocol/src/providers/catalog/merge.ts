@@ -4,12 +4,11 @@ import { z } from 'zod/mini';
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import { ProviderModelDescriptorV1Schema, resolveModelDisplayName } from '../../models/descriptor.js';
 import type { ProviderManualModelV1 } from '../settings/v1.js';
-import { PROVIDER_SETTINGS_LIMITS_V1, ProviderManualModelV1Schema } from '../settings/v1.js';
+import { ProviderManualModelV1Schema } from '../settings/v1.js';
 import {
   ProviderCatalogMembershipPolicyV1Schema,
   type ProviderCatalogMembershipPolicyV1,
 } from './descriptorV1.js';
-import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 import { QualifiedConnectedAccountPurposeV1Schema, type QualifiedConnectedAccountPurposeV1 } from '../../connect/connectedAccountPurposeIdentity.js';
 import { qualifiedPurposeKey } from '../../connect/connectedAccountPurposeBindings.js';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID, buildProviderReasoningModelOptions } from './reasoningEffort.js';
@@ -40,7 +39,7 @@ export const ProviderCatalogProbeModelV1Schema = z.strictObject({
 }) satisfies z.ZodMiniType<ProviderCatalogProbeModelV1>;
 
 const ProviderRuntimeTimestampV1Schema = lazyZodSchema(() => z.number().check(z.nonnegative()));
-export const ProviderCatalogProbeModelsV1Schema = lazyZodSchema(() => z.array(ProviderCatalogProbeModelV1Schema).check(z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection), z.superRefine((models, ctx) => {
+export const ProviderCatalogProbeModelsV1Schema = lazyZodSchema(() => z.array(ProviderCatalogProbeModelV1Schema).check(z.superRefine((models, ctx) => {
     const ids = new Set<string>();
     models.forEach((model, index) => {
       if (ids.has(model.id)) {
@@ -71,7 +70,7 @@ export type ProviderCatalogSnapshotV1 = z.infer<typeof ProviderCatalogSnapshotV1
 
 export const ProviderCatalogTransitionStateV1Schema = lazyZodSchema(() => z.strictObject({
   snapshot: z.nullable(ProviderCatalogSnapshotV1Schema),
-  staleProbeModels: z.array(ProviderCatalogProbeModelV1Schema).check(z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)),
+  staleProbeModels: z.array(ProviderCatalogProbeModelV1Schema),
 }).check(z.superRefine((value, ctx) => {
   if (value.snapshot === null && value.staleProbeModels.length > 0) {
     ctx.addIssue({ code: 'custom', path: ['staleProbeModels'], message: 'A missing catalog snapshot cannot retain stale models' });
@@ -116,11 +115,6 @@ export const ProviderMergedCatalogRowV1Schema = z.strictObject({
   }
 })) satisfies z.ZodMiniType<ProviderMergedCatalogRowV1>;
 
-export class ProviderCatalogLimitError extends Error {
-  readonly code = 'provider_catalog_limit_exceeded';
-  constructor(message: string) { super(message); this.name = 'ProviderCatalogLimitError'; }
-}
-
 function assertUniqueModelIds(models: readonly { id: string }[], source: string): void {
   const ids = new Set<string>();
   for (const model of models) {
@@ -133,10 +127,6 @@ export function applyProviderCatalogRefreshV1(
   previous: ProviderCatalogTransitionStateV1,
   refresh: ProviderCatalogRefreshV1,
 ): ProviderCatalogTransitionStateV1 {
-  if ((previous.snapshot?.models.length ?? 0) > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection
-    || previous.staleProbeModels.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
-    throw new ProviderCatalogLimitError('Previous provider catalog exceeds the per-connection model limit');
-  }
   const normalizedPrevious = ProviderCatalogTransitionStateV1Schema.parse(previous);
   if (refresh.status === 'failed') {
     if (!Number.isFinite(refresh.failedAt) || refresh.failedAt < 0) {
@@ -158,9 +148,6 @@ export function applyProviderCatalogRefreshV1(
     };
   }
   if (!Number.isFinite(refresh.observedAt) || refresh.observedAt < 0) throw new TypeError('Invalid catalog observation time');
-  if (refresh.models.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
-    throw new ProviderCatalogLimitError('Provider catalog exceeds the per-connection model limit');
-  }
   const models = ProviderCatalogProbeModelsV1Schema.parse(refresh.models);
   const ids = new Set(models.map((model) => model.id));
   return {
@@ -205,12 +192,6 @@ export function mergeProviderCatalogV1(input: Readonly<{
   rows: readonly ProviderMergedCatalogRowV1[];
   staleRows: readonly ProviderMergedCatalogRowV1[];
 }> {
-  if (input.staticModels.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection
-    || input.manualModels.length > PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection
-    || (input.probeState.snapshot?.models.length ?? 0) > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection
-    || input.probeState.staleProbeModels.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
-    throw new ProviderCatalogLimitError('Provider catalog source exceeds its model limit');
-  }
   const staticModels = input.staticModels.map((model) => ProviderModelDescriptorV1Schema.parse(model));
   const manualModels = input.manualModels.map((model) => ProviderManualModelV1Schema.parse(model));
   const probeState = ProviderCatalogTransitionStateV1Schema.parse(input.probeState);
@@ -223,15 +204,6 @@ export function mergeProviderCatalogV1(input: Readonly<{
     && probeState.snapshot !== null;
   assertUniqueModelIds(staticModels, 'static');
   assertUniqueModelIds(manualModels, 'manual');
-
-  const uniqueIds = new Set([
-    ...(probeOwnsMembership ? [] : staticModels.map((model) => model.id)),
-    ...manualModels.map((model) => model.id),
-    ...probeModels.map((model) => model.id),
-  ]);
-  if (uniqueIds.size > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
-    throw new ProviderCatalogLimitError('Merged provider catalog exceeds the per-connection model limit');
-  }
 
   const manualById = new Map(manualModels.map((model) => [model.id, model]));
   const staticById = new Map(staticModels.map((model) => [model.id, model]));
@@ -353,10 +325,6 @@ export function resolveProviderCatalogReferenceV1(input: Readonly<{
   agentSupportsFreeformModelIds: boolean;
   displaySnapshot?: Readonly<{ name: string }>;
 }>): ProviderCatalogReferenceResolutionV1 {
-  if (input.activeRows.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection
-    || input.staleRows.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
-    throw new ProviderCatalogLimitError('Provider catalog reference inputs exceed their model limit');
-  }
   const modelId = ProviderModelDescriptorV1Schema.shape.id.parse(input.modelId);
   const manualModelPolicy = z.enum(['allowed', 'catalog-only']).parse(input.manualModelPolicy);
   const agentSupportsFreeformModelIds = z.boolean().parse(input.agentSupportsFreeformModelIds);

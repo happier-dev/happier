@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -6,8 +7,10 @@ import { DaemonExecutionRunListResponseSchema } from '../../daemon/executionRuns
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { SCOPED_RPC_SOCKET_CONNECTION_PHASES } from '../../rpc/errors.js';
 import { InstallableCapabilityIdSchema } from '../../installables/descriptor.js';
 import { ManagedMachineBootstrapApprovalPromptV1Schema } from '../operations/v1.js';
+import { ManagedMachineEnrollmentIdentityV1Schema } from '../../machines/managed/enrollmentIdentityV1.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 export { MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from './machineTerminal.js';
 
@@ -34,6 +37,14 @@ export const MachineMetadataUpdateInputSchema = lazyZodSchema(() => z.strictObje
 export const MachineStopDaemonInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
 export const MachineRunsListInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
 export const MachineRemoveInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
+export const MachineCapabilityDetectInputSchema = lazyZodSchema(() => z.strictObject(machineTarget));
+export const MachineCapabilityDetectOutputSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('completed') }),
+  z.strictObject({ status: z.literal('failed'), reason: z.enum(['not-supported', 'error', 'server-switch-abort']),
+    error: z.optional(z.strictObject({ name: z.optional(z.string()), rpcErrorCode: z.optional(z.string()),
+      connectionPhase: z.optional(z.enum(SCOPED_RPC_SOCKET_CONNECTION_PHASES)) })),
+  }),
+]));
 export const MachineCapabilityInstallInputSchema = lazyZodSchema(() => z.strictObject({
   ...machineTarget,
   capabilityId: InstallableCapabilityIdSchema,
@@ -60,6 +71,7 @@ export const MACHINE_PAGE_ACTION_INPUT_SCHEMAS = {
   'machines.daemon.stop': MachineStopDaemonInputSchema,
   'machines.remove': MachineRemoveInputSchema,
   'machines.runs.list': MachineRunsListInputSchema,
+  'machines.capabilities.detect': MachineCapabilityDetectInputSchema,
   'machines.capabilities.install': MachineCapabilityInstallInputSchema,
   'machines.replacement.set': MachineReplacementSetInputSchema,
   'machines.replacement.clear': MachineReplacementClearInputSchema,
@@ -74,6 +86,7 @@ export const MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS = {
     z.strictObject({ ok: z.literal(false), status: z.number().check(z.int()), error: z.string() }),
   ])),
   'machines.capabilities.install': MachineCapabilityInstallOutputSchema,
+  'machines.capabilities.detect': MachineCapabilityDetectOutputSchema,
   'machines.replacement.set': MachineReplacementOutputSchema,
   'machines.replacement.clear': MachineReplacementOutputSchema,
 } as const;
@@ -98,23 +111,29 @@ export const MachineAddCommandInputSchema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ method: z.literal('ssh'), serverId: id, os: z.enum(['macos', 'linux', 'windows']),
     host: id, username: z.optional(z.string()), port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
     authMode: z._default(z.enum(['agent', 'keyfile', 'password']), 'agent'), identityFilePath: z.optional(z.string()),
+    enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
   }),
 ]));
 export const MachineAddCommandOutputSchema = lazyZodSchema(() => z.strictObject({ command: id, descriptorFileRequired: z.boolean() }));
 export const MachinePairingCreateInputSchema = lazyZodSchema(() => z.strictObject({ serverId: id }));
-export const MachineAddLocalStartInputSchema = lazyZodSchema(() => z.strictObject({ serverId: id, reconsiderCli: z.optional(z.boolean()) }));
+export const MachineAddLocalStartInputSchema = lazyZodSchema(() => z.union([
+  z.strictObject({ serverId: id, reconsiderCli: z.optional(z.boolean()) }),
+  z.strictObject({ serverId: id, purpose: z.literal('relay_repair') }),
+]));
 export const MachinePairingCreateOutputSchema = lazyZodSchema(() => z.strictObject({ pairId: id, link: id, expiresAtMs: z.number().check(z.int(), z.nonnegative()) }));
 export type MachineAddSshActionId = typeof MACHINE_ADD_SSH_ACTION_IDS[number];
 export const MachineAddSshStartInputSchema = lazyZodSchema(() => z.union([z.strictObject({ serverId: id, host: id, username: z._default(z.string(), ''),
   port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))), authMode: z._default(z.enum(['agent', 'keyfile', 'password']), 'agent'),
-  identityFilePath: z.optional(z.string()),
+  identityFilePath: z.optional(z.string()), enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
 }), z.strictObject({ serverId: id, savedHostId: id,
   expectedHostRevision: z.union([z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)), z.literal('absent')]),
+  enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
 })]));
 export const MachineAddSshTaskInputSchema = lazyZodSchema(() => z.strictObject({ taskId: id }));
 export const MachineAddSshCancelInputSchema = lazyZodSchema(() => z.strictObject({ taskId: z.optional(id) }));
 export const MachineAddSshAnswerSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('ssh.password') }),
+  z.strictObject({ kind: z.literal('administrator.establish'), promptId: id }),
   z.strictObject({ kind: z.literal('ssh.trustHost'), trusted: z.boolean() }),
   z.strictObject({ kind: z.literal('ssh.replaceHostKey'), trusted: z.boolean() }),
   z.strictObject({ kind: z.literal('auth.approveRemoteProvisioning'), approved: z.boolean() }),
@@ -129,7 +148,7 @@ export const MachineAddSshCancelOutputSchema = lazyZodSchema(() => z.union([
 export const MachineAddSshStatusOutputSchema = lazyZodSchema(() => z.strictObject({ taskId: id, status: z.enum(['running', 'canceling', 'succeeded', 'failed', 'canceled']),
   currentStepId: z.nullable(z.string()), awaitingInput: z.boolean(),
   prompt: z.nullable(z.strictObject({ kind: id, message: z.string(), fingerprint: z.optional(z.string()), existingFingerprint: z.optional(z.nullable(z.string())),
-    target: z.optional(z.string()), publicKey: z.optional(z.nullable(z.string())), requiresPresentUser: z.boolean() })),
+    target: z.optional(z.string()), publicKey: z.optional(z.nullable(z.string())), promptId: z.optional(id), administratorUsername: z.optional(id), requiresPresentUser: z.boolean() })),
   machineId: z.nullable(z.string()), errorCode: z.nullable(z.string()),
 }));
 export const MACHINE_ADD_SSH_INPUT_SCHEMAS = {
@@ -140,7 +159,19 @@ export const MACHINE_ADD_SSH_INPUT_SCHEMAS = {
 const clientSurfaces = { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false } as const;
 // SSH and setup-command Actions run in the client's SSH bridge / web command; the CLI adds Machines through its own native installer (58d §D3).
 const setupClientSurfaces = { ...clientSurfaces, cli: false } as const;
-export const MACHINE_CONNECTION_ACTION_SPECS = [
+function createMachineConnectionActionSpecs() {
+  return [
+  {
+    id: 'machines.capabilities.detect', approval: { result: 'none' }, title: 'Refresh machine Tools',
+    description: 'Run the Tools Check again operation and return refresh status. Capability facts remain in the existing cache and inventory readers.',
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
+    bindings: { mcpToolName: 'machines_capabilities_detect', rpcMethod: RPC_METHODS.CAPABILITIES_DETECT },
+    cli: { commands: [{ path: ['machines', 'capabilities', 'detect'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.capabilities.detect'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.capabilities.detect'],
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
+  },
   {
     id: 'machines.runs.list', approval: {result: 'none'}, title: 'List machine run markers',
     description: 'Read existing daemon run and process markers. Manage sees the Machine inventory; Use sees only its attributed work. Requester Session Run reads remain separate.',
@@ -194,7 +225,7 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
     description: 'Install, update, or reinstall one installable dependency through the machine daemon capability owner.',
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'machine', placements: [],
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
-    bindings: { mcpToolName: 'machines_capabilities_install' },
+    bindings: { mcpToolName: 'machines_capabilities_install', rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE },
     cli: { commands: [{ path: ['machines', 'capabilities', 'install'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MachineCapabilityInstallInputSchema, outputSchema: MachineCapabilityInstallOutputSchema,
@@ -235,13 +266,14 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
   },
   {
     id: 'machines.add.local.start', approval: { result: 'required' }, title: 'Set up this computer',
-    description: 'Set up the answering desktop computer on its focused signed-in Home. Native setup inputs and Account-move consent remain private to that App.',
+    description: 'Set up or repair the answering desktop computer on its focused signed-in Home. Native setup inputs and Account-move consent remain private to that App.',
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
     bindings: { mcpToolName: 'machines_add_local_start' },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MachineAddLocalStartInputSchema, outputSchema: MachineAddSshTaskOutputSchema,
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true },
-      { path: 'reconsiderCli', title: 'Ask who manages the command line again', widget: 'boolean' }] },
+      { path: 'reconsiderCli', title: 'Ask who manages the command line again', widget: 'boolean' },
+      { path: 'purpose', title: 'Relay repair only', widget: 'text' }] },
   },
   {
     id: 'machines.add.local.cancel', approval: { result: 'required' }, title: 'Cancel this computer setup',
@@ -260,7 +292,7 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }, { path: 'host', title: 'SSH host', widget: 'text' },
       { path: 'savedHostId', title: 'Saved host ID', widget: 'text' }, { path: 'expectedHostRevision', title: 'Saved host catalog revision', widget: 'text' },
       { path: 'username', title: 'SSH user', widget: 'text' }, { path: 'port', title: 'SSH port', widget: 'text' }, { path: 'authMode', title: 'Authentication', widget: 'text' },
-      { path: 'identityFilePath', title: 'Identity file', widget: 'text' }] },
+      { path: 'identityFilePath', title: 'Identity file', widget: 'text' }, { path: 'enrollmentIdentity', title: 'Enrollment identity', widget: 'json' }] },
   },
   {
     id: 'machines.add.ssh.status', approval: {result: 'required'}, title: 'Read SSH machine setup', description: 'Read the retained SSH setup task and its current prompt. Task success is not proof of Home feed arrival.',
@@ -382,3 +414,6 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
     ] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_CONNECTION_ACTION_SPECS: ReturnType<typeof createMachineConnectionActionSpecs> = lazyActionSpecArray(createMachineConnectionActionSpecs);

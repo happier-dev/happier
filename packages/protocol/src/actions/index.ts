@@ -3,9 +3,12 @@ export * from './browserExtensionActions.js';
 export { requiredMachineRoleForBrowserAction } from './browserMachineRole.js';
 export { BROWSER_EXTENSION_ACTION_IDS, BROWSER_EXTENSION_MUTATION_ACTION_IDS, isBrowserExtensionActionIdV1,
   isBrowserExtensionMutationActionIdV1, type BrowserExtensionActionIdV1 } from './actionIds.js';
+export * from '../automations/occurrenceActions.js';
+export { createExecutionRunHostActionApprovalDecision } from './executionRunHostActionApprovalDecision.js';
 export { FILESYSTEM_WRITE_GUARD_ERROR_CODES, isFilesystemWriteGuardErrorCode, type FilesystemWriteGuardErrorCode } from './filesystemActionFamily.js';
 export * from './actionRequestAttributionV1.js';
 export * from './specs/machineResources.js';
+export * from './specs/machineReachability.js';
 export * from './specs/storage.js';
 export * from './clientDispatchV1.js';
 export type { AccountHomeContinuationInputV1, AccountHomeContinuationOperationV1 } from './accountHomeContinuationV1.js';
@@ -27,6 +30,8 @@ export { SessionOrganizationMoveInputSchema, SessionOrganizationMoveOutputSchema
   type SessionOrganizationMoveInput, type SessionOrganizationMoveOutput, type SessionOrganizationPinSetInput } from './sessionOrganizationMoveAction.js';
 export { UiFindInputSchema } from './findActionSpecs.js';
 export { WORKSPACE_ACTION_IDS, WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, isWorkspaceActionId, type WorkspaceActionId, type WorkspaceTabsListOutput, type WorkspaceClosedTabsListOutput } from './workspaceActionFamily.js';
+export { WorkspaceTabAddressSchema, WorkspaceOwnedTabAddressSchema, PaneTabAddressSchema,
+  type WorkspaceTabAddress, type PaneTabAddress } from './workspaceActionFamily.js';
 export * from './scopeActionFamily.js';
 export * from './diagnosticsActionFamily.js';
 export * from './specs/homeHub.js';
@@ -65,6 +70,7 @@ export {
 export { createWorkflowActionExecutor, normalizeWorkflowActionThrownError, type WorkflowRunActionOwner } from './executor/workflowAccountActions.js';
 export { automationOccurrenceRequest } from '../automations/occurrenceActions.js';
 export { bindMachineAccessActionHttpRequestV1 } from './machineAccessActionFamily.js';
+export { createDeploymentLinkContentArtifactIdV1 } from './externalActionApi.js';
 export { MACHINE_ACCESS_ACTION_IDS, MachineAccessActionIdSchema, machineAccessTrustedOsDisclosure, type MachineAccessActionId } from './specs/machine/access.js';
 export { createWorkflowTriggerActions, removeWorkflowTriggersForDefinition, type WorkflowTriggerActions, type WorkflowTriggerActionsDependencies, type WorkflowTriggerAutomationOperations } from './executor/workflowTriggerActions.js';
 export { createAccountWorkflowTriggerActions, type WorkflowTriggerAccountHostParams } from './executor/workflowTriggerAccountHost.js';
@@ -362,6 +368,7 @@ export {
   listVoiceToolActionSpecs,
   resolveActionApprovalFlow,
   resolveActionExecutionPlacementForInput,
+  resolveActionPermissionChangingV1,
   resolveActionSdkMethodName,
   type ActionApproval,
   type ActionApprovalFlow,
@@ -424,7 +431,6 @@ export { normalizeActionInputHintsText } from './actionInputHints.js';
 
 export {
   ACTION_TOOL_EXPOSURE_SURFACES,
-  AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST,
   isActionDirectToolExposedOn,
   isActionDiscoverableOnToolSurface,
   resolveActionToolExposureMode,
@@ -511,6 +517,9 @@ export {
 } from './sessionSpawnMachineTarget.js';
 
 export {
+  readActionSecretInputPaths,
+  readMissingActionSecretInputPaths,
+  isMissingActionSecretInputError,
   normalizeActionInputByFieldHints,
   resolveEffectiveActionInputFields,
   type EffectiveActionInputField,
@@ -645,12 +654,7 @@ export { MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS, MAC
 export type { MachineTerminalActionId, MachineTerminalActionInput } from './specs/machineTerminal.js';
 export * from './settings/automationSettingsDeclarationAction.js';
 export * from './actionPolicyActionFamily.js';
+export * from './approvalProfiles.js';
 export * from './actionAudiencePolicy.js';
 
 export * from './sessionSpaceMembership.js';
-
-export * from './approvalProfiles.js';
-
-export { WorkspaceTabAddressSchema, WorkspaceOwnedTabAddressSchema, PaneTabAddressSchema, type WorkspaceTabAddress, type PaneTabAddress } from "./workspaceActionFamily.js";
-
-export { createExecutionRunHostActionApprovalDecision } from './executionRunHostActionApprovalDecision.js';

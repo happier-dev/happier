@@ -3,6 +3,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { z } from 'zod/mini';
+import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
 import { SessionIdSchema, SidechainIdSchema } from '../idsV1.js';
 import {
@@ -114,6 +115,7 @@ export const ExternalSessionOperationSocketBatchItemV1Schema = lazyZodSchema(() 
   sidechainId: z.nullable(SidechainIdSchema),
   messageRole: z.nullable(SessionMessageRoleSchema),
   content: StrictSessionStoredMessageContentEnvelopeSchema,
+  usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   sourceCreatedAtMs: z.optional(SessionTranscriptSourceTimestampMsSchema),
   sourceUpdatedAtMs: z.optional(SessionTranscriptSourceTimestampMsSchema),
 }).check(z.superRefine((item, context) => {

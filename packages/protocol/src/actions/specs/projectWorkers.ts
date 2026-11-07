@@ -1,3 +1,4 @@
+import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { PROJECT_WORKER_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
 export { PROJECT_WORKER_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -184,7 +185,10 @@ const voiceInputs = {
     expectedRelationship: exampleRelationship, targetMachineId: 'worker', targetWorkspaceRefId: 'copy' },
   'projects.worker.copy.retire': { workspace: exampleWorkspace, machineId: 'controller', expectedRelationship: exampleRelationship },
 } satisfies { [Id in keyof typeof titles]: ProjectWorkerActionInputV1<Id> };
-export const PROJECT_WORKER_ACTION_SPECS = [...PROJECT_SERVICE_PLACEMENT_ACTION_SPECS,
+export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
+  typeof PROJECT_SERVICE_PLACEMENT_ACTION_SPECS,
+  PreNormalizedActionSpec[],
+]> = lazyActionSpecArray(() => [...PROJECT_SERVICE_PLACEMENT_ACTION_SPECS,
   ...(Object.keys(titles) as (keyof typeof titles)[]).map((id): PreNormalizedActionSpec => {
   const read = id.endsWith('.get') || id === 'projects.worker.status' || id === 'projects.worker.copy.inspect';
   const machine = id === 'projects.worker.status' || id === 'projects.worker.copy.inspect' || id === 'projects.worker.copy.retire';
@@ -203,6 +207,8 @@ export const PROJECT_WORKER_ACTION_SPECS = [...PROJECT_SERVICE_PLACEMENT_ACTION_
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     // Policy writes are Account-side key-holder operations; an offline guest is not their authority.
     executionPlacement: machine ? 'machine' : 'account', placements: [],
+    ...(id === 'projects.worker.copy.retire' ? { originalExecution: { accountRoot: 'allowed',
+      requesterCredentials: 'none', daemonIngressSurfaces: ['cli'] } } : {}),
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true,
       rpc: machine },
     bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_'),
@@ -212,4 +218,4 @@ export const PROJECT_WORKER_ACTION_SPECS = [...PROJECT_SERVICE_PLACEMENT_ACTION_
     examples: { voice: { argsExample: JSON.stringify(voiceInputs[id]) } },
     inputSchema: ProjectWorkerActionInputSchemasV1[id], outputSchema: ProjectWorkerActionOutputSchemasV1[id],
   };
-})];
+})]);

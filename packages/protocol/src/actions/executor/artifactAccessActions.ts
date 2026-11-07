@@ -16,14 +16,20 @@ export type ArtifactAccessActionTransportV1 = Readonly<{
   remove: (input: ArtifactAccessGrantRemoveInputV1, signal?: AbortSignal) => Promise<ArtifactAccessGrantMutationResponseV1>;
 }>;
 
-/** The kind owner validates private content; the authenticated storage owner rechecks access. */
+/** Mutations validate private content; the authenticated storage owner authorizes roster reads. */
 export function createArtifactAccessActionsV1(params: Readonly<{
   read: (artifactId: string, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ArtifactSharingResourceV1 | null>;
   transport: ArtifactAccessActionTransportV1;
+  prepareSharing?: (resource: ArtifactSharingResourceV1, signal?: AbortSignal) => Promise<void>;
 }>) {
   return async (args: Readonly<{ actionId: ArtifactAccessActionIdV1; input: unknown; signal?: AbortSignal }>) => {
     args.signal?.throwIfAborted();
     const input = ArtifactAccessActionInputSchemasV1[args.actionId].parse(args.input);
+    if (args.actionId === 'artifact.access.grants.list') {
+      const result = await params.transport.list(input, args.signal);
+      args.signal?.throwIfAborted();
+      return ArtifactAccessActionOutputSchemasV1[args.actionId].parse(result);
+    }
     const resource = await params.read(input.artifactId, args.signal ? { signal: args.signal } : undefined);
     args.signal?.throwIfAborted();
     if (!resource) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
@@ -32,16 +38,17 @@ export function createArtifactAccessActionsV1(params: Readonly<{
       throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
     }
     if (!resource.access) throw Object.assign(new Error('artifact_access_unavailable'), { code: 'artifact_access_unavailable' });
-    if (args.actionId !== 'artifact.access.grants.list' && resource.access !== 'owner' && resource.access !== 'admin') {
+    if (resource.access !== 'owner' && resource.access !== 'admin') {
       throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });
     }
-    let result: ArtifactAccessGrantsListResponseV1 | ArtifactAccessGrantMutationResponseV1;
+    let result: ArtifactAccessGrantMutationResponseV1;
     switch (args.actionId) {
-      case 'artifact.access.grants.list': result = await params.transport.list(input, args.signal); break;
-      case 'artifact.access.grants.set': result = await params.transport.set(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
+      case 'artifact.access.grants.set':
+        await params.prepareSharing?.(resource, args.signal);
+        args.signal?.throwIfAborted();
+        result = await params.transport.set(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
       case 'artifact.access.grants.remove': result = await params.transport.remove(ArtifactAccessActionInputSchemasV1[args.actionId].parse(input), args.signal); break;
     }
-    if (args.actionId === 'artifact.access.grants.list') args.signal?.throwIfAborted();
     return ArtifactAccessActionOutputSchemasV1[args.actionId].parse(result);
   };
 }

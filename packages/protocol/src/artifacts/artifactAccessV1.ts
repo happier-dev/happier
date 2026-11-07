@@ -1,9 +1,9 @@
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from './artifactAccessActionIdsV1.js';
 export { ARTIFACT_ACCESS_ACTION_IDS_V1 } from './artifactAccessActionIdsV1.js';
-import { BotTemplateVersionV1Schema } from '../bots/templates/templateVersionV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ArtifactCoarseKindV1Schema } from './artifactKindV1.js';
+import { BotTemplateVersionV1Schema } from '../bots/templates/templateVersionV1.js';
 
 import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
@@ -14,9 +14,6 @@ import { ResourceAccessLevelV1Schema, ResourceCallerAccessV1Schema, ResourceAcce
 import {
   SessionDataKeyEnvelopeBytesV1Schema,
 } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
-
-/** Document grant wire epoch V1. Every identity, mutation and nested object is closed. */
-
 export const ArtifactAccessActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACCESS_ACTION_IDS_V1));
 export type ArtifactAccessActionIdV1 = z.infer<typeof ArtifactAccessActionIdV1Schema>;
 
@@ -132,6 +129,7 @@ export const ArtifactHttpReadV1Schema = lazyZodSchema(() => z.strictObject({
   kindHint: z.optional(z.nullable(z.string())),
   header: z.string(), headerVersion: z.number(), body: z.string(), bodyVersion: z.number(),
   publicAudience: z.enum(['retained', 'none']),
+  sharedTeamIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   provenance: z.optional(z.nullable(z.string())), provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
   dataEncryptionKey: z.string(), seq: z.number(), createdAt: z.number(), updatedAt: z.number(),
 }));

@@ -13,6 +13,7 @@ import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
 import { ProviderEndpointPolicyV1Shape } from '../endpointPolicyV1.js';
+import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 
 const UnknownCapabilitiesSchema = lazyZodSchema(() => ProviderCompatibilityCapabilitiesV1Schema.check(z.superRefine((value, ctx) => {
   for (const [key, support] of Object.entries(value)) {
@@ -54,6 +55,7 @@ export const CustomProviderApiKeyCredentialRequirementV1Schema = lazyZodSchema((
   slotId: z._default(z.literal('apiKey'), 'apiKey'),
   required: z._default(z.boolean(), true),
   keyUrl: z.optional(ProviderHttpsUrlSchema),
+  authorityDescription: z.optional(PluginLocalizedStringV2Schema),
   transports: z.array(CustomProviderCredentialTransportV1Schema).check(z.minLength(1), z.maxLength(8)),
 }).check(z.superRefine((value, ctx) => {
   addProviderCredentialTransportIssues(value.transports, ctx);

@@ -1,6 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
@@ -63,9 +64,15 @@ export function artifactSavedByFromActionContextV1(caller?: ActionExecutorContex
   if (!accountId) return undefined;
   const author = origin?.caller ?? caller.actionCaller;
   const sessionId = author?.kind === 'session' ? author.sessionId : origin?.sessionId ?? caller.defaultSessionId;
-  return ArtifactSavedByV1Schema.parse((origin?.surface ?? caller.surface) === 'agent' || author?.kind === 'session'
-    ? { kind: 'agent', accountId, ...(sessionId ? { sessionId } : {}) }
-    : { kind: 'person', accountId });
+  const surface = origin?.surface ?? caller.surface;
+  if (caller.authority === 'account_automation' || surface === 'agent' || surface === 'mcp'
+    || author?.kind === 'session' || author?.kind === 'workflowRun' || author?.kind === 'automationRun'
+    || caller.sessionInputSource || caller.causalPermissionAuthority || caller.rpcSessionAuthorization) {
+    return ArtifactSavedByV1Schema.parse({ kind: 'agent', accountId, ...(sessionId ? { sessionId } : {}) });
+  }
+  if (caller.authority !== 'present_user' || author && author.kind !== 'host'
+    || surface !== 'ui' && surface !== 'cli' && surface !== 'voice') return undefined;
+  return ArtifactSavedByV1Schema.parse({ kind: 'person', accountId });
 }
 
 /** Mode is explicit before any binary opening or disclosure. Payloads use standard base64. */
@@ -78,10 +85,9 @@ const uploadIdentity = {
   artifactId: z.string().check(z.minLength(1)), blobId: z.string().check(z.uuid()), t: BinaryBlobContentKindV1Schema,
   sizeBytes: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
 };
-const artifactUuid = z.string().check(z.uuid());
 /** Destination metadata stays small; file bytes use the finite-transfer chunk owner. */
 export const ArtifactBlobUploadInitV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('create'), ...uploadIdentity, artifactId: artifactUuid,
+  z.strictObject({ kind: z.literal('create'), ...uploadIdentity, artifactId: ArtifactCreateIdV1Schema,
     artifactKind: z.optional(ArtifactStoredKindV1Schema),
     header: z.string(), body: z.string(), dataEncryptionKey: z.string(),
     provenance: z.optional(z.nullable(z.string())), provenanceDataEncryptionKey: z.optional(z.nullable(z.string())) }),
@@ -90,7 +96,7 @@ export const ArtifactBlobUploadInitV1Schema = lazyZodSchema(() => z.discriminate
     header: z.optional(z.string()), expectedHeaderVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
     body: z.string(), expectedBodyVersion: z.number().check(z.int(), z.nonnegative()),
     provenance: z.optional(z.nullable(z.string())), provenanceDataEncryptionKey: z.optional(z.nullable(z.string())) }),
-  z.strictObject({ kind: z.literal('encryption-conversion'), ...uploadIdentity, artifactId: artifactUuid }),
+  z.strictObject({ kind: z.literal('encryption-conversion'), ...uploadIdentity, artifactId: ArtifactCreateIdV1Schema }),
 ]));
 export type ArtifactBlobUploadInitV1 = z.infer<typeof ArtifactBlobUploadInitV1Schema>;
 export const ArtifactBlobWriteV1Schema = lazyZodSchema(() => z.strictObject({

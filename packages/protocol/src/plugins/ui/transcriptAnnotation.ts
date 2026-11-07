@@ -3,7 +3,10 @@ import { z } from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import { SessionMessageRefV1Schema } from '../../sessions/messages/sessionMessageRefV1.js';
-import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1, MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 } from '../../runtime/input/composerAttachmentV1.js';
+import {
+  MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1,
+  MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1,
+} from '../../runtime/input/composerAttachmentV1.js';
 import { normalizePluginJsonSchema } from '../actions/protocolComposableSchema.js';
 
 /** First-party attachment for a note on an exact committed transcript passage. */

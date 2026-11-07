@@ -1,23 +1,24 @@
-import { MachineServiceExecInputV1Schema, MachineServiceExecResultV1Schema } from '../../../local/services/serviceExecV1.js';
-import { DeploymentReviewServiceV1Schema } from '../../../local/services/nativeRuntimeFactsV1.js';
-import { HealthCheckStatusV1Schema } from '../../../deployments/healthCheckV1.js';
-import { MachineServiceNativeRuntimeFactsV1Schema } from '../../../local/services/nativeRuntimeFactsV1.js';
-import { MachineDeploymentServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { MachineServiceLogsReadInputV1Schema, ManagedServiceNativeLogResultV1Schema, ManagedServiceUnavailableReasonV1Schema } from '../../../local/services/nativeLogsV1.js';
 export { MachineServiceLogsReadInputV1Schema, type MachineServiceLogsReadInputV1 } from '../../../local/services/nativeLogsV1.js';
 import { ManagedServiceNativeStateV1Schema } from '../../../local/services/nativeStateV1.js';
-
+import { MachineServiceNativeRuntimeFactsV1Schema, DeploymentReviewServiceV1Schema } from '../../../local/services/nativeRuntimeFactsV1.js';
 export { MachineServiceNativeRuntimeFactsV1Schema, DeploymentReviewServiceV1Schema,
   type MachineServiceNativeRuntimeFactsV1, type DeploymentReviewServiceV1 } from '../../../local/services/nativeRuntimeFactsV1.js';
+import { MachineServiceExecInputV1Schema, MachineServiceExecResultV1Schema } from '../../../local/services/serviceExecV1.js';
+export { MachineServiceExecInputV1Schema, MachineServiceExecResultV1Schema,
+  type MachineServiceExecInputV1, type MachineServiceExecResultV1 } from '../../../local/services/serviceExecV1.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 import { MachineServiceWatchV1Schema } from '../../../machines/machineServiceWatchesV1.js';
-
+import { MachineDeploymentServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
+import { HealthCheckStatusV1Schema } from '../../../deployments/healthCheckV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 import { actionInputServerId } from '../definition.js';
 import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '../../../local/services/adoptionV1.js';
+export * from '../../../local/services/adoptionV1.js';
 
 export { MACHINE_SERVICE_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 export type MachineServiceActionId = typeof MACHINE_SERVICE_FRONTDOOR_ACTION_IDS[number];
@@ -167,7 +168,8 @@ export const MachineServiceControlResultV1Schema = lazyZodSchema(() => z.discrim
   z.strictObject({ kind: z.literal('outcome_unknown'), operation: z.strictObject({ operationId: id() }) }),
 ]));
 export type MachineServiceControlResultV1 = z.infer<typeof MachineServiceControlResultV1Schema>;
-export const MACHINE_SERVICE_ACTION_SPECS = [
+function createMachineServiceActionSpecs() {
+  return [
 {
   id: 'machines.services.exec', title: 'Run a service command',
   description: 'Run reviewed literal arguments in the exact admitted current service or prepared Deployment candidate. Retains bounded redacted output without replaying an unknown dispatch.',
@@ -180,12 +182,12 @@ export const MACHINE_SERVICE_ACTION_SPECS = [
   inputSchema: MachineServiceExecInputV1Schema, outputSchema: MachineServiceExecResultV1Schema,
   cli: { acceptsServerId: true, commands: [{ path: ['machines', 'services', 'exec'], visibility: 'canonical' }] },
   inputHints: { fields: [
-    { path: 'serverId', title: 'Home ID', widget: 'text', required: true },
-    { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
-    { path: 'target', title: 'Admitted service target', widget: 'json', required: true },
-    { path: 'mode', title: 'Command mode', widget: 'select', required: true,
-      options: [{ value: 'exec', label: 'Current running container' }, { value: 'run', label: 'Admitted one-off container' }] },
-    { path: 'argv', title: 'Literal arguments', widget: 'json', required: true },
+    { path: 'serverId', title: 'Home', widget: 'text', required: true },
+    { path: 'machineId', title: 'Machine', widget: 'text', required: true },
+    { path: 'target', title: 'Service', widget: 'json', required: true },
+    { path: 'mode', title: 'Runs in', widget: 'select', required: true,
+      options: [{ value: 'exec', label: 'The running container' }, { value: 'run', label: 'A new one-off container' }] },
+    { path: 'argv', title: 'Command', widget: 'json', required: true },
   ] },
 },
   serviceSpec('machines.services.list', 'List Machine services', 'Read the admitted service snapshots from this Machine.'),
@@ -229,5 +231,6 @@ export const MACHINE_SERVICE_ACTION_SPECS = [
     { path: 'cursor', title: 'Log cursor', widget: 'json' },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
 
-export { MachineServiceExecInputV1Schema, MachineServiceExecResultV1Schema, type MachineServiceExecInputV1, type MachineServiceExecResultV1 } from '../../../local/services/serviceExecV1.js';
+export const MACHINE_SERVICE_ACTION_SPECS: ReturnType<typeof createMachineServiceActionSpecs> = lazyActionSpecArray(createMachineServiceActionSpecs);

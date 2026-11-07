@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 import {
   ScmOptionalRemoteManagementNameSchema,
@@ -83,6 +84,7 @@ export const ScmRepositoryProvisioningFailureResponseSchema = lazyZodSchema(() =
     outcome: z.optional(ScmOperationOutcomeSchema),
     error: z.string().check(z.minLength(1)),
     errorCode: z.optional(ScmOperationErrorCodeSchema),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     remediation: z.optional(ScmRepositoryProvisioningRemediationSchema),
     retryNotBeforeMs: z.optional(z.number().check(z.nonnegative())),
     stdout: z.optional(z.string()),

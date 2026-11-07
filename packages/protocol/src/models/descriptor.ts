@@ -84,6 +84,8 @@ export const ProviderModelInlineCompletionV1Schema = z.strictObject({
   rawFimTemplate: z.optional(z.strictObject({ prefix: z.string(), suffix: z.string(), middle: z.string() })),
 });
 export type ProviderModelInlineCompletionV1 = z.infer<typeof ProviderModelInlineCompletionV1Schema>;
+export const ProviderModelNextEditV1Schema = z.omit(ProviderModelInlineCompletionV1Schema, { rawFimTemplate: true });
+export type ProviderModelNextEditV1 = z.infer<typeof ProviderModelNextEditV1Schema>;
 
 export type ProviderModelDescriptorV1 = Readonly<{
   id: string;
@@ -95,6 +97,7 @@ export type ProviderModelDescriptorV1 = Readonly<{
   description?: string;
   contextWindowTokens?: number;
   inlineCompletion?: ProviderModelInlineCompletionV1;
+  nextEdit?: ProviderModelNextEditV1;
   extendedContextModelId?: string;
   modelOptions?: readonly AgentModelOption[];
   capabilities?: Readonly<{
@@ -106,14 +109,15 @@ export type ProviderModelDescriptorV1 = Readonly<{
 
 export const ProviderModelDescriptorV1Schema = z.strictObject({
   id: ProviderModelIdSchema,
-  name: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  name: z.string().check(z.trim(), z.minLength(1)),
   costTier: z.optional(z.enum(['low', 'standard', 'premium'])),
-  aliases: z.optional(z.array(ProviderModelIdSchema).check(z.maxLength(64))),
-  description: z.optional(z.string().check(z.maxLength(1024))),
+  aliases: z.optional(z.array(ProviderModelIdSchema)),
+  description: z.optional(z.string()),
   contextWindowTokens: z.optional(z.number().check(z.int(), z.positive(), z.maximum(100_000_000))),
   inlineCompletion: z.optional(ProviderModelInlineCompletionV1Schema),
+  nextEdit: z.optional(ProviderModelNextEditV1Schema),
   extendedContextModelId: z.optional(ProviderModelIdSchema),
-  modelOptions: z.optional(z.array(AgentModelOptionSchema).check(z.maxLength(64))),
+  modelOptions: z.optional(z.array(AgentModelOptionSchema)),
   capabilities: z.optional(z.strictObject({
     toolRoundTrips: z.optional(CapabilitySupportSchema),
     reasoningControls: z.optional(CapabilitySupportSchema),
@@ -179,11 +183,22 @@ export function projectProviderModelGenerationSettings(
   model: ProviderModelDescriptorV1,
   settings: Readonly<{ maxTokens?: number | null }> | undefined,
 ): ProviderModelDescriptorV1 {
-  if (!model.inlineCompletion || settings?.maxTokens == null) return model;
+  if ((!model.inlineCompletion && !model.nextEdit) || settings?.maxTokens == null) return model;
   // Nonpositive retained settings are valid stored intent, but unusable for
   // inference: do not publish an invalid descriptor or silently use a default.
-  if (settings.maxTokens <= 0) return { ...model, inlineCompletion: undefined };
-  return { ...model, inlineCompletion: { ...model.inlineCompletion, outputTokens: settings.maxTokens } };
+  if (settings.maxTokens <= 0) return { ...model, inlineCompletion: undefined, nextEdit: undefined };
+  return { ...model,
+    ...(model.inlineCompletion ? { inlineCompletion: { ...model.inlineCompletion, outputTokens: settings.maxTokens } } : {}),
+    ...(model.nextEdit ? { nextEdit: { ...model.nextEdit, outputTokens: settings.maxTokens } } : {}),
+  };
+}
+
+/** Whole-file prediction cannot silently become a near-caret capability. Reuse
+ * the tokenizer/context owner, but admit the complete serialized input or none. */
+export function fitsNextEditContext(model: ProviderModelDescriptorV1, prompt: string): boolean {
+  if (!model.nextEdit) return false;
+  const context = budgetInlineCompletionContext({ ...model, inlineCompletion: model.nextEdit }, { prefix: prompt, suffix: '' });
+  return context?.prefix === prompt;
 }
 
 export type AgentModelDescriptor = ProviderModelDescriptorV1;

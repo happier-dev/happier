@@ -59,6 +59,13 @@ export const HappierStorageCategoryIdV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type HappierStorageCategoryIdV1 = z.infer<typeof HappierStorageCategoryIdV1Schema>;
 
+/** Closed, content-free coverage facts; category identity never grants path access. */
+export const StorageReadIssueV1Schema = lazyZodSchema(() => z.strictObject({
+  categoryId: HappierStorageCategoryIdV1Schema,
+  reason: z.literal('permission_denied'), remedy: z.literal('grant_admin_access_or_run_as_machine_owner'),
+}));
+export type StorageReadIssueV1 = z.infer<typeof StorageReadIssueV1Schema>;
+
 export const StorageVolumeRefV1Schema = lazyZodSchema(() => z.strictObject({
   volumeId: z.string().check(z.minLength(1)), mountPath: z.string().check(z.minLength(1)), label: z.string(),
 }));
@@ -74,7 +81,7 @@ export const StorageReasonV1Schema = lazyZodSchema(() => z.object({
     'merged_clean', 'branch_gone', 'clean_pushed', 'rebuilds', 'reinstalls', 'downloads_again', 'stopped', 'old',
     'attachments_go', 'feature_waits', 'not_rebuildable', 'personal_folder', 'agent_home', 'credentials',
     'user_protected', 'contains', 'root', 'system', 'home_folder', 'happier_install', 'happier_data',
-    'contains_forbidden', 'facts_unavailable',
+    'contains_forbidden', 'facts_unavailable', 'policy_unavailable',
     'changed_since_review', 'missing', 'trash_unavailable', 'destination_occupied', 'parent_missing',
     'unauthorized', 'operation_failed', 'unsupported', 'has_submodules',
   ]),
@@ -128,7 +135,9 @@ export const DiskScanStateV1Schema = lazyZodSchema(() => z.strictObject({
   scanId: z.string().check(z.minLength(1)),
   target: z.union([z.strictObject({ volumeId: z.string().check(z.minLength(1)) }), z.strictObject({ folderPath: z.string().check(z.minLength(1)) })]),
   status: z.enum(['running', 'complete', 'cancelled', 'interrupted', 'failed']),
-  progress: z.object({ sizedBytes: bytes(), usedBytes: bytes(), items: z.number().check(z.int(), z.nonnegative()), currentPath: z.optional(z.string()), stuckSinceMs: z.optional(time()) }),
+  // usedBytes is a measured whole-volume denominator; omission means unknown.
+  // An observed empty volume retains zero rather than becoming unknown.
+  progress: z.object({ sizedBytes: bytes(), usedBytes: z.optional(bytes()), items: z.number().check(z.int(), z.nonnegative()), currentPath: z.optional(z.string()), stuckSinceMs: z.optional(time()) }),
   startedAt: time(), finishedAt: z.optional(time()), previousScanAt: z.optional(time()),
   // Read-only observation of local Time Machine snapshots on the scanned APFS volume.
   // Missing means unobserved; it never contributes bytes or authorizes cleanup.
@@ -174,6 +183,7 @@ export const MachineStorageScanSkipInputV1Schema = lazyZodSchema(() => z.strictO
 export type MachineStorageScanSkipInputV1 = z.infer<typeof MachineStorageScanSkipInputV1Schema>;
 export const MachineStorageScanGetResultV1Schema = lazyZodSchema(() => z.strictObject({
   state: z.nullable(DiskScanStateV1Schema), nodes: z.array(DiskNodeV1Schema), nextCursor: z.optional(z.string().check(z.minLength(1))),
+  incomplete: z.optional(z.array(StorageReadIssueV1Schema)),
   // The selected level's facts are independent of child paging and chart depth.
   root: z.optional(DiskNodeV1Schema),
   coverage: z.array(z.strictObject({ path: z.string().check(z.minLength(1)), scannedAt: time(), complete: z.boolean() })),
@@ -190,10 +200,17 @@ export type MachineStorageProtectedAddInputV1 = z.infer<typeof MachineStoragePro
 export const MachineStorageProtectedRemoveInputV1Schema = MachineStorageProtectedAddInputV1Schema;
 export type MachineStorageProtectedRemoveInputV1 = z.infer<typeof MachineStorageProtectedRemoveInputV1Schema>;
 
+// The largest bounded summary consumer is the Full Suggestion widget (eight
+// rows); the Storage tab presents three. Full inventory stays on suggestions.list.
+export const STORAGE_SUMMARY_SUGGESTION_LIMIT = 8;
+
 export const HappierStorageSummaryV1Schema = lazyZodSchema(() => z.object({
   revision: revision(), sizedAt: time(),
+  incomplete: z.optional(z.array(StorageReadIssueV1Schema)),
+  // The watch cursor includes scan progress; detail readers use their producer's content revision.
+  pileRevision: z.optional(revision()), itemsRevision: z.optional(revision()),
   // Daemon-qualified folder entry points, consumed by the ordinary scanner.
-  scanShortcuts: z.optional(z.array(z.strictObject({ kind: z.enum(['downloads', 'cache']), path: z.string().check(z.minLength(1)) }))),
+  scanShortcuts: z.optional(z.array(z.strictObject({ kind: z.enum(['downloads', 'cache', 'folder']), path: z.string().check(z.minLength(1)) }))),
   volumes: z.array(z.object({ volume: StorageVolumeRefV1Schema, totalBytes: bytes(), freeBytes: bytes(), happierBytes: bytes(), pileBytes: bytes(), trashBytes: bytes(),
     // Allocated pile/Trash bytes describe occupancy; only measured exclusive bytes
     // may forecast returned space. Absence means an older producer did not report it.
@@ -203,8 +220,17 @@ export const HappierStorageSummaryV1Schema = lazyZodSchema(() => z.object({
     // A measured verified-Safe union; absence is unreported, not measured zero.
     canGoBytes: z.optional(bytes()),
   })),
-  categories: z.array(z.strictObject({ categoryId: HappierStorageCategoryIdV1Schema, size: StorageSizeV1Schema, canGoBytes: bytes(), count: z.number().check(z.int(), z.nonnegative()), detailFacts: detailFacts() })),
-  suggestionsTop: z.array(StorageItemV1Schema), pile: PileSummaryV1Schema, trash: TrashSummaryV1Schema,
+  categories: z.array(z.strictObject({ categoryId: HappierStorageCategoryIdV1Schema, revision: z.optional(revision()), size: StorageSizeV1Schema, canGoBytes: bytes(), count: z.number().check(z.int(), z.nonnegative()), detailFacts: detailFacts() })),
+  // Readers still accept older, unbounded summaries. Absence of the total means
+  // the producer did not report coverage; never infer a complete inventory.
+  suggestionsTop: z.array(StorageItemV1Schema),
+  // Safe-only summary consumers cannot infer emptiness from the mixed preview:
+  // larger Caution items may fill it. Older producers omit this projection.
+  suggestionsSafeTop: z.optional(z.array(StorageItemV1Schema)),
+  suggestionsSafeTotalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+  suggestionsSafeFreesBytes: z.optional(bytes()),
+  suggestionsTotalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+  pile: PileSummaryV1Schema, trash: TrashSummaryV1Schema,
   wholeDisk: z.object({ enabled: z.boolean(), scans: z.array(DiskScanStateV1Schema) }),
 }));
 export type HappierStorageSummaryV1 = z.infer<typeof HappierStorageSummaryV1Schema>;
@@ -221,6 +247,7 @@ export const StorageCategoryGroupV1Schema = lazyZodSchema(() => z.strictObject({
 export type StorageCategoryGroupV1 = z.infer<typeof StorageCategoryGroupV1Schema>;
 export const MachineStorageCategoryListResultV1Schema = lazyZodSchema(() => z.strictObject({
   revision: revision(), sizedAt: time(), categoryId: HappierStorageCategoryIdV1Schema,
+  incomplete: z.optional(z.array(StorageReadIssueV1Schema)),
   items: z.array(StorageItemV1Schema), trashEntries: z.optional(z.array(TrashEntryV1Schema)), nextCursor: z.optional(z.string().check(z.minLength(1))),
   groups: z.optional(z.array(StorageCategoryGroupV1Schema)),
 }));
@@ -298,6 +325,7 @@ export const MachineStoragePileGetInputV1Schema = MachineStorageSummaryGetInputV
 export type MachineStoragePileGetInputV1 = z.infer<typeof MachineStoragePileGetInputV1Schema>;
 export const MachineStoragePileSetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...target(), add: z.optional(z.array(StorageItemRefV1Schema)), remove: z.optional(z.array(z.string().check(z.minLength(1)))), clear: z.optional(z.literal(true)),
+  acknowledgeDropped: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));
 export type MachineStoragePileSetInputV1 = z.infer<typeof MachineStoragePileSetInputV1Schema>;
 export const MachineStoragePileResultV1Schema = lazyZodSchema(() => z.strictObject({
@@ -340,6 +368,7 @@ export const MachineStorageSuggestionsListInputV1Schema = lazyZodSchema(() => z.
 }));
 export type MachineStorageSuggestionsListInputV1 = z.infer<typeof MachineStorageSuggestionsListInputV1Schema>;
 export const MachineStorageItemsListResultV1Schema = lazyZodSchema(() => z.strictObject({
+  incomplete: z.optional(z.array(StorageReadIssueV1Schema)),
   revision: revision(), items: z.array(StorageItemV1Schema), nextCursor: z.optional(z.string().check(z.minLength(1))), declinedCount: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));
 export type MachineStorageItemsListResultV1 = z.infer<typeof MachineStorageItemsListResultV1Schema>;

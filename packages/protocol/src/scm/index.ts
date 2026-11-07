@@ -29,6 +29,7 @@ export { admitScmRemotePolicy, type ScmRemotePolicy } from './remotePolicy.js';
 export * from './operationOutcome.js';
 export * from './entriesHistoryV1.js';
 export * from './fileAtRevision.js';
+export * from './fileViewed.js';
 export * from './commitPublication.js';
 export * from './branches.js';
 export * from './stash.js';
@@ -59,6 +60,7 @@ import {
   ScmOperationStateSchema,
   ScmRepoModeSchema,
   ScmRemoteInfoSchema,
+  ScmSnapshotDetailSchema,
   ScmWorkingEntrySchema,
   ScmWorkingSnapshotSchema,
   type ScmWorkingSnapshot,
@@ -186,9 +188,14 @@ export const ScmBackendDescribeResponseSchema = lazyZodSchema(() => z.object({
 }));
 export type ScmBackendDescribeResponse = z.infer<typeof ScmBackendDescribeResponseSchema>;
 
+export * from './changeCounting.js';
 export const ScmStatusSnapshotRequestSchema = lazyZodSchema(() => z.extend(ScmRequestBaseSchema, {
   includeWorktreeStatus: z.optional(z.boolean()),
   operationStateVersion: z.optional(z.literal(1)),
+  // Delivery follows consumption. Absent: the full changed-file list (Git/Review while presented).
+  // 'summary': counts and line totals only (composer, headers). 'facts': root, branch, worktrees
+  // and remotes from cheap queries, no working-copy scan (checkout pickers). See `detail` on the reply.
+  detail: z.optional(ScmSnapshotDetailSchema),
 }));
 export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSchema>;
 
@@ -1100,3 +1107,4 @@ export {
   sameScmHostingRepositoryIdentity,
   type ScmHostingRepositoryIdentityV1,
 } from './hostingRepositoryIdentity.js';
+export * from './suggestions.js';

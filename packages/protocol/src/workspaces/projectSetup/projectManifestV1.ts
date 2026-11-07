@@ -36,12 +36,12 @@ export const ProjectCommandSourceV1Schema = z.union([
 ]);
 export type ProjectCommandSourceV1 = z.infer<typeof ProjectCommandSourceV1Schema>;
 
-export const ProjectEnvironmentSelectionV1Schema = z.union([
+export const ProjectToolchainSelectionV1Schema = z.union([
   z.strictObject({ kind: z.literal('host') }),
   z.strictObject({ kind: z.literal('toolchain'), tool: z.enum(['mise', 'devbox', 'devenv', 'flox', 'nix_flake']), configPath: z.optional(containedPath) }),
   z.strictObject({ kind: z.literal('pluginToolchain'), adapter, configPath: z.optional(containedPath) }),
 ]);
-export type ProjectEnvironmentSelectionV1 = z.infer<typeof ProjectEnvironmentSelectionV1Schema>;
+export type ProjectToolchainSelectionV1 = z.infer<typeof ProjectToolchainSelectionV1Schema>;
 
 export const ProjectDevcontainerSelectionV1Schema = z.strictObject({ configPath: z.optional(containedPath) });
 export type ProjectDevcontainerSelectionV1 = z.infer<typeof ProjectDevcontainerSelectionV1Schema>;
@@ -54,7 +54,7 @@ const execution = z.optional(z.enum(['primary', 'portable']));
 export const ProjectManifestV1Schema = z.strictObject({
   version: z.literal(1),
   $schema: z.optional(nonempty),
-  environment: z.optional(ProjectEnvironmentSelectionV1Schema),
+  toolchain: z.optional(ProjectToolchainSelectionV1Schema),
   devcontainer: z.optional(ProjectDevcontainerSelectionV1Schema),
   environmentVariables: z.optional(z.array(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(EnvVarRequirementSchema)))),
   workspace: z.optional(z.strictObject({
@@ -83,7 +83,7 @@ export const ProjectDefinitionDetectionV1Schema = z.strictObject({
   entries: z.array(z.strictObject({ source: ProjectNativeRefV1Schema, usage: z.enum(['script', 'service', 'setup']) }).check(z.refine(
     entry => entry.usage === 'service' || isFiniteSource(entry.source), 'Compose and Procfile references are services',
   ))),
-  environments: z.array(ProjectEnvironmentSelectionV1Schema),
+  toolchains: z.array(ProjectToolchainSelectionV1Schema),
   devcontainers: z.array(ProjectDevcontainerSelectionV1Schema),
   coverage: z.enum(['complete', 'partial']),
   diagnostics: z.array(z.strictObject({ file: nonempty, code: nonempty })),
@@ -102,11 +102,3 @@ export const ProjectDefinitionImportCandidateV1Schema = z.strictObject({
   executionInputs: z.optional(z.array(ProjectExecutionInputV1Schema)),
 }).check(z.refine(candidate => !candidate.preselected || candidate.availability === 'available', 'Only available unambiguous offers may be preselected'));
 export type ProjectDefinitionImportCandidateV1 = z.infer<typeof ProjectDefinitionImportCandidateV1Schema>;
-
-export type ProjectToolchainSelectionV1 = z.infer<typeof ProjectToolchainSelectionV1Schema>;
-
-export const ProjectToolchainSelectionV1Schema = z.union([
-  z.strictObject({ kind: z.literal('host') }),
-  z.strictObject({ kind: z.literal('toolchain'), tool: z.enum(['mise', 'devbox', 'devenv', 'flox', 'nix_flake']), configPath: z.optional(containedPath) }),
-  z.strictObject({ kind: z.literal('pluginToolchain'), adapter, configPath: z.optional(containedPath) }),
-]);

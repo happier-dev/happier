@@ -499,7 +499,7 @@ export const LegacyProfileReviewedMappingV1Schema = lazyZodSchema(() => z.strict
     credentialStyle: LegacyProfileCredentialStyleV1Schema,
   })).check(z.maxLength(1)),
   routingEnvironmentVariableNames: z._default(z.array(z.string().check(z.regex(/^[A-Z_][A-Z0-9_]*$/u), z.maxLength(128))).check(z.maxLength(32)), []),
-  manualModelIds: z.array(ProviderModelIdSchema).check(z.maxLength(500)),
+  manualModelIds: z.array(ProviderModelIdSchema),
   selectedModel: z.optional(z.strictObject({
     agentTargetKey: ProviderAgentTargetKeySchema,
     modelId: ProviderModelIdSchema,

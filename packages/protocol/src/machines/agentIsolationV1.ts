@@ -20,6 +20,16 @@ export function resolveMachineAgentExecutionPlacementV1(input: Readonly<{
   return input.platform === 'linux' && input.policy.memberProvisioning === 'linuxUsersV1' ? 'member' : 'sharedAgent';
 }
 
+/** linuxUsersV1 gives each separated member its own workspace at `<root>/<sha256 hex>`, apart from its home.
+ * Provisioning creates it there and display reads it back as a place, never as the member digest. */
+export const MACHINE_MEMBER_WORKSPACES_ROOT_V1 = '/srv/happier/members';
+const MEMBER_WORKSPACE_PATH_V1 = new RegExp(`^${MACHINE_MEMBER_WORKSPACES_ROOT_V1}/[0-9a-f]{64}(?:/+(.*))?$`);
+/** The path below a member workspace root (`''` at the root itself), or null for any other path. */
+export function readMachineMemberWorkspaceRelativePathV1(path: string): string | null {
+  const match = MEMBER_WORKSPACE_PATH_V1.exec(path);
+  return match ? (match[1] ?? '').replace(/\/+$/, '') : null;
+}
+
 export const MachineAgentIsolationPolicyV1StoredSchema = createStoredReadSchema(MachineAgentIsolationPolicyV1Schema);
 export const agentIsolationMetadataFieldV1 = {
   field: 'agentIsolation', storedSchema: MachineAgentIsolationPolicyV1StoredSchema,
@@ -31,19 +41,35 @@ export function readMachineAgentIsolationPolicyV1(metadata: unknown) {
   return readMachineMetadataFieldV1(metadata, agentIsolationMetadataFieldV1);
 }
 
+/** Host-selected identity and fixed probe result only; native output and launch material never cross this boundary. */
+export const MachineAgentIsolationProbeFailureV1Schema = lazyZodSchema(() => {
+  const common = {
+    check: z.enum(['uid', 'home', 'user', 'groups', 'umask', 'managed_payload', 'agent_payload',
+      'root_sudo', 'docker_socket', 'private_path', 'mcp_authentication', 'mcp_anonymous', 'workspace', 'launch', 'output']),
+    identity: z.strictObject({ username: id, uid: z.number().check(z.int(), z.positive()),
+      gid: z.number().check(z.int(), z.positive()), home: id, cwd: id }),
+  };
+  return z.union([z.strictObject({ ...common, exitCode: z.number().check(z.int(), z.nonnegative()) }),
+    z.strictObject({ ...common, transportError: z.enum(['spawn_failed', 'signalled', 'execution_failed']) })]);
+});
+export type MachineAgentIsolationProbeFailureV1 = z.infer<typeof MachineAgentIsolationProbeFailureV1Schema>;
+
 export const MachineAgentIsolationUnavailableStatusV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('unavailable'),
   code: z.enum(['unsupported_platform', 'sudo_unavailable', 'sudoers_invalid', 'agent_user_missing',
     'workspace_not_ready', 'payload_not_accessible', 'workspace_ancestor_not_traversable',
     'agent_launch_kind_unavailable', 'provisioning_unavailable', 'launch_probe_failed',
     'mcp_socket_access_unavailable', 'local_admin_api_accessible', 'metadata_unavailable']),
+  probeFailure: z.optional(MachineAgentIsolationProbeFailureV1Schema),
   // Publish only the prerequisite cause, without native recovery payloads.
   setup: z.optional(z.pick(MachineElevatedNotAppliedResultV1Schema, { outcome: true, reasonCode: true, failure: true })),
   // Preparation can stop before native CHECK has a setup result to report.
-  prerequisite: z.optional(z.strictObject({ reason: z.literal('required_fact_unavailable'),
+  prerequisite: z.optional(z.union([z.strictObject({ reason: z.literal('required_fact_unavailable'),
     requiredFact: z.enum(['session_inventory', 'daemon_identity', 'workspace_census', 'workspace_paths']),
     remedy: id,
-  })),
+  }), z.strictObject({ reason: z.literal('native_effect_pending'), requiredFact: id,
+    detail: z.optional(id), path: z.optional(id), remedy: z.literal('machines.agentIsolation.preview'),
+  })])),
 }));
 export const MachineAgentIsolationStatusV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent') }),
@@ -79,6 +105,22 @@ const previewInput = { serverId: z.optional(id), machineId: id, enabled: z.boole
 /** Own readiness is a read result, never global launch or provisioning authority. */
 export const MachineAgentIsolationStatusInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: z.optional(id), machineId: id }));
 export type MachineAgentIsolationStatusInputV1 = z.infer<typeof MachineAgentIsolationStatusInputV1Schema>;
+export const MachineAgentIsolationOwnStatusV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ protection: z.literal('shared_user'), status: z.strictObject({
+    kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent'),
+  }) }),
+  z.strictObject({ protection: z.literal('member_separated'), status: z.strictObject({
+    kind: z.literal('effective'), platform: z.literal('linux'),
+  }), directories: z.optional(z.strictObject({ home: id, workspace: id })) }),
+  z.strictObject({ protection: z.literal('setup_pending'), status: z.union([
+    z.strictObject({ kind: z.literal('disabled') }),
+    z.strictObject({ kind: z.literal('enable_required'), reason: z.literal('existing_machine_workspace_migration') }),
+    z.strictObject({ kind: z.literal('applying'), phase: z.enum(['account', 'sudoers', 'workspace', 'runtime_replacement']) }),
+  ]) }),
+  z.strictObject({ protection: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema }),
+  z.strictObject({ protection: z.literal('trusted_administrator'), status: MachineAgentIsolationStatusV1Schema }),
+]));
+export type MachineAgentIsolationOwnStatusV1 = z.infer<typeof MachineAgentIsolationOwnStatusV1Schema>;
 export const MachineAgentIsolationPreviewInputV1Schema = lazyZodSchema(() => z.strictObject(previewInput));
 export type MachineAgentIsolationPreviewInputV1 = z.infer<typeof MachineAgentIsolationPreviewInputV1Schema>;
 export const MachineAgentIsolationReadyPreviewV1Schema = lazyZodSchema(() => z.strictObject({
@@ -115,20 +157,3 @@ export const MachineAgentIsolationSetResultV1Schema = lazyZodSchema(() => z.unio
   z.strictObject({ kind: z.literal('failed'), operationId: z.optional(id), code: z.enum(['cancelled', 'denied', 'locked', 'invalid', 'unavailable', 'outcome_unknown']) }),
 ]));
 export type MachineAgentIsolationSetResultV1 = z.infer<typeof MachineAgentIsolationSetResultV1Schema>;
-
-export const MachineAgentIsolationOwnStatusV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ protection: z.literal('shared_user'), status: z.strictObject({
-    kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent'),
-  }) }),
-  z.strictObject({ protection: z.literal('member_separated'), status: z.strictObject({
-    kind: z.literal('effective'), platform: z.literal('linux'),
-  }), directories: z.optional(z.strictObject({ home: id, workspace: id })) }),
-  z.strictObject({ protection: z.literal('setup_pending'), status: z.union([
-    z.strictObject({ kind: z.literal('disabled') }),
-    z.strictObject({ kind: z.literal('enable_required'), reason: z.literal('existing_machine_workspace_migration') }),
-    z.strictObject({ kind: z.literal('applying'), phase: z.enum(['account', 'sudoers', 'workspace', 'runtime_replacement']) }),
-  ]) }),
-  z.strictObject({ protection: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema }),
-  z.strictObject({ protection: z.literal('trusted_administrator'), status: MachineAgentIsolationStatusV1Schema }),
-]));
-export type MachineAgentIsolationOwnStatusV1 = z.infer<typeof MachineAgentIsolationOwnStatusV1Schema>;

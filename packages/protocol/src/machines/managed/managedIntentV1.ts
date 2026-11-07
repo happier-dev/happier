@@ -4,6 +4,8 @@ import { ActionOperationGetV1RequestSchema } from '../../actions/operations/v1.j
 import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';
 import { RetentionV1Schema, ManagedControllerV1Schema } from './managedMachineV1.js';
 import { ManagedCommittedIdleEvidenceV1Schema } from './actionsV1.js';
+import { ActivityDecisionV1Schema } from './activityDecisionV1.js';
+export { ActivityDecisionV1Schema, ManagedActivityReasonV1Schema, type ActivityDecisionV1, type ManagedActivityReasonV1 } from './activityDecisionV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.int().check(z.gte(0));
@@ -31,20 +33,8 @@ export const ManagedIntentResultSchema = lazyDefinition(() => z.discriminatedUni
   z.strictObject({ kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema }),
 ]));
 
-/** Content-free projection only; live inventory, attribution and owner references stay host-internal. */
-export const ActivityDecisionV1Schema = lazyDefinition(() => {
-  const reasons = z.array(z.enum(['session', 'finite', 'terminal', 'service', 'transfer',
-    'handoff', 'sync', 'setup', 'input', 'execution_run', 'workflow_run', 'agents', 'attention', 'coverage_unknown']));
-  return z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('busy'), reasons }),
-    z.strictObject({ kind: z.literal('unknown'), reasons }),
-    z.strictObject({ kind: z.literal('idle'), since: z.number().check(z.gte(0)) }),
-  ]);
-});
-
 export type ManagedIntentInput = Readonly<z.infer<typeof ManagedIntentInputSchema>>;
 export type ManagedIntentResult = Readonly<z.infer<typeof ManagedIntentResultSchema>>;
-export type ActivityDecisionV1 = Readonly<z.infer<typeof ActivityDecisionV1Schema>>;
 
 export { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from './actionIdsV1.js';
 

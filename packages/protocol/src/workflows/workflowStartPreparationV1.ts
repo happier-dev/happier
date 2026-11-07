@@ -117,7 +117,7 @@ export type WorkflowCombinedActionHostAdmissionV1 =
   | Readonly<{ kind: 'unavailable'; code: 'machine_unavailable'; machineId: string; role: 'controller' }>;
 export type WorkflowCombinedActionHostResolutionV1 =
   | (WorkflowCombinedActionHostAdmissionV1 & Readonly<{ review: WorkflowCombinedActionHostReviewV1 }>)
-  | Readonly<{ kind: 'selection_required' | 'platform_only'; review: WorkflowCombinedActionHostReviewV1 }>;
+  | Readonly<{ kind: 'selection_required'; review: WorkflowCombinedActionHostReviewV1 }>;
 
 /** Re-admit the reviewed/accepted host at dispatch; never resolve defaults again after review. */
 export function admitCombinedActionWorkflowHostV1(params: Readonly<{
@@ -133,7 +133,7 @@ export function admitCombinedActionWorkflowHostV1(params: Readonly<{
 }
 
 /**
- * Combined Action preparation shared by setup and Publish. Feed ready.machineId
+ * Combined Setup Action preparation. Feed ready.machineId
  * into the existing Workflow materializer's context and host-resolved project;
  * review is display data only, never authority or an Account preference.
  */
@@ -142,21 +142,17 @@ export function resolveCombinedActionWorkflowHostV1(params: Readonly<{
   createdMachineIds?: readonly string[];
   agentMachineId?: string;
   selectedMachineId?: string;
-}> & (
-  | Readonly<{ actionId: 'machines.setup.apply'; targetMachineIds: readonly string[] }>
-  | Readonly<{ actionId: 'deployments.publish'; projectEnvironmentControllerMachineIds?: readonly string[] }>
-)): WorkflowCombinedActionHostResolutionV1 {
+  actionId: 'machines.setup.apply'; targetMachineIds: readonly string[];
+}>): WorkflowCombinedActionHostResolutionV1 {
   const created = new Set(params.createdMachineIds ?? []);
   const machines = params.machines.filter(machine => !created.has(machine.machineId));
   let machineId = params.selectedMachineId ?? params.agentMachineId;
   if (machineId === undefined) {
     const byId = new Map(machines.map(machine => [machine.machineId, machine]));
-    machineId = params.actionId === 'machines.setup.apply'
-      ? params.targetMachineIds.find(id => byId.get(id)?.online)
-      : params.projectEnvironmentControllerMachineIds?.find(id => byId.has(id));
+    machineId = params.targetMachineIds.find(id => byId.get(id)?.online);
   }
   if (machineId === undefined) {
-    return { kind: params.actionId === 'deployments.publish' && machines.length === 0 ? 'platform_only' : 'selection_required',
+    return { kind: 'selection_required',
       review: { machineId: null, machines } };
   }
   return { ...admitCombinedActionWorkflowHostV1({ machineId, machines }), review: { machineId, machines } };

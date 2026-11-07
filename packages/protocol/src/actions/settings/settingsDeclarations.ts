@@ -4,6 +4,9 @@ import { BUILT_IN_SETTINGS_METADATA_V1 } from './builtInSettingsMetadata.js';
 import type { z } from 'zod/mini';
 import type { TeamSettingBindingV1 } from './settingsOwnerActions.js';
 import { readPortableAccountSettingBindingV1 } from './accountSettingBindings.js';
+import { applyAtmosphereLayoutDefault, recordAtmospherePictureSelection, type HomeAtmosphere } from '../../account/settings/homeAtmosphere.js';
+import { readCollectionSpaceDeletionApprovalV1 } from './collectionSpaceApproval.js';
+import { getFeatureAliases, isFeatureId } from '../../features/catalog.js';
 
 export type PortableSettingStorageV1 = Readonly<{
   scope: 'account' | 'local' | 'home' | 'team' | 'project';
@@ -49,6 +52,11 @@ export const BUILT_IN_SETTINGS_DECLARATIONS_V1: readonly PortableSettingDeclarat
 );
 // Approval and host-intent admission still resolve the canonical private declaration.
 const declarationsByAnchor = new Map(builtInSettingsDeclarations.map(declaration => [declaration.anchor, declaration]));
+for (const declaration of builtInSettingsDeclarations) {
+  const featureId = declaration.storage?.owner === 'featureToggle' ? declaration.storage.options?.[0] : undefined;
+  if (!isFeatureId(featureId) || declaration.anchor !== `features.${featureId}`) continue;
+  for (const alias of getFeatureAliases(featureId)) declarationsByAnchor.set(`features.${alias}`, declaration);
+}
 export function readBuiltInSettingDeclarationV1(anchor: unknown): PortableSettingDeclarationV1 | null {
   return typeof anchor === 'string' ? declarationsByAnchor.get(anchor) ?? null : null;
 }
@@ -56,7 +64,9 @@ export function readBuiltInSettingDeclarationV1(anchor: unknown): PortableSettin
 /** One declaration-owned default for static and activation-owned Settings operations. */
 export function resolveSettingsDeclarationOperationApprovalPolicyV1(operation: Readonly<{
   kind: 'interaction' | 'invoke'; requiresApproval?: boolean; uiConfirmation?: 'direct' | 'policy';
-}> | undefined): Readonly<{ requiresApproval: boolean; uiConfirmationRequired: boolean }> {
+}> | undefined, input?: unknown): Readonly<{ requiresApproval: boolean; uiConfirmationRequired: boolean }> {
+  const collectionDeletion = readCollectionSpaceDeletionApprovalV1(input);
+  if (collectionDeletion) return { requiresApproval: collectionDeletion.requiresApproval, uiConfirmationRequired: collectionDeletion.uiConfirmationRequired };
   const requiresApproval = operation?.kind !== 'invoke' || operation.requiresApproval !== false;
   return { requiresApproval, uiConfirmationRequired: requiresApproval && operation?.uiConfirmation !== 'direct' };
 }
@@ -64,7 +74,7 @@ export function resolveSettingsDeclarationOperationApprovalPolicyV1(operation: R
 /** Unknown operations fail closed; Action inputs never declare their own confirmation policy. */
 export function readBuiltInSettingsOperationApprovalPolicyV1(input: unknown): ReturnType<typeof resolveSettingsDeclarationOperationApprovalPolicyV1> {
   const anchor = input !== null && typeof input === 'object' && 'anchor' in input ? input.anchor : undefined;
-  return resolveSettingsDeclarationOperationApprovalPolicyV1(readBuiltInSettingDeclarationV1(anchor)?.operation);
+  return resolveSettingsDeclarationOperationApprovalPolicyV1(readBuiltInSettingDeclarationV1(anchor)?.operation, input);
 }
 
 /** Action inputs select an existing declaration; they cannot supply their own safety. */
@@ -141,6 +151,10 @@ export function describeSettingsDeclarationApprovalSummaryV1(actionId: SettingsD
   if (!parsed.success || !('anchor' in parsed.data)) return null;
   const declaration = readBuiltInSettingDeclarationV1(parsed.data.anchor);
   if (!declaration) return null;
+  if (actionId === 'settings.invoke') {
+    const collectionDeletion = readCollectionSpaceDeletionApprovalV1(parsed.data);
+    if (collectionDeletion) return collectionDeletion.summary;
+  }
   const name = `“${declaration.title}”`;
   const described = actionId === 'settings.set' && 'value' in parsed.data ? describeSettingsDeclarationValueV1(declaration, parsed.data.value) : null;
   const effect = described !== null ? `${described}.` : actionId === 'settings.set'
@@ -170,13 +184,15 @@ export function readBuiltInSettingsOperationPolicyV1(owner: string, options: rea
 
 export function readPortableDomainSettingBindingV1(declaration: PortableSettingDeclarationV1):
   TeamSettingBindingV1 | Readonly<{ scope: 'home'; kind: 'homeSettings'; key: string; access: PortableSettingStorageV1['access'] }>
-  | Readonly<{ scope: 'home'; kind: 'sessionAutoFollowPreferences'; field: 'assigned' | 'direct' | 'team' | 'group'; access: PortableSettingStorageV1['access'] }> | null {
+  | Readonly<{ scope: 'home'; kind: 'sessionAutoFollowPreferences'; field: 'assigned' | 'direct' | 'team' | 'group'
+    | 'managerPolicy' | 'runReportPolicy' | 'discussionReceivePolicy'; access: PortableSettingStorageV1['access'] }> | null {
   const binding = declaration.storage;
   if (!binding) return null;
   const { access } = binding;
   if (binding.scope === 'home' && binding.kind === 'homeSettings' && binding.key) return { scope: 'home', kind: binding.kind, key: binding.key, access };
   if (binding.scope === 'home' && binding.kind === 'sessionAutoFollowPreferences'
-    && (binding.field === 'assigned' || binding.field === 'direct' || binding.field === 'team' || binding.field === 'group')) return { scope: 'home', kind: binding.kind, field: binding.field, access };
+    && (binding.field === 'assigned' || binding.field === 'direct' || binding.field === 'team' || binding.field === 'group'
+      || binding.field === 'managerPolicy' || binding.field === 'runReportPolicy' || binding.field === 'discussionReceivePolicy')) return { scope: 'home', kind: binding.kind, field: binding.field, access };
   if (binding.scope !== 'team') return null;
   if (binding.kind === 'teamAdmissionMode' && (binding.mode === 'invite_only' || binding.mode === 'provisioned' || binding.mode === 'jit')) return { scope: 'team', kind: binding.kind, mode: binding.mode, access };
   if (binding.kind === 'teamAuthentication' && (binding.field === 'inherit' || binding.field === 'restricted' || binding.field === 'accepted')) return { scope: 'team', kind: binding.kind, field: binding.field, access };
@@ -271,6 +287,24 @@ export function buildBuiltInAccountSettingMutationV1(declaration: AccountSetting
   const admitted = parseBuiltInAccountSettingValueV1(declaration, value);
   if (!binding?.key || !definition || !admitted.success) return null;
   const stored = binding.invertBoolean ? !admitted.value : admitted.value;
-  const parsed = definition.parseMutationValue(binding.path ? replacePath(settings[binding.key], binding.path, stored) : stored);
+  let current = settings[binding.key];
+  let parsed = definition.parseMutationValue(binding.path ? replacePath(current, binding.path, stored) : stored);
+  if (binding.path && !parsed.success) {
+    // Incoming fields were strictly admitted above. Recover only their retained owner,
+    // preserving opaque siblings whenever its mutation schema already accepts them.
+    const opened = definition.schema.safeParse(current);
+    if (!opened.success) return null;
+    current = opened.data;
+    parsed = definition.parseMutationValue(replacePath(current, binding.path, stored));
+  }
+  if (parsed.success && binding.key === 'homeAtmosphere' && binding.path?.join('.') === 'picture.layout') {
+    // This key's current owner snapshot and the parsed next value are HomeAtmosphere documents.
+    return { homeAtmosphere: applyAtmosphereLayoutDefault(current as HomeAtmosphere, parsed.data as HomeAtmosphere) };
+  }
+  if (parsed.success && binding.key === 'homeAtmosphere'
+      && (binding.path?.join('.') === 'picture.ref' || binding.path?.join('.') === 'source' && stored === 'picture')) {
+    // The key selects the HomeAtmosphere definition above; its full strict parser just admitted this value.
+    return { homeAtmosphere: recordAtmospherePictureSelection(parsed.data as HomeAtmosphere) };
+  }
   return parsed.success ? { [binding.key]: parsed.data } : null;
 }

@@ -90,3 +90,4 @@ export const SessionReadBatchResponseV1Schema: z.ZodMiniObject<{
 }, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   results: z.array(SessionReadBatchResultV1Schema),
 })) satisfies z.ZodMiniType<SessionReadBatchResponseV1>;
+

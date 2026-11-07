@@ -67,6 +67,7 @@ import {
   normalizeLegacyExecutionRunBackendTargetInput,
 } from './startRequest.js';
 export {
+  ExecutionRunApprovalProfileSetInputSchema,
   ExecutionRunTeamCredentialSessionBindingConsentV1Schema,
   type ExecutionRunTeamCredentialSessionBindingConsentV1,
 } from './startRequest.js';

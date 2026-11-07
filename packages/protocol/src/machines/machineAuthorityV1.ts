@@ -3,6 +3,13 @@ import { readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacemen
 
 export type MachineAuthorityFreshnessV1 = 'current' | 'stale';
 export type MachineHostAuthorityV1 = 'administrator' | 'ordinary' | 'unknown';
+/** Configuration availability is distinct from the native setup observation.
+ * Preview owns the prerequisites for turning a supported target on. */
+export type MachineSeparateUsersAvailabilityV1 = Readonly<
+  | { kind: 'available' }
+  | { kind: 'can_turn_on' }
+  | { kind: 'unavailable'; reason: 'unsupported_platform' | 'metadata_unavailable' }
+>;
 export type MachineDaemonRightsV1 = Readonly<{
   observation: MachineAdminAccessObservationV1 | null;
   freshness: MachineAuthorityFreshnessV1;
@@ -32,7 +39,7 @@ export type MachineAuthorityPresentationV1 = Readonly<{
   isolation: MachineAgentIsolationStatusV1 | null;
   separateUsers: Readonly<{
     placement: ReturnType<typeof resolveMachineAgentExecutionPlacementV1> | null;
-    canEnable: boolean;
+    availability: MachineSeparateUsersAvailabilityV1;
   }>;
   daemonAccount: Readonly<{
     username: string | null;
@@ -78,8 +85,11 @@ export function presentMachineAuthorityV1(input: MachineAuthorityInputV1): Machi
     ? {} : { agentIsolation: input.isolationPolicy }) : null;
   const placement = policy?.status === 'ready' && input.platform
     ? resolveMachineAgentExecutionPlacementV1({ policy: policy.policy, platform: input.platform }) : null;
-  const separateUsers = { placement, canEnable: input.platform === 'linux' && placement !== null && placement !== 'member'
-    && isolation?.kind !== 'unavailable' };
+  const availability: MachineSeparateUsersAvailabilityV1 = !input.platform || placement === null
+    ? { kind: 'unavailable', reason: 'metadata_unavailable' }
+    : input.platform !== 'linux' ? { kind: 'unavailable', reason: 'unsupported_platform' }
+      : { kind: placement === 'member' ? 'available' : 'can_turn_on' };
+  const separateUsers = { placement, availability };
   const agentHostAuthority = freshness !== 'current' || isolation === null ? 'unknown'
     : isolation.kind === 'effective' ? 'ordinary' : hostAuthority;
   const authorization = observation?.tailscaledOperator?.authorization ?? 'unknown';
@@ -88,13 +98,13 @@ export function presentMachineAuthorityV1(input: MachineAuthorityInputV1): Machi
     rootEquivalentGroups: observation?.rootEquivalentGroups ?? null,
     groupMembership: observation?.groupMembership ?? { state: 'unknown' },
     desiredAdminAccess: input.desiredAdminAccess ?? null,
-    isolation, separateUsers, sharedAgentUid: input.sharedMachine === true,
+    isolation, separateUsers, sharedAgentUid: input.sharedMachine === true && placement !== 'member',
     daemonAccount: { username: observation?.daemonUsername ?? null,
       passwordLocked: observation?.daemonAccount?.passwordLocked ?? null, loginShell: observation?.daemonAccount?.loginShell ?? null },
     daemonService: { managed: input.serviceManaged ?? null,
       mode: observation?.daemonService?.mode ?? null, startsAtBoot: observation?.daemonService?.startsAtBoot ?? null },
-    // Every current effective isolation shape still uses happier-agent. Neither
-    // desired policy nor unknown/stale setup proves distinct member identities.
+    // Placement does not retract material delivered before member separation.
+    // Keep historical peer exposure distinct from the current execution policy.
     deliveredMaterial: { ownerVisible: true, sharedUserPeerVisible: input.sharedMachine !== false },
     tailscaledOperator: { authorization, freshness,
       currentAuthorization: freshness === 'current' ? authorization : 'unknown' },

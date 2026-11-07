@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -21,7 +22,8 @@ function projectConfigureObservationInput(value: unknown): unknown {
     reviewedPlanBasis: input.reviewedPlanBasis };
 }
 
-export const MACHINE_REACHABILITY_ACTION_SPECS_V1 = [
+function createMachineReachabilityActionSpecsV1() {
+  return [
   { id: 'machines.reachability.inspect', title: 'Inspect Machine reachability',
     description: 'Read selected network facts or prepare a proposed change without mutation or native admission.',
     approval: { result: 'required' }, approvalScope: 'machine', safety: 'safe', sideEffectClass: 'read',
@@ -46,3 +48,6 @@ export const MACHINE_REACHABILITY_ACTION_SPECS_V1 = [
       { path: 'reviewedPlanBasis', title: 'Reviewed reachability plan', widget: 'json', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_REACHABILITY_ACTION_SPECS_V1: ReturnType<typeof createMachineReachabilityActionSpecsV1> = lazyActionSpecArray(createMachineReachabilityActionSpecsV1);

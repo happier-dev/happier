@@ -1,5 +1,6 @@
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 export { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { TodoCreateInputV1Schema, TodoItemPatchV1Schema, TodoItemV1Schema, TodoStateV1Schema } from '../todos/todoSessionLinkV1.js';
@@ -79,7 +80,8 @@ export type InternalTaskActionOutput = InternalTaskListOutput | InternalTaskMuta
 const shared = { safety: 'safe', requiredAuthority: 'account_automation', executionPlacement: 'account', placements: [],
   originalExecution: { accountRoot: 'allowed' },
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false } } as const;
-export const INTERNAL_TASK_ACTION_SPECS = [
+function createInternalTaskActionSpecs() {
+  return [
   { ...shared, id: 'tasks.internal.labels.setColor', title: 'Set personal task label colour', description: 'Choose a theme colour for this Account’s task label without changing task records.',
     sideEffectClass: 'write', approval: { result: 'required' }, inputSchema: InternalTaskLabelSetColorInputSchema, outputSchema: InternalTaskLabelColorOutputSchema,
     bindings: { mcpToolName: 'tasks_internal_labels_set_color' }, cli: { acceptsServerId: true, commands: [{ path: ['tasks', 'internal', 'labels', 'set-color'], visibility: 'canonical' }] } },
@@ -128,3 +130,6 @@ export const INTERNAL_TASK_ACTION_SPECS = [
     ] },
     bindings: { mcpToolName: 'tasks_internal_transition' }, cli: { acceptsServerId: true, commands: [{ path: ['tasks', 'internal', 'transition'], visibility: 'canonical' }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const INTERNAL_TASK_ACTION_SPECS: ReturnType<typeof createInternalTaskActionSpecs> = lazyActionSpecArray(createInternalTaskActionSpecs);

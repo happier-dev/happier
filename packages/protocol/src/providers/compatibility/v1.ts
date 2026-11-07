@@ -71,6 +71,8 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
   }),
   credentialSupport: z.strictObject({
     supportsNoAuth: z.boolean(),
+    /** The adapter consumes every independent companion secret on a transport. */
+    supportsAdditionalCredentials: z.optional(z.literal(true)),
     /**
      * Narrows `supportsNoAuth` to the protocols the Agent's driver can actually
      * dispatch without an Authorization header. Absent means every accepted
@@ -80,6 +82,8 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
      */
     noAuthProtocols: z.optional(z.array(ProviderWireProtocolSchema).check(z.minLength(1), z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration))),
     apiKeyTransports: z.array(AgentCredentialTransportSupportV1Schema).check(z.maxLength(32)),
+    /** Alternatives scoped by protocol: primary or companion must match at least one; no entry means no extra constraint. */
+    requiredApiKeyTransports: z.optional(z.array(AgentCredentialTransportSupportV1Schema).check(z.minLength(1), z.maxLength(32))),
   }),
   authIsolation: z.strictObject({
     suppressConnectedServiceIds: z.array(ConnectedServiceIdSchema).check(z.maxLength(32)),
@@ -181,7 +185,7 @@ export const ProviderBindingCompatibilityV1Schema = lazyZodSchema(() => z.discri
     reasons: z.array(ProviderCompatibilityReasonCodeV1Schema).check(z.minLength(1)),
     confirmationScope: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('connection') }),
-      z.strictObject({ kind: z.literal('model'), modelId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)) }),
+      z.strictObject({ kind: z.literal('model'), modelId: z.string().check(z.trim(), z.minLength(1)) }),
     ]),
     evidence: z.optional(ProviderCompatibilityEvidenceV1Schema),
   }),

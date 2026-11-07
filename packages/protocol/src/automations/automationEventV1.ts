@@ -240,7 +240,6 @@ export {
   AutomationAccountCurrentnessWitnessV1Schema,
   projectAutomationAccountCurrentnessWitnessV1,
   sameAutomationAccountContentIdentityV1,
-  sameAutomationAccountCurrentnessWitnessV1,
 } from './automationAccountCurrentnessV1.js';
 export type { AutomationAccountCurrentnessWitnessV1 } from './automationAccountCurrentnessV1.js';
 
@@ -313,7 +312,6 @@ export type {
 
 export const MAX_AUTOMATION_PROVIDER_CHECKPOINT_UTF8_BYTES = 64 * 1024;
 export const MAX_AUTOMATION_OBSERVATIONS_PER_POLL = 100;
-export const MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT = 10_000;
 
 const UTF8_ENCODER = new TextEncoder();
 
