@@ -2491,7 +2491,10 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<ApprovalQueueListResultV1>;
   approvalsCreate?: (args: Readonly<{ request: ApprovalRequest; serverId?: string | null }>) => Promise<{ artifactId: string; request?: ApprovalRequest }>;
   approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ApprovalRequest | TargetActionApprovalRequestV1 | null>;
-  approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequest; serverId?: string | null; context?: ActionExecutorContext }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
+  approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequest; serverId?: string | null; context?: ActionExecutorContext;
+    /** Lifecycle basis observed by the settling owner, checked before the existing Artifact revision CAS. */
+    expectedStatus?: ApprovalRequest['status'];
+  }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
   /** Code-only host diagnostic for best-effort retirement after an already-confirmed effect. */
   recordApprovalRetirementWarning?: (warning: Readonly<{ artifactId?: string; code: string }>) => void | Promise<void>;
   /** Host-owned Home identity preparation, demanded only when constructing an approval origin. Never serialized. */
