@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TriageEntryRefV1Schema } from './identity.js';
-import { triageFailureSubjectEntryV1, triageHealthAlertEntryV1 } from './investigationSubjects.js';
+import { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectEntryV1, triageHealthAlertEntryV1 } from './investigationSubjects.js';
 
 describe('native investigation subject identity', () => {
     it('separates receipt identity by Home, Environment and deployment without a placement identity', () => {
@@ -13,6 +13,15 @@ describe('native investigation subject identity', () => {
         }
         expect(triageFailureSubjectEntryV1({ deploymentId: subject.deploymentId, environmentId: subject.environmentId,
             serverId: subject.serverId, kind: subject.kind })).toEqual(original);
+    });
+
+    it('identifies an Environment by Home and Environment so its Sessions link to one native record', () => {
+        const subject = { kind: 'deploymentEnvironment', serverId: 'home', environmentId: 'environment' } as const;
+        const original = triageFailureSubjectEntryV1(subject);
+        expect(TriageEntryRefV1Schema.parse(original.entryRef)).toEqual(original.entryRef);
+        expect(original.entryRef).toMatchObject({ kindId: 'deployment-environment', entryId: 'environment' });
+        expect(triageFailureSubjectEntryV1({ ...subject, serverId: 'other-home' }).entryRef).not.toEqual(original.entryRef);
+        expect(TRIAGE_NATIVE_INVESTIGATION_KINDS_V1.map(kind => kind.id)).toContain(original.entryRef.kindId);
     });
 
     it('keeps a notice on its exact Artifact across execution placement choices', () => {

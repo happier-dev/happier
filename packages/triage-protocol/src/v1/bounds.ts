@@ -192,6 +192,19 @@ export const TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1 = [
 ] as const;
 
 /**
+ * What a configured agent action can be offered on (`appliesTo`): every source
+ * workflow subject plus the native subjects whose owners declare their own
+ * action records (owner ruling 2026-11-07 "Agent actions: one shared flow").
+ * Source descriptors keep the narrower source vocabulary above; a native record
+ * still declares `other` as its source workflow subject.
+ */
+export const TRIAGE_ACTION_SUBJECTS_V1 = [
+    ...TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
+    'deploymentReceipt',
+    'deploymentEnvironment',
+] as const;
+
+/**
  * Whether a source's `localInstanceKey` is immutable provider identity or is
  * derived from an explicitly configured normalized origin. `CONTRACT.md` §3.1
  * makes an origin change explicit reconfiguration rather than an alias

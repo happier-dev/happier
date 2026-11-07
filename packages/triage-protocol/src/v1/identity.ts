@@ -17,6 +17,7 @@ import {
     MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
+    TRIAGE_ACTION_SUBJECTS_V1,
 } from './bounds.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
 
@@ -76,6 +77,14 @@ export const TriageSourceWorkflowSubjectV1Schema = defineProtocolUnion([
 export type TriageSourceWorkflowSubjectV1 = ReturnType<
     typeof TriageSourceWorkflowSubjectV1Schema.parse
 >;
+
+/** A configured action's `appliesTo` member: a source subject or a declared native subject. */
+export const TriageActionSubjectV1Schema = defineProtocolUnion([
+    defineProtocolLiteral(TRIAGE_ACTION_SUBJECTS_V1[0]),
+    defineProtocolLiteral(TRIAGE_ACTION_SUBJECTS_V1[1]),
+    ...TRIAGE_ACTION_SUBJECTS_V1.slice(2).map(subject => defineProtocolLiteral(subject)),
+]);
+export type TriageActionSubjectV1 = (typeof TRIAGE_ACTION_SUBJECTS_V1)[number];
 
 /**
  * The source-local entry reference. `CONTRACT.md` §6 publishes only this

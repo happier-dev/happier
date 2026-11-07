@@ -99,6 +99,8 @@ const SUBJECT_LABELS: Readonly<Record<string, Readonly<{ key: string; text: stri
   issue: { key: 'plugins.triage.surface.actions.subject.issue', text: 'Issues' },
   errorIssue: { key: 'plugins.triage.surface.actions.subject.errorIssue', text: 'Error groups' },
   other: { key: 'plugins.triage.surface.actions.subject.other', text: 'Everything else' },
+  deploymentReceipt: { key: 'plugins.triage.surface.actions.subject.deploymentReceipt', text: 'Deploys' },
+  deploymentEnvironment: { key: 'plugins.triage.surface.actions.subject.deploymentEnvironment', text: 'Environments' },
 };
 
 const WORKSPACE_LABELS: Readonly<Record<string, Readonly<{ key: string; text: string }>>> = {

@@ -2,12 +2,13 @@ import {
   hasTriageActionInstructionSourceV1,
   isTriageActionTargetOfferableV1,
   requiresTriageActionInstructionV1,
+  TRIAGE_ACTION_TARGET_KINDS_V1,
   type TriageActionV1,
 } from '../../settings/actions.js';
 import { TRIAGE_WORKSPACE_MODES_V1 } from '../../sessions/entrySessionWorkspace.js';
 import { TRIAGE_ACTION_DELIVERIES_V1 } from '../../settings/actions.js';
-import { TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1 } from '@happier-dev/triage-protocol/v1';
-import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_ACTION_SUBJECTS_V1, TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageActionSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageActionEditorDraftV1 } from './actionsCommand.js';
 
 /**
@@ -21,11 +22,14 @@ import type { TriageActionEditorDraftV1 } from './actionsCommand.js';
  */
 
 /** Every closed vocabulary the editor offers, in one declared order. */
-export const TRIAGE_EDITOR_SUBJECTS_V1: readonly TriageSourceWorkflowSubjectV1[] =
+export const TRIAGE_EDITOR_SUBJECTS_V1: readonly TriageActionSubjectV1[] =
+  Object.freeze([...TRIAGE_ACTION_SUBJECTS_V1]);
+/** A new action starts on every Triage subject; native subjects are opted into, like their owners' records. */
+const TRIAGE_EDITOR_NEW_ACTION_SUBJECTS_V1: readonly TriageActionSubjectV1[] =
   Object.freeze([...TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1]);
 export const TRIAGE_EDITOR_WORKSPACE_MODES_V1 = TRIAGE_WORKSPACE_MODES_V1;
 export const TRIAGE_EDITOR_DELIVERIES_V1 = TRIAGE_ACTION_DELIVERIES_V1;
-export const TRIAGE_EDITOR_TARGET_KINDS_V1 = (['agent', 'reviewStart'] as const)
+export const TRIAGE_EDITOR_TARGET_KINDS_V1 = TRIAGE_ACTION_TARGET_KINDS_V1
   .filter(isTriageActionTargetOfferableV1);
 export type TriageEditorTargetKindV1 = (typeof TRIAGE_EDITOR_TARGET_KINDS_V1)[number];
 
@@ -89,7 +93,7 @@ export function newTriageActionDraftV1(): TriageActionEditorDraftV1 {
   return {
     label: '',
     enabled: true,
-    appliesTo: TRIAGE_EDITOR_SUBJECTS_V1,
+    appliesTo: TRIAGE_EDITOR_NEW_ACTION_SUBJECTS_V1,
     profileId: null,
     workspaceMode: 'reference_only',
     hasSeededFallbackInstruction: false,

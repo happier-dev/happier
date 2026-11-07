@@ -1,4 +1,4 @@
-import { INTERNAL_TASK_SOURCE_V1, type TriageEntryRefV1, type TriageEntryLocatorV1 } from './identity.js';
+import { INTERNAL_TASK_SOURCE_V1, type TriageActionSubjectV1, type TriageEntryRefV1, type TriageEntryLocatorV1 } from './identity.js';
 import type { TriageFailureSubjectV1, TriageSessionHandoffInputV1 } from './sessionHandoff.js';
 
 const kinds = {
@@ -7,6 +7,7 @@ const kinds = {
     backupRun: { id: 'backup-run', workflowSubject: 'other', displayName: 'Backup' },
     service: { id: 'native-service', workflowSubject: 'other', displayName: 'Service' },
     domain: { id: 'native-domain', workflowSubject: 'other', displayName: 'Domain' },
+    deploymentEnvironment: { id: 'deployment-environment', workflowSubject: 'other', displayName: 'Environment' },
     healthNotice: { id: 'health-notice', workflowSubject: 'other', displayName: 'Health notice' },
 } as const;
 
@@ -31,6 +32,8 @@ export function triageFailureSubjectEntryV1(subject: TriageFailureSubjectV1): Tr
             return entry(kinds[subject.kind], [subject.operation.serverId, subject.operation.machineId], subject.operation.operationId);
         case 'domain':
             return entry(kinds.domain, [subject.serverId, subject.environmentId], subject.domainId);
+        case 'deploymentEnvironment':
+            return entry(kinds.deploymentEnvironment, [subject.serverId], subject.environmentId);
         case 'service': {
             const target = subject.target;
             return target.page === 'machine_service'
@@ -38,6 +41,11 @@ export function triageFailureSubjectEntryV1(subject: TriageFailureSubjectV1): Tr
                 : entry(kinds.service, [target.environment.serverId, target.environment.environmentId], target.targetLinkId ?? target.environment.environmentId);
         }
     }
+}
+
+/** The action subject a native record's own configured records name; other native records have only `other`. */
+export function triageFailureSubjectActionSubjectV1(subject: TriageFailureSubjectV1): TriageActionSubjectV1 | undefined {
+    return subject.kind === 'deploymentReceipt' || subject.kind === 'deploymentEnvironment' ? subject.kind : undefined;
 }
 
 /** Notice identity stays with its retained Artifact; a current binding cannot identify its old receipt. */

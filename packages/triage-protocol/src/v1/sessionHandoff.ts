@@ -13,7 +13,7 @@ import {
 import { AgentTargetKeyV2Schema } from '@happier-dev/plugin-sdk/agents';
 import { ForgeCiFailureSummaryV1Schema } from '../ci/v1/failureSummary.js';
 import { ForgeReleaseNotesContextV1Schema } from '../releases/v1/operations.js';
-import { TriageActionIdV1Schema, TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
+import { TriageActionIdV1Schema, TriageActionSubjectV1Schema, TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString();
@@ -35,13 +35,17 @@ const healthPlacement = {
 };
 
 
-/** Failure evidence is an exact owner address, never caller-supplied logs or a health verdict. */
+/**
+ * A native subject is an exact owner address, never caller-supplied logs or a health verdict. Most are failures;
+ * `deploymentEnvironment` is the Environment a setup action starts from, re-read through the same owner.
+ */
 export const TriageFailureSubjectV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('deploymentReceipt'), serverId: text, environmentId: text, deploymentId: text }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('managedMachineOperation'), operation: ProjectExecutionOperationRefV1ProtocolSchema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('backupRun'), operation: ProjectExecutionOperationRefV1ProtocolSchema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('service'), target: ProtocolServiceHealthNoticePageV1Schema }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('domain'), serverId: text, environmentId: text, domainId: text }, closed),
+    defineProtocolObject({ kind: defineProtocolLiteral('deploymentEnvironment'), serverId: text, environmentId: text }, closed),
 ]);
 export type TriageFailureSubjectV1 = ReturnType<typeof TriageFailureSubjectV1Schema.parse>;
 
@@ -73,13 +77,22 @@ export type TriageSessionHandoffSelectionV1 = ReturnType<typeof TriageSessionHan
 export const TriageReadSessionHandoffChoicesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1), projection: defineProtocolLiteral('sessionHandoff'),
     task: handoffTask.optional(),
+    /** The page's own native subject: its records are added to the shared choices and marked `forSubject`. */
+    subject: TriageActionSubjectV1Schema.optional(),
 }, closed);
 export type TriageReadSessionHandoffChoicesInputV1 = ReturnType<typeof TriageReadSessionHandoffChoicesInputV1Schema.parse>;
 
 /** Only the catalog owner chooses offered Actions and the default identity. */
 export const TriageSessionHandoffChoicesV1Schema = defineProtocolUnion([
     defineProtocolObject({ v: defineProtocolLiteral(1), kind: defineProtocolLiteral('choices'),
-        actions: defineProtocolArray(defineProtocolObject({ label: text, selection: TriageSessionHandoffSelectionV1Schema }, closed)),
+        actions: defineProtocolArray(defineProtocolObject({ label: text, selection: TriageSessionHandoffSelectionV1Schema,
+            // The catalog owner's launch facts for the split button: its own mode, whether Start can run it, and the
+            // translation key of a still-shipped label. Optional only so a newer UI reads an older catalog.
+            launchMode: defineProtocolUnion([defineProtocolLiteral('start'), defineProtocolLiteral('review')]).optional(),
+            startable: bool.optional(),
+            titleKey: text.optional(),
+            forSubject: defineProtocolLiteral(true).optional(),
+        }, closed)),
         defaultActionId: TriageActionIdV1Schema.nullable(),
     }, closed),
     defineProtocolObject({ v: defineProtocolLiteral(1), kind: defineProtocolLiteral('unavailable'),
