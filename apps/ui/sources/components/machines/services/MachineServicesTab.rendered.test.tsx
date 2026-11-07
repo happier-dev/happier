@@ -534,10 +534,10 @@ describe('MachineServicesTab rendered production wiring', () => {
         homes.answer(serverId, '/v1/deployments/environments', { select: () => pending.promise });
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.groups.environmentReading')));
-        expect(screen.findHostByTestId('machine-services-table:group:environment:hidden-environment:action')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-environment-hidden-environment:open')).toBeNull();
         await act(async () => { pending.resolve({ body: { ok: true, items: [], nextCursor: null } }); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.groups.environmentUnavailable')));
-        expect(screen.findHostByTestId('machine-services-table:group:environment:hidden-environment:action')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-environment-hidden-environment:open')).toBeNull();
         expect(router.push).not.toHaveBeenCalled();
     });
 
@@ -559,7 +559,13 @@ describe('MachineServicesTab rendered production wiring', () => {
         })] }));
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Storefront · Production'));
-        const linkId = `machine-services-table:group:environment:${environment.id}:action`;
+        // One row per Environment (lab `services/list`): its services stay under it until the person opens the row.
+        expect(screen.findHostByTestId(`machine-services-environment-${environment.id}`)).not.toBeNull();
+        expect(screen.findHostByTestId('machine-service-web')).toBeNull();
+        expect(screen.getTextContent()).toContain(t('machineServices.environmentRow.services', { count: 1 }));
+        await screen.pressByTestIdAsync(`machine-services-environment-${environment.id}`);
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
+        const linkId = `machine-services-environment-${environment.id}:open`;
         expect(screen.findHostByTestId(linkId)?.props.accessibilityLabel)
             .toBe(`${t('machineServices.groups.openEnvironment')}, Storefront · Production`);
         await screen.pressByTestIdAsync(linkId);

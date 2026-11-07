@@ -276,11 +276,14 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
 
 describe('carries the Environment health starter and Machine-service health starter subjects into Add check', () => {
 it.each([
-    { label: 'Environment', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
+    { label: 'Environment', starter: 'healthFailed', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
         subject: { kind: 'environment', environmentId: 'environment-production' } },
-    { label: 'Machine-service', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
+    { label: 'Machine-service', starter: 'healthFailed', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
         subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'service-production' } },
-] as const)('$label through the rendered Event editor and native Health form', async ({ triggerSubject, subject }) => {
+    // Add a check opens the New trigger editor straight at the service's bound Health form (O-MACH 11-07).
+    { label: 'Machine-service Add a check', starter: 'addCheck', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
+        subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'service-production' } },
+] as const)('$label through the rendered Event editor and native Health form', async ({ starter, triggerSubject, subject }) => {
     const { SubjectTriggersSection } = await import('@/components/workflows/triggers/SubjectTriggersSection');
     const { Item } = await import('@/components/ui/lists/Item');
     const { PluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
@@ -330,9 +333,11 @@ it.each([
             ...(triggerSubject.kind === 'environment' ? { controllerMachineId: machineId,
                 deploymentEnvironment: { serverId: connection.serverId, projectSourceId: 'source-production', environmentId: triggerSubject.environmentId } } : {}) };
         screen = await renderScreen(<SubjectTriggersSection {...subjectPageProps} />);
-        await waitForHomeGovernance(() => expect(screen!.findByTestId('subject-triggers-starter:healthFailed')).not.toBeNull());
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'subject-triggers-starter:healthFailed'));
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
+        await waitForHomeGovernance(() => expect(screen!.findByTestId(`subject-triggers-starter:${starter}`)).not.toBeNull());
+        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === `subject-triggers-starter:${starter}`));
+        if (starter === 'healthFailed') {
+            await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
+        }
         const editor = screen.findByType(PluginEventAutomationEditor);
         const initialSetupSeed: React.ComponentProps<typeof PluginEventAutomationEditor>['initialSetupSeed'] = editor.props.initialSetupSeed;
         // The native surface adapter is the UI platform boundary; source selection, schema,

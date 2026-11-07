@@ -193,6 +193,7 @@ export const en = {
         },
         notifyMessage: ({ subject }: { subject: string }) => `An automation on ${subject} finished. The result is in your Inbox.`,
         starter: {
+            addCheck: "Add a check",
             healthFailed: "Investigate when health fails",
             deploymentFailed: "Investigate when a deploy fails",
             nightly: "Nightly check",

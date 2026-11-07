@@ -20,8 +20,13 @@ import {
   useAccountWorkflowEditor,
 } from './AccountTriggersSection';
 import { GuidedAutomationSetup } from './GuidedAutomationSetup';
-import type { GuidedStarter } from './guidedAutomation';
-import { SUBJECT_TRIGGER_STARTER_GLYPH, SUBJECT_TRIGGER_STARTERS } from './subjectTriggerStarters';
+import { guidedStarterEventSeed, type GuidedStarter } from './guidedAutomation';
+import {
+  SUBJECT_TRIGGER_PERSISTENT_STARTERS,
+  SUBJECT_TRIGGER_STARTER_GLYPH,
+  SUBJECT_TRIGGER_STARTERS,
+  type SubjectTriggerStarter,
+} from './subjectTriggerStarters';
 import { TriggerRow } from './TriggerRow';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 
@@ -29,6 +34,8 @@ const ACCOUNT_TRIGGER_QUERY = { scope: 'account_inline' } as const;
 
 type Opening =
   | Readonly<{ kind: 'custom' }>
+  /** Add a check: the New trigger editor opened at the subject's own health form (the bound health-setup seed). */
+  | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>
   | Readonly<{
       kind: 'guided';
       starter: GuidedStarter | null;
@@ -103,13 +110,7 @@ export const SubjectTriggersSection = React.memo(
       >
         {empty
           ? SUBJECT_TRIGGER_STARTERS[props.subject.kind].map((starter) => (
-              <StarterRow
-                key={starter}
-                starter={starter}
-                onOpen={(anchor) =>
-                  setOpening({ kind: 'guided', starter, anchor })
-                }
-              />
+              <StarterRow key={starter} starter={starter} onOpen={(anchor) => setOpening(openStarter(starter, anchor))} />
             ))
           : rows.map((row) => (
               <SubjectTriggerRowView
@@ -124,6 +125,9 @@ export const SubjectTriggersSection = React.memo(
                 }}
               />
             ))}
+        {empty ? null : SUBJECT_TRIGGER_PERSISTENT_STARTERS[props.subject.kind].map((starter) => (
+          <StarterRow key={starter} starter={starter} onOpen={(anchor) => setOpening(openStarter(starter, anchor))} />
+        ))}
         {rows.length > 0 && status === 'failed' ? (
           <SurfaceFreshnessLine
             testID="subject-triggers-read"
@@ -149,6 +153,14 @@ export const SubjectTriggersSection = React.memo(
             initialProject={project}
           />
         ) : null}
+        {opening?.kind === 'check' ? (
+          <NewAccountTriggerPopover
+            anchorRef={opening.anchor}
+            onRequestClose={close}
+            initialProject={project}
+            eventSeed={guidedStarterEventSeed('healthFailed', { subject: props.subject, controllerMachineId: props.controllerMachineId })}
+          />
+        ) : null}
         {opening?.kind === 'guided' ? (
           <GuidedAutomationSetup
             anchorRef={opening.anchor}
@@ -167,10 +179,14 @@ export const SubjectTriggersSection = React.memo(
   },
 );
 
-/** A suggested automation: a row that opens the four questions already answered for it. */
+function openStarter(starter: SubjectTriggerStarter, anchor: React.RefObject<View | null>): Opening {
+  return starter === 'addCheck' ? { kind: 'check', anchor } : { kind: 'guided', starter, anchor };
+}
+
+/** A suggested entry: a row that opens the four questions already answered for it, or Add a check's health form. */
 const StarterRow = React.memo(function StarterRow(
   props: Readonly<{
-    starter: GuidedStarter;
+    starter: SubjectTriggerStarter;
     onOpen: (anchor: React.RefObject<View | null>) => void;
   }>,
 ) {
