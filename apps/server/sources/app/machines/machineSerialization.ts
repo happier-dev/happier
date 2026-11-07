@@ -56,7 +56,7 @@ export function serializeManagedInputRuntime(row: Pick<MachineSerializationRow, 
         // owner still decides whether this exact enrolled daemon is reachable.
         const runtime = resolveManagedMachineRuntimeV1(projectManagedMachine(managed), row.id, true);
         return { nativeReady: runtime.ready, wakeState: managed.wakeOnAcceptedMessage ? runtime.wakeState : null,
-            acceptedInputWakeOwner: runtime.acceptedInputWakeOwner, newSessionWake: runtime.newSessionWake };
+            acceptedInputWakeOwner: runtime.acceptedInputWakeOwner, newSessionWake: runtime.newSessionWake, state: runtime.state };
     }
     catch { return null; }
 }

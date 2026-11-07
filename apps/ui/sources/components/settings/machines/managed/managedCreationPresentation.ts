@@ -93,11 +93,8 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
     if (machine.submittedNativeEffect?.intent === 'delete') return { kind: 'cleanupPending',
         cost: resolveManagedConfigurationCost({ ...machine.reviewedFacts, provider: context.provider ?? null }) };
     if (machine.submittedNativeEffect?.intent === 'stop' && machine.observation?.power !== 'stopped') return { kind: 'stopPending' };
-    // A committed Start whose native submission is unconfirmed has no submitted effect yet (QB118), but the
-    // guest is still observed asleep: the request stands, so the page must not read as a machine at rest.
-    const retainedPowerIntent = machine.desired === 'start' && machine.observation?.power === 'stopped' ? 'start'
-        : machine.desired === 'resume' && machine.observation?.power === 'suspended' ? 'resume' : undefined;
-    const pendingIntent = machine.submittedNativeEffect?.intent ?? retainedPowerIntent;
+    // Desired intent can outlive a completed operation; only a submitted native effect proves a transition.
+    const pendingIntent = machine.submittedNativeEffect?.intent;
     if ((pendingIntent === 'start' || pendingIntent === 'resume') && machine.observation?.power !== 'running'
         || pendingIntent === 'suspend' && machine.observation?.power !== 'suspended') {
         return { kind: 'powerPending', provider: context.provider ?? t('common.machine'), state: t(`managedMachines.actions.${pendingIntent}`) };
@@ -132,20 +129,12 @@ export function managedMachineEnrolledDetailId(machine: ManagedMachineV1, enroll
 }
 
 /**
- * A created machine its provider reports stopped or suspended is offline because of that power state; its own
- * state row and receipt (Start) explain it, so the page must not say a second, vaguer "offline".
- */
-export function managedPowerExplainsOffline(machine: Pick<ManagedMachineV1, 'creationState' | 'observation'> | undefined): boolean {
-    const power = machine?.observation?.power;
-    return machine?.creationState === 'active' && (power === 'stopped' || power === 'suspended');
-}
-
-/**
  * Enrolled healthy or stopped resources use the observation row instead of repeating their state: the page header's
  * presence line already says Stopped or Asleep in the Machines rail's word (`managedMachineHeaderPresence`).
  */
 export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1, 'enrolledMachineId'>, state: ManagedLifecycleState): boolean {
-    return !machine.enrolledMachineId || state.kind !== 'resourceReady' && state.kind !== 'stoppedStorage';
+    return !machine.enrolledMachineId || state.kind !== 'resourceReady' && state.kind !== 'stoppedStorage'
+        && state.kind !== 'powerPending' && state.kind !== 'stopPending';
 }
 
 /**

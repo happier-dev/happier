@@ -74,6 +74,8 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     offlineRetry?: Readonly<{ onPress: () => void; loading: boolean }>;
     /** The page already says why it is offline (a created machine that is stopped); no second banner. */
     offlineExplained?: boolean;
+    /** The shared Machine presentation sentence; vitals contributes only its own last-report fact. */
+    offlineTitle?: string;
   }>,
 ) {
   const { machine } = props;
@@ -119,7 +121,7 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     <AttentionBanner
       testID="machine-vitals-offline"
       tone="neutral"
-      title={t('machineVitals.states.offlineTitle', { machine: props.machineName })}
+      title={props.offlineTitle ?? t('machineVitals.states.offlineTitle', { machine: props.machineName })}
       description={view.kind === 'offline_empty'
         ? t('machineVitals.states.offlineNeverReported')
         : t('machineVitals.states.offlineLastReported', { machine: props.machineName })}

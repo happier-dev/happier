@@ -7,6 +7,7 @@ import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
 
 import { usePaneHeaderSlotBinding, usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import { CheckoutUnreachableState, useCheckoutReachabilityPresentation, retryMachineReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { useRestoreFocusToTrigger, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useProjectPageBack } from '@/components/projects/detail/projectPageBack';
@@ -225,7 +226,8 @@ function buildHeaderLine(input: Readonly<{
     if (input.offline) {
         return {
             leading: input.offlineMark,
-            segments: [machine ? t('localServices.pane.offlineOn', { machine }) : t('localServices.pane.offline')],
+            // The checkout owner or the pane body says the current state once; this line keeps identity only.
+            segments: machine ? [machine] : [],
         };
     }
     if (input.runningCount > 0) {
@@ -440,7 +442,10 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     const machineName = props.machine?.name ?? null;
     // Only a machine we know about and cannot reach is offline; an unknown one (a shared Session)
     // keeps today's behaviour rather than claiming an outage.
-    const offline = props.machine?.reachability === 'unreachable';
+    const machineScope = props.serverId && props.sourceMachineId ? { serverId: props.serverId, machineId: props.sourceMachineId } : null;
+    const reachability = useCheckoutReachabilityPresentation(machineScope,
+        props.machine ?? { name: null, homeDir: null, reachability: 'unknown' });
+    const offline = reachability.unreachable;
 
     // One selected Service, presented inline on wide layouts or as a pushed detail on phones.
     // Responsive changes and native placement handoffs do not change the person's selection.
@@ -704,14 +709,8 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     if (offline && !hasRows) {
         return withFooter(
-            <SurfaceStateCard
-                testID={`${testID}-offline`}
-                kind="unavailable"
-                iconName="cloud-slash"
-                title={machineName ? t('localServices.pane.offlineOn', { machine: machineName }) : t('localServices.pane.offline')}
-                reason={t('localServices.pane.offlineReason')}
-                {...(checkAgain ? { action: checkAgain } : {})}
-            />
+            <CheckoutUnreachableState reachability={reachability}
+                testID={`${testID}-${reachability.announced ? 'waiting' : 'offline'}`} />
         );
     }
 
@@ -769,13 +768,14 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                 >
                     <ConstrainedScreenContent>
                         {pageHeader}
-                        {offline ? (
+                        {offline && !reachability.announced ? (
                             <View style={styles.offlineLine}>
                                 <SurfaceFreshnessLine
                                     testID={`${testID}-offline-line`}
                                     tone="warning"
-                                    reason={machineName ? t('localServices.pane.offlineOn', { machine: machineName }) : t('localServices.pane.offline')}
-                                    {...(checkAgain ? { action: checkAgain } : {})}
+                                    reason={reachability.runtime.label}
+                                    action={reachability.runtime.nextAction === 'retry'
+                                        ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
                                 />
                             </View>
                         ) : null}

@@ -15,6 +15,7 @@ import { enqueuePendingMessage, updatePendingRequestedAction, markPendingActivat
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import * as privacyKit from 'privacy-kit';
 import { db } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { encryptWithDataKey, decryptWithDataKey } from '../../../../../../cli/src/api/encryption';
@@ -66,6 +67,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             installationId: `installation-${randomUUID()}`,
         } });
+        await makeShareEligibleForTest(owner.id, [recipient.id, other.id]);
         return { owner, recipient, other, machine };
     }
 
@@ -92,6 +94,89 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(hasController
                 ? { kind: 'available' } : { kind: 'unavailable', reason: 'no_controller' });
             expect(response.json().machine.managedInputRuntime).not.toHaveProperty('controller');
+        });
+    });
+
+    async function sharedManagedRuntimeFixture() {
+        const { owner, recipient, machine } = await fixture();
+        const managed = await db.managedMachine.create({ data: {
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id, enrolledMachineId: machine.id,
+            admittedActionRequestId: randomUUID(), admittedInput: { creationScopeRetention: {
+                effect: 'stop', source: { kind: 'session', sessionId: 'private-source-session' },
+            } }, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+        } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: recipient.id }, level: 'view' }));
+        return { owner, recipient, machine, managed };
+    }
+
+    it('projects native lifecycle independently of accepted-input wake eligibility to guest Use recipients', async () => {
+        const { recipient, machine, managed } = await sharedManagedRuntimeFixture();
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = () => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
+            const asleep = await read();
+            expect(asleep.statusCode, asleep.body).toBe(200);
+            expect(asleep.json().machine.managedInputRuntime.state).toBe('asleep');
+            await inTx(async tx => {
+                const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                await tx.managedMachine.update({ where: { id: managed.id }, data: { wakeOnAcceptedMessage: false } });
+                await invalidateManagedMachineInTx(tx, previous);
+            });
+            // Disabling accepted-input wake preserves the stopped native lifecycle.
+            expect((await read()).json().machine.managedInputRuntime).toEqual(expect.objectContaining({ wakeState: null, state: 'asleep' }));
+            for (const storage of ['retained', 'lost'] as const) {
+                await inTx(async tx => {
+                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                    await tx.managedMachine.update({ where: { id: managed.id }, data: {
+                        observation: { observedAt: 2, availability: 'present', power: 'running', storage },
+                    } });
+                    await invalidateManagedMachineInTx(tx, previous);
+                });
+                expect((await read()).json().machine.managedInputRuntime.state).toBeNull();
+            }
+        });
+    });
+
+    it('projects owner-enabled accepted-input wake to guest Use recipients and refreshes policy changes', async () => {
+        const { owner, recipient, machine, managed } = await sharedManagedRuntimeFixture();
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = () => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
+            const asleep = await read();
+            expect(asleep.statusCode, asleep.body).toBe(200);
+            expect(asleep.json().machine.managedInputRuntime).toEqual(expect.objectContaining({ nativeReady: false, wakeState: 'asleep' }));
+            expect(asleep.json().machine.managedInputRuntime).not.toHaveProperty('creationScopeRetention');
+            expect(asleep.json().machine.managedInputRuntime).not.toHaveProperty('source');
+            expect(asleep.json().machine.access).toMatchObject({ role: 'use' });
+            expect(asleep.json().machine).not.toHaveProperty('launch');
+            expect(asleep.json().machine).not.toHaveProperty('creationScopeRetention');
+            expect(asleep.body).not.toContain('private-source-session');
+            const before = await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
+                accountId: recipient.id, kind: 'machine', entityId: machine.id,
+            } } });
+            await inTx(async tx => {
+                const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                await tx.managedMachine.update({ where: { id: managed.id }, data: { wakeOnAcceptedMessage: false } });
+                await invalidateManagedMachineInTx(tx, previous);
+            });
+            const disabled = await read();
+            expect(disabled.json().machine.managedInputRuntime).toEqual(expect.objectContaining({ nativeReady: false, wakeState: null }));
+            expect((await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+                accountId: recipient.id, kind: 'machine', entityId: machine.id,
+            } } })).cursor).toBeGreaterThan(before?.cursor ?? 0);
+            for (const [storage, nativeReady] of [['retained', true], ['lost', false]] as const) {
+                await inTx(async tx => {
+                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                    await tx.managedMachine.update({ where: { id: managed.id }, data: {
+                        observation: { observedAt: 2, availability: 'present', power: 'running', storage },
+                    } });
+                    await invalidateManagedMachineInTx(tx, previous);
+                });
+                expect((await read()).json().machine.managedInputRuntime).toEqual(expect.objectContaining({ nativeReady, wakeState: null }));
+            }
         });
     });
 

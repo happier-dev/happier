@@ -6,12 +6,13 @@ import { MachineRecentSessionsSection } from '@/components/machines/sessions/Mac
 import { MachineVitalsOverview } from '@/components/machines/vitals/MachineVitalsOverview';
 import { MachineProjectWorkSection } from '@/components/projects/workers/MachineProjectWorkSection';
 import { ManagedEnrolledMachineSectionsView } from '@/components/settings/machines/managed/ManagedMachineSections';
-import { managedPowerExplainsOffline } from '@/components/settings/machines/managed/managedCreationPresentation';
+import { describeMachineRuntimePresence, projectMachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { splitHappierBannerPoint } from '@happier-dev/plugin-ui/presentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
+import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 
 import { MachineCapabilitiesSection } from './MachineCapabilitiesSection';
 import { MachineThisMachineSection } from './MachineThisMachineSection';
@@ -60,14 +61,17 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     const offlineRetry = React.useMemo(() => ({ onPress: () => void retry(), loading: retrying }), [retry, retrying]);
     const { setParams } = props;
     const openProcesses = React.useCallback(() => setParams({ id: 'processes' }), [setParams]);
+    const reachabilityScope = React.useMemo(() => ({ serverId: props.serverId, machineId: props.machineId }), [props.serverId, props.machineId]);
 
     if (!machine) return null;
+    const runtimePresence = describeMachineRuntimePresence(machine, undefined,
+        projectMachineManagedPresence(machine, managedEnrolled.machine), machineAccountScope);
     return (
-        <>
+        <CheckoutReachabilityScope scope={reachabilityScope}>
             {/* An offline machine is a fact, not a fault: the vitals body below says it once, in its quiet banner above
                 what the machine last reported (lab `rv` OS 3). Only a machine that is online but still cannot start
                 sessions gets the checks. */}
-            {props.online && !canSpawn ? (
+            {props.online && !runtimePresence.showStatus && !canSpawn ? (
                 <AttentionBanner
                     testID="machine-detail-unavailable"
                     tone="warning"
@@ -83,8 +87,9 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
 
             {/* Plan 20's vitals body: live while this tab is shown, its history and Alerts row. */}
             <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
-                rangeInBar={props.barAccessoryShown} onOpenProcesses={openProcesses} offlineRetry={offlineRetry}
-                offlineExplained={managedPowerExplainsOffline(managedEnrolled.machine)} />
+                rangeInBar={props.barAccessoryShown} onOpenProcesses={openProcesses}
+                offlineRetry={runtimePresence.nextAction === 'retry' ? offlineRetry : undefined}
+                offlineTitle={runtimePresence.label} offlineExplained={runtimePresence.nextAction !== 'retry'} />
 
             {/* The page answers first; the agent is there when it is not enough (lab `ra` A1). */}
             <MachineResourcesAskBlock serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} />
@@ -102,6 +107,6 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
 
             {/* The machine's own settings and diagnostics, one pushed page each. */}
             <MachineThisMachineSection serverId={props.serverId} machine={machine} />
-        </>
+        </CheckoutReachabilityScope>
     );
 }

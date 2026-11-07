@@ -174,6 +174,7 @@ function buildPublicPreviewState() {
 describe('ProjectRightPanelServicesView', () => {
     let serverId: string;
     let serverIdentityId: string;
+    let connection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness').restoreServerAccountForTest>> | undefined;
     beforeEach(async () => {
         await home.reset();
         serverId = await home.addHome({ name: 'Project Home', serverUrl: 'https://project.example.test', accountId: 'project-account',
@@ -195,7 +196,149 @@ describe('ProjectRightPanelServicesView', () => {
         modalShowMock.mockReset();
         modalShowMock.mockImplementation(() => 'modal-id');
     });
-    afterEach(async () => { await home.reset(); });
+    afterEach(async () => { await connection?.dispose(); connection = undefined; await home.reset(); });
+
+    it('keeps one managed runtime state and recovery across the real rail, detail and Services', async () => {
+        const { View } = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const { t } = await import('@/text');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { sync } = await import('@/sync/sync');
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { MachineCollectionRail } = await import('@/components/settings/machines/collection/MachineCollectionList');
+        const { MachinePageHeader } = await import('@/components/machines/page/MachinePageHeader');
+        const { MachineOverview } = await import('@/components/machines/page/MachineOverview');
+        const { MachineDetailsSection } = await import('@/components/machines/details/MachineDetailsSection');
+        const { MachinePageStateContext } = await import('@/components/machines/page/machinePageContext');
+        const { useMachinePagePresenceTarget } = await import('@/components/machines/page/useMachinePageTarget');
+        const { useManagedEnrolledMachine, useManagedMachineHeaderIdentity } = await import('@/components/settings/machines/managed/ManagedMachineSections');
+        const { useServerScopedMachine } = await import('@/sync/domains/state/storage');
+        const { CheckoutReachabilityLine, CheckoutReachabilityScope } = await import('@/components/workspaces/reachability/checkoutReachability');
+        const launch = { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1,
+            name: 'Retained studio', choices: {} };
+        let managed: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineV1 = {
+            id: 'managed-studio', homeId: serverIdentityId, custodianAccountId: 'project-account', launch,
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'machine-a',
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' },
+            reviewedFacts: { launch, controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current',
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, prerequisites: [],
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        };
+        let machine = createMachineFixture({ id: 'machine-a', active: false, activeAt: 1, presenceProtocolVersion: 1,
+            metadata: { ...createMachineFixture().metadata!, displayName: launch.name },
+            managedMachineRef: { homeId: serverIdentityId, managedId: managed.id },
+            managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' },
+        });
+        const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'project-account' };
+        home.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
+        home.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+        home.answer(serverId, '/v1/machines/pools/list', { body: { pools: [] } });
+        const inventory = buildLocalServiceInventoryState({ rows: [] });
+        const launcher = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+            v: 1, machineId: machine.id, updatedAt: 1, targets: [],
+        });
+        const answerMachine = () => {
+            const row = { ...createPlainMachineRowFixture({ id: machine.id, accountId: scope.accountId, machine }),
+                managedInputRuntime: machine.managedInputRuntime };
+            home.answer(serverId, '/v1/machines', { body: [row] });
+            home.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: row } });
+        };
+        answerMachine();
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://project.example.test',
+            serverIdentityId, accountId: scope.accountId,
+            request: async (input, init) => {
+                const response = await home.request(input, init);
+                return response.status === 404
+                    ? createEmptyAccountBootstrapHttpResponse(new URL(String(input)).pathname, init) ?? response
+                    : response;
+            },
+        });
+        const publishMachine = async () => {
+            answerMachine();
+            await sync.refreshMachines({ serverId: scope.serverId });
+        };
+        await publishMachine();
+        expect(storage.getState().machines[machine.id], 'real HTTP Sync must hydrate the displayed Machine').toMatchObject({ id: machine.id });
+        const reload = async () => {};
+        function Detail() {
+            const current = useServerScopedMachine(serverId, machine.id)!;
+            const enrolled = useManagedEnrolledMachine({ serverId, enrolledMachineId: machine.id });
+            const target = { machineId: current.id, requestedServerId: serverId, serverId, activeServerId: serverId,
+                machine: current, machineName: launch.name, machineSentenceName: launch.name,
+                isServerSwitching: false, isHydratingMachine: false, switchReady: true };
+            const presenceTarget = useMachinePagePresenceTarget(target);
+            const identity = useManagedMachineHeaderIdentity(enrolled.machine, serverId);
+            return <MachinePageStateContext.Provider value={{ target, managedEnrolled: enrolled, refreshKey: 0, reload }}>
+                <MachinePageHeader target={target} managedIdentity={identity} renaming={false} onRename={() => {}} />
+                <MachineOverview serverId={serverId} machineId={machine.id} machineName={launch.name}
+                    online={presenceTarget.online} setParams={() => {}} />
+            </MachinePageStateContext.Provider>;
+        }
+        function NativeDetails() {
+            const current = useServerScopedMachine(serverId, machine.id)!;
+            return <MachineDetailsSection machine={current} serverId={serverId} />;
+        }
+        const screen = await renderScreen(<AuthProvider initialCredentials={connection.credentials}>
+            <View testID="runtime-rail"><MachineCollectionRail /></View>
+            <View testID="runtime-detail"><Detail /></View>
+            <View testID="runtime-services"><CheckoutReachabilityScope scope={{ serverId, machineId: machine.id }}>
+                <CheckoutReachabilityLine scope={{ serverId, machineId: machine.id }} />
+                <ProjectRightPanelServicesView serverId={serverId} machineId={machine.id} workspaceRoot="/repo"
+                    presentation="page" inventoryState={inventory} launcherState={launcher} testID="runtime-services-pane" />
+            </CheckoutReachabilityScope></View>
+            <View testID="runtime-native-details"><NativeDetails /></View>
+        </AuthProvider>);
+        const text = (node: import('react-test-renderer').ReactTestInstance): string => node.children
+            .map(child => typeof child === 'string' ? child : text(child)).join(' ');
+        const allSay = async (word: string) => waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            for (const surface of ['runtime-rail', 'machine-detail-header', 'runtime-services']) {
+                expect(text(screen.findByTestId(surface)!), surface).toContain(word);
+            }
+        });
+        // Input wake is disabled. Native parking is still Asleep in every surface, and merely
+        // reading Services must neither wake it nor invent a second offline recovery.
+        await allSay(t('managedPower.asleep'));
+        expect(screen.findByTestId('runtime-services-pane-offline')).toBeNull();
+        expect(screen.findByTestId('machine-vitals-offline')).toBeNull();
+        // A retained fresh heartbeat cannot add a competing Online fact after native parking.
+        machine = { ...machine, active: true, activeAt: Date.now() };
+        await act(async () => { await publishMachine(); });
+        await allSay(t('managedPower.asleep'));
+        expect(screen.findByTestId('machine-detail-presence')).toBeNull();
+        expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();
+        managed = { ...managed, submittedNativeEffect: { intent: 'start', intentRevision: managed.intentRevision, requestId: 'start-studio' },
+            observation: { availability: 'present', observedAt: 2, power: 'stopped', storage: 'retained' } };
+        const offlineAt = Date.now();
+        machine = { ...machine, active: false, activeAt: offlineAt,
+            managedInputRuntime: { nativeReady: false, wakeState: null, state: 'starting' } };
+        home.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
+        await act(async () => { await publishMachine(); publishHomeAccountChange(serverId); });
+        await allSay(t('managedWake.starting', { machine: launch.name }));
+        // Vendor Running is not proof that this Home can reach the guest. Desired Start alone
+        // must not keep the rail Starting while the detail says Offline and Running.
+        machine = { ...machine, managedInputRuntime: { nativeReady: true, wakeState: null, state: null } };
+        await act(async () => { await publishMachine(); });
+        // Public lifecycle settles before the protected list refreshes. The header must consume
+        // that same result, rather than retain its previous native Starting word.
+        await allSay(t('settingsOverview.machineOffline', { lastSeen: (await import('@/utils/sessions/sessionUtils')).formatLastSeen(offlineAt) }));
+        managed = { ...managed, submittedNativeEffect: undefined,
+            observation: { availability: 'present', observedAt: 3, power: 'running', storage: 'retained' } };
+        home.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
+        await act(async () => { await publishMachine(); publishHomeAccountChange(serverId); });
+        await allSay(t('settingsOverview.machineOffline', { lastSeen: (await import('@/utils/sessions/sessionUtils')).formatLastSeen(offlineAt) }));
+        expect(screen.findByTestId('machine-detail-managed-power')).toBeNull();
+        expect(text(screen.findByTestId('machine-details-native-power')!)).toContain(t('managedMachines.detail.power.running'));
+        expect(screen.findByTestId('runtime-services-pane-offline')).toBeNull();
+        expect(rpc.machine.mock.calls.some(([request]) => request?.method?.includes('managed'))).toBe(false);
+        await screen.unmount();
+    });
 
     it('keeps same-name checkout descriptions separate across workspace and machine scope, retaining worker copies', async () => {
         const workspace = { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };

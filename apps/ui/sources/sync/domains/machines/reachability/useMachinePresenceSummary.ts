@@ -32,6 +32,9 @@ import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/ma
  * is not visible from here (a shared Session), which callers must not present as offline.
  */
 export type MachinePresenceSummary = Readonly<{
+    /** Selected recipient-safe lifecycle and heartbeat facts; UI presentation never reclassifies native power. */
+    nativeState?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineInputRuntimeV1['state'];
+    presenceOnline?: boolean;
     name: string | null;
     /** The name as a sentence uses it ("Reading it from {machine}"): "this machine" while its details load or are locked. */
     sentenceName?: string | null;
@@ -93,13 +96,16 @@ export function useMachinePresenceSummaries(
                 : machine ? resolveMachineReachability(scope, machine, nowMs, resolveScopeId) : 'unknown';
             const machineIsKnown = Boolean(machine);
             const activeAt = machine ? readMachineActivity(machine).activeAt : null;
-            const lastSeenAt = reachability === 'unreachable' && machine && !isMachineOnline(machine, nowMs)
+            const nativeState = machine?.managedInputRuntime?.state ?? null;
+            const presenceOnline = Boolean(machine && isMachineOnline(machine, nowMs));
+            const lastSeenAt = reachability === 'unreachable' && machine && !presenceOnline
                 && typeof activeAt === 'number' && activeAt > 0
                 ? activeAt : null;
             const previous = cached.current[index];
             return previous && previous.name === name && previous.sentenceName === sentenceName && previous.homeDir === homeDir
                 && previous.reachability === reachability && previous.lastSeenAt === lastSeenAt && previous.machineIsKnown === machineIsKnown
-                ? previous : { name, sentenceName, homeDir, reachability, lastSeenAt, machineIsKnown };
+                && previous.nativeState === nativeState && previous.presenceOnline === presenceOnline
+                ? previous : { name, sentenceName, homeDir, reachability, lastSeenAt, machineIsKnown, nativeState, presenceOnline };
         });
         if (next.length !== cached.current.length || next.some((value, index) => value !== cached.current[index])) cached.current = next;
         return cached.current;

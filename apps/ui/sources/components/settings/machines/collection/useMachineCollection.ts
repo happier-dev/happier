@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
@@ -30,9 +30,10 @@ export function useMachineCollectionPresenceRows(rows: readonly MachineCollectio
         const next = rows.map(row => {
             const source = row.presenceSource;
             if (!source) return row;
-            const presence = describeMachinePresenceLine(source.machine, nowMs, source.managedPresence, source.scope);
-            return row.online === presence.online && row.status === presence.status && row.presence === presence.label
-                ? row : { ...row, online: presence.online, status: presence.status, presence: presence.label };
+            const presence = describeMachineRuntimePresence(source.machine, nowMs, source.managedPresence, source.scope);
+            const presenceWord = presence.showStatus ? presence.label : undefined;
+            return row.online === presence.online && row.status === presence.status && row.presence === presence.label && row.presenceWord === presenceWord
+                ? row : { ...row, online: presence.online, status: presence.status, presence: presence.label, presenceWord };
         });
         previous.current = reconcileStableRows(previous.current, next, machineCollectionRowKey);
         return previous.current;

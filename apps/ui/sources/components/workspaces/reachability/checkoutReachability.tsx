@@ -13,6 +13,7 @@ import {
   type SurfaceStateSize,
 } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { describeMachinePresenceSummary, type MachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 
 /** The machine a checkout lives on: reachability is a fact of the machine, not of the folder. */
 export type CheckoutMachineScope = Readonly<{
@@ -33,6 +34,7 @@ export type CheckoutMachineScope = Readonly<{
  */
 export type CheckoutReachability = Readonly<{
   unreachable: boolean;
+  runtime: MachineRuntimePresence;
   machineName: string;
   lastSeenAt: number | null;
   /** A page above already says it; this surface only inherits. */
@@ -67,8 +69,17 @@ export function useCheckoutReachability(
   scope: CheckoutMachineScope | null,
 ): CheckoutReachability {
   const presence = useMachinePresenceSummary(scope?.serverId, scope?.machineId);
+  return useCheckoutReachabilityPresentation(scope, presence);
+}
+
+/** A surface already holding the selected Machine summary shares the announcement without another subscription. */
+export function useCheckoutReachabilityPresentation(
+  scope: CheckoutMachineScope | null,
+  presence: Parameters<typeof describeMachinePresenceSummary>[0],
+): CheckoutReachability {
   const announcedScope = React.useContext(AnnouncedCheckoutMachine);
-  const unreachable = scope != null && presence.reachability === 'unreachable';
+  const runtime = React.useMemo(() => describeMachinePresenceSummary(presence), [presence]);
+  const unreachable = runtime.showStatus;
   // Every use of this name is inside a sentence, so a Machine still loading reads "this machine", never "Loading…".
   const machineName = presence.sentenceName ?? scope?.machineId ?? '';
   const lastSeenAt = unreachable ? (presence.lastSeenAt ?? null) : null;
@@ -78,8 +89,8 @@ export function useCheckoutReachability(
     announcedScope?.serverId === scope.serverId &&
     announcedScope.machineId === scope.machineId;
   return React.useMemo(
-    () => ({ unreachable, machineName, lastSeenAt, announced }),
-    [unreachable, machineName, lastSeenAt, announced],
+    () => ({ unreachable, machineName, lastSeenAt, announced, runtime }),
+    [unreachable, machineName, lastSeenAt, announced, runtime],
   );
 }
 
@@ -117,11 +128,8 @@ export function CheckoutReachabilityLine(
       {shown.unreachable ? (
         <SurfaceFreshnessLine
           testID={props.testID ?? 'checkout-reachability'}
-          asOf={shown.lastSeenAt}
-          reason={t('projects.checkouts.notAnswering', {
-            machine: shown.machineName,
-          })}
-          action={{ label: t('common.retry'), onPress: retryMachineReachability }}
+          reason={shown.runtime.label}
+          action={shown.runtime.nextAction === 'retry' ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
         />
       ) : null}
     </ExpandableItem>
@@ -159,10 +167,8 @@ export function CheckoutUnreachableState(
       kind="unavailable"
       size={props.size ?? (widget ? 'line' : undefined)}
       iconName="wifi-slash"
-      title={t('projects.checkouts.notAnswering', {
-        machine: reachability.machineName,
-      })}
-      action={{ label: t('common.retry'), onPress: retryMachineReachability }}
+      title={reachability.runtime.label}
+      action={reachability.runtime.nextAction === 'retry' ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
     />
   );
 }

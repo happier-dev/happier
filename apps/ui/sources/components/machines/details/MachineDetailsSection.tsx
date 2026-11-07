@@ -22,6 +22,8 @@ import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
 import { sync } from '@/sync/sync';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
+import { ManagedMachineNativeObservation, useManagedEnrolledMachine } from '@/components/settings/machines/managed/ManagedMachineSections';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -66,6 +68,9 @@ export const MachineDetailsSection = React.memo(function MachineDetailsSection(p
     const machineId = machine.id;
     const machineServerId = props.serverId;
     const metadata = machine.metadata;
+    const managed = useManagedEnrolledMachine({ enrolledMachineId: machine.id, serverId: props.serverId });
+    const presence = useMachinePresenceSummary(props.serverId, machine.id);
+    const startedAt = machine.daemonState?.startedAt;
     const stopExecution = useMountedActionExecution(machineServerId);
     const expectedSettingsScope = useAccountSettingsScope();
     const providerCatalog = useProviderCatalog(expectedSettingsScope);
@@ -117,6 +122,8 @@ export const MachineDetailsSection = React.memo(function MachineDetailsSection(p
     return (
         <>
             <ItemGroup title={t('machineDetailPage.detailsTitle')}>
+                {managed.machine ? <ManagedMachineNativeObservation machine={managed.machine}
+                    runningSince={presence.reachability === 'reachable' && typeof startedAt === 'number' ? startedAt : undefined} /> : null}
                 <Item
                     title={t('machine.host')}
                     detail={metadata?.host || t('status.unknown')}

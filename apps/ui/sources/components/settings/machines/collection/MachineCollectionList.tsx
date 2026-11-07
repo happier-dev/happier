@@ -193,8 +193,7 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
     const isThisComputer = (row.kind === 'machine' ? row.machineId : row.enrolledMachineId) === thisComputerMachineId;
     const summaryMetrics = useMachineSummarySettingValue().metrics.length;
     const summaryRef = React.useRef<View>(null);
-    const quietWord = row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online
-        ? row.presenceWord ?? (row.kind === 'managed' ? row.presence : t('machineDetailPage.offline')) : row.ownership);
+    const quietWord = row.reason ?? row.presenceWord ?? row.ownership;
     return (
         rail ? (
             // The name has the whole row, on any width. What the machine reports stands on the line beneath it: its

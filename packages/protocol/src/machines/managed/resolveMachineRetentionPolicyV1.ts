@@ -27,7 +27,8 @@ export function resolveManagedFiniteWakeControllerV1(machine: Pick<ManagedMachin
  */
 export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enrolledMachineId: string,
   machineReachable = false): Readonly<{
-    available: boolean; ready: boolean; wakeState: ManagedMachineInputWakeV1 | null; inspectionRequired: boolean;
+    available: boolean; ready: boolean; wakeState: ManagedMachineInputWakeV1 | null;
+    state: ManagedMachineInputWakeV1 | 'stopping' | null; inspectionRequired: boolean;
     acceptedInputWakeOwner: 'home' | 'caller';
     newSessionWake: ManagedMachineNewSessionWakeV1;
   }> {
@@ -39,16 +40,21 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   // A reachable guest proves readiness through failed Inspect, unless native facts report loss or parking.
   const ready = available && machineReachable && !parked
     && (observation?.availability === 'present' || observation?.availability === 'unavailable');
-  const retainedTarget = available && machine.archivedAt === undefined && machine.enrolledMachineId === enrolledMachineId
-    && machine.allocation === 'bound' && Boolean(machine.resource) && observation?.availability === 'present'
-    && machine.desired !== 'delete' && !machine.cleanup && machine.submittedNativeEffect?.intent !== 'delete';
+  const nativeTarget = available && machine.archivedAt === undefined && machine.enrolledMachineId === enrolledMachineId
+    && machine.allocation === 'bound' && Boolean(machine.resource) && observation?.availability === 'present';
+  const retainedTarget = nativeTarget && machine.desired !== 'delete' && !machine.cleanup && machine.submittedNativeEffect?.intent !== 'delete';
   const starting = retainedTarget && observation?.power !== 'running'
     && (machine.submittedNativeEffect?.intent === 'start' || machine.submittedNativeEffect?.intent === 'resume');
   const retainedWake = retainedTarget && observation?.storage === 'retained'
     && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities);
   const wakeState = starting ? 'starting' : retainedWake && parked ? 'asleep' : null;
+  const stopping = retainedTarget && (machine.submittedNativeEffect?.intent === 'stop' && observation?.power !== 'stopped'
+    || machine.submittedNativeEffect?.intent === 'suspend' && observation?.power !== 'suspended');
+  // Current native lifecycle is presentation, independent of whether automatic wake is enabled or eligible.
+  const state = stopping ? 'stopping' : starting ? 'starting'
+    : nativeTarget && parked ? 'asleep' : null;
   // Home dispatches accepted input through an assigned controller or its custodian Account daemon.
-  return { available, ready, wakeState, acceptedInputWakeOwner: 'home',
+  return { available, ready, wakeState, state, acceptedInputWakeOwner: 'home',
     newSessionWake: finiteWake.kind === 'available' ? { kind: 'available' } : finiteWake,
     // An offline running observation may predate a vendor-side Stop. Native power owns fresh Inspect.
     inspectionRequired: wakeState === 'asleep' || !starting && !machineReachable && retainedWake && observation?.power === 'running' };

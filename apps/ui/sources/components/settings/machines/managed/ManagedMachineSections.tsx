@@ -966,56 +966,50 @@ function formatUptime(ms: number): string {
  * when the caller knows when it came up. Native resource identities stay in Details, so a generated
  * guest hostname never competes with the machine's own name.
  */
-export function managedMachineHeaderMeta(input: Readonly<{
-    machine: Readonly<{ observation?: ManagedMachineV1['observation']; resource?: Readonly<{ value: unknown }> }>;
-    provider: string | null; kindTitle: string | null;
-    /** When the machine's Happier came up (its connected daemon's start), for a running machine's uptime. */
-    runningSince?: number;
-    now: number;
-}>): PageHeaderMetaFact[] {
-    const meta: PageHeaderMetaFact[] = [];
-    const power = input.machine.observation?.availability === 'present' ? input.machine.observation.power : undefined;
-    // Stopped, suspended or asleep is the header's presence sentence (`managedMachineHeaderPresence`); a second fact would repeat it.
-    if (power === 'running') {
-        const uptime = input.runningSince !== undefined && input.runningSince <= input.now
-            ? formatUptime(input.now - input.runningSince) : null;
-        meta.push({ key: 'managed-power', testID: 'machine-detail-managed-power',
-            text: uptime ? t('managedMachines.detail.runningFor', { duration: uptime }) : t(`managedMachines.detail.power.${power}`) });
-    }
-    if (input.provider) {
-        const kind = input.kindTitle ? t('managedMachines.detail.kindFact', { provider: input.provider, kind: input.kindTitle }) : input.provider;
-        meta.push({ key: 'managed-kind', text: kind });
-    }
-    return meta;
+/** Native power and known guest uptime remain dated facts in Details, separate from current reachability. */
+export function ManagedMachineNativeObservation(props: Readonly<{
+    machine: ManagedMachineV1; runningSince?: number;
+}>) {
+    const observation = props.machine.observation;
+    if (observation?.availability !== 'present' || !observation.power) return null;
+    const now = Date.now();
+    const uptime = observation.power === 'running' && props.runningSince !== undefined && props.runningSince <= now
+        ? formatUptime(now - props.runningSince) : null;
+    const word = uptime ? t('managedMachines.detail.runningFor', { duration: uptime })
+        : observation.power === 'unknown' ? t('status.unknown') : t(`managedMachines.detail.power.${observation.power}`);
+    return <Item testID="machine-details-native-power" title={word}
+        subtitle={t('surfaceState.asOf', { time: formatAsOfTime(observation.observedAt) })}
+        mode="info" showChevron={false} />;
 }
 
 /**
  * The created machine's lifecycle for its header presence line, in the one word the Machines rail uses (Asleep,
  * Stopped, Starting…), so the header never says "Offline · last seen" beside a rail that says Asleep.
  */
-export function managedMachineHeaderPresence(machine: ManagedMachineV1): MachineManagedPresence | null {
-    return machine.enrolledMachineId ? projectMachineManagedPresence({ id: machine.enrolledMachineId }, machine) : null;
+export function managedMachineHeaderPresence(machine: ManagedMachineV1,
+    enrolledMachine?: Parameters<typeof projectMachineManagedPresence>[0] | null,
+): MachineManagedPresence | null {
+    return machine.enrolledMachineId ? projectMachineManagedPresence(enrolledMachine ?? { id: machine.enrolledMachineId }, machine) : null;
 }
 
 /**
  * Who a created machine is, for its page header (lab `m-detail`): the provider's mark, where it came
- * from ("Made from the Build box preset."), and its observed power, uptime and kind beside the
- * ordinary facts. Identity comes from the installed provisioner declaration, so the header asks no
+ * from ("Made from the Build box preset."), and its kind beside the ordinary facts. Identity comes from the installed provisioner declaration, so the header asks no
  * machine anything.
  */
-export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | undefined, serverId: string,
-    live?: Readonly<{ runningSince?: number }>): ManagedMachineHeaderIdentity | null {
+export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | undefined, serverId: string): ManagedMachineHeaderIdentity | null {
+    const enrolledMachine = useServerScopedMachine(serverId, machine?.enrolledMachineId ?? '');
     const presentation = useManagedProvisionerPresentation({ serverId, controller: machine?.controller,
         provider: machine?.launch.provider, schemaVersion: machine?.launch.schemaVersion });
     if (!machine) return null;
     const provider = presentation.title;
     const presetName = machine.reviewedFacts?.preset?.name;
-    const meta = managedMachineHeaderMeta({ machine, provider, kindTitle: presentation.kindTitle,
-        runningSince: live?.runningSince, now: Date.now() });
+    const meta: PageHeaderMetaFact[] = provider ? [{ key: 'managed-kind', text: presentation.kindTitle
+        ? t('managedMachines.detail.kindFact', { provider, kind: presentation.kindTitle }) : provider }] : [];
     return { name: machine.launch.name, mark: presentation.mark,
         description: presetName ? t('managedMachines.detail.madeFromPreset', { preset: presetName })
             : provider ? t('managedMachines.detail.createdOn', { provider }) : null,
-        meta, presence: managedMachineHeaderPresence(machine) };
+        meta, presence: managedMachineHeaderPresence(machine, enrolledMachine) };
 }
 
 type ManagedKeepProps = Omit<ManagedMachineKeepControlProps, 'presentation' | 'testID' | 'showLabel'>;

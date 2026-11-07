@@ -42,7 +42,7 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
-import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -113,10 +113,8 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     nowMs?: number;
 }>): PageHeaderMetaFact[] {
     const { machine } = input;
-    // Presence is named only when it adds something: "Running 3 h" already says a created machine is up, and an
-    // offline machine's sentence above the facts already reads "Offline · last seen …".
-    const powerSaysOnline = input.online && (input.managedMeta ?? []).some((fact) => fact.key === 'managed-power');
-    const facts: PageHeaderMetaFact[] = [...(powerSaysOnline || !input.online ? [] : [{
+    // The shared runtime sentence already names an unavailable or native-transition state.
+    const facts: PageHeaderMetaFact[] = [...(!input.online ? [] : [{
         key: 'presence',
         text: t('machineDetailPage.online'),
         testID: 'machine-detail-presence',
@@ -135,7 +133,7 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
             ...(only && onOpenEnvironment ? { onPress: () => onOpenEnvironment(only) } : {}),
         };
     });
-    const presenceEnd = facts.findIndex(fact => fact.key === 'presence' || fact.key === 'managed-power') + 1;
+    const presenceEnd = facts.findIndex(fact => fact.key === 'presence') + 1;
     facts.splice(presenceEnd, 0, ...roles);
     // A machine shared with you says whose it is next (lab `m-share` T "Online · Ben's"); an owner without a public
     // name is left out, never drawn as a bare "'s".
@@ -236,16 +234,17 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         router.push(deploymentEnvironmentRoute({ serverId: target.serverId, projectSourceId: environment.projectSourceId,
             environmentId: environment.environmentId }));
     }, [router, target.serverId]);
+    const runtimePresence = machine ? describeMachineRuntimePresence(machine, undefined, props.managedIdentity?.presence, machineAccountScope) : null;
     const meta = React.useMemo(() => machine ? composeMachinePageHeaderFacts({
         machine,
-        online: target.online,
+        online: target.online && !runtimePresence?.showStatus,
         managedMeta: props.managedIdentity?.meta,
         encryptionMode,
         replacedByMachineLabel: replacement.replacedByMachineLabel,
         hostFacts: published?.host ?? null,
         roleEnvironments,
         onOpenEnvironment: openRoleEnvironment,
-    }) : [], [language, encryptionMode, machine, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, roleEnvironments, openRoleEnvironment]);
+    }) : [], [language, encryptionMode, machine, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
 
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const { onRename, renaming } = props;
@@ -289,10 +288,10 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             // The mark and the actions hang from the name's line; the sentence and facts run beneath both (lab `rm` R).
             actionsLayout="hang"
             title={machine ? machineName : t('machineDetailPage.placeholderTitle')}
-            description={machine && (published || !target.online) ? (
+            description={machine && (published || runtimePresence?.showStatus) ? (
                 <MachineWorkingCountsProvider>
                     <MachineSentence serverId={target.serverId} machineId={machine.id} attention={published?.attention ?? null}
-                        online={target.online} offlineLine={describeMachinePresenceLine(machine, undefined, props.managedIdentity?.presence, machineAccountScope).label}
+                        online={target.online && !runtimePresence?.showStatus} offlineLine={runtimePresence?.label ?? ''}
                         fallback={fallbackDescription} />
                 </MachineWorkingCountsProvider>
             ) : fallbackDescription}

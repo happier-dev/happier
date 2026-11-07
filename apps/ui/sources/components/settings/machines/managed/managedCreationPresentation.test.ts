@@ -10,7 +10,6 @@ import {
   managedCreationState,
   managedMachineEnrolledDetailId,
   managedCreationSetup,
-  managedPowerExplainsOffline,
   managedReceiptPowerIntents,
   isManagedCreationStateRowVisible,
 } from './managedCreationPresentation';
@@ -119,7 +118,7 @@ describe('managed creation presentation', () => {
       'resume',
     ]);
   });
-  it('lets the header say a joined machine is stopped, so its card adds only freshness and Check now', () => {
+  it('leaves the joined machine state to its header while retaining its freshness', () => {
     const stopped = { ...machine, enrolledMachineId: 'guest', desired: 'stop' as const,
       observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' }) };
     expect(isManagedCreationStateRowVisible(stopped, managedCreationState(stopped))).toBe(false);
@@ -1219,8 +1218,8 @@ describe('managed creation presentation', () => {
       }).kind,
     ).toBe('resourceReady');
   });
-  it('reads a retained Start as requested, not as a stopped machine at rest, until power is observed running', () => {
-    // QB118: a committed Start whose native submission is unconfirmed has no submitted effect yet.
+  it('keeps observed parking until a native Start is submitted instead of deriving Starting from retained desire', () => {
+    // Desired Start can remain after an earlier completed start, so it does not prove a current transition.
     const retained: ManagedMachineV1 = {
       ...machine,
       desired: 'start',
@@ -1231,10 +1230,7 @@ describe('managed creation presentation', () => {
         storage: 'retained',
       },
     };
-    expect(managedCreationState(retained, { provider: 'Lima' })).toMatchObject({
-      kind: 'powerPending',
-      provider: 'Lima',
-    });
+    expect(managedCreationState(retained, { provider: 'Lima' }).kind).toBe('stoppedStorage');
     expect(managedCreationState({ ...retained, desired: 'stop' }).kind).toBe(
       'stoppedStorage',
     );
@@ -1251,28 +1247,7 @@ describe('managed creation presentation', () => {
   });
 });
 
-describe('managedPowerExplainsOffline (UIR5)', () => {
-  it('lets an observed stopped or suspended created machine own its offline explanation, never a running or unknown one', () => {
-    const observed = (
-      power: 'running' | 'stopped' | 'suspended' | 'unknown',
-    ): ManagedMachineV1 => ({
-      ...machine,
-      observation: { availability: 'present', observedAt: 1, power },
-    });
-    expect(managedPowerExplainsOffline(observed('stopped'))).toBe(true);
-    expect(managedPowerExplainsOffline(observed('suspended'))).toBe(true);
-    expect(managedPowerExplainsOffline(observed('running'))).toBe(false);
-    expect(managedPowerExplainsOffline(observed('unknown'))).toBe(false);
-    expect(managedPowerExplainsOffline(machine)).toBe(false);
-    expect(managedPowerExplainsOffline(undefined)).toBe(false);
-    expect(
-      managedPowerExplainsOffline({
-        ...observed('stopped'),
-        creationState: 'canceled',
-      }),
-    ).toBe(false);
-  });
-
+describe('managed creation stages', () => {
   it('maps the recorded row to Create, Install and Join, current only while this device runs the recipe (58B-U1 facts)', () => {
     const stages = (row: ManagedMachineV1 | undefined, running: boolean) =>
       managedCreationStages(row, running).map(stage => [stage.id, stage.state, stage.note ?? null]);

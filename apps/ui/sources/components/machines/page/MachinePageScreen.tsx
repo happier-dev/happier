@@ -227,10 +227,7 @@ function ManagedMachinePageHeader(props: Readonly<{
     renaming: boolean;
     onRename(): void;
 }>) {
-    const online = useMachinePageOnline(props.target.serverId, props.target.machineId);
-    const startedAt = props.target.machine?.daemonState?.startedAt;
-    const managedIdentity = useManagedMachineHeaderIdentity(props.managedEnrolled.machine, props.managedEnrolled.serverId,
-        { runningSince: online && typeof startedAt === 'number' ? startedAt : undefined });
+    const managedIdentity = useManagedMachineHeaderIdentity(props.managedEnrolled.machine, props.managedEnrolled.serverId);
     return <MachinePageHeader target={props.target} managedIdentity={managedIdentity} renaming={props.renaming} onRename={props.onRename} />;
 }
 

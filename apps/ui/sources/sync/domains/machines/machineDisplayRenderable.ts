@@ -119,6 +119,7 @@ function areMachineDisplayValuesEqual(
         && (previous.managedMachineRef?.managedId ?? null) === (next.managedMachineRef?.managedId ?? null)
         && previous.managedInputRuntime?.nativeReady === next.managedInputRuntime?.nativeReady
         && previous.managedInputRuntime?.wakeState === next.managedInputRuntime?.wakeState
+        && previous.managedInputRuntime?.state === next.managedInputRuntime?.state
         && previous.access?.custodian.accountId === next.access?.custodian.accountId
         && previous.access?.custodian.displayName === next.access?.custodian.displayName
         && previous.access?.role === next.access?.role

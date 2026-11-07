@@ -88,8 +88,8 @@ describe('resolveWorkStatusTone', () => {
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, archivedAt: 20 } } }).bucket).toBe('offline');
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, revokedAt: 20 } }).bucket).toBe('offline');
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, observation: undefined } } }).word).not.toBe(t('managedPower.asleep'));
-        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, wakeOnAcceptedMessage: false } } }).word).toBe(t('managedMachines.detail.power.stopped'));
-        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, desired: 'delete' } } }).word).toBe(t('managedMachines.detail.power.stopped'));
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, wakeOnAcceptedMessage: false } } }).word).toBe(t('managedPower.asleep'));
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, desired: 'delete' } } }).word).toBe(t('managedPower.asleep'));
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed,
             submittedNativeEffect: { intent: 'start', intentRevision: 2, controller: managed.controller, requestId: 'start-a' } } } })).toMatchObject({ bucket: 'working', word: t('managedWake.starting', { machine: 'Build box' }) });
         const stopping: ManagedMachineV1 = { ...managed, observation: { ...managed.observation!, power: 'running' },

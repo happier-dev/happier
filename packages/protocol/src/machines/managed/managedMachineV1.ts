@@ -39,6 +39,8 @@ export const ManagedMachineInputRuntimeV1Schema = lazyDefinition(() => z.strictO
     /** Native wake placement only; the Home Pending record retains input ownership. */
     acceptedInputWakeOwner: z.optional(z.enum(['home', 'caller'])),
     newSessionWake: z.optional(ManagedMachineNewSessionWakeV1Schema),
+    /** Current lifecycle only; automatic wake eligibility stays in wakeState. Older Homes omit it. */
+    state: z.optional(z.nullable(z.union([ManagedMachineInputWakeV1Schema, z.literal('stopping')]))),
 }));
 export type ManagedMachineInputRuntimeV1 = z.infer<typeof ManagedMachineInputRuntimeV1Schema>;
 /** Released 0.2 Home rows omit this projection; explicit invalid references still fail. */
