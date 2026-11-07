@@ -14,6 +14,7 @@ import { DaemonFilesystemListDirectoryRequestSchema, DaemonFilesystemListDirecto
     type DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol/machines/fileBrowser';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { t } from '@/text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -159,6 +160,32 @@ async function flushPathSelectionDynamicResolver() {
 }
 
 describe('PathSelectionList', () => {
+    it('names saved member workspaces without showing their digest and commits the real directory', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const digest = 'a'.repeat(64);
+        const workspace = `/srv/happier/members/${digest}`;
+        const onCommit = vi.fn();
+        const screen = await renderScreen(<PathSelectionList
+            initialValue={workspace} initialSuggestionMode="history"
+            favorites={[{ path: workspace }]} recents={[{ path: `${workspace}/api`, lastUsedAt: 1 }]}
+            machineHomeDir="/home/member" machineId={null} serverId={null} machinePlatform="unix"
+            onCommit={onCommit} onRequestClose={() => {}}
+        />);
+        try {
+            expect(screen.getTextContent()).toContain(t('workspacePresentation.memberWorkspace'));
+            expect(screen.getTextContent()).not.toContain(digest);
+            const input = screen.findByTestId('path-selection-list:header:input');
+            expect(readProps<ValueLikeProps>(input!).value).toBe('');
+            expect(input!.props.placeholder).toBe(t('workspacePresentation.memberWorkspace'));
+            await act(async () => {
+                readProps<PressableLikeProps>(screen.findByTestId(`path-selection-list:path-root:option:favorite:${workspace}`)!).onPress?.();
+            });
+            expect(onCommit).toHaveBeenCalledWith(workspace);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('renders favorites and recent sections rooted under the path-selection-list testID', async () => {
         const { PathSelectionList } = await import('./PathSelectionList');
 
@@ -725,10 +752,11 @@ describe('PathSelectionList', () => {
         const { PathSelectionList } = await import('./PathSelectionList');
         const absolutePath = '/Users/leeroy/Documents/Development/happier/remote-dev';
         const displayPath = '~/Documents/Development/happier/remote-dev';
+        const label = 'Saved project';
         const screen = await renderScreen(
             <PathSelectionList
                 initialValue=""
-                favorites={[{ path: absolutePath }]}
+                favorites={[{ path: absolutePath, label }]}
                 recents={[]}
                 machineHomeDir="/Users/leeroy"
                 machineId="m-1"
@@ -739,8 +767,8 @@ describe('PathSelectionList', () => {
             />,
         );
 
-        const title = findTextNodeByContent(screen.tree.root, displayPath);
-        const subtitle = findTextNodeByContent(screen.tree.root, absolutePath);
+        const title = findTextNodeByContent(screen.tree.root, label);
+        const subtitle = findTextNodeByContent(screen.tree.root, displayPath);
         expect(title).not.toBeUndefined();
         expect(subtitle).not.toBeUndefined();
         expect(readProps<TextLikeProps>(title!).ellipsizeMode).toBe('head');

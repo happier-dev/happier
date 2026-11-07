@@ -4,6 +4,11 @@ import type { MachineReachabilityScope } from '@/sync/domains/machines/reachabil
 
 type RecentMachinePathEntry = Readonly<{ machineId?: string | null }> | null | undefined;
 
+/** Implicit placement starts on the person's computer, never a guest or somebody else's Machine. */
+export function isOwnComputerDefaultCandidate(machine: Pick<Machine, 'isShared' | 'managedMachineRef'>): boolean {
+  return machine.isShared !== true && !machine.managedMachineRef;
+}
+
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
 }
@@ -84,7 +89,8 @@ export function resolvePreferredMachineId(params: Readonly<{
 
 /**
  * The machine a launch starts on when nobody chose one: the preferred order among online
- * machines, and only when none is online the same order over every machine.
+ * own computers, and only when none is online the same order over those computers.
+ * A named preferred target is deliberate placement and remains a candidate.
  */
 export function resolvePreferredLaunchMachineId(params: Readonly<{
   scope?: MachineReachabilityScope | null;
@@ -92,6 +98,11 @@ export function resolvePreferredLaunchMachineId(params: Readonly<{
   recentMachinePaths: ReadonlyArray<RecentMachinePathEntry>;
   preferredMachineId?: string | null;
 }>): string | null {
-  return resolvePreferredMachineId({ ...params, onlineOnly: true })
-    ?? resolvePreferredMachineId(params);
+  const preferredMachineId = normalizeId(params.preferredMachineId);
+  const machines = params.machines.filter(machine => normalizeId(machine.id) === preferredMachineId || isOwnComputerDefaultCandidate(machine));
+  const machineIds = new Set(machines.map(machine => normalizeId(machine.id)));
+  const defaults = { ...params, machines,
+    recentMachinePaths: params.recentMachinePaths.filter(recent => machineIds.has(normalizeId(recent?.machineId))) };
+  return resolvePreferredMachineId({ ...defaults, onlineOnly: true })
+    ?? resolvePreferredMachineId(defaults);
 }

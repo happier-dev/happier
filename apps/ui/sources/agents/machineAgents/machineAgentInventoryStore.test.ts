@@ -3,6 +3,11 @@ import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabiliti
 import { createMachineAgentInventoryStore } from './machineAgentInventoryStore';
 import { resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
 import { isMachineAgentReady } from './resolveMachineAgentState';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { buildAgentCollection } from '@/components/settings/agents/collection/agentCollectionModel';
+import { createMachineAgentInventoryPersistence } from './machineAgentInventoryPersistence';
+import { projectMachineAgentCapabilityObservation } from './machineAgentCapabilityObservation';
+import { projectMachineAgentForCredential } from './machineAgentModel';
 
 const facts = (agentId: string): MachineAgentInventoryItem => ({ agentId, title: agentId, installed: true,
     version: '1.0.0', latestVersion: '1.0.0', update: { supported: true, command: null },
@@ -10,6 +15,245 @@ const facts = (agentId: string): MachineAgentInventoryItem => ({ agentId, title:
     install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [] });
 
 describe('machine agent inventory store', () => {
+    it('retains a cold classified failure without inventing Agents and publishes only a changed reason', () => {
+        const store = createMachineAgentInventoryStore();
+        const changed = vi.fn();
+        const off = store.subscribe('cold-machine', changed);
+        const failed = { status: 'error' as const, items: [], lastCheckedAt: null,
+            failure: { reason: 'probe_failed' as const, errorCode: 'access-denied' } };
+        store.publish('cold-machine', failed);
+        const first = store.read('cold-machine');
+        expect(first.agents).toEqual([]);
+        expect(resolveMachineAgentStatus(null, undefined, first.status, first.failure)).toMatchObject({
+            kind: 'unavailable', reason: { errorCode: 'access-denied' },
+        });
+        for (let index = 0; index < 20; index++) store.publish('cold-machine', { ...failed, failure: { ...failed.failure } });
+        expect(store.read('cold-machine')).toBe(first);
+        expect(changed).toHaveBeenCalledTimes(1);
+        store.publish('cold-machine', { ...failed, failure: { ...failed.failure, errorCode: 'transport-unavailable' } });
+        expect(changed).toHaveBeenCalledTimes(2);
+        expect(store.read('cold-machine').failure?.errorCode).toBe('transport-unavailable');
+        store.publish('cold-machine', { status: 'ready', items: [facts('codex')], lastCheckedAt: 1 });
+        expect(store.read('cold-machine')).not.toHaveProperty('failure');
+        expect(isMachineAgentReady(store.read('cold-machine').agents[0])).toBe(true);
+        off();
+    });
+
+    it('initializes the first snapshot silently once per key and still publishes later real changes', () => {
+        const store = createMachineAgentInventoryStore();
+        const readSaved = vi.fn(() => ({ status: 'offline' as const, items: [facts('claude')], lastCheckedAt: 1 }));
+        const changed = vi.fn();
+        const agentChanged = vi.fn();
+        const off = store.subscribe('machine', changed);
+        const offAgent = store.subscribeAgent('machine', 'claude', agentChanged);
+        const first = store.read('machine', readSaved);
+        expect(first.agents[0]).toMatchObject({ agentId: 'claude', version: '1.0.0', stale: true });
+        expect(store.read('machine', readSaved)).toBe(first);
+        expect(readSaved).toHaveBeenCalledTimes(1);
+        expect(changed).not.toHaveBeenCalled();
+        expect(agentChanged).not.toHaveBeenCalled();
+        const readEmpty = vi.fn(() => null);
+        expect(store.read('other-account/machine', readEmpty).agents).toEqual([]);
+        store.read('other-account/machine', readEmpty);
+        expect(readEmpty).toHaveBeenCalledTimes(1);
+        store.publish('machine', { status: 'ready', items: [{ ...facts('claude'), version: '2.0.0' }], lastCheckedAt: 2 });
+        expect(store.read('machine', readSaved).agents[0]).toMatchObject({ version: '2.0.0', stale: false });
+        expect(changed).toHaveBeenCalledTimes(1);
+        expect(agentChanged).toHaveBeenCalledTimes(1);
+        expect(readSaved).toHaveBeenCalledTimes(1);
+        off(); offAgent();
+    });
+
+    it('retains hydrated attention rows through catalog observation until Account authentication settles', () => {
+        const store = createMachineAgentInventoryStore();
+        const values = new Map<string, string>();
+        const persistence = createMachineAgentInventoryPersistence({
+            getString: key => values.get(key), set: (key, value) => { values.set(key, value); },
+        });
+        const scope = { serverId: 'home', accountId: 'alice' };
+        const items = ['claude', 'codex'].map(agentId => ({ ...facts(agentId),
+            signIn: { status: 'signedOut' as const, loginSupport: 'login_terminal' as const } }));
+        items.push({ ...facts('antigravity'), installed: false,
+            signIn: { status: 'signedOut', loginSupport: 'login_terminal' } });
+        const descriptors = items.map(({ agentId, title }) => ({ agentId, title }));
+        const entries = descriptors.map(({ agentId }) => resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }));
+        const collection = () => buildAgentCollection({ entries, agents: store.read('machine').agents, query: '' });
+        // The home reserves these last-known rows until it can assert verified trouble.
+        const attentionKeys = () => collection().onMachine.filter(row => row.trouble || row.status === 'needsSignIn').map(row => row.key);
+        persistence.write(scope, 'machine', { items, lastCheckedAt: 1 });
+        const saved = persistence.read(scope, 'machine');
+        if (!saved) throw new Error('Expected the persisted inventory fixture');
+        store.publish('machine', { ...saved, status: 'offline' }); // hydrate
+        expect(attentionKeys()).toEqual(['claude', 'codex']);
+        expect(collection().onMachine.filter(row => row.trouble)).toHaveLength(0);
+        const hydrated = store.read('machine').agents;
+        const changes = vi.fn();
+        const off = store.subscribeAgent('machine', 'claude', changes);
+        const credentialSelectionsByAgentId = Object.fromEntries(descriptors.map(({ agentId }) => [agentId, {
+            credentialBindings: null, credentialBindingsReady: false,
+        }]));
+        const pending = projectMachineAgentCapabilityObservation(descriptors, { status: 'idle' }, hydrated);
+        // observe: the catalog now exists, but the Account purpose read and native probe have not settled.
+        store.publish('machine', { ...pending, credentialSelectionsByAgentId });
+        expect(attentionKeys()).toEqual(['claude', 'codex']);
+        expect(store.read('machine').agents[0].signIn.status).toBe('unknown');
+        expect(changes).toHaveBeenCalledTimes(1); // The Account credential choice is now explicitly unread.
+        const pendingAgents = store.read('machine').agents;
+        store.publish('machine', { ...pending, credentialSelectionsByAgentId });
+        expect(store.read('machine').agents).toBe(pendingAgents);
+        expect(changes).toHaveBeenCalledTimes(1);
+        const detected = projectMachineAgentCapabilityObservation(descriptors, { status: 'loaded', snapshot: {
+            response: { protocolVersion: 1, results: Object.fromEntries(items.map(item => [`cli.${item.agentId}`, {
+                ok: true, checkedAt: 2, data: item,
+            }])) },
+        } }, store.read('machine').agents);
+        store.publish('machine', { ...detected, credentialSelectionsByAgentId });
+        expect(attentionKeys()).toEqual(['claude', 'codex']);
+        expect(changes).toHaveBeenCalledTimes(2); // Native installation freshness settled, not the credential choice.
+        const detectedAgents = store.read('machine').agents;
+        for (let arrival = 0; arrival < 3; arrival++) store.publish('machine', { ...detected, credentialSelectionsByAgentId });
+        expect(store.read('machine').agents).toBe(detectedAgents);
+        expect(changes).toHaveBeenCalledTimes(2);
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(false);
+        expect(collection().available.map(row => row.key)).toEqual(['antigravity']);
+        // Retaining attention must not swallow independently verified installation/version changes.
+        store.publish('machine', { ...detected, items: detected.items.map(item => item.agentId === 'claude'
+            ? { ...item, version: '2.0.0' } : item), credentialSelectionsByAgentId });
+        expect(store.read('machine').agents[0].version).toBe('2.0.0');
+        expect(store.read('machine').agents[1]).toBe(detectedAgents[1]);
+        expect(attentionKeys()).toEqual(['claude', 'codex']);
+        expect(changes).toHaveBeenCalledTimes(3);
+        const settledCredentials = Object.fromEntries(descriptors.map(({ agentId }) => [agentId, {
+            credentialBindings: null, credentialBindingsReady: true,
+        }]));
+        store.publish('machine', { status: 'ready', items: [], descriptors, lastCheckedAt: 2,
+            credentialSelectionsByAgentId: settledCredentials });
+        expect(collection().onMachine.filter(row => row.trouble).map(row => row.key)).toEqual(['claude', 'codex']);
+        expect(changes).toHaveBeenCalledTimes(4);
+        const available = store.read('machine').agents[2];
+        store.publish('machine', { status: 'ready', items: [facts('claude'), facts('codex')], descriptors, lastCheckedAt: 3 });
+        expect(attentionKeys()).toEqual([]);
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(true);
+        expect(changes).toHaveBeenCalledTimes(5);
+        expect(store.read('machine').agents[2]).toBe(available);
+        expect(store.read('another-account/machine').agents).toEqual([]);
+        off();
+    });
+
+    it('retains fresh native authentication for an explicit Session choice while Account defaults are unread', () => {
+        const store = createMachineAgentInventoryStore();
+        store.publish('machine', { status: 'offline', lastCheckedAt: 1, items: [{ ...facts('claude'),
+            signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+        }] });
+        store.publish('machine', { status: 'ready', items: [facts('claude')], lastCheckedAt: 2,
+            credentialSelectionsByAgentId: { claude: { credentialBindings: null, credentialBindingsReady: false } },
+        });
+        const agent = store.read('machine').agents[0];
+        expect(agent.signIn.native?.status).toBe('signedIn');
+        expect(agent.signIn.status).toBe('unknown');
+        expect(isMachineAgentReady(agent)).toBe(false);
+        expect(isMachineAgentReady(projectMachineAgentForCredential(agent, { credentialBindings: null }))).toBe(true);
+    });
+
+    it.each(['removed', 'unsupported', 'unavailable'] as const)('settles a hydrated Agent that is %s even while Account authentication is unread', (outcome) => {
+        const store = createMachineAgentInventoryStore();
+        const signedOut = { ...facts('claude'), signIn: { status: 'signedOut' as const, loginSupport: 'login_terminal' as const } };
+        store.publish('machine', { status: 'offline', items: [signedOut], lastCheckedAt: 1 });
+        const changed = vi.fn();
+        const off = store.subscribeAgent('machine', 'claude', changed);
+        store.publish('machine', { status: 'ready', lastCheckedAt: 2,
+            items: outcome === 'unavailable' ? [] : [{ ...signedOut,
+                ...(outcome === 'removed' ? { installed: false } : { platform: { supported: false, reason: 'os' } }),
+            }],
+            ...(outcome === 'unavailable' ? { unavailable: [{ agentId: 'claude', reason: 'probe_failed' as const }] } : {}),
+            credentialSelectionsByAgentId: { claude: { credentialBindings: null, credentialBindingsReady: false } },
+        });
+        expect(store.read('machine').agents[0].state).toBe(outcome === 'removed' ? 'notInstalled' : outcome === 'unsupported' ? 'unsupported' : 'unknown');
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(false);
+        expect(changed).toHaveBeenCalledTimes(1);
+        off();
+    });
+
+    it('retains last-known sign-in trouble until a verified result settles without granting readiness', () => {
+        const store = createMachineAgentInventoryStore();
+        const signedOut = { ...facts('claude'), signIn: { status: 'signedOut' as const, loginSupport: 'login_terminal' as const } };
+        const entries = [resolveAgentCatalogProjection('claude', { enabledAgentIds: [] })];
+        const collection = (key = 'machine') => buildAgentCollection({ entries, agents: store.read(key).agents, query: '' });
+        // A cold native snapshot alone does not prove the Account's effective credential choice.
+        store.publish('cold', { status: 'offline', items: [signedOut], lastCheckedAt: 1 });
+        expect(collection('cold').onMachine[0].trouble).toBe(false);
+        store.publish('machine', { status: 'ready', items: [signedOut], lastCheckedAt: 1 });
+        expect(collection().onMachine[0].trouble).toBe(true);
+        store.publish('machine', { status: 'offline', items: [], lastCheckedAt: null });
+        expect(collection().onMachine[0].trouble).toBe(true);
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(false);
+        const pending = { status: 'loading' as const, items: [], lastCheckedAt: null,
+            credentialSelectionsByAgentId: { claude: { credentialBindings: null, credentialBindingsReady: false } } };
+        store.publish('machine', pending);
+        expect(store.read('machine').agents[0].state).toBe('unknown');
+        expect(collection().onMachine[0].trouble).toBe(true);
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(false);
+        const prior = store.read('machine').agents[0];
+        const changed = vi.fn();
+        const dispose = store.subscribeAgent('machine', 'claude', changed);
+        store.publish('machine', pending);
+        expect(store.read('machine').agents[0]).toBe(prior);
+        expect(changed).not.toHaveBeenCalled();
+        // Inventory completion is not credential verification while its Account choice is unread.
+        store.publish('machine', { ...pending, status: 'ready' });
+        expect(collection().onMachine[0].trouble).toBe(true);
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(false);
+        expect(changed).toHaveBeenCalledTimes(1); // Installation freshness settled, not the credential choice.
+        const inventorySettled = store.read('machine').agents[0];
+        store.publish('machine', { ...pending, status: 'ready' });
+        expect(store.read('machine').agents[0]).toBe(inventorySettled);
+        expect(changed).toHaveBeenCalledTimes(1);
+        store.publish('machine', { status: 'ready', items: [facts('claude')], lastCheckedAt: 2,
+            credentialSelectionsByAgentId: { claude: { credentialBindings: null, credentialBindingsReady: true } } });
+        expect(collection().onMachine[0].trouble).toBe(false);
+        expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(true);
+        expect(changed).toHaveBeenCalledTimes(2);
+        expect(store.read('another-account/machine').agents).toEqual([]);
+        dispose();
+    });
+
+    it.each(['idle', 'loading'] as const)('retains last-known freshness during %s and publishes Agent changes only when observations settle', (status) => {
+        const store = createMachineAgentInventoryStore();
+        const signedOut = { ...facts('claude'), signIn: { status: 'signedOut' as const, loginSupport: 'login_terminal' as const } };
+        store.publish('machine', { status: 'offline', items: [signedOut], lastCheckedAt: 1 });
+        const lastKnown = store.read('machine').agents[0];
+        const changed = vi.fn();
+        const dispose = store.subscribeAgent('machine', 'claude', changed);
+        store.publish('machine', { status, items: [], lastCheckedAt: null });
+        expect(store.read('machine').agents[0]).toBe(lastKnown);
+        expect(changed).not.toHaveBeenCalled();
+        store.publish('machine', { status: 'ready', items: [signedOut], lastCheckedAt: 2 });
+        const current = store.read('machine').agents[0];
+        expect(current).toMatchObject({ state: 'needsSignIn', stale: false });
+        expect(changed).toHaveBeenCalledTimes(1);
+        store.publish('machine', { status, items: [], lastCheckedAt: null });
+        expect(store.read('machine').agents[0]).toBe(current);
+        expect(changed).toHaveBeenCalledTimes(1);
+        store.publish('machine', { status: 'ready', items: [facts('claude')], lastCheckedAt: 3 });
+        expect(store.read('machine').agents[0]).toMatchObject({ state: 'ready', stale: false });
+        expect(changed).toHaveBeenCalledTimes(2);
+        dispose();
+    });
+
+    it('keeps a native Agent summary complete when unrelated configured instances have not been read', () => {
+        const store = createMachineAgentInventoryStore();
+        const keys = ['active', 'cold'];
+        const published = new Map(keys.map(key => [key, { checkedAt: 1, installedAgentIds: ['claude', 'custom-acp'] }]));
+        store.publish('active', { status: 'ready', items: [{ ...facts('claude'), version: '2.1.4' }], lastCheckedAt: 1 });
+        const summary = store.createHeldAgentSummary(keys, 'claude', undefined, published);
+        expect(summary.getSnapshot()).toEqual({ machineCount: 2, versions: ['2.1.4'], unknownVersionCount: 1, complete: true });
+        // An unread configured instance stays unknown; a factory never proves its installation.
+        expect(store.createHeldAgentSummary(keys, 'custom-acp', 'review', published).getSnapshot())
+            .toEqual({ machineCount: 0, versions: [], unknownVersionCount: 0, complete: false });
+        // A genuinely unobserved Machine still prevents an exact total.
+        expect(store.createHeldAgentSummary([...keys, 'unobserved'], 'claude', undefined, published).getSnapshot().complete).toBe(false);
+    });
+
     it('projects held installed counts and all reported versions without notifying for unrelated arrivals', () => {
         const store = createMachineAgentInventoryStore();
         const keys = Array.from({ length: 139 }, (_, i) => `account-a/machine-${i}`);
@@ -59,7 +303,7 @@ describe('machine agent inventory store', () => {
         expect(resolveMachineAgentStatus(store.read('machine').agents[0])).toEqual({ kind: 'offline', tone: 'quiet', lastKnown: 'signedIn' });
 
         store.publish('machine', { status: 'ready', items: [], unavailable: [{ agentId: 'claude', reason: 'probe_failed' }], lastCheckedAt: 2 });
-        expect(resolveMachineAgentStatus(store.read('machine').agents[0])).toEqual({ kind: 'unknown', tone: 'quiet' });
+        expect(resolveMachineAgentStatus(store.read('machine').agents[0])).toEqual({ kind: 'unavailable', tone: 'quiet', reason: { reason: 'probe_failed' } });
         expect(isMachineAgentReady(store.read('machine').agents[0])).toBe(false);
 
         store.publish('machine', { status: 'offline', items: [], lastCheckedAt: null });

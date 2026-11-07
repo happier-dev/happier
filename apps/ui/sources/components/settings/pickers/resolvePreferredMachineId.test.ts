@@ -15,3 +15,14 @@ it('ranks only selectable machines online while retaining remembered offline lau
     expect(resolvePreferredLaunchMachineId(input)).toBe('ready');
     expect(resolvePreferredLaunchMachineId({ ...input, machines: [machines[0]!] })).toBe('offline');
 });
+
+it('defaults to an owned computer instead of a recent managed guest or shared machine', () => {
+    const computer = createMachineFixture({ id: 'computer' });
+    const guest = createMachineFixture({ id: 'guest', managedMachineRef: { homeId: 'home', managedId: 'managed' } });
+    const shared = createMachineFixture({ id: 'shared', isShared: true });
+    const input = { machines: [guest, shared, computer], recentMachinePaths: [{ machineId: 'guest' }, { machineId: 'shared' }],
+        scope: { serverId: 'home', accountId: 'account' } };
+    expect(resolvePreferredLaunchMachineId(input)).toBe('computer');
+    expect(resolvePreferredLaunchMachineId({ ...input, machines: [guest, shared] })).toBeNull();
+    expect(resolvePreferredLaunchMachineId({ ...input, preferredMachineId: 'guest' })).toBe('guest');
+});

@@ -160,6 +160,14 @@ uncertain; the expiry classification adds no retry or input redelivery.
 Neither result automatically resends the prompt. A rolled-back first admission
 does not itself make the Session's empty hosted transcript unreadable.
 
+For a first turn already presented in the Session, `createPresentedFirstTurnSettlement`
+also reads the canonical Action operation's typed spawn result. A succeeded Action
+can contain a definite spawn refusal: it settles `pendingLaunch.state` as `failed`,
+retains the draft, and preserves the producer's error in `pendingLaunch.failure`,
+including its `code`, `launchError.code` and `launchError.agentIsolationRefusal.remedy`
+when present. That known refusal is not unknown delivery. `unresolved` remains for
+a launch whose outcome is unknown; neither settlement automatically resends input.
+
 ## Caller-owned external handoff (0.3 development)
 
 Voice reserves input with `deliveryMode: external_handoff` before dispatching
@@ -922,11 +930,35 @@ stopped-cloud input; its exact protected managed wake target remains the owner o
 placement. An authorized running Account daemon consumes that target through the
 same power Action. Opted-out input or an Account with no running daemon waits;
 opening, viewing and prefetching never request power. An explicit app Send reviews
-its wake child under the original Action, accepts the input first, then invokes
-that exact child after enqueue ACK without a second review.
+its wake child under the original Action. Existing-Session input invokes that
+exact child after enqueue ACK without a second review. New-Session Send uses
+the verified Session-spawn Action as its accepted input before the Session exists;
+the server keeps the encrypted first-message content opaque.
 Null-controller resources use the canonical managed-role custodian decision;
-paired resources retain their existing Team/controller admission. Unattended
-input uses the existing policy Action and Ask, not a second Send review.
+paired resources retain their existing controller admission for manual power and
+finite Actions other than Session spawn. Owner-enabled accepted input may borrow that controller's wake when its
+requester has Can use on the exact guest Machine; it grants no controller or
+manual-power access. Unattended input uses the existing policy Action and Ask,
+not a second Send review.
+
+Machine reads and existing Machine updates publish the recipient-safe
+`managedInputRuntime` projection from the managed runtime owner. Its `wakeState`
+is `asleep` or `starting` while **Start it for new messages** is enabled; its
+`nativeReady` factors the same runtime decision from guest connectivity. Pending
+activation combines that native qualification with the exact enrolled guest's
+existing reachability. Optional `acceptedInputWakeOwner: 'home'` routes existing
+Session input through Home Pending, including controllerless wake by a running
+custodian Account daemon. Optional `newSessionWake` comes from
+`resolveManagedFiniteWakeControllerV1`, also consumed by finite wake custody and
+preparation: it is `{ kind: 'available' }` or
+`{ kind: 'unavailable', reason: 'no_controller' }`. The New Session picker claims
+**Asleep · starts when you send** only with owner-enabled `wakeState` and
+`newSessionWake.kind === 'available'`, without reading the controller's managed
+allocation. Controllerless pre-Session wake is unsupported: start the Machine
+before sending. Missing support facts, or an absent or null projection, make no
+New Session wake claim.
+Policy, enrollment and native-observation changes use the existing Machine
+invalidation and push path; opening a picker never requests power.
 
 Shared-editor input can arm inactive Session activation through the managed
 Machine's accepted-input wake policy only while it is asleep and

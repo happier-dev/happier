@@ -31,6 +31,7 @@ import { readPendingSessionInputAdmission } from '@/app/session/pending/pendingI
 import { resolveManagedFiniteWakeControllerV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
+import { isSessionSpawnNewActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
     | Readonly<{ kind: 'unavailable' | 'submitted-unknown' }>;
@@ -47,6 +48,7 @@ export async function readCurrentManagedFiniteWakeCustodyInTx(tx: Tx, input: Rea
     const target = input.target ?? await resolveManagedWakeTargetInTx(tx, {
         actorAccountId: binding.accountId, machineId: binding.machineId,
         origin: { kind: 'finite-command', actionRequestId: binding.requestId },
+        finiteActionId: binding.actionId,
     });
     if (!target) return null;
     const finiteWake = resolveManagedFiniteWakeControllerV1(target);
@@ -56,7 +58,7 @@ export async function readCurrentManagedFiniteWakeCustodyInTx(tx: Tx, input: Rea
     if (!row) return null;
     try { await assertManagedWakeOriginCurrentInTx(tx, { row, target, actionOrigin: input.actionOrigin }); }
     catch (error) { if (error instanceof ManagedMachineError) return null; throw error; }
-    const controller = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
+    const controller = await resolveMachineAdmissionInTx(tx, { actorAccountId: row.custodianAccountId,
         machineId: controllerBinding.machineId, requiredRole: 'manage', requireOnline: true });
     if (controller.kind !== 'admitted' || controller.installationId !== controllerBinding.installationId
         || controller.custodianAccountId !== row.custodianAccountId) return null;
@@ -78,51 +80,34 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     if (input.signal.aborted || !binding || !sameManagedInput(binding, input.actionOrigin.binding)
         || !isExternalActionManagedWakeRootV1(binding)
         || !await verifyCurrentExternalActionPrincipal(binding)) return { kind: 'unavailable' };
-    let target: ManagedWakeTargetV1 | undefined;
-    const isCurrent = async (): Promise<boolean> => {
-        if (input.signal.aborted || !await auth.verifyExternalActionExecutionAuthorization(input.actionOrigin.token)
-            || (input.isOriginalSourceCurrent && !await input.isOriginalSourceCurrent())) return false;
-        try {
-            const current = await inTx(async tx => {
-                if (await readCurrentServerIdentityId(process.env, tx) !== binding.serverIdentityId
-                    || !await verifyCurrentExternalActionPrincipalInTx(tx, binding)) return false;
-                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
-                    machineId: binding.machineId, actionId: binding.actionId });
-                if (admission.kind !== 'admitted' || admission.installationId !== binding.installationId
-                    || admission.custodianAccountId !== binding.custodianAccountId
-                    // Original Account-mode currentness is checked by the signed
-                    // principal owner; C40 independently admits the resource mode.
-                    || binding.accountEncryptionMode === undefined) return false;
-                if (target) {
-                    const row = await tx.managedMachine.findUnique({ where: { id: target.managedId } });
-                    if (!row) return false;
-                    await assertManagedWakeOriginCurrentInTx(tx, { row, target, actionOrigin: input.actionOrigin });
-                }
-                return !input.signal.aborted;
-            });
-            // The source owner reads current publisher state through its own DB
-            // and Socket boundaries; it must not wait on the transaction above.
-            return current && !input.signal.aborted
-                && (!input.isOriginalSourceCurrent || await input.isOriginalSourceCurrent())
-                && !input.signal.aborted;
-        } catch (error) { if (error instanceof ManagedMachineError) return false; throw error; }
-    };
-    if (!await isCurrent()) return { kind: 'unavailable' };
+    // This finite request admits once. The HTTP/socket owner cancels its local
+    // steps; guest dispatch and controller Home calls admit as new requests.
+    const isCurrent = async (): Promise<boolean> => !input.signal.aborted;
+    if (input.signal.aborted || (input.isOriginalSourceCurrent && !await input.isOriginalSourceCurrent())) return { kind: 'unavailable' };
     const initial = await inTx(async tx => {
+        if (await readCurrentServerIdentityId(process.env, tx) !== binding.serverIdentityId) return null;
+        const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
+            machineId: binding.machineId, actionId: binding.actionId });
+        if (admission.kind !== 'admitted' || admission.installationId !== binding.installationId
+            || admission.custodianAccountId !== binding.custodianAccountId
+            || binding.accountEncryptionMode === undefined) return null;
         const guest = await tx.machine.findUnique({ where: { id: binding.machineId }, select: { active: true, lastActiveAt: true } });
         if (guest && isMachineReachableV1({ machine: serializeMachinePresence(guest) })) return { online: true as const };
         const wake = await resolveManagedWakeTargetInTx(tx, { actorAccountId: binding.accountId, machineId: binding.machineId,
-            origin: { kind: 'finite-command', actionRequestId: binding.requestId }, requireInspection: true });
-        return { online: false as const, wake };
+            origin: { kind: 'finite-command', actionRequestId: binding.requestId }, finiteActionId: binding.actionId, requireInspection: true });
+        return { online: false as const, wake, controllerCustodianAccountId: admission.custodianAccountId };
     });
+    if (!initial || input.signal.aborted) return { kind: 'unavailable' };
     if (initial.online) return { kind: 'not-needed', isCurrent };
-    target = initial.wake;
+    const target = initial.wake;
     if (!target) return { kind: 'unavailable' };
     const finiteWake = resolveManagedFiniteWakeControllerV1(target);
     if (finiteWake.kind === 'unavailable' || !await isCurrent()) return { kind: 'unavailable' };
     const wakeTarget = target;
     const controllerBinding = finiteWake.controller;
-    const controller = await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
+    // Target admission owns requester power. This read selects that resource's
+    // installed custodian transport; the signed original requester stays on the Action.
+    const controller = await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: initial.controllerCustodianAccountId,
         machineId: controllerBinding.machineId, requiredRole: 'manage', requireOnline: true }));
     if (controller.kind !== 'admitted' || controller.installationId !== controllerBinding.installationId) return { kind: 'unavailable' };
     const exact = (candidate: RpcAckResponseEmitter) =>
@@ -192,15 +177,25 @@ async function readManagedWakeTargetBindingInTx(tx: Tx, input: Readonly<{
         inspectionRequired: runtime.inspectionRequired };
 }
 
+/** Owner-enabled accepted input borrows native wake only; manual power retains Manage admission. */
+function hasManagedWakeAuthority(controllerRole: 'manage' | 'use' | null, wakeOnAcceptedMessage: boolean,
+    origin: ManagedWakeTargetV1['origin']['kind'], finiteActionId?: string): boolean {
+    return controllerRole === 'manage' || wakeOnAcceptedMessage && (origin === 'session-input'
+        || origin === 'finite-command' && finiteActionId !== undefined && isSessionSpawnNewActionIdV1(finiteActionId));
+}
+
 export async function resolveManagedWakeTargetInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; machineId: string; origin: ManagedWakeTargetV1['origin'];
     requireAcceptedInputWake?: boolean;
     requireInspection?: boolean;
+    /** Internal projection of the verified original finite Action, never request JSON. */
+    finiteActionId?: string;
 }>): Promise<ManagedWakeTargetV1 | undefined> {
     const binding = await readManagedWakeTargetBindingInTx(tx, input);
     if (input.requireInspection && !binding?.inspectionRequired) return undefined;
     if (input.requireAcceptedInputWake && !(binding?.inspectionRequired && binding.wakeOnAcceptedMessage)) return undefined;
-    return binding?.controllerRole === 'manage' ? ManagedWakeTargetV1Schema.parse({ ...binding.binding, origin: input.origin }) : undefined;
+    return binding && hasManagedWakeAuthority(binding.controllerRole, binding.wakeOnAcceptedMessage, input.origin.kind, input.finiteActionId)
+        ? ManagedWakeTargetV1Schema.parse({ ...binding.binding, origin: input.origin }) : undefined;
 }
 
 /** Same binding and power-role owner as wake admission; this read cannot arm or start anything. */
@@ -209,7 +204,7 @@ export async function readManagedPendingActivationHoldReasonInTx(tx: Tx, input: 
 }>): Promise<PendingActivationHoldReasonV1 | undefined> {
     const current = await readManagedWakeTargetBindingInTx(tx, input);
     if (!current?.inspectionRequired || current.binding.homeId !== input.homeId) return undefined;
-    if (current.controllerRole !== 'manage') return 'managed_power_required';
+    if (!hasManagedWakeAuthority(current.controllerRole, current.wakeOnAcceptedMessage, 'session-input')) return 'managed_power_required';
     return input.resumeRequested ? undefined : 'resume_not_requested';
 }
 
@@ -352,6 +347,7 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
     if (!input.allowUnavailableObservation
         && (projected.observation?.availability === 'absent' || projected.observation?.storage === 'lost')) throw new ManagedMachineError('admission_unavailable');
     let actorAccountId: string;
+    let finiteActionId: string | undefined;
     if (target.origin.kind === 'session-input') {
         const origin = target.origin;
         const session = await tx.session.findUnique({ where: { id: origin.session.sessionId }, select: {
@@ -408,11 +404,12 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
             || admitted.custodianAccountId !== binding.custodianAccountId
             || binding.accountEncryptionMode === undefined) throw new ManagedMachineError('admission_unavailable');
         actorAccountId = binding.accountId;
+        finiteActionId = binding.actionId;
     } else {
         // A finite Action needs its existing verified authority, never a request-body id.
         throw new ManagedMachineError('admission_unavailable');
     }
-    if (await resolveManagedMachineRoleInTx(tx, row, actorAccountId) !== 'manage'
+    if (!hasManagedWakeAuthority(await resolveManagedMachineRoleInTx(tx, row, actorAccountId), row.wakeOnAcceptedMessage, target.origin.kind, finiteActionId)
         || !await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: target.enrolledMachineId })) throw new ManagedMachineError('permission_denied');
     const guest = await tx.machine.findUnique({ where: { id: target.enrolledMachineId } });
     if (classifyMachineAvailabilityState(guest) !== 'available') throw new ManagedMachineError('enrollment_retired');

@@ -203,7 +203,7 @@ function buildFavoriteOptions(
             return {
                 id: optionId,
                 label: entry.label ?? formatPathRelativeToHome(absolutePath, machineHomeDir),
-                subtitle: absolutePath,
+                subtitle: formatPathRelativeToHome(absolutePath, machineHomeDir),
                 labelEllipsizeMode: 'head',
                 subtitleEllipsizeMode: 'head',
                 onSelect: () => onCommit(absolutePath),
@@ -229,7 +229,7 @@ function buildRecentOptions(
             return {
                 id: optionId,
                 label: formatPathRelativeToHome(absolutePath, machineHomeDir),
-                subtitle: absolutePath,
+                subtitle: formatPathRelativeToHome(absolutePath, machineHomeDir),
                 labelEllipsizeMode: 'head',
                 subtitleEllipsizeMode: 'head',
                 onSelect: () => onCommit(absolutePath),
@@ -644,7 +644,9 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         ];
         return {
             id: 'path-root',
-            inputPlaceholder: t('newSession.pathPicker.enterPathPlaceholder'),
+            inputPlaceholder: initialSuggestionMode === 'history' && initialValue && !hasUserEditedInput
+                ? formatPathRelativeToHome(initialValue, machineHomeDir)
+                : t('newSession.pathPicker.enterPathPlaceholder'),
             // Nothing matches (a new folder name): Enter still uses the path as typed.
             emptyStateLabel: t('newSession.pathPicker.emptyNewFolder'),
             sections,
@@ -660,6 +662,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         hasUserEditedInput,
         inThisFolderResolver,
         initialSuggestionMode,
+        initialValue,
         machineHomeDir,
         machineId,
         machinePlatform,

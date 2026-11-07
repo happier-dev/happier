@@ -17,7 +17,7 @@ import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/pr
 import type { InputHints } from '@happier-dev/protocol/inputs/inputFields';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MACHINE_PROVISIONER_DIMENSIONS_V1, type MachineProvisionerDimensionV1, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { managedSizeMemoryRecommendation } from './managedSizeMemoryRecommendation';
 
@@ -47,7 +47,7 @@ export type ManagedConfiguratorDraft = Readonly<{
     /** Exact public preset review; a member cannot replace its launch or spending policy. */
     delegatedFacts?: ManagedConfigurationFactsV1;
 }>;
-export type ManagedConfiguratorDimension = 'size' | 'image' | 'location' | 'network' | 'duration';
+export type ManagedConfiguratorDimension = MachineProvisionerDimensionV1;
 /** Adopt the current catalog before its check/options read, retaining the person's draft. */
 export function refreshManagedConfiguratorProvisioner(draft: ManagedConfiguratorDraft,
     provisioner: ManagedConfiguratorDraft['provisioner'], controller?: ManagedControllerV1): ManagedConfiguratorDraft {
@@ -58,7 +58,7 @@ export function refreshManagedConfiguratorProvisioner(draft: ManagedConfigurator
     return { ...next, provisioner, choicesSchema: createManagedConfiguratorDraft({ provisioner,
         controller: next.controller, name: next.name }).choicesSchema, optionStatus: 'loading', check: undefined };
 }
-const dimensions: readonly ManagedConfiguratorDimension[] = ['size', 'image', 'location', 'network', 'duration'];
+const dimensions = MACHINE_PROVISIONER_DIMENSIONS_V1;
 type Projection = ReturnType<typeof projectMachineProvisionerSelectionV1>;
 type ManagedConfiguratorSelection = Readonly<{
     id: string; title: MachineProvisionerOptionsResultV1['dimensions']['size'][number]['title'];
@@ -89,6 +89,12 @@ export function managedConfiguratorDimensionSelection(draft: ManagedConfigurator
 export function managedConfiguratorProjection(draft: ManagedConfiguratorDraft, selection = managedConfiguratorDimensionSelection(draft)) {
     return draft.options ? projectMachineProvisionerSelectionV1({ options: draft.options, selection,
         launchSchema: draft.provisioner.descriptor.launchSchema }) : null;
+}
+export function managedConfiguratorMissingDimension(draft: ManagedConfiguratorDraft,
+    projection = managedConfiguratorProjection(draft)): ManagedConfiguratorDimension | undefined {
+    if (draft.optionStatus !== 'current' || projection?.kind !== 'incomplete') return undefined;
+    const selection = managedConfiguratorDimensionSelection(draft);
+    return dimensions.find(dimension => draft.options!.dimensions[dimension].length > 0 && selection[dimension] === undefined);
 }
 export function managedConfiguratorDimensionChoices(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension) {
     const selection = managedConfiguratorDimensionSelection(draft);
@@ -204,7 +210,10 @@ export function setManagedConfiguratorCredentials(draft: ManagedConfiguratorDraf
  */
 export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraft, options: MachineProvisionerOptionsResultV1,
     selectors?: unknown): ManagedConfiguratorDraft {
-    let selection = { ...managedConfiguratorDimensionSelection(draft) };
+    let selection = {
+        ...(!draft.selected && options.base ? readMachineProvisionerSelectionForLaunchV1(options, options.base.launch) : {}),
+        ...managedConfiguratorDimensionSelection(draft),
+    };
     // A fully qualified form already supplied this sole native fact. Keep its
     // visible row selected rather than asking the person to repeat that input.
     const supplied = (assignment: Readonly<{ path: string; value: unknown }>) =>

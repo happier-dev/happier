@@ -6,6 +6,8 @@ type HetznerOptions = Awaited<ReturnType<ReturnType<typeof createHetznerNativeCl
 // REST v1 Image.os_flavor (hcloud-python v2.11.0, images/domain.py).
 // Unknown/custom images carry no guest-platform claim, regardless of their name.
 const LINUX_IMAGE_FLAVORS = new Set(['ubuntu', 'centos', 'debian', 'fedora']);
+// General-purpose server systems, in presentation order. Native ids and architectures stay distinct.
+const SERVER_IMAGES = ['ubuntu-24.04', 'debian-13', 'ubuntu-22.04'] as const;
 function priceLabel(id: keyof typeof HETZNER_PRICE_LABELS.en) {
   return { key: `machineHetzner.prices.${id}`, fallback: HETZNER_PRICE_LABELS.en[id] };
 }
@@ -16,9 +18,16 @@ const PUBLIC_NETWORKING = [
 
 /** Native dimensions and constraints for reviewing a launch. */
 export function projectHetznerOptions(facts: HetznerOptions): MachineProvisionerOptionsResultV1 {
-  const images = facts.images.filter(image => image.status === 'available' && image.deprecated === null);
+  const images = SERVER_IMAGES.flatMap(name => facts.images.filter(image => image.name === name
+    && image.type === 'system' && image.status === 'available' && image.deprecated === null));
+  const defaultImage = images.find(image => image.name === SERVER_IMAGES[0]
+    && facts.sizes.some(size => size.architecture === image.architecture && size.prices.length > 0));
+  // Prices are location-specific. Start with a visible place that currently offers the default system's architecture.
+  const defaultLocation = facts.locations.find(location => facts.sizes.some(size => (!defaultImage || size.architecture === defaultImage.architecture)
+    && size.prices.some(price => price.location === location.name)));
   const locationIds = new Set(facts.locations.map(location => location.name));
-  return { base: { launch: {} }, dimensions: {
+  return { base: { launch: { ...(defaultImage ? { imageId: String(defaultImage.id) } : {}),
+    ...(defaultLocation ? { locationId: defaultLocation.name } : {}) } }, dimensions: {
     size: facts.sizes.map(size => ({
       id: String(size.id), title: size.name, assignments: [{ path: 'serverTypeId', value: String(size.id) }],
       available: size.prices.length > 0,
@@ -68,4 +77,3 @@ export function projectHetznerOptions(facts: HetznerOptions): MachineProvisioner
     })),
   ] };
 }
-

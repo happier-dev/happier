@@ -71,7 +71,12 @@ export function resolveMachineAgentSignIn(input: Readonly<{
 
 export type MachineAgentCredentialSelection = Readonly<{
     credentialBindings: ConnectedServiceBindingsV2 | null;
-    providerRoute?: Readonly<{ ready: boolean; suppressedConnectedServiceIds: readonly string[] }> | null;
+    providerRoute?: Readonly<{
+        ready: boolean;
+        suppressedConnectedServiceIds: readonly string[];
+        /** Exact current Agent declaration, for non-React diagnostic readers that do not hydrate Account profiles. */
+        acceptedConnectedServiceIds?: readonly string[];
+    }> | null;
 }> & Pick<Parameters<typeof resolveMachineAgentSignIn>[0], 'credentialBindingsReady' | 'groupOptionsByServiceId' | 'teamCredentialResources'>;
 
 /** Account-default inventory and explicit Session selection share the same credential decision. */
@@ -79,22 +84,29 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
     if (!agent) return null;
     const suppressedServiceIds = new Set((selection.providerRoute?.ready ? selection.providerRoute.suppressedConnectedServiceIds : [])
         .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
-    // Suppression must cover the Agent's actual accepted authentication services,
-    // not merely a same-named service belonging to another plugin.
-    const authenticationRequired = (agent.signIn.native?.required !== false && agent.signIn.connectedServices.length === 0)
-        || agent.signIn.connectedServices.some(service => !suppressedServiceIds.has(service.serviceId))
-        || Object.keys(selection.credentialBindings?.bindingsByServiceId ?? {}).some(serviceId => !suppressedServiceIds.has(serviceId));
+    const acceptedServiceIds = new Set([
+        ...agent.signIn.connectedServices.map(service => service.serviceId),
+        ...(selection.providerRoute?.acceptedConnectedServiceIds ?? [])
+            .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null),
+    ]);
+    // Selected credentials and an admitted Provider route override native policy;
+    // the shared execution-state resolver owns native authentication requirements.
+    const authenticationRequired = Object.entries(selection.credentialBindings?.bindingsByServiceId ?? {})
+        .some(([serviceId, binding]) => binding.source !== 'native' && !suppressedServiceIds.has(serviceId))
+        ? true : acceptedServiceIds.size > 0 && [...acceptedServiceIds].every(serviceId => suppressedServiceIds.has(serviceId))
+            ? false : undefined;
     const signIn = resolveMachineAgentSignIn({
         native: agent.signIn.native ?? { status: agent.signIn.via?.kind === 'connected' ? 'unknown' : agent.signIn.status, loginSupport: 'unsupported' },
         connectedServices: agent.signIn.connectedServices,
         ...selection,
         suppressedServiceIds,
     });
-    return { ...agent, signIn, state: resolveMachineAgentState({ ...agent, signIn,
+    return { ...agent, signIn: { ...signIn, native: agent.signIn.native }, state: resolveMachineAgentState({ ...agent, signIn,
         // An unread default can make authentication unknown without withdrawing known installation facts.
-        known: !agent.unavailableReason && (agent.installed || (agent.state !== 'unknown' && agent.state !== 'checking')),
+        known: !agent.unavailableReason && ((agent.installed && agent.signIn.native !== undefined) || (agent.state !== 'unknown' && agent.state !== 'checking')),
         checking: agent.state === 'checking',
-        credentialRouteReady: selection.providerRoute?.ready, authenticationRequired }) };
+        credentialRouteReady: selection.credentialBindingsReady === false ? false : selection.providerRoute?.ready,
+        authenticationRequired }) };
 }
 
 export function projectMachineAgent(input: Readonly<{
@@ -102,6 +114,8 @@ export function projectMachineAgent(input: Readonly<{
     definitionId?: string;
     title: string;
     facts: MachineAgentInventoryItem | null;
+    /** Machine-published installation is useful independently of requester probe facts. */
+    installed?: boolean;
     checking: boolean;
     stale: boolean;
     staleReason?: MachineAgent['staleReason'];
@@ -117,10 +131,11 @@ export function projectMachineAgent(input: Readonly<{
         ...(input.definitionId ? { definitionId: input.definitionId } : {}),
         ...(facts?.managed !== undefined ? { managed: facts.managed } : {}),
         ...(facts?.fit ? { fit: facts.fit } : {}),
-        installed: facts?.installed ?? false,
+        installed: input.installed ?? facts?.installed ?? false,
         version: facts?.version ?? null, latestVersion: facts?.latestVersion ?? null,
         update: facts?.update ?? null,
-        signIn: resolveMachineAgentSignIn({ native: facts?.signIn ?? { status: 'unknown', loginSupport: 'unsupported' }, connectedServices: input.connectedServices }),
+        // An absent probe must remain absent; the fallback only supplies display defaults.
+        signIn: { ...resolveMachineAgentSignIn({ native: facts?.signIn ?? { status: 'unknown', loginSupport: 'unsupported' }, connectedServices: input.connectedServices }), native: facts?.signIn },
         platform: facts?.platform ?? { supported: true as const },
         install: { ...(facts?.install ?? { available: false, mode: 'none' as const, sizeBytes: null, guideUrl: null }), requiresVendorConsent: facts?.install.mode === 'vendor_recipe' },
         dependencies: (facts?.dependencies ?? []).map((dependency) => ({ ...dependency, title: input.dependencyTitlesByKey?.[dependency.key] ?? dependency.key })),

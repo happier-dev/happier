@@ -1,8 +1,9 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { canAttemptMachineSpawn, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { resolveMachineDestinationPurposeEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 
 export function isHostBoundNewSessionMachine(params: Readonly<{
     selectedMachineId: string | null;
@@ -39,6 +40,9 @@ export function canCreateNewSession(params: Readonly<{
     if (params.directoryKind !== 'managed' && !params.selectedPath.trim()) return false;
     if (isHostBoundNewSessionMachine(params)) return true;
     if (!params.selectedMachine) return false;
+    const eligibility = resolveMachineDestinationPurposeEligibility('session', undefined, params.selectedMachine, params.scope);
+    if (!eligibility.eligible) return false;
+    if (eligibility.managedWake) return params.selectedMachine.id === params.selectedMachineId;
     return canAttemptMachineSpawn({
         selectedMachineId: params.selectedMachineId,
         machine: params.selectedMachine,

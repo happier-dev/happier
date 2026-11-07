@@ -1,0 +1,63 @@
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+
+import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createManagedControllerMachineFixture as createControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { useManagedControllerScope } = await import('./useManagedControllerScope');
+const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+
+beforeEach(async () => {
+  await harness.reset();
+  resetScopedHomeActionExecutorsForTests();
+});
+afterEach(async () => {
+  standardCleanup();
+  await harness.reset();
+});
+
+describe('Managed controller scope', () => {
+  it.each(['none', 'default', 'lastUsed', 'thisComputer'] as const)('never defaults Managed from implicitly to a managed guest, preserving its existing selection intent (%s)', async intent => {
+    const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { setMachineAdministrationTargetPreference, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } = await import('@/sync/domains/machines/administration/selectionPreferences');
+    const { rememberMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
+    const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
+    const { publishLocalDaemonStatus, readLocalDaemonSharedState } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
+    const runner = getSystemTasksRunner();
+    const previousStatus = readLocalDaemonSharedState(runner).status;
+    onTestFinished(() => publishLocalDaemonStatus(runner, previousStatus));
+    const previousSettings = storage.getState().settings;
+    const previousScope = storage.getState().settingsScope;
+    onTestFinished(() => storage.setState({ settings: previousSettings, settingsScope: previousScope }));
+    const guest = createControllerMachineFixture({ id: 'a-guest', installationId: 'guest-installation',
+      active: intent !== 'default', activeAt: intent === 'default' ? 0 : Date.now(),
+      managedMachineRef: { homeId: 'srv_build', managedId: 'managed' } });
+    const computer = createControllerMachineFixture({ id: 'z-computer', installationId: 'computer-installation', activeAt: Date.now() });
+    storage.setState({ machineListByServerId: { srv_build: [guest, computer] }, machineListStatusByServerId: { srv_build: 'idle' },
+      settingsScope: { serverId: 'srv_build', accountId: 'owner' }, settings: { ...previousSettings,
+        machineAdministrationTargetsLocalV1: intent === 'default' ? setMachineAdministrationTargetPreference({},
+          MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines, { serverIdentityId: 'srv_build', machineId: guest.id }) : {} } });
+    if (intent === 'lastUsed') rememberMachineAdministrationTargetObservation({ serverId: 'srv_build', accountId: 'owner' },
+      MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines, { serverIdentityId: 'srv_build', machineId: guest.id });
+    if (intent === 'thisComputer') publishLocalDaemonStatus(runner,
+      { serviceInstalled: true, daemonRunning: true, needsAuth: false, machineId: guest.id });
+    const hook = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
+    try {
+      expect(hook.getCurrent().controller?.machineId).toBe(intent === 'default' ? guest.id : computer.id);
+      if (intent === 'none') {
+        await act(async () => storage.setState({ machineListByServerId: { srv_build: [guest] } }));
+        expect(hook.getCurrent().controller).toBeUndefined();
+      }
+      const target = hook.getCurrent().selection?.pickerRows.find(row => row.candidate.target.machineId === guest.id)?.candidate.target;
+      expect(target).toBeDefined();
+      await act(async () => hook.getCurrent().selection?.selectTarget(target!));
+      expect(hook.getCurrent().controller?.machineId).toBe(guest.id);
+    } finally { await hook.unmount(); }
+  });
+});

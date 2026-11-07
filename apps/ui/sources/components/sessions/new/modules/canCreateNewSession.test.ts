@@ -2,8 +2,27 @@ import { describe, expect, it } from 'vitest';
 
 import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 describe('canCreateNewSession', () => {
+    it('allows the selected asleep shared target with an admitted wake fact, while retaining access refusals', () => {
+        const selectedMachine = { ...createMachineFixture({ id: 'guest', active: false, activeAt: 0, isShared: true,
+            access: { custodian: { accountId: 'owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }),
+            managedInputRuntime: { nativeReady: false, wakeState: 'asleep' as const, newSessionWake: { kind: 'available' as const } } };
+        const input = { selectedMachineId: 'guest', selectedMachine, selectedPath: '/work',
+            scope: { serverId: 'home', accountId: 'member' } };
+        expect(canCreateNewSession(input)).toBe(true);
+        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine,
+            managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable', reason: 'no_controller' } } } })).toBe(false);
+        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine,
+            managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: undefined } } })).toBe(false);
+        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine, active: true, activeAt: Date.now(),
+            managedInputRuntime: { ...selectedMachine.managedInputRuntime, newSessionWake: { kind: 'unavailable', reason: 'no_controller' } } } })).toBe(true);
+        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine, managedInputRuntime: undefined } })).toBe(false);
+        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine,
+            access: { ...selectedMachine.access!, accessState: 'key_pending' as const } } })).toBe(false);
+        expect(canCreateNewSession({ ...input, selectedMachine: { ...selectedMachine, revokedAt: 1 } })).toBe(false);
+    });
     it('admits a reviewed managed recipe without a Machine projection, but not unresolved provider choices', () => {
         const managedMachineSelection = createManagedMachineSelectionDraft({
             selection: { kind: 'preset', homeId: 'srv_home', id: 'preset', revision: 1 },
@@ -131,14 +150,14 @@ describe('canCreateNewSession', () => {
         })).toBe(true);
     });
 
-    it('allows an online machine to attempt launch while exact spawn readiness is probing', () => {
+    it('allows an online machine to attempt launch while exact spawn readiness is unknown', () => {
         const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
         expect(canCreateNewSession({
             scope: { serverId: 'creation-home', accountId: 'creation-account' },
             selectedMachineId: 'm1',
             selectedMachine: onlineMachine,
             selectedPath: '/repo',
-            spawnReadiness: { status: 'probing', machineId: 'm1' },
+            spawnReadiness: { status: 'unknown', machineId: 'm1' },
         })).toBe(true);
     });
 

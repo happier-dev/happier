@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { projectMachineAgent, projectMachineAgentForCredential, reconcileMachineAgents, resolveMachineAgentSignIn } from './machineAgentModel';
 import type { MachineAgent } from './machineAgentTypes';
+import { resolveReviewWalkthroughPlan } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 
 describe('machine agent projection', () => {
-    it('admits explicitly optional native authentication without relaxing selected credentials or missing facts', () => {
+    it('retains published installation without inventing probe or authentication readiness across credential projections', () => {
+        const agent = projectMachineAgent({ agentId: 'claude', title: 'Claude', facts: null, installed: true,
+            checking: false, stale: false, connectedServices: [], job: null });
+        const selection = { credentialBindings: null };
+        for (const projected of [agent, projectMachineAgentForCredential(agent, selection),
+            projectMachineAgentForCredential(projectMachineAgentForCredential(agent, selection), selection)]) {
+            expect(projected).toMatchObject({ installed: true, state: 'unknown', signIn: { status: 'unknown' } });
+            expect(projected?.signIn.native).toBeUndefined();
+        }
+    });
+    it.each([false, undefined])('admits no-login native authentication (required=%s) without relaxing selected credentials or missing facts', required => {
         const serviceId = 'acme.agent/account';
-        const signIn = { status: 'unknown' as const, loginSupport: 'unsupported' as const, required: false };
+        const signIn = { status: 'unknown' as const, loginSupport: 'unsupported' as const, required };
         const facts = { agentId: 'acme.agent', title: 'Local helper', installed: true, version: null, latestVersion: null,
             update: { supported: false, command: null }, signIn, platform: { supported: true as const },
             install: { available: false, mode: 'none' as const, sizeBytes: null, guideUrl: null }, dependencies: [] };
@@ -16,7 +27,7 @@ describe('machine agent projection', () => {
             signIn: { status: 'unknown', via: null, nativeLogin: 'unsupported', native: signIn } });
         expect(projectMachineAgentForCredential(projectMachineAgent({ ...input,
             facts: { ...facts, signIn: { status: 'unknown', loginSupport: 'unsupported' } },
-        }), { credentialBindings: null })?.state).toBe('unknown');
+        }), { credentialBindings: null })?.state).toBe('ready');
         expect(projectMachineAgentForCredential(projectMachineAgent({ ...input,
             facts: { ...facts, signIn: { ...signIn, required: true } },
         }), { credentialBindings: null })?.state).toBe('unknown');
@@ -28,6 +39,15 @@ describe('machine agent projection', () => {
             connected: true, healthy: false, profileLabel: 'Expired', profiles: [
                 { profileId: 'expired', healthy: false, profileLabel: 'Expired' },
             ] }] });
+        const native = projectMachineAgentForCredential(withAccount, { credentialBindings: null });
+        expect(native?.state).toBe('ready');
+        expect(projectMachineAgentForCredential(withAccount, { credentialBindings: null,
+            credentialBindingsReady: false })?.state).toBe('unknown');
+        expect(projectMachineAgentForCredential(withAccount, { credentialBindings: { v: 2,
+            bindingsByServiceId: { [serviceId]: { source: 'native' } } } })?.state).toBe('ready');
+        expect(resolveReviewWalkthroughPlan({ engines: [{ engineId: 'local-review', label: 'Local review',
+            enabled: true, structuredNarration: true, machineAgent: native }], selectedEngineIds: ['local-review'],
+            walkthrough: false, narratorEngineId: null })).toMatchObject({ canStart: true, blocked: null });
         expect(projectMachineAgentForCredential(withAccount, { credentialBindings })?.state).toBe('needsSignIn');
         expect(projectMachineAgentForCredential(agent, { credentialBindings: null, providerRoute: {
             ready: false, suppressedConnectedServiceIds: [],
@@ -46,6 +66,10 @@ describe('machine agent projection', () => {
         const providerRoute = { ready: true, suppressedConnectedServiceIds: ['claude-subscription', 'anthropic'] };
         const selection = { credentialBindings: null, providerRoute };
         expect(projectMachineAgentForCredential(agent, selection)).toMatchObject({ state: 'ready', signIn: { status: 'signedOut' } });
+        expect(projectMachineAgentForCredential({ ...agent, signIn: { ...agent.signIn, connectedServices: [] } }, {
+            credentialBindings: null,
+            providerRoute: { ...providerRoute, acceptedConnectedServiceIds: [serviceId] },
+        })).toMatchObject({ state: 'ready', signIn: { status: 'signedOut' } });
         expect(projectMachineAgentForCredential({ ...agent, signIn: { ...agent.signIn,
             native: { status: 'unknown', loginSupport: 'login_terminal' }, status: 'unknown' } }, selection)?.state).toBe('ready');
         expect(projectMachineAgentForCredential(agent, { ...selection, credentialBindings: { v: 2, bindingsByServiceId: {

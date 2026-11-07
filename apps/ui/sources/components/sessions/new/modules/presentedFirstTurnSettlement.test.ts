@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { createPresentedFirstTurnSettlement } from './presentedFirstTurnSettlement';
+import { getPendingMessageVisualState } from '@/components/sessions/pending/pendingMessageVisualState';
 
 const presented = { sessionId: 'session-1', firstTurnLocalId: 'first-turn' };
 const canonical = (state: ActionOperationSnapshotV1['state'], error?: ActionOperationSnapshotV1['error']) =>
     ({ state, ...(error ? { error } : {}) }) as Pick<ActionOperationSnapshotV1, 'state' | 'error'>;
 
-function harness(operation: Pick<ActionOperationSnapshotV1, 'state' | 'error'> | null) {
+function harness(operation: Pick<ActionOperationSnapshotV1, 'state' | 'error' | 'result'> | null) {
     const write = vi.fn();
     const settlement = createPresentedFirstTurnSettlement({
         draftId: 'draft-1', readCanonicalOperation: () => operation, write,
@@ -17,6 +19,20 @@ function harness(operation: Pick<ActionOperationSnapshotV1, 'state' | 'error'> |
 }
 
 describe('createPresentedFirstTurnSettlement', () => {
+    it('recovers a typed spawn refusal from a successful Action without claiming that its first input reached the agent', () => {
+        const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+            launchError: { kind: 'launch_error' as const, code: 'agent_isolation_unavailable', message: 'Member setup unavailable',
+                agentIsolationRefusal: { reason: 'member_setup_required' as const, phase: 'native_execution_preparation' as const,
+                    remedy: { kind: 'ask_machine_manager' as const } } } };
+        const { settlement, write } = harness({ state: 'succeeded', result: projectSessionSpawnNewActionResultV1(refusal) });
+        settlement.settle({ final: true, acceptedLocalId: null });
+        const pendingLaunch = write.mock.calls[0]?.[1];
+        expect(pendingLaunch).toMatchObject({ state: 'failed', failure: refusal });
+        const visual = getPendingMessageVisualState({ id: 'first-turn', localId: 'first-turn', createdAt: 1, updatedAt: 1,
+            source: 'local_outbound', text: 'Start here', rawRecord: {}, pendingLaunch });
+        expect(visual).toMatchObject({ kind: 'launch_failed', deliveryBlockedPresentation: { isUnknown: false } });
+    });
+
     it('settles a launch the caller abandoned to its canonical operation from that operation (review P1 path a)', () => {
         const { settlement, write } = harness(canonical('failed', { errorCode: 'spawn_failed', error: 'spawn_failed' }));
         // The launcher adopted the canonical settlement and returned without any result.

@@ -6,6 +6,7 @@ import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/proto
 import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { isOwnComputerDefaultCandidate } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { isMachineAdministrationCandidateExplicitlySelectable, machineAdministrationTargetsEqual, resolveMachineAdministrationTargetState } from '@/sync/domains/machines/administration/targetSelection';
 import {
@@ -54,7 +55,7 @@ export type ManagedControllerScope = Readonly<{
  * (lab `m-add` / `m-config`). It is shown through the canonical header chip
  * (`MachineAdministrationTargetSelector presentation="chip"`), offering only machines that can manage,
  * and starts on an online controller admitted by the Action protocol, preferring held installed
- * provisioners and the person's last choice. Managed guests require an existing selection intent;
+ * provisioners and the person's last own-computer choice. Managed guests require a configured default or explicit selection;
  * their presence in this Home is not an invitation to use them as a controller. The choice is page-local, as the
  * draft it scopes is.
  */
@@ -186,14 +187,13 @@ export function useManagedControllerScope(
     const readScope = binding?.isCurrent() ? binding.scope : null;
     const retainedAutomatic = scopedChoice && !scopedChoice.explicit ? scopedChoice.controller : undefined;
     return resolveMachineAdministrationTargetState({
-      storedTarget: null,
+      storedTarget: defaultTarget,
       candidates: scopedRows.map(row => row.candidate),
       automaticSelection: {
         isEligible: candidate => {
           const machine = eligibleById.get(candidate.target.machineId);
           return !!machine && supportsManagedControllerActions(machine)
-            && (!machine.managedMachineRef || machine.id === thisMachineId
-              || !!rememberedTarget && machineAdministrationTargetsEqual(candidate.target, rememberedTarget))
+            && isOwnComputerDefaultCandidate(machine)
             && !unsupportedProvisionerMachines.has(machine.id)
             && readMachineRequestReachabilityObservation(readScope, machine.id)?.outcome !== 'failed';
         },
@@ -209,17 +209,19 @@ export function useManagedControllerScope(
         },
       },
     });
-  }, [binding, eligibleById, installedProvisionerMachines, rememberedTarget, scopedChoice, scopedRows, thisMachineId, unsupportedProvisionerMachines]);
+  }, [binding, defaultTarget, eligibleById, installedProvisionerMachines, rememberedTarget, scopedChoice, scopedRows, thisMachineId, unsupportedProvisionerMachines]);
   // Kept identity-stable by its ids: presence updates must not restart the reads it scopes.
   const preferred = React.useMemo(() => {
     // A draft keeps its exact installation even when asleep, missing or replaced; fresh execution
     // admission decides whether it can run. Inventory churn must never silently redirect it.
     if (namedRetained) return namedRetained;
-    const machine = automaticState.kind === 'online' ? eligibleById.get(automaticState.target.machineId) : undefined;
+    const machine = automaticState.kind !== 'unselected'
+      && (automaticState.kind === 'online' || defaultTarget && automaticState.snapshot)
+      ? eligibleById.get(automaticState.target.machineId) : undefined;
     return machine?.installationId
       ? { machineId: machine.id, installationId: machine.installationId }
       : undefined;
-  }, [namedRetained?.machineId, namedRetained?.installationId, automaticState, eligibleById]);
+  }, [namedRetained?.machineId, namedRetained?.installationId, automaticState, defaultTarget, eligibleById]);
   const controllerMachineId = preferred?.machineId;
   const controllerInstallationId = preferred?.installationId;
   const controller = React.useMemo(

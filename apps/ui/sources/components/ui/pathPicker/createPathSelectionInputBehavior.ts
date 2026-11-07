@@ -1,3 +1,5 @@
+import { readMachineMemberWorkspaceRelativePathV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+
 import type { SelectionListInputBehavior } from '@/components/ui/selectionList';
 import { makePathBrowseInputBehavior } from '@/utils/path/browseInputBehavior';
 import {
@@ -11,6 +13,9 @@ export function resolvePathSelectionInitialInputValue(params: Readonly<{
     initialValue: string;
     initialSuggestionMode: PathSelectionInitialSuggestionMode;
 }>): string {
+    // History keeps the selected directory behind its display label until the person edits.
+    if (params.initialSuggestionMode === 'history'
+        && readMachineMemberWorkspaceRelativePathV1(params.initialValue) !== null) return '';
     return params.initialValue;
 }
 

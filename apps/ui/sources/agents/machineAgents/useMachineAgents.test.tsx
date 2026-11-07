@@ -54,6 +54,52 @@ afterEach(async () => {
 afterAll(() => network.dispose());
 
 describe('machine inventory lifecycle boundary', () => {
+    it.each(['detail', 'fleet'] as const)('shows machine-published last-known Agents on a cold offline %s without inventing authentication or probing', async surface => {
+        const server = await network.addHome(`https://${surface}-offline-published-agents.test`, 'offline-inventory-account');
+        const scope = { serverId: server.id, accountId: 'offline-inventory-account' };
+        let machine = createMachineFixture({ id: `${surface}-offline-published-agents`, active: false, activeAt: 0 });
+        machine = { ...machine, metadata: { ...machine.metadata!, agentInventory: {
+            checkedAt: 10, installedAgentIds: ['claude', 'codex', 'custom-acp'],
+        } } };
+        storage.setState({ profileScope: scope });
+        storage.getState().applyMachines([machine], true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
+        const hook = await renderHook(surface === 'detail'
+            ? () => useMachineAgents({ serverId: server.id, machineId: machine.id, load: false })
+            : () => useMachineAgentsByMachine({ serverId: server.id, machineIds: [machine.id], load: false }).get(machine.id) ?? EMPTY_MACHINE_AGENTS);
+        try {
+            expect(hook.getCurrent()).toMatchObject({ status: 'offline', agents: [
+                { agentId: 'claude', installed: true, state: 'unknown', stale: true, signIn: { status: 'unknown' } },
+                { agentId: 'codex', installed: true, state: 'unknown', stale: true, signIn: { status: 'unknown' } },
+            ] });
+            expect(hook.getCurrent().agents.every(agent => !isMachineAgentReady(agent))).toBe(true);
+            const key = serverAccountScopedResourceKey(scope, 'machine-agents', machine.id);
+            const changed = vi.fn();
+            const off = machineAgentInventoryStore.subscribe(key, changed);
+            const previous = hook.getCurrent().agents;
+            try {
+                for (let checkedAt = 11; checkedAt <= 13; checkedAt++) await act(async () => {
+                    machine = { ...machine, seq: machine.seq + 1, metadataVersion: machine.metadataVersion + 1,
+                        metadata: { ...machine.metadata!, agentInventory: {
+                            checkedAt, installedAgentIds: ['claude', 'codex', 'custom-acp'],
+                        } } };
+                    storage.getState().applyMachines([machine], false, { sourceServerId: server.id, sourceAccountId: scope.accountId });
+                });
+                await act(async () => machineAgentInventoryStore.publishJobs(key, new Map()));
+                expect(hook.getCurrent().agents).toBe(previous);
+                expect(changed).not.toHaveBeenCalled();
+                await act(async () => {
+                    machine = { ...machine, seq: machine.seq + 1, metadataVersion: machine.metadataVersion + 1,
+                        metadata: { ...machine.metadata!, agentInventory: { checkedAt: 14, installedAgentIds: ['claude'] } } };
+                    storage.getState().applyMachines([machine], false, { sourceServerId: server.id, sourceAccountId: scope.accountId });
+                });
+                expect(hook.getCurrent().agents.filter(agent => agent.installed).map(agent => agent.agentId)).toEqual(['claude']);
+                expect(hook.getCurrent().agents[0]).toBe(previous[0]);
+                expect(changed).toHaveBeenCalledTimes(1);
+                expect(rpc).not.toHaveBeenCalled();
+            } finally { off(); }
+        } finally { await hook.unmount(); }
+    });
+
     it.each(['active', 'manual', 'withdrawn'] as const)('keeps capability failure recovery owned by %s inventory demand', async demand => {
         const server = await network.addHome(`https://inventory-error-${demand}.example.test`, 'inventory-retry-account');
         const scope = { serverId: server.id, accountId: 'inventory-retry-account' };
