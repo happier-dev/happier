@@ -374,7 +374,7 @@ describe('sessionMachineTarget', () => {
         });
     });
 
-    it('routes a missing stale session machine id to the unique same-host and same-home active machine', async () => {
+    it('does not infer a replacement for a missing session machine from matching host and home', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({
             sessions: {
@@ -399,10 +399,7 @@ describe('sessionMachineTarget', () => {
             getProjectForSession: () => null,
         });
 
-        expect(readMachineTargetForSession('s1')).toEqual({
-            machineId: 'm-replacement',
-            basePath: '/Users/alice/work/repo',
-        });
+        expect(readMachineTargetForSession('s1')).toBeNull();
     });
 
     it('uses visible lookup session metadata when the raw session is not hydrated', async () => {
