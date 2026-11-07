@@ -211,6 +211,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('manual'),
+      browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
       outcomeReconciliation: z.literal('none'),
       fields: PluginConnectedAccountAuthenticationFieldsV2Schema,

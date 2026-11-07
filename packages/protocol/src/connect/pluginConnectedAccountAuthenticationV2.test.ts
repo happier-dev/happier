@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from './connectedAccountUiProjectionV1.js';
 
+it('preserves manual credential-check reachability through the UI projection', () => {
+  const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+    id: 'vendor', title: 'Vendor', authentication: { defaultModeId: 'token', modes: [{
+      id: 'token', kind: 'manual', browserReachability: 'unreachable', outcomeReconciliation: 'none', fields: [],
+    }] },
+  });
+  const projection = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+    descriptor, serviceId: 'vendor', pluginId: 'acme.vendor', provenance: 'external', sourceKind: 'installed',
+    availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+  }));
+  expect(projection.authentication.modes[0]).toMatchObject({ kind: 'manual', browserReachability: 'unreachable' });
+});
+
 it('defers only declared optional Account configuration fields until OAuth succeeds', () => {
   const mode = { id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
     pkce: 'required', outcomeReconciliation: 'providerCheck', postAuthenticationFieldIds: ['accountId'],
