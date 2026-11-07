@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -11,19 +12,13 @@ import { t } from '@/text';
 import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
-
-/** Where each "+" choice goes; the editor owns what happens next. */
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE, WORKFLOWS_RUN_SETTINGS_ROUTE } from '../workflowsRoutes';
 
 /**
- * The column header's two controls (lab `nav-N1m`, FIN 04 §3.3): `⋯` with the destination's run
- * settings, and "+", a menu because there is more than one way to add. Its choices are the ones whose
- * owners exist: a blank draft, an imported file and a new Account trigger (F1, offered also where
- * only Triggers are available, 04 §3.4), and the read-only example picker (08). Create with an agent
- * is supplied by the authoring owner (U-17).
+ * The column exposes each existing start directly (lab N1m); each editor owns its next step.
  */
 export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions(props: Readonly<{
-    /** Workflows can be created here (not the Triggers-only configuration). */
+    /** This surface owns saved-Workflow creation. */
     canCreate: boolean;
 }>) {
     const router = useRouter();
@@ -37,21 +32,20 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     const newTriggerItem: DropdownMenuItem = {
         id: 'trigger',
         testID: 'workflows-column:add:trigger',
-        title: t('workflows.triggers.column.newTrigger'),
+        title: t('workflows.triggers.editor.title'),
         subtitle: t('workflows.triggers.column.newTriggerSubtitle'),
         icon: <Icon name="lightning" />,
     };
     const workflowItems: readonly DropdownMenuItem[] = [
         {
-            id: 'new',
-            testID: 'workflows-column:add:new',
+            id: 'blank',
+            testID: 'workflows-column:add:blank',
             title: t('workflows.newWorkflow'),
             subtitle: t('workflows.destination.addMenu.newWorkflowSubtitle'),
             icon: <Icon name="plus" />,
         },
         { id: 'agent', testID: 'workflows-column:add:agent', title: t('workflows.authoring.create'),
             subtitle: t('workflows.authoring.description'), icon: <Icon name="sparkle" /> },
-        newTriggerItem,
         { id: 'example', testID: 'workflows-column:add:example', title: t('workflows.examples.fromExample'),
             subtitle: t('workflows.examples.description'), icon: <Icon name="tree-structure" /> },
         {
@@ -62,7 +56,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
             icon: <Icon name="download" />,
         },
     ];
-    const addItems: readonly DropdownMenuItem[] = props.canCreate ? workflowItems : [newTriggerItem];
+    const addItems: readonly DropdownMenuItem[] = [workflowItems[0]!, newTriggerItem, ...workflowItems.slice(1)];
     const moreItems: readonly DropdownMenuItem[] = [
         ...(!props.canCreate ? [newTriggerItem] : []),
         {
@@ -97,7 +91,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                         accessibilityLabel={t('workflows.destination.moreAccessibility')}
                         tooltip={t('workflows.destination.moreAccessibility')}
                         variant="plain"
-                        interactiveTargetGapPx={ROW_GAP}
+                        interactiveTargetEdgesPx={BAND_EDGES}
                         onPress={toggle}
                     />
                 )}
@@ -127,7 +121,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                             accessibilityLabel={t('workflows.destination.addAccessibility')}
                             tooltip={t('workflows.destination.addAccessibility')}
                             variant="plain"
-                            interactiveTargetGapPx={ROW_GAP}
+                            interactiveTargetEdgesPx={BAND_EDGES}
                             onPress={toggle}
                         />
                     )}
@@ -141,8 +135,11 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     );
 });
 
-/** The two header buttons sit flush, so their hit areas reach only above and below. */
-const ROW_GAP = 0;
+/**
+ * The two header buttons sit flush, so their hit areas reach only above and below, and below only into the
+ * band's own padding: the title block starts right after it and paints over anything further.
+ */
+const BAND_EDGES = { leading: 0, trailing: 0, bottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop } as const;
 
 const styles = StyleSheet.create(() => ({
     row: {

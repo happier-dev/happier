@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { CollectionEntityKindV1Schema, CollectionSpaceSelectionV1Schema, CollectionSpaceSelectionValueV1Schema, resolveCollectionSpacesV1,
-    type CollectionSpaceSelectionV1, type CollectionEntityKindV1, type CollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { CollectionEntityKindV1Schema, CollectionSpaceSelectionV1Schema, CollectionSpaceSelectionValueV1Schema,
+    type CollectionSpaceSelectionV1, type CollectionEntityKindV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { createPersistentUiState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 
@@ -25,20 +25,9 @@ export function useCollectionSpaceSelection(scopeKey: string, entityKind: Collec
     return useMemo(() => selectedSpace(scopeKey, entityKind, spaceId), [spaceId, scopeKey, entityKind]);
 }
 
-/** Captured Account authority serves both mounted navigation and Actions. */
-export async function writeCollectionSpaceSelectionV1(input: Readonly<{
-    scope: AccountSettingsScope | null | undefined;
-    entityKind: CollectionEntityKindV1;
-    spaceId: string;
-    isCurrent(): boolean;
-    readSettings(): Readonly<{ collectionSpacesV1: CollectionSpacesV1 }> | Promise<Readonly<{ collectionSpacesV1: CollectionSpacesV1 }>>;
-}>): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; reason: 'setting_not_bound' | 'space_not_found' }>> {
-    if (!input.scope || !input.isCurrent()) return { ok: false, reason: 'setting_not_bound' };
-    const settings = await input.readSettings();
-    if (!input.isCurrent()) return { ok: false, reason: 'setting_not_bound' };
-    if (!resolveCollectionSpacesV1(settings.collectionSpacesV1, input.entityKind).some(space => space.id === input.spaceId)) return { ok: false, reason: 'space_not_found' };
-    selections.set(key(accountSettingsScopeKeySuffix(input.scope), input.entityKind), input.spaceId);
-    return { ok: true };
+/** Device-local navigation; mounted controls and admitted Actions share this synchronous owner. */
+export function selectCollectionSpace(scope: AccountSettingsScope, entityKind: CollectionEntityKindV1, spaceId: string): void {
+    selections.set(key(accountSettingsScopeKeySuffix(scope), entityKind), spaceId);
 }
 
 /** Import each exact predecessor scope/entity independently; a current destination wins. */

@@ -37,7 +37,7 @@ import { t, tLoose } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
-import { WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
+import { WorkflowsColumnCreationRefContext, WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -72,6 +72,9 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     // A page with no navigation bar over it opens on its name, with the actions on the name's line, then the
     // switch, in both views (FIN-DESIGN-REVIEW L6). Under a native header the bar already carries the name.
     const headsPage = !titleChrome && props.definitionsContent !== undefined;
+    const creationRef = React.useRef<import('@/keyboard/focusReturn').FocusReturnTarget>(null);
+    const setCreationRef = React.useCallback<NonNullable<React.ComponentProps<typeof WorkflowsLibraryHeaderActions>['controlRef']>>(
+        target => { creationRef.current = target; }, []);
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
@@ -95,7 +98,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 testIDPrefix="workflows-column:view"
                 accessibilityLabel={t('workflows.tabsAccessibility.savedRuns')}
                 tabs={[
-                    { id: 'definitions', label: t('workflows.list.definitions') },
+                    { id: 'definitions', label: t('workflows.title') },
                     { id: 'runs', label: t('workflows.tabs.runs') },
                 ]}
                 activeTabId={view}
@@ -108,7 +111,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     // Without a shell column, Definitions is the full home, not a second compact navigation list.
     // The same view owner still reaches Runs; the home carries its own page identity, actions and spaces.
     if (props.definitionsContent !== undefined && access.kind === 'workflows') {
-        return <View testID="workflows-column" style={styles.column}>
+        return <WorkflowsColumnCreationRefContext.Provider value={creationRef}><View testID="workflows-column" style={styles.column}>
             {headsPage && phone ? <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
                 <PhoneMainTabLine />
                 <NavigationLargeTitleProvider largeTitle>
@@ -121,7 +124,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     <PageFrame column="wide" content="column" style={styles.pageHead}>
                         <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
                             <PageHeader title={t('workflows.title')} description={t('workflows.destination.description')}
-                                actions={<WorkflowsLibraryHeaderActions secondary={!ownsCreation} />} />
+                                actions={<WorkflowsLibraryHeaderActions secondary={!ownsCreation} controlRef={setCreationRef} />} />
                         </View>
                         {viewTabs}
                     </PageFrame>
@@ -135,7 +138,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
                 </WorkflowsColumnOwnsCreationContext.Provider>
             )}
-        </View>;
+        </View></WorkflowsColumnCreationRefContext.Provider>;
     }
     const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
     if (access.kind === 'workflows') {
@@ -177,7 +180,7 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         compact
         segmentSizing="content"
         tabs={[
-            { id: 'definitions', label: t('workflows.list.definitions'), icon: <Icon name="tree-structure" size={15} color={theme.colors.text.secondary} /> },
+            { id: 'definitions', label: t('workflows.title'), icon: <Icon name="tree-structure" size={15} color={theme.colors.text.secondary} /> },
             { id: 'runs', label: t('workflows.tabs.runs'), icon: <Icon name="play-circle" size={15} color={theme.colors.text.secondary} /> },
         ]}
         activeTabId={props.view}

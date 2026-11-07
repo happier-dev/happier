@@ -3,6 +3,7 @@ import { I18nManager, Platform, Pressable, View, type LayoutChangeEvent } from '
 import type { PressableProps, StyleProp, TextStyle, ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 // Selection equality and the RTL-aware roving destination are NOT owned here. `plugin-ui` is the
 // single owner for both rules so that core's tablist and the public `HappierTabs` adapter cannot
 // drift apart, and `sharedFamilyOwnership.test.ts` names this file as the required core consumer of
@@ -39,7 +40,7 @@ import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { KeyCombinationHint } from '@/components/ui/keyboard/KeyHint';
 
-import { resolveSegmentedTabFit } from './segmentedTabFit';
+import { resolveSegmentedTabFit, type SegmentedTabFit } from './segmentedTabFit';
 import { t } from '@/text';
 
 /**
@@ -131,6 +132,13 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     onSelectTab: (tabId: T) => void;
     /** Wraps each visible tab, whole (a reorder row around a strip tab); the bar keeps its selection and keys. */
     wrapTab?: (tabId: T, tab: React.ReactElement) => React.ReactNode;
+    /** A visible tab's place in the row, for a host that scrolls the bar (reveals the selected tab). */
+    onTabLayout?: (tabId: T, rect: Readonly<{ x: number; width: number }>) => void;
+    /**
+     * A tab's secondary activation (right-click, long-press): the owner opens its menu for that option, anchored to
+     * the tab. Selection stays the press; nothing is reachable only from here.
+     */
+    onTabContextMenu?: (tabId: T, anchor: React.ElementRef<typeof Pressable> | null) => void;
     /** Optional testID prefix – tabs get `${testIDPrefix}:${tab.id}` */
     testIDPrefix?: string;
     /** Compact mode with reduced padding and smaller font */
@@ -145,8 +153,9 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     presentation?: 'segmented' | 'pills' | 'plain';
     /**
      * Fit the row to its measured width instead of scrolling or squeezing (D44): glyphs drop first,
-     * then the trailing tabs that no longer fit move behind one More menu, which keeps their
-     * selected state. Selection, focus and the chosen tab are unchanged by a resize. A value choice
+     * then the trailing tabs that no longer fit move behind one More menu. The selected tab never
+     * goes there: it keeps a place after the tabs that fit, and an explicit-overflow tab the route
+     * opened joins the row the same way. Selection and focus are unchanged by a resize. A value choice
      * (`role="radiogroup"`) never hides options behind More: one that no longer fits becomes one
      * bordered field select of every option, which always shows the chosen value.
      */
@@ -157,11 +166,17 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
         items?: readonly SegmentedTab<T>[];
         /** The placement owner's resolved full catalog order for the combined More menu. */
         orderedIds?: readonly T[];
-        /** Surface operations (Customize…), drawn as menu items below its pages, not as a fake destination. */
+        /**
+         * Surface operations under the pages, past a hairline (Customize tabs…): menu rows of their own, never a fake
+         * destination among the tabs.
+         */
         actions?: readonly SegmentedOverflowAction[];
-        /** Existing menu footer, for surface actions such as Customize without a fake destination. */
-        footer?: React.ReactNode;
     }>;
+    /**
+     * Seat the segmented track on the floating glass while true (a bar over atmosphere art); passing false keeps
+     * the same mounted bar on its ordinary track. Omit it for a bar that is never over art.
+     */
+    glassTrack?: boolean;
     /**
      * `'equal'` (default): segments share the row width evenly.
      * `'content'`: each segment hugs its label so short labels never
@@ -244,6 +259,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 0,
         // A fitting bar's container spans the row to measure it; the track itself still hugs its segments.
         alignSelf: 'flex-start',
+    },
+    // Laid out (so the row takes its place) but not painted until the tabs are measured and fitted.
+    innerAwaitingFit: { opacity: 0 },
+    glassTrack: {
+        borderRadius: HAPPIER_SEGMENTED_METRICS.trackRadiusPx.default,
+        width: '100%',
+        minWidth: 0,
     },
     innerPills: {
         backgroundColor: 'transparent',
@@ -363,6 +385,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexBasis: 'auto',
     },
     /** The box that actually paints: background, radius, focus ring, and the visible height. */
+    // The hairline is part of the drawn height, so the padding gives it back: the track stays the
+    // control height the metrics name (2 + 6 + 16 + 6 + 2 = 32), level with fields and menus beside
+    // it, as the plugin segmented choice already draws it.
     tabSurface: {
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: 'transparent',
@@ -573,10 +598,17 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     const iconOnly = !plain && props.iconPlacement !== 'leading' && props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
     const overflow = props.overflow;
     const hasOverflow = overflow !== undefined;
-    const hasOverflowActions = (overflow?.actions?.length ?? 0) > 0;
-    const reserveMore = hasOverflowActions || (overflow?.items?.length ?? 0) > 0;
     const overflowItems = overflow?.items;
     const overflowOrderedIds = overflow?.orderedIds;
+    // The selected tab is never parked behind More: an explicit-overflow tab the route opened joins the
+    // row after the others, and the fit keeps the selected tab's place (`keep`). A value choice needs
+    // neither: it becomes one field select that shows its value.
+    const promoted = React.useMemo(() => valueChoice || props.tabs.some((tab) => isHappierTabSelected(props.activeTabId, tab.id)) ? null
+        : overflowItems?.find((tab) => isHappierTabSelected(props.activeTabId, tab.id)) ?? null, [overflowItems, props.activeTabId, props.tabs, valueChoice]);
+    const rowTabs = React.useMemo(() => (promoted ? [...props.tabs, promoted] : props.tabs), [promoted, props.tabs]);
+    const keep = valueChoice ? -1 : rowTabs.findIndex((tab) => isHappierTabSelected(props.activeTabId, tab.id));
+    const hasOverflowActions = (overflow?.actions?.length ?? 0) > 0;
+    const reserveMore = hasOverflowActions || overflowItems?.some((tab) => tab !== promoted) === true;
     const [rowWidth, setRowWidth] = React.useState<number | null>(null);
     const [measured, setMeasured] = React.useState<Readonly<Record<string, number>>>({});
     const recordMeasure = React.useCallback((key: string, event: LayoutChangeEvent) => {
@@ -585,37 +617,54 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     }, []);
     // A scale of short steps (Codex's six effort tiers) stays one row while its labels fit, even when
     // the widest would not fit an equal share: each segment then takes its own label's width.
-    const labelWidths = props.tabs.map((tab) => measured[`l:${tab.id}`]);
-    const labelSized = props.segmentSizing === 'equal-or-label' && rowWidth !== null
+    const availableForSegments = rowWidth === null ? null : rowWidth - (plain ? 0 : SEGMENT_TRACK_PADDING_PX * 2);
+    const labelWidths = rowTabs.map((tab) => measured[`l:${tab.id}`]);
+    const labelSized = props.segmentSizing === 'equal-or-label' && availableForSegments !== null
         && labelWidths.every((width) => width !== undefined)
-        && Math.max(...(labelWidths as number[])) * labelWidths.length > rowWidth - (plain ? 0 : SEGMENT_TRACK_PADDING_PX * 2);
-    const fit = React.useMemo(() => {
-        if (!hasOverflow) return { icons: true, counts: true, visibleCount: props.tabs.length };
-        const complete = props.tabs.every((tab) => measured[`i:${tab.id}`] !== undefined && measured[`l:${tab.id}`] !== undefined
+        && Math.max(...(labelWidths as number[])) * labelWidths.length > availableForSegments;
+    const resolvedFit = React.useMemo(() => {
+        if (!hasOverflow) return null;
+        const complete = rowTabs.every((tab) => measured[`i:${tab.id}`] !== undefined && measured[`l:${tab.id}`] !== undefined
             && (!tab.count || measured[`b:${tab.id}`] !== undefined))
             && measured.more !== undefined;
+        if (!complete || rowWidth === null) return null;
         // An equal-width value row gives every choice the same share, so it fits only while its widest choice does.
         const segmentWidths = (widths: readonly number[]) => equalValueRow && !labelSized ? widths.map(() => Math.max(...widths)) : widths;
         return resolveSegmentedTabFit({
             // The track's own padding is not room for segments: counting it let a row that "fit" squeeze
             // every label ("Overvi…") instead of dropping the glyphs first.
-            available: complete && rowWidth !== null ? rowWidth - (plain ? 0 : SEGMENT_TRACK_PADDING_PX * 2) : null,
-            withIcons: segmentWidths(props.tabs.map((tab) => measured[`i:${tab.id}`] ?? 0)),
-            labelsOnly: segmentWidths(props.tabs.map((tab) => measured[`l:${tab.id}`] ?? 0)),
-            labelsWithoutCounts: segmentWidths(props.tabs.map((tab) => measured[`b:${tab.id}`] ?? measured[`l:${tab.id}`] ?? 0)),
+            available: availableForSegments ?? rowWidth,
+            withIcons: segmentWidths(rowTabs.map((tab) => measured[`i:${tab.id}`] ?? 0)),
+            labelsOnly: segmentWidths(rowTabs.map((tab) => measured[`l:${tab.id}`] ?? 0)),
+            labelsWithoutCounts: segmentWidths(rowTabs.map((tab) => measured[`b:${tab.id}`] ?? measured[`l:${tab.id}`] ?? 0)),
             gap: plain ? HAPPIER_SEGMENTED_METRICS.plain.gapPx : 0,
             more: measured.more ?? 0,
             reserveMore,
+            keep: keep >= 0 ? keep : null,
         });
-    }, [equalValueRow, hasOverflow, labelSized, measured, plain, props.tabs, reserveMore, rowWidth]);
+    }, [availableForSegments, equalValueRow, hasOverflow, keep, labelSized, measured, plain, reserveMore, rowTabs, rowWidth]);
+    // A tab set that changes (a count arriving) is measured again; until then the last resolved fit stands,
+    // never a row that paints every tab squeezed. Before the first fit the row is laid out but not painted.
+    const lastFit = React.useRef<SegmentedTabFit | null>(null);
+    if (resolvedFit) lastFit.current = resolvedFit;
+    const settledFit = resolvedFit ?? lastFit.current;
+    const awaitingFit = hasOverflow && settledFit === null;
+    const fit: SegmentedTabFit = hasOverflow && settledFit ? settledFit : { icons: true, counts: true, visibleCount: rowTabs.length };
     const showIcons = plain && fit.icons;
     const glyphOnly = plain && resolveHappierTabGlyphOnly({ labels: props.labels, tabs: props.tabs });
-    const visibleTabs = React.useMemo(() => (hasOverflow ? props.tabs.slice(0, fit.visibleCount) : props.tabs), [fit.visibleCount, hasOverflow, props.tabs]);
+    // The selected tab past the fitting tabs is drawn after them, even on a last fit still standing while a
+    // changed tab set is measured.
+    const keptPastFit = hasOverflow && keep >= fit.visibleCount;
+    const visibleTabs = React.useMemo(() => {
+        if (!hasOverflow) return props.tabs;
+        const lead = rowTabs.slice(0, fit.visibleCount);
+        return keptPastFit ? [...lead, rowTabs[keep]!] : lead;
+    }, [fit.visibleCount, hasOverflow, keep, keptPastFit, props.tabs, rowTabs]);
     const hiddenTabs = React.useMemo(() => {
         if (!hasOverflow) return [];
-        const suffix = props.tabs.slice(fit.visibleCount);
-        if (!overflowItems?.length && !overflowOrderedIds) return suffix;
         const visibleIds = new Set(visibleTabs.map(tab => tab.id));
+        const suffix = rowTabs.filter(tab => !visibleIds.has(tab.id));
+        if (!overflowItems?.length && !overflowOrderedIds) return suffix;
         const byId = new Map(suffix.map(tab => [tab.id, tab]));
         for (const tab of overflowItems ?? []) {
             if (!visibleIds.has(tab.id) && !byId.has(tab.id)) byId.set(tab.id, tab);
@@ -629,8 +678,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
             }
         }
         return [...ordered, ...byId.values()];
-    }, [fit.visibleCount, hasOverflow, overflowItems, overflowOrderedIds, props.tabs, visibleTabs]);
-    const activeHidden = hiddenTabs.some((tab) => isHappierTabSelected(props.activeTabId, tab.id));
+    }, [hasOverflow, overflowItems, overflowOrderedIds, rowTabs, visibleTabs]);
     // A value choice must always show its value, so it never parks options behind More.
     const asSelect = valueChoice && overflow != null && hiddenTabs.length > 0;
     // The segment is drawn at its design height under every pointer; its hit area (the shared owner's) reaches
@@ -655,7 +703,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
         });
     }, []);
 
-    const activeRect = (activeHidden ? tabRects[OVERFLOW_KEY] : tabRects[props.activeTabId]) ?? null;
+    const activeRect = tabRects[props.activeTabId] ?? null;
     // Roving tabindex: the active segment takes focus; when the value names no enabled segment (a
     // custom value, or a choice that cannot apply now) the first enabled one does, so the group
     // never drops out of the tab order.
@@ -685,10 +733,6 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
 
     return (
         <View
-            // React Native Web starts observing a View's layout only when it mounts with a handler, so a
-            // bar that starts fitting itself later (the Inbox list narrowing beside an open item) would
-            // never learn its width. Switching modes remounts the row, which then measures.
-            key={overflow ? 'fit' : 'flow'}
             style={[styles.container, contentSized && !overflow ? styles.containerContent : null]}
             onLayout={overflow ? (event) => {
                 const width = event.nativeEvent.layout.width;
@@ -702,7 +746,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                 // otherwise let the whole pane scroll sideways).
                 <View style={styles.measureClip} pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                 <View style={styles.measureLayer}>
-                    {props.tabs.map((tab) => {
+                    {rowTabs.map((tab) => {
                         // The selected tab draws its label in the active weight, which is wider: measured
                         // regular, the row that "fits" would cut the selected name short ("Overvi…").
                         const active = isHappierTabSelected(props.activeTabId, tab.id);
@@ -738,6 +782,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     testID={props.testIDPrefix ? `${props.testIDPrefix}:select` : undefined}
                 />
             ) : (
+            <SegmentedTrackGlass glass={props.glassTrack} contentSized={contentSized} compact={compact === true}>
             <View
                 style={[
                     styles.inner,
@@ -747,6 +792,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     plain ? styles.innerPlain : null,
                     !pills && !plain ? { backgroundColor: paintColor(theme.colors.segmentedControl.trackBackground) } : null,
                     disabled ? styles.innerDisabled : null,
+                    awaitingFit ? styles.innerAwaitingFit : null,
                 ]}
                 accessibilityRole={valueChoice ? 'radiogroup' : 'tablist'}
                 accessibilityLabel={props.accessibilityLabel}
@@ -773,9 +819,12 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     const webKeyDownProps = Platform.OS === 'web'
                         ? ({ onKeyDown: (event: any) => handleTabKeyDown(tabIndex, event) } as Record<string, unknown>)
                         : {};
+                    // A kept tab moves when the tabs before it change; on web a View reports layout only when its
+                    // own size changes, so it remounts at each new place and the thumb follows it there.
+                    const tabKey = keptPastFit && tabIndex === visibleTabs.length - 1 ? `${tab.id}@${fit.visibleCount}` : tab.id;
                     const tabNode = (
                         <SegmentedTabPressable
-                            key={tab.id}
+                            key={tabKey}
                             ref={(node) => {
                                 if (node) tabRefs.current.set(tab.id, node);
                                 else tabRefs.current.delete(tab.id);
@@ -786,11 +835,22 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                 if (tabDisabled) return;
                                 props.onSelectTab(tab.id);
                             }}
+                            {...(props.onTabContextMenu && !tabDisabled ? {
+                                onLongPress: () => props.onTabContextMenu?.(tab.id, tabRefs.current.get(tab.id) ?? null),
+                                // React Native Web forwards the DOM event; the browser's own menu yields to the owner's.
+                                onContextMenu: (event: Readonly<{ preventDefault?: () => void }>) => {
+                                    event.preventDefault?.();
+                                    props.onTabContextMenu?.(tab.id, tabRefs.current.get(tab.id) ?? null);
+                                },
+                            } as object : {})}
                             // The ring is for keyboard focus only; a click on a segment focuses it too.
                             onFocus={(event) => setFocusedTabId(isHappierFocusVisible(event?.target) ? tab.id : null)}
                             onBlur={() => setFocusedTabId((current) => (current === tab.id ? null : current))}
                             {...webKeyDownProps}
-                            onLayout={slidingThumb && !props.wrapTab ? (event) => handleTabLayout(tab.id, event) : undefined}
+                            onLayout={(slidingThumb || props.onTabLayout) && !props.wrapTab ? (event) => {
+                                if (slidingThumb) handleTabLayout(tab.id, event);
+                                props.onTabLayout?.(tab.id, event.nativeEvent.layout);
+                            } : undefined}
                             style={[
                                 styles.tabFrame,
                                 contentSized ? styles.tabFrameContent : null,
@@ -868,7 +928,10 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     );
                     // A wrapped tab is measured at its wrapper, the item that sits in the row, so the thumb lands on it.
                     return props.wrapTab ? (
-                        <View key={tab.id} onLayout={slidingThumb ? (event) => handleTabLayout(tab.id, event) : undefined}>
+                        <View key={tabKey} onLayout={slidingThumb || props.onTabLayout ? (event) => {
+                            if (slidingThumb) handleTabLayout(tab.id, event);
+                            props.onTabLayout?.(tab.id, event.nativeEvent.layout);
+                        } : undefined}>
                             {props.wrapTab(tab.id, tabNode)}
                         </View>
                     ) : tabNode;
@@ -878,22 +941,37 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                         label={overflow.label}
                         testID={overflow.testID ?? (props.testIDPrefix ? `${props.testIDPrefix}:more` : undefined)}
                         tabs={hiddenTabs}
-                        activeTabId={props.activeTabId}
-                        active={activeHidden}
                         disabled={disabled}
-                        footer={overflow.footer}
                         actions={overflow.actions}
                         onSelectTab={props.onSelectTab}
-                        onLayout={(event) => handleTabLayout(OVERFLOW_KEY, event)}
                     />
                 ) : null}
             </View>
+            </SegmentedTrackGlass>
             )}
         </View>
     );
 }
 
-/** A value choice too wide for its row: the page's bordered field select over the same options. */
+/**
+ * A bar over atmosphere art seats its track on the floating glass, the Look chip's material (lab `at-chip`), so its
+ * labels read through blur rather than over the art. Only a bar that asks for it is wrapped, and its wrapper stays
+ * mounted with no coat while the art is away, so the tabs never remount when the art arrives.
+ */
+function SegmentedTrackGlass(props: Readonly<{ glass: boolean | undefined; contentSized: boolean; compact: boolean; children: React.ReactNode }>) {
+    if (props.glass === undefined) return <>{props.children}</>;
+    return (
+        <GlassSurface surfaceGroup="floating" noCoat={!props.glass}
+            style={[stylesheet.glassTrack, props.compact ? stylesheet.innerCompact : null, props.contentSized ? stylesheet.innerContent : null]}>
+            {props.children}
+        </GlassSurface>
+    );
+}
+
+/**
+ * A value choice too wide for its row, or with more choices than one segmented control holds
+ * (`resolveHappierChoiceControl`): the page's bordered field select over the same options.
+ */
 export function SegmentedValueSelect<T extends string>(props: Readonly<{
     tabs: ReadonlyArray<SegmentedTab<T>>;
     activeTabId: T;
@@ -924,6 +1002,10 @@ export function SegmentedValueSelect<T extends string>(props: Readonly<{
             selectedId={activeTab?.id ?? null}
             onSelect={(id) => { setOpen(false); props.onSelectTab(id as T); }}
             placement="bottom"
+            // A value select also sits inside floating surfaces (the engine popover's selected model card): a
+            // screen-local host paints its menu under that surface, so it opens at body level, which still
+            // stacks above a dialog it was opened from.
+            popoverPortalWebTarget="body"
             trigger={({ toggle }) => (
                 <Pressable
                     testID={props.testID}
@@ -1011,17 +1093,13 @@ const OVERFLOW_PAGES_CATEGORY = 'pages';
 const OVERFLOW_ACTIONS_CATEGORY = 'actions';
 const OVERFLOW_ACTION_ID_PREFIX = '\u0000action:';
 
-/** The tabs that no longer fit, in one menu; it is the selected tab's place while that tab is inside. */
+/** The tabs that no longer fit, in one menu; the selected tab is never among them. */
 function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
     label: string;
     testID?: string;
     tabs: ReadonlyArray<SegmentedTab<T>>;
-    activeTabId: T;
-    active: boolean;
     disabled: boolean;
     onSelectTab: (tabId: T) => void;
-    onLayout: (event: LayoutChangeEvent) => void;
-    footer?: React.ReactNode;
     actions?: readonly SegmentedOverflowAction[];
 }>) {
     const styles = stylesheet;
@@ -1030,11 +1108,13 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
     const [focusVisible, setFocusVisible] = React.useState(false);
     const items = React.useMemo((): DropdownMenuItem[] => [
         ...props.tabs.map((tab) => ({
-            id: tab.id,
-            title: [tab.label, tab.count, tab.badge].filter(Boolean).join(' '),
+            id: tab.id as string,
+            // The name leads; the quiet count stands in the row's trailing meta column, as on the tab itself.
+            title: [tab.label, tab.badge].filter(Boolean).join(' '),
+            accessibilityLabel: [tab.label, tab.count, tab.badge].filter(Boolean).join(' '),
             subtitle: tab.disabled === true ? tab.unavailableReason : undefined,
             icon: tab.icon ?? undefined,
-            checked: isHappierTabSelected(props.activeTabId, tab.id),
+            rightElement: tab.count ? <Text numberOfLines={1} style={styles.tabCount}>{tab.count}</Text> : undefined,
             category: OVERFLOW_PAGES_CATEGORY,
             disabled: tab.disabled === true,
             testID: props.testID ? `${props.testID}:${tab.id}` : undefined,
@@ -1046,9 +1126,7 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
             category: OVERFLOW_ACTIONS_CATEGORY,
             testID: action.testID,
         })),
-    ], [props.actions, props.activeTabId, props.tabs, props.testID]);
-    const activeItem = items.find(item => item.checked) ?? null;
-    const triggerLabel = activeItem ? [props.label, activeItem.title, activeItem.subtitle].filter(Boolean).join(', ') : props.label;
+    ], [props.actions, props.tabs, props.testID, styles.tabCount]);
     const onSelect = (id: string) => {
         setOpen(false);
         if (id.startsWith(OVERFLOW_ACTION_ID_PREFIX)) {
@@ -1058,16 +1136,13 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
         props.onSelectTab(id as T);
     };
     return (
-        // Measure in the track's coordinate space, like the visible tabs. DropdownMenu's
-        // anchoring host wraps its trigger, whose own onLayout x is only host-relative.
-        <View onLayout={props.onLayout}>
+        <View>
             <DropdownMenu
                 open={open}
                 onOpenChange={setOpen}
                 items={items}
-                footer={props.footer}
                 separateCategories
-                selectedId={activeItem?.id ?? null}
+                selectedId={null}
                 onSelect={onSelect}
                 placement="bottom"
                 matchTriggerWidth={false}
@@ -1080,12 +1155,12 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
                         onBlur={() => setFocusVisible(false)}
                         style={[styles.tabFrameContent, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
                         accessibilityRole="button"
-                        accessibilityLabel={triggerLabel}
-                        accessibilityState={{ expanded: open, selected: props.active, disabled: props.disabled }}
+                        accessibilityLabel={props.label}
+                        accessibilityState={{ expanded: open, disabled: props.disabled }}
                         {...(Platform.OS === 'web' ? ({ 'aria-haspopup': 'menu', 'aria-expanded': open } as Record<string, unknown>) : {})}
                     >
                         <View style={[styles.tabSurface, styles.plainSurface, happierFocusRingStyle({ visible: focusVisible, color: theme.colors.border.focus })]}>
-                            <PlainTabCaption tab={{ id: OVERFLOW_KEY, label: props.label }} icon={false} active={props.active} more />
+                            <PlainTabCaption tab={{ id: OVERFLOW_KEY, label: props.label }} icon={false} active={false} more />
                         </View>
                     </Pressable>
                 )}

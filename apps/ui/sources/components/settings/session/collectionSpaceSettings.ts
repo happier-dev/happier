@@ -4,7 +4,7 @@ import { CollectionSpaceSelectionValueV1Schema, getDefaultCollectionSpaceIdV1, r
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { builtInSettingUiDeclaration, SETTING_VALUE_UNAVAILABLE,
     type SettingDeclaration, type SettingOperationContext, type SettingsPageDeclaration, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
-import { readCollectionSpaceId, readCollectionSpaceSelection, writeCollectionSpaceSelectionV1 } from '@/sync/domains/session/listing/sessionListSpaces';
+import { readCollectionSpaceId, readCollectionSpaceSelection, selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { readCollectionSpaceDefaultV1 } from './collectionSpaceDefaults';
 
@@ -20,10 +20,8 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
     const defaultId = getDefaultCollectionSpaceIdV1(entityKind);
     const needsDefault = mutation.op === 'resetDefault' || (mutation.op === 'edit' || mutation.op === 'associateTag') && mutation.spaceId === defaultId
         || mutation.op === 'reorder' && (mutation.spaceId === defaultId || mutation.beforeSpaceId === defaultId);
-    if (needsDefault && !context.readLocalSettings) return { status: 'unavailable' as const, reason: 'setting_not_bound' };
-    const defaultSpace = needsDefault && context.readLocalSettings
-        ? readCollectionSpaceDefaultV1(entityKind, await context.readSettings(), context.readLocalSettings()) : undefined;
-    if (!context.isCurrent()) return { status: 'unavailable' as const, reason: 'setting_not_bound' };
+    const defaultSpace = needsDefault
+        ? readCollectionSpaceDefaultV1(entityKind, await context.readSettings()) : undefined;
     let accepted: CollectionSpacesV1 | undefined;
     let reason = 'space_not_found';
     try {
@@ -38,15 +36,13 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
         if (error instanceof SpaceMutationRejected) return { status: 'unavailable' as const, reason };
         throw error;
     }
-    if (changesSelection && accepted && context.isCurrent()) {
+    if (changesSelection && accepted) {
         const selectedId = readCollectionSpaceId(accountSettingsScopeKeySuffix(context.accountScope), entityKind);
         const nextId = mutation.op === 'create' ? mutation.space.id
             : mutation.op === 'delete' && selectedId === mutation.spaceId ? defaultId : undefined;
         if (nextId !== undefined) {
             // Definition acceptance is the navigation boundary. Never select before CAS or on another device.
-            const catalog = accepted;
-            await writeCollectionSpaceSelectionV1({ scope: context.accountScope, entityKind, spaceId: nextId,
-                isCurrent: context.isCurrent, readSettings: () => ({ collectionSpacesV1: catalog }) });
+            selectCollectionSpace(context.accountScope, entityKind, nextId);
         }
     }
     return accepted ? { status: 'completed' as const, value: accepted as CollectionSpacesV1 & import('@/components/settings/catalog/settingDeclarations').SettingValue }
@@ -69,9 +65,9 @@ function selectedSpaceDeclaration(entityKind: CollectionEntityKindV1): SettingDe
         commit: async (_local, value, _write, context) => {
             const selection = CollectionSpaceSelectionValueV1Schema.parse(value);
             if (!context?.accountScope || !context.isCurrent() || !context.readSettings) return SETTING_VALUE_UNAVAILABLE;
-            const result = await writeCollectionSpaceSelectionV1({ scope: context.accountScope, entityKind, spaceId: selection.spaceId,
-                isCurrent: context.isCurrent, readSettings: context.readSettings });
-            if (!result.ok) return SETTING_VALUE_UNAVAILABLE;
+            const settings = await context.readSettings();
+            if (!resolveCollectionSpacesV1(settings.collectionSpacesV1, entityKind).some(space => space.id === selection.spaceId)) return SETTING_VALUE_UNAVAILABLE;
+            selectCollectionSpace(context.accountScope, entityKind, selection.spaceId);
         },
     } };
 }
@@ -99,7 +95,7 @@ export function collectionSpaceSettingRefs(entityKind: CollectionEntityKindV1): 
 }
 export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['sessionWork', 'workflow', 'discussion'] as const).flatMap((entityKind): SettingsPageDeclaration[] => {
     const settings = collectionSpaceSettingRefs(entityKind);
-    const pageSettings: Record<string, SettingRef> = { spaces: settings.spaces, selectedSpace: settings.selectedSpace, enabled: settings.enabled,
+    const pageSettings: Record<string, SettingRef> = { spaces: settings.spaces, enabled: settings.enabled,
         ...(entityKind === 'sessionWork' ? { masterEnabled: settings.masterEnabled } : {}) };
     const sectionId = settings.spaces.sectionId;
     // Manage spaces is the rows' home: search and the title menu open that entity's page at the same anchors.
@@ -109,9 +105,9 @@ export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['
     const pageId = entityKind === 'sessionWork' ? 'session' as const : 'settings' as const;
     return [{ pageId, subpage, sections: {
         list: { titleKey: 'sessionsList.spacesTitle', settings: pageSettings },
-    }, sectionRefs: { list: { id: sectionId, settingAnchors: [settings.spaces.anchor, settings.selectedSpace.anchor,
+    }, sectionRefs: { list: { id: sectionId, settingAnchors: [settings.spaces.anchor,
         settings.enabled.anchor, ...(entityKind === 'sessionWork' ? [settings.masterEnabled.anchor] : [])] } },
-        settings: pageSettings },
+        settings: { ...pageSettings, selectedSpace: settings.selectedSpace } },
     { pageId, subpage: { id: 'filters', route: entityKind === 'sessionWork' ? '/' : entityKind === 'workflow' ? '/workflows' : '/discussions',
         titleKey: entityKind === 'sessionWork' ? 'sessionsList.filtersTitle' : entityKind === 'workflow' ? 'workflows.title' : 'session.collaboration.discussion.title', anchors: 'page' },
         sections: { list: { settings: { filters: settings.filters } } },

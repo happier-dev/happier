@@ -2,18 +2,27 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  BUILTIN_WORKFLOW_CATALOG_V1,
-  WORKFLOW_STARTER_EXAMPLES_V1,
-  PluginProjectionV2Schema,
-  WorkflowDefinitionV1Schema,
-  encodePlainArtifactStoredContent,
-  ActionIdSchema,
-  StrictJsonValueSchema,
-  createWorkflowAccountRunActionOwner,
+  BUILTIN_WORKFLOW_CATALOG_V1} from '@happier-dev/protocol/workflows/builtins/catalog';
+import {
+  WORKFLOW_STARTER_EXAMPLES_V1} from '@happier-dev/protocol/workflows/builtins/examples';
+import {
+  PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+  WorkflowDefinitionV1Schema} from '@happier-dev/protocol/workflows/workflowV1';
+import {
+  encodePlainArtifactStoredContent, decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+  ActionIdSchema} from '@happier-dev/protocol/actions/actionIds';
+import {
+  StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import {
+  createWorkflowAccountRunActionOwner} from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import {
   openWorkflowAcceptedSnapshotStoredEnvelopeV1,
-  parseWorkflowStoredContentEnvelopeV1,
+  parseWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import {
   AutomationDefinitionListRequestSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -31,7 +40,7 @@ import {
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import {
@@ -257,8 +266,12 @@ async function seedUnavailableWorkflowDefinitions() {
       kind: 'workflow-definition.v1',
     }),
   });
+  // A library row is a header summary; only a legacy header (written before its step labels) has
+  // its body opened by the list, so that is where an unreadable body still shows as unavailable.
+  const { previewSteps: _labels, ...legacyHeader } = decodePlainArtifactStoredContent(badBody.header) as Record<string, unknown>;
   artifacts.replaceStoredRow({
     ...badBody,
+    header: encodePlainArtifactStoredContent(legacyHeader),
     body: encodePlainArtifactStoredContent({ body: 'invalid-workflow-json' }),
   });
   home.requests.length = 0;
@@ -370,6 +383,8 @@ beforeEach(async () => {
   const machine = createMachineFixture({
     id: 'machine-1',
     activeAt: Date.now(),
+    // Automatic Account discovery requires an own Machine, as the real Home row declares.
+    access: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'workflow-picker-account' }).access,
   });
   storage.setState({
     machines: { [machine.id]: machine },
@@ -600,9 +615,9 @@ describe('WorkflowStartPicker plugin workflows', () => {
       .findAllByType(DropdownMenu)
       .find((menu) => menu.props.testID === 'workflows-column:add:menu')!;
     expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
-      'new',
-      'agent',
+      'blank',
       'trigger',
+      'agent',
       'example',
       'import',
     ]);
@@ -818,7 +833,12 @@ describe('WorkflowStartPicker plugin workflows', () => {
     });
     await screen.pressByTestIdAsync('workflow-builtin-run-now');
     expect(starts()).toEqual([]);
-    expect(modals).toEqual([]);
+    expect(modals).toHaveLength(1);
+    expect(modals[0]).toMatchObject({
+      type: 'custom',
+      visible: true,
+      chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'none' },
+    });
     expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
     await act(async () => {
       screen.findByType(WorkflowRunComposer).props.onRun(undefined);
@@ -893,8 +913,9 @@ describe('WorkflowStartPicker plugin workflows', () => {
   it('shows the plugin library even when no saved definitions or runs exist', async () => {
     installPluginProjection();
     const screen = await renderScreen(<WorkflowsLibraryHome />);
-    await act(async () => {
-      await Promise.resolve();
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.findByTestId(`workflows-home:row:${plugin.workflow}`)).not.toBeNull();
     });
     await screen.pressByTestIdAsync(`workflows-home:row:${plugin.workflow}`);
     expect(routing.push).toHaveBeenCalledWith(
@@ -947,26 +968,30 @@ describe('WorkflowStartPicker plugin workflows', () => {
       machines: { [machine.id]: machine },
     });
     installPluginProjection();
-    const hook = await renderHook(
-      () => useSessionBuiltinWorkflowStart({ sessionId: session.id }),
-      { wrapper: withPanes },
-    );
+    let openStart!: ReturnType<typeof useSessionBuiltinWorkflowStart>;
+    function SessionStart() {
+      openStart = useSessionBuiltinWorkflowStart({ sessionId: session.id });
+      return null;
+    }
+    const screen = await renderScreen(React.createElement(withPanes, null, <SessionStart />));
     await act(async () => {
-      hook.getCurrent()(plugin);
+      openStart(plugin);
     });
     expect(modals).toHaveLength(1);
     expect(modals[0]).toMatchObject({ type: 'custom', visible: true });
     expect(starts()).toEqual([]);
-    const composer = hook.tree.root.findByType(WorkflowRunComposer);
+    expect(findAllHostTestInstances(screen.root, node => node.props.testID === 'workflow-start-details')).toHaveLength(1);
+    const composer = screen.findByType(WorkflowRunComposer);
     const startSettled = () =>
-      expect(routing.push).toHaveBeenCalledWith(createWorkflowRunRoute(
-        String(starts()[0]?.input.runId), storage.getState().profileScope!.serverId,
-      ));
+      expect(findAllHostTestInstances(screen.root, node => node.props.testID === 'workflow-start-details')).toHaveLength(0);
     await act(async () => {
       composer.props.onRun({});
       await vi.waitFor(startSettled);
     });
     expect(confirmation).not.toHaveBeenCalled();
+    expect(routing.push).not.toHaveBeenCalled();
+    const { WorkflowRunPane } = await import('./WorkflowRunPane');
+    await vi.waitFor(() => expect(screen.findAllByType(WorkflowRunPane)).toHaveLength(1));
     expect(starts()).toEqual([
       expect.objectContaining({
         input: expect.objectContaining({
@@ -985,7 +1010,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     ]);
     expect(
       modals.filter((entry) => 'visible' in entry && entry.visible === true),
-    ).toEqual([]);
+    ).toHaveLength(1);
     startSettled();
   });
   it('starts a chosen workflow from the Session Run… chip with the retained draft as its question', async () => {
@@ -1031,11 +1056,13 @@ describe('WorkflowStartPicker plugin workflows', () => {
     const { useSessionWorkflowRunChip } =
       await import('@/components/sessions/agents/launch/useSessionWorkflowRunChip');
     const draft = 'Is 5 attempts enough if the relay restarts mid-deploy?';
+    const { writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    writeExistingSessionDraft({ scope: storage.getState().profileScope!, sessionId: session.id,
+      patch: { text: draft }, materializationIntent: 'userEdit' });
     const hook = await renderHook(
       () =>
         useSessionWorkflowRunChip({
           sessionId: session.id,
-          readDraft: () => draft,
         }),
       { wrapper: withPanes },
     );
@@ -1083,7 +1110,8 @@ describe('WorkflowStartPicker plugin workflows', () => {
       node => node.props.testID === 'workflow-run-inputs-run');
     await vi.waitFor(() => expect(button?.props.accessibilityState.disabled).toBe(false));
     await pressTestInstanceAsync(button);
-    await vi.waitFor(() => expect(routing.push).toHaveBeenCalled());
+    await vi.waitFor(() => expect(starts()).toHaveLength(1));
+    expect(routing.push).not.toHaveBeenCalled();
     expect(starts()[0]).toMatchObject({
       input: {
         source: { kind: 'catalog', workflow: panel.id },
@@ -1097,51 +1125,133 @@ describe('WorkflowStartPicker plugin workflows', () => {
     })).toMatchObject({ kind: 'available', content: { inputs: { request: draft, previousRoundContext: null },
       origin: { kind: 'direct', originSessionId: session.id } } });
   });
-  it.each([false, true])('keeps Discussion pattern reads on demand and submits the reviewed committed question (prepare=%s)', async (prepare) => {
+  it('keeps the selected saved Workflow inputs while consuming its relevant revision only', async () => {
+    const { WorkflowStartDetailsBody } = await import('./WorkflowStartDetails');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { updateWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+    const definitionId = '00000000-0000-4000-8000-000000000091';
+    const panel = BUILTIN_WORKFLOW_CATALOG_V1.find(entry => entry.id === 'builtin:plan-with-a-panel')!;
+    const saved = await createWorkflowDefinition({ definitionId, definition: panel.definition, metadata: { title: 'Selected plan' } });
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    const onStarted = vi.fn();
+    const screen = await renderScreen(<WorkflowStartDetailsBody accountLifetime={lifetime}
+      source={{ kind: 'saved', definitionId, revision: saved.revision }} project={{ machineId: 'machine-1', directory: '/project' }}
+      onStarted={onStarted} />, { wrapper: withPanes });
+    await vi.waitFor(() => expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1));
+    const main = panel.definition.inputs.find(input => input.valueType === 'string')!;
+    await act(async () => { screen.findByType(WorkflowRunComposer).props.onChangeValues({ [main.name]: 'Keep my edits' }); });
+    const before = screen.findByType(WorkflowRunComposer).props;
+    const definitionReads = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts'));
+    home.requests.length = 0;
+    await act(async () => publishHomeAccountChange(lifetime.scope.serverId, ['00000000-0000-4000-8000-000000000092'],
+      { source: 'socket', changeKinds: ['artifact'], workflowDefinitionsAffect: true }));
+    expect(definitionReads()).toEqual([]);
+    expect(screen.findByType(WorkflowRunComposer).props.inputs).toBe(before.inputs);
+    expect(screen.findByType(WorkflowRunComposer).props.definition).toBe(before.definition);
+    expect(starts()).toEqual([]);
+    expect(routing.push).not.toHaveBeenCalled();
+    await updateWorkflowDefinition({ definitionId, expectedRevision: saved.revision, definition: panel.definition,
+      metadata: { title: 'Revised plan' } });
+    home.requests.length = 0;
+    await act(async () => publishHomeAccountChange(lifetime.scope.serverId, [definitionId],
+      { source: 'socket', changeKinds: ['artifact'], workflowDefinitionsAffect: true }));
+    await vi.waitFor(() => expect(screen.findByType(WorkflowRunComposer).props.workflowName).toBe('Revised plan'));
+    expect(definitionReads()).toHaveLength(1);
+    expect(screen.findByType(WorkflowRunComposer).props.values[main.name]).toBe('Keep my edits');
+    await act(async () => { screen.findByType(WorkflowRunComposer).props.onRun({ [main.name]: 'Keep my edits' }); });
+    await vi.waitFor(() => expect(starts()).toHaveLength(1));
+    expect(onStarted).toHaveBeenCalledOnce();
+    expect(starts()[0]!.input).toMatchObject({ source: { kind: 'saved', definitionId }, inputs: { [main.name]: 'Keep my edits' } });
+    expect(starts()[0]!.input.source).not.toEqual({ kind: 'saved', definitionId, revision: saved.revision });
+    await screen.unmount();
+    home.requests.length = 0;
+    await act(async () => publishHomeAccountChange(lifetime.scope.serverId, [definitionId],
+      { source: 'socket', changeKinds: ['artifact'], workflowDefinitionsAffect: true }));
+    expect(definitionReads()).toEqual([]);
+  });
+  it('retains reviewed Workflow inputs after the Start body is dismissed and mounted again', async () => {
+    const { WorkflowStartDetailsBody } = await import('./WorkflowStartDetails');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    const panel = BUILTIN_WORKFLOW_CATALOG_V1.find(entry => entry.id === 'builtin:plan-with-a-panel')!;
+    const body = <WorkflowStartDetailsBody accountLifetime={lifetime} source={{ kind: 'catalog', workflow: panel.id }}
+      originSession={{ sessionId: 'session-review-a' }}
+      project={{ machineId: 'machine-1', directory: '/project' }} retainedDraft="Original question" onStarted={vi.fn()} />;
+    const first = await renderScreen(body, { wrapper: withPanes });
+    await vi.waitFor(() => expect(first.findAllByType(WorkflowRunComposer)).toHaveLength(1));
+    const reviewed = { request: 'Reviewed question', previousRoundContext: { notes: 'Reviewed context' } };
+    const raw = { request: 'Reviewed question', previousRoundContext: '{ "notes": "Reviewed context" }' };
+    await act(async () => {
+      const composer = first.findByType(WorkflowRunComposer);
+      composer.props.onChangeValues(reviewed);
+      composer.props.onChangeRawTextValues(raw);
+    });
+    await first.unmount();
+    const other = await renderScreen(<WorkflowStartDetailsBody accountLifetime={lifetime}
+      source={{ kind: 'catalog', workflow: panel.id }} originSession={{ sessionId: 'session-review-b' }}
+      project={{ machineId: 'machine-1', directory: '/project' }} retainedDraft="Original question" onStarted={vi.fn()} />,
+      { wrapper: withPanes });
+    await vi.waitFor(() => expect(other.findAllByType(WorkflowRunComposer)).toHaveLength(1));
+    expect(other.findByType(WorkflowRunComposer).props.values.request).toBe('Original question');
+    await other.unmount();
+    const reopened = await renderScreen(body, { wrapper: withPanes });
+    await vi.waitFor(() => expect(reopened.findAllByType(WorkflowRunComposer)).toHaveLength(1));
+    expect(reopened.findByType(WorkflowRunComposer).props.values).toEqual(reviewed);
+    expect(reopened.findByType(WorkflowRunComposer).props.rawTextValues).toEqual(raw);
+  });
+  it('opens a reference-only Discussion Start tab without posting or admitting work', async () => {
     const { useDiscussionWorkflowRun } = await import('@/components/discussions/useDiscussionWorkflowRun');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('missing_account_scope');
-    const machine = createMachineFixture();
-    storage.setState({ machines: { [machine.id]: machine } });
-    const onStarted = vi.fn();
     const discussion = { serverId: lifetime.scope.serverId, discussionId: 'discussion-1' };
-    const project = { machineId: machine.id, directory: '/repo' };
-    let preparedQuestion: Readonly<{ localId: string; retainedDraft: string; submittedDraft: string }> | null = null;
-    // This entry selects an existing committed parent; posting/rejoining remains the repository's contract.
-    const prepareAddressingMessage = async (request: Readonly<{ localId: string; retainedDraft: string; submittedDraft: string }>) => {
-      preparedQuestion = request;
-      return { messageId: 'committed-question-1' };
-    };
-    const hook = await renderHook(({ messageId }: { messageId: string }) => useDiscussionWorkflowRun({
-      discussion, accountLifetime: lifetime, project, addressingMessageId: prepare ? null : messageId,
-      ...(prepare ? { prepareAddressingMessage } : {}),
-      readDraft: () => 'Check the relay migration', onStarted,
-    }), { wrapper: withPanes, initialProps: { messageId: 'committed-question-1' } });
-    expect(hook.getCurrent().chip.controlId).toBe('workflow');
-    expect(modals).toEqual([]);
-    expect(home.requests.filter(request => request.path === '/v3/automations/runs/workflow-storage')).toEqual([]);
+    const scopeId = 'discussion-test';
+    const hook = await renderHook(() => ({
+      run: useDiscussionWorkflowRun({ discussion, accountLifetime: lifetime, paneScopeId: scopeId }),
+      pane: useAppPaneScope(scopeId),
+    }), { wrapper: withPanes });
+    expect(hook.getCurrent().run.chip.controlId).toBe('workflow');
     expect(machineRpc).not.toHaveBeenCalled();
-    // Reuse an actual catalog definition rather than a second executable-definition fixture.
     const panel = BUILTIN_WORKFLOW_CATALOG_V1.find(entry => entry.id === 'builtin:plan-with-a-panel')!;
-    await act(async () => hook.getCurrent().select({ id: panel.id, name: 'Relay check', description: '', definition: panel.definition,
-      source: { kind: 'catalog', workflow: panel.id } }));
-    expect(starts()).toEqual([]);
-    expect(preparedQuestion).toBeNull();
-    await hook.rerender({ messageId: 'later-question-2' });
-    const composer = hook.tree.root.findByType(WorkflowRunComposer);
-    const main = panel.definition.inputs.find(input => input.valueType === 'string')!;
-    expect(composer.props.values[main.name]).toBe('Check the relay migration');
-    await act(async () => {
-      composer.props.onRun({ [main.name]: 'Check the revised relay migration' });
-      await vi.waitFor(() => expect(onStarted).toHaveBeenCalled());
+    await act(async () => hook.getCurrent().run.select({ name: 'Relay check', source: { kind: 'catalog', workflow: panel.id } }));
+    expect(hook.getCurrent().pane.scopeState?.details.tabs[0]?.resource).toEqual({
+      kind: 'workflowStart', source: { kind: 'catalog', workflow: panel.id },
+      origin: { kind: 'discussion', discussion },
     });
-    expect(starts()[0]?.input).toMatchObject({ origin: { kind: 'discussion', discussion, addressingMessageId: 'committed-question-1' },
-      onComplete: { kind: 'originating_discussion' } });
-    if (prepare) expect(preparedQuestion).toMatchObject({ localId: starts()[0]?.input.runId,
-      retainedDraft: 'Check the relay migration', submittedDraft: 'Check the revised relay migration' });
-    expect(hook.getCurrent().saveAsPattern).toMatchObject({ state: { status: 'closed' },
-      open: expect.any(Function), review: expect.any(Function), openEditor: expect.any(Function) });
+    // A phone presents the tab in its Start sheet; nothing else asks for attention.
+    const { PhoneDetailsStartSheet } = await import('@/components/appShell/panes/details/PhoneDetailsStartSheet');
+    expect(modals.map(modal => modal.type === 'custom' ? modal.component : modal.type)).toEqual([PhoneDetailsStartSheet]);
+    expect(starts()).toEqual([]);
+    expect(writes()).toEqual([]);
+    expect(hook.getCurrent().run.saveAsPattern.state.status).toBe('closed');
+  });
+  it('retains edited setup values and raw input when the same workflow is dismissed and selected again', async () => {
+    const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+    const hook = await renderHook(() => useWorkflowComposerStart({
+      project: { machineId: 'machine-1', directory: '/repo' }, onStarted: vi.fn(),
+    }), { wrapper: withPanes });
+    const workflow = 'builtin:plan-with-a-panel';
+    // The modal host keeps its exiting content mounted for motion; use the newest review.
+    const currentComposer = () => ({ props: hook.getCurrent().composerProps! });
+    await act(async () => { hook.getCurrent().start(workflow, { retainedDraft: 'Original question' }); });
+    const reviewed = { request: 'Edited question', previousRoundContext: { notes: 'Keep this context' } };
+    const raw = { request: 'Edited question', previousRoundContext: '{ "notes": "Keep this context" }' };
+    await act(async () => {
+      const composer = currentComposer();
+      composer.props.onChangeValues(reviewed);
+      composer.props.onChangeRawTextValues(raw);
+    });
+    await act(async () => currentComposer().props.onCancel());
+    await act(async () => { hook.getCurrent().start(workflow, { retainedDraft: 'Original question' }); });
+    const reopened = currentComposer();
+    expect(reopened.props.values).toEqual(reviewed);
+    expect(reopened.props.rawTextValues).toEqual(raw);
+    expect(starts()).toEqual([]);
+    await act(async () => reopened.props.onCancel());
+    await act(async () => { hook.getCurrent().start(workflow, { retainedDraft: 'A new composer question' }); });
+    expect(currentComposer().props.values.request).toBe('A new composer question');
   });
   it('keeps a reviewed start on its captured Account when a later render has no caller scope', async () => {
     const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
@@ -1153,12 +1263,12 @@ describe('WorkflowStartPicker plugin workflows', () => {
       accountLifetime: current ? lifetime : null, project: { machineId: 'machine-1', directory: '/repo' }, onStarted,
     }), { wrapper: withPanes, initialProps: { current: true } });
     const panel = BUILTIN_WORKFLOW_CATALOG_V1.find(entry => entry.id === 'builtin:plan-with-a-panel')!;
-    await act(async () => hook.getCurrent()({ id: panel.id, name: 'Retained review', description: '',
-      definition: panel.definition, source: { kind: 'catalog', workflow: panel.id } }));
+    await act(async () => { hook.getCurrent().start({ id: panel.id, name: 'Retained review', description: '',
+      definition: panel.definition, source: { kind: 'catalog', workflow: panel.id } }); });
     await hook.rerender({ current: false });
     const main = panel.definition.inputs.find(input => input.valueType === 'string')!;
     await act(async () => {
-      hook.tree.root.findByType(WorkflowRunComposer).props.onRun({ [main.name]: 'Review the selected question' });
+      hook.getCurrent().composerProps!.onRun({ [main.name]: 'Review the selected question' });
       await vi.waitFor(() => expect(onStarted).toHaveBeenCalled());
     });
     expect(starts()).toHaveLength(1);
@@ -1186,11 +1296,13 @@ describe('WorkflowStartPicker plugin workflows', () => {
       (input) => input.valueType === 'string',
     )!;
     const draft = 'Should the relay retry five times?';
+    const { writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    writeExistingSessionDraft({ scope: storage.getState().profileScope!, sessionId: session.id,
+      patch: { text: draft }, materializationIntent: 'userEdit' });
     await act(async () => {
       hook.getCurrent()(
-        { id: panel.id, name: 'Panel', description: '', definition: panel.definition,
+        { name: 'Panel',
           source: { kind: 'catalog', workflow: panel.id } },
-        { retainedDraft: draft },
       );
     });
     await act(async () => {
@@ -1198,7 +1310,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
       await vi.waitFor(() => expect(starts()).toHaveLength(1));
     });
     await vi.waitFor(() =>
-      expect(hook.tree.root.findByType(WorkflowRunComposer).props.startProblem).toBe(
+      expect(hook.tree.root.findByType(WorkflowRunComposer).props.startProblem?.message).toBe(
         t('workflows.problem.targetUnavailable'),
       ),
     );
@@ -1210,7 +1322,9 @@ describe('WorkflowStartPicker plugin workflows', () => {
     expect(composer.props.pending).toBe(false);
     // Closing the form drops the reason; the next opening starts clean.
     await act(async () => {
-      composer.props.onCancel();
+      const activeModal = modals.find(modal => modal.type === 'custom' && 'visible' in modal && modal.visible === true);
+      if (activeModal?.type !== 'custom') throw new Error('missing_details_sheet');
+      activeModal.onRequestClose?.();
     });
     // The real host keeps the old content mounted until its exit motion completes.
     await vi.waitFor(async () => {
@@ -1219,10 +1333,11 @@ describe('WorkflowStartPicker plugin workflows', () => {
     });
     await act(async () => {
       hook.getCurrent()(
-        { id: panel.id, name: 'Panel', description: '', definition: panel.definition,
+        { name: 'Panel',
           source: { kind: 'catalog', workflow: panel.id } },
       );
     });
+    await vi.waitFor(() => expect(hook.tree.root.findAllByType(WorkflowRunComposer)).toHaveLength(1));
     expect(hook.tree.root.findByType(WorkflowRunComposer).props.startProblem ?? null).toBeNull();
   });
   it.each([
@@ -1270,201 +1385,84 @@ describe('WorkflowStartPicker plugin workflows', () => {
       });
     },
   );
-  it('offers the contribution in the Work launch submenu and selects that exact source', async () => {
-    installPluginProjection();
-    const startPluginWorkflow = vi.fn();
-    const launcher = {
-      unavailableReason: null,
-      intents: [],
-      agentIds: [],
-      providerLaunch: null,
-      openConversation: vi.fn(),
-      openRun: vi.fn(),
-      openDetails: vi.fn(),
-      openStartDraft: vi.fn(),
-      startBuiltinWorkflow: vi.fn(),
-      startPluginWorkflow,
+  async function openWorkChooser(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+    await act(async () => { screen.findByType(DropdownMenu).props.onSelect('run-workflow'); });
+    const menu = screen.findByType<typeof DropdownMenu>(DropdownMenu).props;
+    if (!menu.renderContent) throw new Error('missing_shared_workflow_chooser');
+    // The native portal is painted by live QA. Render the real menu content contract here;
+    // chooser rows, library, Account lifetime and selection remain the production path.
+    return renderScreen(<>{menu.renderContent({ maxHeight: 600, maxWidth: 400, placement: 'bottom',
+      presentation: 'anchored', requestClose: () => menu.onOpenChange(false) })}</>);
+  }
+  function workLauncher() {
+    return {
+      unavailableReason: null, intents: [], agentIds: [], providerLaunch: null,
+      openConversation: vi.fn(), openRun: vi.fn(), openDetails: vi.fn(), openStartDraft: vi.fn(),
+      startBuiltinWorkflow: vi.fn(), startPluginWorkflow: vi.fn(), startWorkflow: vi.fn(),
     };
-    const screen = await renderScreen(
-      <SessionAgentsLaunchMenu launcher={launcher} testID="plugin-launch" />,
-    );
-    // Native/DOM portal painting is a live gate; the real menu's public presentation
-    // contract can be selected here without replacing its catalog or library logic.
-    await act(async () => {
-      screen.findByType(DropdownMenu).props.onOpenChange(true);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const menu = screen.findByType(DropdownMenu);
-    const items: React.ComponentProps<typeof DropdownMenu>['items'] =
-      menu.props.items;
-    const pluginItem = items
-      .find((item) => item.id === 'run-workflow')
-      ?.submenu?.items.find(
-        (item) =>
-          item.testID === `session-agents-launch:plugin:${plugin.workflow}`,
-      );
-    expect(pluginItem).toMatchObject({
-      title: plugin.title,
-      category: 'workflows.plugins.fromPlugins',
-    });
-    await act(async () => {
-      menu.props.onSelect(pluginItem!.id);
-    });
-    expect(startPluginWorkflow).toHaveBeenCalledWith(plugin);
+  }
+  it('offers the contribution through the shared Work chooser and selects its reference', async () => {
+    installPluginProjection();
+    const launcher = workLauncher();
+    const screen = await renderScreen(<SessionAgentsLaunchMenu launcher={launcher} testID="plugin-launch" />);
+    const chooser = await openWorkChooser(screen);
+    await chooser.pressByTestIdAsync(`workflow-choice:${plugin.workflow}`);
+    expect(launcher.startWorkflow).toHaveBeenCalledWith({ name: plugin.title,
+      source: { kind: 'catalog', workflow: plugin.workflow, pluginVersion: plugin.version } });
+    expect(routing.push).not.toHaveBeenCalled();
   });
-  it('keeps unavailable rows visible and refuses them in the Work launch submenu', async () => {
+  it('keeps unavailable rows visible and starts a readable saved reference through the Work chooser', async () => {
     const ids = await seedUnavailableWorkflowDefinitions();
     installPluginProjection();
-    const launcher = {
-      unavailableReason: null,
-      intents: [],
-      agentIds: [],
-      providerLaunch: null,
-      openConversation: vi.fn(),
-      openRun: vi.fn(),
-      openDetails: vi.fn(),
-      openStartDraft: vi.fn(),
-      startBuiltinWorkflow: vi.fn(),
-      startPluginWorkflow: vi.fn(),
-    };
-    const screen = await renderScreen(
-      <SessionAgentsLaunchMenu launcher={launcher} />,
-    );
-    await act(async () => {
-      screen.findByType(DropdownMenu).props.onOpenChange(true);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const menu = screen.findByType(DropdownMenu);
-    const items: React.ComponentProps<typeof DropdownMenu>['items'] =
-      menu.props.items;
-    const rows = items.find((item) => item.id === 'run-workflow')!.submenu!
-      .items;
+    const launcher = workLauncher();
+    const screen = await renderScreen(<SessionAgentsLaunchMenu launcher={launcher} />);
+    const chooser = await openWorkChooser(screen);
+    const root: React.ComponentProps<typeof SelectionList>['rootStep'] = chooser.findByType(SelectionList).props.rootStep;
+    const section = root.sections.find(entry => entry.kind === 'dynamic' && entry.id === 'library');
+    if (section?.kind !== 'dynamic') throw new Error('missing_library_options');
+    const rows = await section.resolve('', new AbortController().signal);
     for (const id of [ids.missingTitle, ids.badBody]) {
-      const row = rows.find((item) => item.id === `workflow:${id}`);
-      expect(row).toMatchObject({
-        disabled: true,
-        subtitle: expect.any(String),
-      });
-      await act(async () => {
-        menu.props.onSelect(`workflow:${id}`);
-      });
+      expect(rows.options.find(row => row.id === id)).toMatchObject({ disabled: true, subtitle: expect.any(String) });
+      await act(async () => { await chooser.findByType(SelectionList).props.onSelect(id); });
     }
+    expect(launcher.startWorkflow).not.toHaveBeenCalled();
+    await act(async () => { await chooser.findByType(SelectionList).props.onSelect(ids.readable); });
+    expect(launcher.startWorkflow).toHaveBeenCalledWith({ name: 'Readable recipe',
+      source: { kind: 'saved', definitionId: ids.readable, revision: { headerVersion: 1, bodyVersion: 1 } } });
     expect(routing.push).not.toHaveBeenCalled();
-    expect(
-      rows.find((item) => item.id === `workflow:${ids.readable}`)?.disabled,
-    ).not.toBe(true);
-    await act(async () => {
-      screen.findByType(DropdownMenu).props.onOpenChange(true);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      screen
-        .findByType(DropdownMenu)
-        .props.onSelect(`workflow:${ids.readable}`);
-    });
-    expect(routing.push).toHaveBeenCalledWith({
-      pathname: '/workflows/[id]',
-      params: { id: ids.readable, intent: 'run' },
-    });
-    expect(
-      rows.find((item) => item.id === `plugin-workflow:${plugin.workflow}`)
-        ?.title,
-    ).toBe(plugin.title);
   });
   it('does not retain or select a previous Account catalog while the closed menu changes Account', async () => {
     installPluginProjection();
-    await createWorkflowDefinition({
-      definitionId: '00000000-0000-4000-8000-000000000003',
-      definition: plugin.definition,
-      metadata: { title: 'Private saved recipe' },
-    });
+    await createWorkflowDefinition({ definitionId: '00000000-0000-4000-8000-000000000003',
+      definition: plugin.definition, metadata: { title: 'Private saved recipe' } });
     home.requests.length = 0;
     machineRpc.mockClear();
-    const startPluginWorkflow = vi.fn();
-    const launcher = {
-      unavailableReason: null,
-      intents: [],
-      agentIds: [],
-      providerLaunch: null,
-      openConversation: vi.fn(),
-      openRun: vi.fn(),
-      openDetails: vi.fn(),
-      openStartDraft: vi.fn(),
-      startBuiltinWorkflow: vi.fn(),
-      startPluginWorkflow,
-    };
-    const screen = await renderScreen(
-      <SessionAgentsLaunchMenu launcher={launcher} />,
-    );
-    // Sync may finish its header-only census after fixture setup. The closed
-    // launcher must not demand Workflow bodies, summaries or daemon catalogs.
-    const workflowReads = () => home.requests.filter((request) =>
-      request.path === '/v1/artifacts/read' ||
-      (request.path === '/v1/artifacts' && request.url.searchParams.get('includeBody') === 'true') ||
+    const launcher = workLauncher();
+    const screen = await renderScreen(<SessionAgentsLaunchMenu launcher={launcher} />);
+    const workflowReads = () => home.requests.filter(request => request.path === '/v1/artifacts/read' ||
+      (request.path === '/v1/artifacts' && request.method !== 'POST') ||
       request.path === '/v3/automations/runs/workflow-storage');
-    expect(
-      workflowReads(),
-    ).toEqual([]);
+    expect(workflowReads()).toEqual([]);
     expect(machineRpc).not.toHaveBeenCalled();
-    await act(async () => {
-      screen.findByType(DropdownMenu).props.onOpenChange(true);
-    });
+    const chooser = await openWorkChooser(screen);
     await vi.waitFor(() => expect(workflowReads()).not.toHaveLength(0));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      screen.findByType(DropdownMenu).props.onOpenChange(false);
-    });
+    await act(async () => { chooser.tree.unmount(); screen.findByType(DropdownMenu).props.onOpenChange(false); });
     const next = createDeferred<Response>();
     delayedRead = next.promise;
     await act(async () => {
       await home.switchAccount('picker', 'next-account');
-      (
-        await import('@/sync/domains/scope/activeServerAccountScope')
-      ).retireActiveServerAccountScopeLifetime();
-      storage.setState({
-        profileScope: {
-          serverId: storage.getState().profileScope!.serverId,
-          accountId: 'next-account',
-        },
-      });
+      (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
+      storage.setState({ profileScope: { serverId: storage.getState().profileScope!.serverId, accountId: 'next-account' } });
     });
-    const menu = screen.findByType(DropdownMenu);
-    const items: React.ComponentProps<typeof DropdownMenu>['items'] =
-      menu.props.items;
-    const workflowItems = items.find((item) => item.id === 'run-workflow')!
-      .submenu!.items;
-    expect(
-      workflowItems.some(
-        (item) =>
-          item.title === plugin.title || item.title === 'Private saved recipe',
-      ),
-    ).toBe(false);
-    await act(async () => {
-      menu.props.onSelect(`plugin-workflow:${plugin.workflow}`);
-    });
-    expect(startPluginWorkflow).not.toHaveBeenCalled();
-    await act(async () => {
-      menu.props.onOpenChange(true);
-    });
-    const pendingItems: React.ComponentProps<typeof DropdownMenu>['items'] =
-      screen.findByType(DropdownMenu).props.items;
-    expect(
-      pendingItems
-        .find((item) => item.id === 'run-workflow')!
-        .submenu!.items.some((item) => item.title === plugin.title),
-    ).toBe(false);
-    await act(async () => {
-      next.resolve(Response.json([]));
-      await next.promise;
-    });
+    expect(screen.findByType(DropdownMenu).props.renderContent).toBeUndefined();
+    const pendingChooser = await openWorkChooser(screen);
+    const root: React.ComponentProps<typeof SelectionList>['rootStep'] = pendingChooser.findByType(SelectionList).props.rootStep;
+    expect(root.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+      .some(item => item.label === plugin.title || item.label === 'Private saved recipe')).toBe(false);
+    await act(async () => { await pendingChooser.findByType(SelectionList).props.onSelect(plugin.workflow); });
+    expect(launcher.startWorkflow).not.toHaveBeenCalled();
+    await act(async () => { next.resolve(Response.json([])); await next.promise; });
   });
   it('selects the catalog definition with its qualified identity and observed plugin version', async () => {
     installPluginProjection();
@@ -1477,8 +1475,9 @@ describe('WorkflowStartPicker plugin workflows', () => {
         maxHeight={600}
       />,
     );
-    await act(async () => {
-      await Promise.resolve();
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.findByTestId(`workflow-choice:${plugin.workflow}`)).not.toBeNull();
     });
     await screen.pressByTestIdAsync(`workflow-choice:${plugin.workflow}`);
     expect(selected).toHaveBeenCalledWith(

@@ -1,4 +1,8 @@
 import * as React from 'react';
+import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
+
+/** The page-form column and its library share the real creation control's focus target. */
+export const WorkflowsColumnCreationRefContext = React.createContext<FocusReturnMutableRef | null>(null);
 
 /**
  * True inside a Workflows column that carries the destination's own "+" (a phone, where navigation

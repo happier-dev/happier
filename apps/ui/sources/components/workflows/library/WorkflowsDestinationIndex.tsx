@@ -7,7 +7,7 @@ import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 
-import { WorkflowsLibraryHome, WorkflowsLibraryIdle } from './WorkflowsLibraryHome';
+import { WorkflowsLibraryHome } from './WorkflowsLibraryHome';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
@@ -51,14 +51,12 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
         identity: { name: workflowsName },
     }), [hideWorkflowLabel, showWorkflowLabel, workflowsName]);
     const close = () => router.setParams({ authoringSessionId: undefined, authoringServerId: undefined });
-    const content = !columnVisible && (access.kind === 'workflows' || access.kind === 'triggersOnly')
+    const content = !columnVisible && access.kind === 'workflows'
         ? phone
             // A phone tab like the others: the shell hands the column its Home line and glyphs.
-            ? <PhoneMainTabShell><WorkflowsColumn surface="page" {...(access.kind === 'workflows'
-                ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} /></PhoneMainTabShell>
-            : <WorkflowsColumn surface="page" {...(access.kind === 'workflows'
-                ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} />
-        : <WorkflowsGate surface="destination"><WorkflowsLibraryIdle /></WorkflowsGate>;
+            ? <PhoneMainTabShell><WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} /></PhoneMainTabShell>
+            : <WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} />
+        : <WorkflowsGate surface="destination"><WorkflowsLibraryHome /></WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}
         <View ref={eventAnchor} style={{ flex: 1 }} collapsable={false}>{content}</View>
@@ -89,9 +87,11 @@ function AutomationEventAuthoringDestination(props: Readonly<{
     const activeScope = useActiveServerAccountScope();
     const seed = useWorkflowEditorDraftSeed(props.serverId && !binding ? null : props.seedId,
         readAutomationEventAuthoringSeed, props.serverId ? binding : undefined);
-    // Event configuration consumes the active Account's catalog and its exact lifetime.
+    // Plugin Event configuration still consumes the active Account's catalog. A host Run draft
+    // consumes only its addressed Account lifetime, supplied to the existing trigger form below.
+    const usesActiveEventCatalog = seed.seed !== null && !('kind' in seed.seed);
     if (access.kind !== 'workflows' || !seed.seed || !seed.lifetime?.isCurrent()
-        || !areServerAccountScopesEqual(seed.lifetime.scope, activeScope)) {
+        || (usesActiveEventCatalog && !areServerAccountScopesEqual(seed.lifetime.scope, activeScope))) {
         return <SurfaceStateCard size="line" kind="unavailable" testID="automation-event-authoring-unavailable"
             title={t('workflows.triggers.legacy.notAvailable')} />;
     }

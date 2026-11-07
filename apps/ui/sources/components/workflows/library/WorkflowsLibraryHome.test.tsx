@@ -164,6 +164,52 @@ afterEach(async () => {
 });
 
 describe('workflow library page anatomy', () => {
+    it('returns focus to the moved New action after the last workflow is deleted on a wide page', async () => {
+        const { WorkflowsColumn } = await import('../column/WorkflowsColumn');
+        const definitionId = '10000000-0000-4000-8000-000000000081';
+        const previousWidth = windowSize.width;
+        windowSize.width = 1440;
+        let deleted = false;
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: deleted ? [] : [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Last visible workflow' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+            }] } };
+            if (actionId === 'workflow.definition.delete') {
+                deleted = true;
+                return { ok: true, result: { definitionId, deleted: true } };
+            }
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'Unexpected fixture request' };
+        });
+        const focused: string[] = [];
+        // Host refs are the native focus boundary; column, library, deletion and focus-return owners stay real.
+        const screen = await renderScreen(<WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} />, {
+            wrapper: Wrapper,
+            createNodeMock: element => ({ focus: () => { if (typeof element.props.testID === 'string') focused.push(element.props.testID); } }),
+        });
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
+            focused.length = 0;
+            const { ContextMenu } = await import('@happier-dev/plugin-ui');
+            const row = screen.findAll(node => node.props.testID === `workflows-home:row:${definitionId}`
+                && Array.isArray(node.props.secondaryActions))[0]!;
+            await act(async () => { row.findByType(ContextMenu).props.onSelect('delete'); });
+            await vi.waitFor(async () => {
+                if (nativeAlert.mock.calls.length > answeredNativeConfirmations) await confirmDeletion();
+                expect(deleted).toBe(true);
+            });
+            await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).toBeNull());
+            await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:deleted')).not.toBeNull());
+            expect(screen.findHostByTestId('workflows-home:new')).not.toBeNull();
+            await vi.waitFor(() => expect(focused).toContain('workflows-home:new'));
+        } finally {
+            await screen.unmount();
+            windowSize.width = previousWidth;
+        }
+    });
     it('retains unknown trigger facts when only scheduler enrichment is unavailable', async () => {
         const { WorkflowDefinitionListResultV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
         const { workflowLibraryRowFilterFacts } = await import('./useWorkflowLibraryView');
@@ -718,12 +764,11 @@ describe('workflow library page anatomy', () => {
         // One overflow: the title bar carries no page-actions `⋯` of raw buttons beside the column's own.
         expect(screen.findHostByTestId('page-header-actions.trigger')).toBeNull();
         expect(screen.findHostByTestId('workflows-home:new')).toBeNull();
-        // Q7/FIN naming: one New workflow entry retains each existing start as an option.
+        // Every workflow start is directly available from the same creation menu.
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const addMenu = screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'workflows-column:add:menu')!;
         expect(addMenu).toBeDefined();
-        expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual(['new']);
-        expect(addMenu.props.items[0].submenu.items.map((item: { id: string }) => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
+        expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
         await act(async () => { addMenu.props.onSelect('blank'); });
         expect(routerPush).toHaveBeenCalledWith('/workflows/new');
     });
@@ -752,8 +797,7 @@ describe('workflow library page anatomy', () => {
             expect(screen.findHostByTestId('workflows-home:agent')).toBeNull();
             const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
             const addMenu = screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'workflows-column:add:menu');
-            expect(addMenu?.props.items.map((item: { id: string }) => item.id)).toEqual(['new']);
-            expect(addMenu?.props.items[0].submenu.items.map((item: { id: string }) => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
+            expect(addMenu?.props.items.map((item: { id: string }) => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
         } finally {
             windowSize.width = 800;
         }
@@ -863,7 +907,8 @@ describe('workflow library page anatomy', () => {
         if (besideColumn) {
             await vi.waitFor(() => expect(screen.findByTestId('workflows-column:library:account-trigger:digest')).not.toBeNull());
             expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
-            expect(screen.findByTestId('workflows-home:idle')).not.toBeNull();
+            expect(screen.findByTestId('workflows-home:idle')).toBeNull();
+            expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull();
             expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(0);
             return;
         }
@@ -882,13 +927,12 @@ describe('workflow library page anatomy', () => {
         await screen.pressByTestIdAsync('workflows-column:more');
         await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
         expect(screen.findByTestId('workflows-column:more:settings')).not.toBeNull();
-        await screen.pressByTestIdAsync('workflows-column:add:new');
-        await vi.waitFor(() => expect(screen.findByTestId('workflows-column:add:trigger')).not.toBeNull());
+        expect(screen.findByTestId('workflows-column:add:trigger')).not.toBeNull();
         // A returning Library keeps the examples one compact row away.
         await reportCollectionLayout(screen, 'workflow-examples:cards');
         expect(screen.findAll(node => /^workflow-examples:.+:use$/.test(String(node.props?.testID ?? ''))).length).toBeGreaterThan(0);
     });
-    it('beside the Workflows column asks which to open and never repeats the column list or its space header (R8-7)', async () => {
+    it('shows the library overview beside the Workflows column (FIN-COMPOSE F10)', async () => {
         windowSize.width = 1440;
         const definitionId = '10000000-0000-4000-8000-000000000071';
         execute.mockImplementation(async (actionId: string) => {
@@ -906,13 +950,11 @@ describe('workflow library page anatomy', () => {
         const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
             <WorkflowsDestinationIndex />
         </AppShellColumnContext.Provider>, { wrapper: Wrapper });
-        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:idle')).not.toBeNull());
-        // The column beside this page is the one list and the one space header; main never draws a second copy.
-        expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).toBeNull();
-        expect(screen.findHostByTestId('workflows-home:search')).toBeNull();
-        expect(screen.findAllHostsByTestId('workflows-home-space-title-swipe')).toHaveLength(0);
+        await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
+        expect(screen.findHostByTestId('workflows-home:idle')).toBeNull();
+        expect(screen.findHostByTestId('workflows-home:search')).not.toBeNull();
         // One primary: New workflow opens the blank draft.
-        await screen.pressByTestIdAsync('workflows-home:idle:new');
+        await screen.pressByTestIdAsync('workflows-home:new');
         expect(routerPush).toHaveBeenCalledWith('/workflows/new');
     });
     it.each([false, true])('reads history for an empty library and distinguishes a first visit (has history: %s)', async (hasHistory) => {

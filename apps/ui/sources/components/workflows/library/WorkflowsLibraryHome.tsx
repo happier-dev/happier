@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { View } from 'react-native';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntityComposerMention';
@@ -45,7 +47,7 @@ import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE } from '../workflowsRoutes';
-import { useWorkflowsColumnHeadsPage, useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
+import { WorkflowsColumnCreationRefContext, useWorkflowsColumnHeadsPage, useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
 import {
     dismissWorkflowLibraryDeletionReceipt,
     useWorkflowRunWindow,
@@ -93,7 +95,7 @@ type LibraryRowCommands = Readonly<{
     run: (definitionId: string) => void;
     exportJson: (definitionId: string) => void;
     /** Opens the one document share sheet (INT I2) for a workflow the caller owns (07 S7 Share). */
-    share: (definition: WorkflowLibraryDefinition) => void;
+    share: (definition: WorkflowLibraryDefinition, anchor?: ShareSheetAnchor) => void;
     remove: (definitionId: string) => void;
 }>;
 
@@ -129,7 +131,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const focused = useIsFocused();
     // The one Workflow library controller (R8-7): the column beside this page narrows through the same draft.
     const libraryView = useWorkflowLibraryView(focused);
-    const { library, filter, visibleKeys, needle, searchQuery: query } = libraryView;
+    const { library, filter, needle, searchQuery: query } = libraryView;
     const spaceHeader = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-home-space', 'section');
     React.useEffect(() => {
         const definitionId = library.deletedDefinitionId;
@@ -178,6 +180,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const anatomy = useLibraryAnatomy();
     const commands = useLibraryRowCommands(library.deletedDefinitionId);
     const deleted = library.deletedDefinitionId !== null;
+    // Built-ins share the filter but live outside this Collection's reachable focus rows.
+    const visibleKeys = model.keys;
     const visibleKeysRef = React.useRef(visibleKeys);
     visibleKeysRef.current = visibleKeys;
     const previousVisibleKeys = React.useRef(visibleKeys);
@@ -191,12 +195,13 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     }, [library.deletedDefinitionId, library.status]);
     React.useEffect(() => { previousVisibleKeys.current = visibleKeys; }, [visibleKeys]);
     const focusRequest = commands.focusRequest ?? deletionFocusRequest;
-    const creationRef = React.useRef<import('@/keyboard/focusReturn').FocusReturnTarget>(null);
+    const localCreationRef = React.useRef<import('@/keyboard/focusReturn').FocusReturnTarget>(null);
+    const creationRef = React.useContext(WorkflowsColumnCreationRefContext) ?? localCreationRef;
     const setCreationRef = React.useCallback<NonNullable<React.ComponentProps<typeof RoundButton>['controlRef']>>(
-        target => { creationRef.current = target; }, []);
+        target => { creationRef.current = target; }, [creationRef]);
     React.useEffect(() => {
         if (deleted && deletionFocusRequest === undefined) restoreFocusToBestTarget(creationRef);
-    }, [deleted, deletionFocusRequest]);
+    }, [creationRef, deleted, deletionFocusRequest]);
 
     const newWorkflow = () => router.push(WORKFLOWS_NEW_ROUTE as never);
     const importWorkflow = () => router.pushRetainingCurrent(WORKFLOWS_IMPORT_ROUTE as never);
@@ -240,6 +245,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             {phone ? null : search}
         </View>
         {phone ? <View style={styles.controlLine}>{search}</View> : <View style={styles.spaceStrip}>{spaceHeader.strip}</View>}
+        {spaceHeader.conditionRow ? <View style={styles.spaceStrip}>{spaceHeader.conditionRow}</View> : null}
         {spaceHeader.overlays}
     </>);
 
@@ -458,7 +464,7 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
             ...(row.group === 'fromPlugins' ? [] : [{ id: 'export', label: t('workflows.exportJson') }]),
             ...(owned ? [{ id: 'delete', label: t('common.delete'), destructive: true }] : []),
         ],
-        onSecondaryAction: (id) => {
+        onSecondaryAction: (id, selection) => {
             if (id === 'mentionInComposer' && row.group !== 'fromPlugins' && scope) {
                 void mention({ kind: 'workflow', scope, workflowId: row.definition.definitionId }, rowTitle(row));
                 return;
@@ -470,7 +476,7 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
             }
             const definitionId = row.definition.definitionId;
             if (id === 'run' && !unavailable) commands.run(definitionId);
-            else if (id === 'share') commands.share(row.definition);
+            else if (id === 'share') commands.share(row.definition, resolvePressTriggerAnchor({ currentTarget: selection?.anchorRef?.current }));
             else if (id === 'export') commands.exportJson(definitionId);
             else if (id === 'delete') commands.remove(definitionId);
         },
@@ -513,7 +519,8 @@ function useLibraryRowCommands(deletedDefinitionId: string | null): LibraryRowCo
         // exact revision in the editor, whose Run review admits the run.
         run: (definitionId) => router.push({ pathname: '/workflows/[id]', params: { id: definitionId, intent: 'run' } } as never),
         exportJson: (definitionId) => { void exportDefinition(definitionId); },
-        share: (definition) => showDocumentShareSheet({
+        share: (definition, anchor) => showDocumentShareSheet({
+            ...(anchor ? { anchor } : {}),
             kind: 'workflow-definition.v1', artifactId: definition.definitionId, name: formatWorkflowDefinitionLibraryTitle(definition),
             subtitle: definition.contentStatus === 'available'
                 ? t('workflows.examples.stepCount', { count: definition.stepCount }) : t('common.unavailable'),
@@ -579,53 +586,10 @@ async function exportDefinition(definitionId: string): Promise<void> {
 }
 
 /**
- * `/workflows` beside the Workflows column (R8-7, the Discussions pattern of lab `clfamily`): the column is
- * the one list and the one space header, so main never draws a second copy of either. It asks which
- * workflow to open, with one primary **New workflow**, and keeps what the column lacks: starting from an
- * example (lab `nav-N1`'s secondary row). An empty library keeps the first-visit invitation.
- */
-export function WorkflowsLibraryIdle(): React.ReactElement | null {
-    const router = useRouter();
-    const openAgent = useWorkflowAgentAuthoring();
-    const focused = useIsFocused();
-    const { library, libraryIsEmpty } = useWorkflowLibraryView(focused);
-    // A deletion receipt belongs to the home that lists the rows; beside the column it would linger with no row to explain.
-    React.useEffect(() => {
-        const definitionId = library.deletedDefinitionId;
-        if (!focused || definitionId === null) return;
-        dismissWorkflowLibraryDeletionReceipt(definitionId);
-    }, [focused, library.deletedDefinitionId]);
-    const history = useWorkflowRunWindow('all', { enabled: libraryIsEmpty });
-    const newWorkflow = () => router.push(WORKFLOWS_NEW_ROUTE as never);
-    const createWithAgent = () => openAgent(buildWorkflowAgentAuthoringSeed({ kind: 'create' }));
-    if (libraryIsEmpty && history.status === 'loaded' && history.rows.length === 0) {
-        return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onCreateWithAgent={createWithAgent}
-            onImport={() => router.pushRetainingCurrent(WORKFLOWS_IMPORT_ROUTE as never)} withBuiltins={false} />;
-    }
-    return (
-        <ItemList pageColumn="wide" containerStyle={styles.idlePage}>
-            <PageContentColumn style={styles.idleColumn}>
-                <EmptyState
-                    testID="workflows-home:idle"
-                    layout="centered"
-                    scene="noWorkflows"
-                    title={t('workflows.destination.idleTitle')}
-                    subtitle={t('workflows.destination.idleBody')}
-                    primaryAction={{ label: t('workflows.newWorkflow'), onPress: newWorkflow, testID: 'workflows-home:idle:new' }}
-                    secondaryAction={{ label: t('workflows.authoring.create'), onPress: createWithAgent, testID: 'workflows-home:idle:agent' }}
-                />
-                <WorkflowExamplesSection presentation="strip" />
-            </PageContentColumn>
-        </ItemList>
-    );
-}
-
-/**
  * First visit (lab `nav-N3`): show, guide, confirm. One primary, and a quiet way in for a file. The
  * examples use the same catalog as the returning home and column picker (08 §6).
  */
-function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void;
-    withBuiltins?: boolean }>) {
+function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void }>) {
     return (
         <ItemList pageColumn="wide">
             <PageContentColumn>
@@ -638,8 +602,7 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
-                {/* Beside the column, the built-ins are already its rows. */}
-                {props.withBuiltins === false ? null : <WorkflowBuiltinsSection />}
+                <WorkflowBuiltinsSection />
                 <WorkflowExamplesSection />
                 <View style={styles.importLine}>
                     <Text style={styles.importPrompt}>{t('workflows.destination.importPrompt')}</Text>
@@ -657,15 +620,6 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
 }
 
 const styles = StyleSheet.create((theme) => ({
-    // The idle page centres its question in the pane, as Discussions' does, with the examples beneath it.
-    idlePage: {
-        flexGrow: 1,
-        justifyContent: 'center',
-    },
-    idleColumn: {
-        gap: theme.space.s32,
-        paddingVertical: theme.space.s32,
-    },
     controlLine: {
         flexDirection: 'row',
         flexWrap: 'wrap',

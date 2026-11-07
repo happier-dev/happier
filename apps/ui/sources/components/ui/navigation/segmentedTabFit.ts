@@ -5,13 +5,18 @@
  * with the rest behind More. A dropped count stays in each tab's accessible name. Nothing here
  * counts tabs or assumes a width: the inputs are the row's own measured box and each tab's own
  * measured width, so long translations, large text and a split pane all resolve the same way.
+ * The selected tab never goes behind More: when it falls past the names that fit, the leading tabs
+ * give way until it fits after them, and the row draws it there (`keep`).
  */
 export type SegmentedTabFit = Readonly<{
   /** Whether the visible tabs draw their glyphs. */
   icons: boolean;
   /** Whether the visible tabs draw their counts. */
   counts: boolean;
-  /** How many leading tabs stay in the row; the rest open from More. */
+  /**
+   * How many leading tabs stay in the row; the rest open from More. A kept tab past them is drawn
+   * after them, and this count already leaves its room.
+   */
   visibleCount: number;
 }>;
 
@@ -30,6 +35,8 @@ export type SegmentedTabFitInput = Readonly<{
   more: number;
   /** Explicit overflow keeps More present even when every pinned tab fits. */
   reserveMore?: boolean;
+  /** The selected tab's index: it stays in the row whatever the width. */
+  keep?: number | null;
 }>;
 
 function rowWidth(
@@ -68,6 +75,18 @@ export function resolveSegmentedTabFit(
   while (
     visible > 0 &&
     rowWidth(names, visible, input.gap) + input.gap + input.more >
+      input.available + tolerance
+  ) {
+    visible -= 1;
+  }
+  const keep = input.keep ?? null;
+  if (keep === null || keep < visible || keep >= count)
+    return { icons: false, counts: false, visibleCount: visible };
+  // The selected tab sits past the names that fit: the leading tabs give way until it fits after them.
+  const keptRoom = (names[keep] ?? 0) + input.gap;
+  while (
+    visible > 0 &&
+    rowWidth(names, visible, input.gap) + input.gap + input.more + keptRoom >
       input.available + tolerance
   ) {
     visible -= 1;
