@@ -32,7 +32,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
-import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
+import { readWorkflowRunStorageFailure } from './workflowRunStorageClient';
 import { readWorkflowDiscussionRoundBindingV1, WorkflowDiscussionRoundProjectResultV1Schema,
   type WorkflowDiscussionRoundBindingV1, type WorkflowDiscussionRoundProgressV1 } from '@happier-dev/protocol/workflows';
 
@@ -2198,10 +2198,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       } catch (error) {
         if (claim.signal?.aborted) throw error;
         const publicationUnavailable = error instanceof WorkflowDiscussionPublicationUnavailable;
-        const storageUnavailable = typeof error === 'object' && error !== null
-          && 'workflowStorageOperation' in error
-          && classifyDaemonServerWorkError(error).kind === 'server_error';
-        if (!publicationUnavailable && !storageUnavailable) throw error;
+        const storageFailure = readWorkflowRunStorageFailure(error);
+        if (!publicationUnavailable && storageFailure === null) throw error;
         if (publicationUnavailable) {
           discussionPublicationPending = !error.terminal;
           // An Ask or unavailable append retains publication custody, not an
@@ -2225,13 +2223,14 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         try {
           await durableStore.commitFact({ key: root.key, lifecycle: terminalPublicationFailure ? 'failed' : 'needs_attention',
             reason,
+            ...(storageFailure ? { failureCause: storageFailure.failureCause } : {}),
             reasonMessage: terminalPublicationFailure
               ? 'The accepted result is saved, but its Discussion return was refused. The native execution result is unchanged.'
               : publicationUnavailable && error.pending
               ? 'The accepted result is saved privately for Discussion publication. Resolve its approval request, then resume the run.'
               : publicationUnavailable
               ? 'The accepted result is saved, but Discussion publication is unavailable. Restore access or resolve the publication request, then resume the run.'
-              : 'Workflow storage is temporarily unavailable. Previously saved work is preserved; review the run before continuing.' });
+              : storageFailure!.message });
         } catch (error) {
           if (error instanceof WorkflowControlBoundary && error.state === 'cancelled') {
             return { state: 'cancelled' } satisfies WorkflowCoordinatorResult;

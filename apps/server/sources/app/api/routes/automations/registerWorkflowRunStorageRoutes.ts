@@ -1,4 +1,4 @@
-import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { isTransactionStorageError, readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { z } from "zod/mini";
 import { extend } from "zod/mini";
 import { AutomationAccountCurrentnessWitnessV1Schema } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
@@ -250,7 +250,7 @@ export function registerWorkflowRunStorageRoutes(
                 // Unexpected application errors still reach the global error owner.
                 log({ module: "workflow-storage", level: "error", operation: body.operation,
                     errorCode: "code" in error ? error.code : error.name }, "Workflow storage is unavailable");
-                return reply.code(503).send({ error: "storage_unavailable" });
+                return reply.code(503).send({ error: readDatabaseErrorCode(error) ?? "storage_unavailable" });
             }
             if (!(error instanceof WorkflowRunServiceError)) throw error;
             const status = error.code === "run_not_found" ? 404 : error.code === "run_access_denied" ? 403 : error.code === "currentness_conflict" ? 409 : 422;

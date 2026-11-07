@@ -62,6 +62,8 @@ import {
   zodSchemaToJsonSchemaObject,
   SessionInputAuthorityV2Schema,
   WorkflowDiscussionRoundProjectResultV1Schema,
+  resolveBuiltinWorkflowDefinitionV1,
+  buildBackendTargetKeyV2,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
@@ -70,7 +72,7 @@ import type { WorkflowPromptContext } from './workflowPromptContext';
 import { observeWorkflowSessionInputResult } from './stepExecution';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
-import { isWorkflowJsonObject, WorkflowInputResolutionError } from './input';
+import { bindAutomationWorkflowInputs, isWorkflowJsonObject, WorkflowInputResolutionError } from './input';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -1006,22 +1008,35 @@ describe('production workflow coordinator', () => {
     { status: 500, committed: false, recordingAvailable: true, settlement: false },
     { status: 500, committed: true, recordingAvailable: true, settlement: false },
     { status: 503, committed: false, recordingAvailable: true, settlement: false },
+    { status: 503, committed: false, recordingAvailable: true, settlement: false, debate: true },
     { status: 503, committed: false, recordingAvailable: true, settlement: false, cancelAtAttention: true },
     { status: 500, committed: false, recordingAvailable: false, settlement: false },
     { status: 500, committed: true, recordingAvailable: true, settlement: true },
-  ])('retains a readable recoverable storage cause after HTTP $status (committed=$committed, recording=$recordingAvailable, settlement=$settlement, cancel=$cancelAtAttention)', async ({ status, committed, recordingAvailable, settlement, cancelAtAttention = false }) => {
-    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
+  ])('retains a readable recoverable storage cause after HTTP $status (committed=$committed, recording=$recordingAvailable, settlement=$settlement, cancel=$cancelAtAttention, debate=$debate)', async ({ status, committed, recordingAvailable, settlement, cancelAtAttention = false, debate = false }) => {
+    const definition: WorkflowDefinitionV1 = debate ? resolveBuiltinWorkflowDefinitionV1('debate')!.definition : { version: 1, inputs: [], defaults: {
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.external-test', localId: 'external' } },
       conversation: { kind: 'existing_session', sessionId: 'session-1', machineId },
     }, blocks: [onlyStep, { kind: 'parallel', id: 'together', failurePolicy: 'fail_stop', branches: [
       { id: 'first', blocks: [{ ...onlyStep, id: 'alpha' }] },
       { id: 'second', blocks: [{ ...onlyStep, id: 'beta' }] },
     ] }] };
+    const inputsForAdmission = debate ? bindAutomationWorkflowInputs({ definition, evidence: { question: 'Prefer tea or coffee?', rounds: 1,
+      participants: [{ kind: 'model', launch: { executionTarget: { serverId: 'server-1', machineId },
+        directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        modelSelection: { v: 1, updatedAt: 0, ref: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), providerConnectionId: null, modelId: 'gpt-6-luna' } },
+        configuration: { options: { reasoning_effort: { value: 'low', updatedAtMs: 0 } } },
+      } }],
+    } }) : {};
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
-      context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+      context: { source: { kind: 'inline' }, inputs: inputsForAdmission, machineId, executionTarget: { kind: 'session' },
         workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
         origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
-      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => {
+          const parsed = ActionIdSchema.safeParse(id);
+          return parsed.success ? freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(parsed.data))) : null;
+        },
+      } });
     if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted.snapshot,
@@ -1033,7 +1048,7 @@ describe('production workflow coordinator', () => {
         sequence: row.index.sequence, parentRecordId: row.index.parentRecordId, memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt } });
     let faulted = false;
     const storageFailure = Object.assign(new Error('Request failed with status code ' + status), {
-      code: 'ERR_BAD_RESPONSE', response: { status, data: { error: status === 503 ? 'storage_unavailable' : 'Internal Server Error' } },
+      code: 'ERR_BAD_RESPONSE', response: { status, data: { error: status === 503 ? 'database_transaction_timeout' : 'Internal Server Error' } },
     });
     const originalPost = vi.mocked(axios.post).getMockImplementation()!;
     vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown, config) => {
@@ -1049,7 +1064,7 @@ describe('production workflow coordinator', () => {
         const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', envelope: parseWorkflowStoredContentEnvelopeV1(candidate.contentEnvelope),
           binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: candidate.id, sequence: candidate.sequence,
             parentRecordId: candidate.parentRecordId, memberOrdinal: candidate.memberOrdinal, attempt: '0' } });
-        return opened.kind === 'available' && opened.content.invocationPath.blockId === 'beta';
+        return opened.kind === 'available' && opened.content.invocationPath.blockId === (debate ? 'context' : 'beta');
       });
       if (!faulted && (settlement ? operation.operation === 'transition' && operation.state === 'succeeded' : beta)) {
         faulted = true;
@@ -1105,13 +1120,18 @@ describe('production workflow coordinator', () => {
         actionId: 'workflow.run.invocations.get', input: { runId, invocationId: root.index.id }, context: {},
       }));
       expect(readable.invocation.progress.reason).toMatchObject({ code: 'storage_unavailable', message: expect.any(String) });
+      if (status === 503) {
+        expect(readable.invocation.progress.reason).toMatchObject({ failureCause: {
+          phase: 'workflow.storage.invocations.admit', errorCode: 'database_transaction_timeout', httpStatus: 503,
+        }, message: expect.stringContaining('database_transaction_timeout') });
+      }
     }
     expect(new Set(inputs).size).toBe(inputs.length);
     const completedPredecessor = boundary.rows().filter(row => {
       const progress = openProgress(row);
       return row.index.lifecycle === 'completed' && progress.kind === 'available' && progress.content.invocationPath.blockId === 'work';
     });
-    expect(completedPredecessor).toHaveLength(1);
+    expect(completedPredecessor).toHaveLength(debate ? 0 : 1);
     const betaRows = boundary.rows().filter(row => {
       const progress = openProgress(row);
       return progress.kind === 'available' && progress.content.invocationPath.blockId === 'beta';

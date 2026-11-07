@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { getRouteEntry } from "../../testkit/routeHarness";
 import { registerWorkflowRunStorageRoutes } from "./registerWorkflowRunStorageRoutes";
+import { db } from "@/storage/db";
+import { TransactionDeadlineExceededError } from "@/storage/transactionErrors";
+
+// The database transport below has no connected client. Use the real SDK's
+// error constructors without initializing a database or replacing transaction logic.
+vi.mock("@/storage/prisma", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/storage/prisma")>();
+    return { ...actual, getActivePrismaRuntime: () => actual.prismaRuntime };
+});
 
 // These refusal cases need the persisted custodian only. The composed Setup
 // spec exercises the same route with real storage and publisher signatures.
@@ -11,10 +20,35 @@ vi.mock("@/storage/db", async (importOriginal) => {
     const { createDbMocks } = await import("../../testkit/dbMocks");
     const { db } = createDbMocks({ machine: ["findUnique"] });
     db.machine.findUnique.mockResolvedValue({ accountId: "account-1" });
-    return { ...actual, db };
+    return { ...actual, db: { ...db, $transaction: vi.fn() } };
 });
 
 describe("registerWorkflowRunStorageRoutes", () => {
+    it("preserves the transaction owner's deadline cause in the storage refusal", async () => {
+        vi.mocked(db.$transaction).mockRejectedValueOnce(new TransactionDeadlineExceededError(new Error("private database detail")));
+        const route = createRouteTestBuilder({ method: "POST", path: "/v3/automations/runs/workflow-storage",
+            defaultRequest: { userId: "account-1" },
+            registerRoutes(app) { registerWorkflowRunStorageRoutes(app as never); } });
+        const { reply, response } = await route.invoke({ body: { operation: "get", runId: "run-1" } });
+        expect(reply.statusCode).toBe(503);
+        expect(response).toEqual({ error: "database_transaction_timeout" });
+    });
+    it("accepts content-free Discussion round facts only on protected worker writes", () => {
+        const route = createRouteTestBuilder({ method: "POST", path: "/v3/automations/runs/workflow-storage",
+            registerRoutes(app) { registerWorkflowRunStorageRoutes(app as never); } });
+        const schema = (getRouteEntry(route.app, "POST", "/v3/automations/runs/workflow-storage").opts.schema as {
+            body: { safeParse(value: unknown): { success: boolean } } }).body;
+        const operation = { operation: "invocations.fact", publisherMachineId: "machine-1", runId: "run-1",
+            parentAttempt: 0, accountCurrentness: { mode: "plain", version: 1, contentKeyFingerprint: null },
+            invocationId: "root", invocationAttempt: "0", expectedContentRevision: "0", expectedLifecycle: "running",
+            lifecycle: "running", contentEnvelope: "opaque", discussionRound: { discussionId: "discussion-1", answerCount: 2, synthesized: false } };
+        expect(schema.safeParse(operation).success).toBe(true);
+        for (const extra of [{ title: "private" }, { pattern: "fresh_opinions" }, { settled: true }, { runId: "other" }]) {
+            expect(schema.safeParse({ ...operation, discussionRound: { ...operation.discussionRound, ...extra } }).success).toBe(false);
+        }
+        expect(schema.safeParse({ ...operation, discussionRound: { ...operation.discussionRound, answerCount: -1 } }).success).toBe(false);
+        expect(schema.safeParse({ operation: "get", runId: "run-1", discussionRound: operation.discussionRound }).success).toBe(false);
+    });
     it("rejects a workflow persistence request without an exact machine publisher proof", async () => {
         const verifyPublisher = vi.fn(async () => null);
         const route = createRouteTestBuilder({
@@ -102,6 +136,8 @@ describe("registerWorkflowRunStorageRoutes", () => {
         // its deadline-expired marker, never a server-side waiting budget.
         expect(schema.safeParse({ operation: "wait", runId: "run-1", timeoutSeconds: 1 }).success).toBe(false);
         expect(schema.safeParse({ operation: "recovery.list", pageByteLimit: 4096 }).success).toBe(false);
+        expect(schema.safeParse({ operation: "recovery.list", publisherMachineId: "machine-1", runId: "run-1", pageByteLimit: 4096 }).success).toBe(true);
+        expect(schema.safeParse({ operation: "recovery.list", publisherMachineId: "machine-1", runId: "", pageByteLimit: 4096 }).success).toBe(false);
     });
 
     it("admits only direct Workflow origins at the internal storage boundary", () => {

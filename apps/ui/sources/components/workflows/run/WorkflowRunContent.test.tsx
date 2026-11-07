@@ -3406,6 +3406,19 @@ describe('WorkflowRunContent', () => {
     ).toBe('workflows.run.stepNumber:{"ordinal":"1"} · The Run store could not be written.');
     await interrupted.unmount();
 
+    // Admission can park the root before a leaf exists. Its retained storage
+    // cause must still explain the interrupted Run without selecting a step.
+    const root = createWorkflowInvocationIndexFixture({ id: 'root-storage', parentRecordId: null, lifecycle: 'needs_attention' });
+    const rootProgress = { ...progress, blockKind: 'root' as const, invocationPath: { blockId: '$root', scope: [] },
+      logicalInvocationRecordId: root.id, reason: { code: 'storage_unavailable',
+        message: 'Workflow storage is temporarily unavailable (database_transaction_timeout).',
+        failureCause: { phase: 'workflow.storage.invocations.admit', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } };
+    const beforePrepare = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+      invocations: [root], selectedInvocationId: null, invocationProgressById: new Map([[root.id, rootProgress]]),
+      firstFailedInvocationId: null, firstFailedInvocationResolution: 'resolved' });
+    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('database_transaction_timeout');
+    await beforePrepare.unmount();
+
     // A step that finished says nothing about an older failure reason.
     const completed = await render('completed');
     expect(completed.getTextContent()).not.toContain(

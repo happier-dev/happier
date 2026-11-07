@@ -1,15 +1,17 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 export type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowRunFollowEventV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 import type { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
 import type { logger } from '@/ui/logger';
 
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { observeAccountChanges } from '@/api/observeAccountChanges';
 import {
   createDefaultPluginInstallationPublisherHeader,
@@ -17,6 +19,19 @@ import {
 } from '@/plugins/installations/publisherProof';
 
 export const WORKFLOW_RUN_STORAGE_HTTP_PATH = '/v3/automations/runs/workflow-storage';
+
+/** Keep the first storage boundary's safe cause when the coordinator parks a Run. */
+export function readWorkflowRunStorageFailure(error: unknown): Readonly<{ failureCause: ActionFailureCauseV1; message: string }> | null {
+  if (typeof error !== 'object' || error === null || !('workflowStorageOperation' in error)
+    || classifyDaemonServerWorkError(error).kind !== 'server_error') return null;
+  const metadata = error.workflowStorageOperation;
+  const operation = typeof metadata === 'object' && metadata !== null && 'operation' in metadata
+    && typeof metadata.operation === 'string' ? metadata.operation : null;
+  const failureCause = projectActionFailureCauseV1(error,
+    operation === null ? 'workflow.storage' : `workflow.storage.${operation.replaceAll('-', '_')}`);
+  return { failureCause,
+    message: `Workflow storage is temporarily unavailable (${failureCause.errorCode ?? 'storage_unavailable'}). Previously saved work is preserved; review the run before continuing.` };
+}
 
 /** Thin transport to the server's opaque workflow Run storage owner. */
 export function createWorkflowRunStorageClient(params: Readonly<{
@@ -26,12 +41,15 @@ export function createWorkflowRunStorageClient(params: Readonly<{
   createPublisherHeader?: CreatePluginInstallationPublisherHeader;
   resolveAuthorizationHeaders?: (request: Readonly<{ method: 'POST'; path: string; body: unknown }>) => Readonly<Record<string, string>> | null;
 }>) {
-  const baseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+  const explicitBaseUrl = params.serverHttpBaseUrl;
+  const readBaseUrl = explicitBaseUrl === undefined
+    ? captureServerHttpBaseUrl() : () => explicitBaseUrl;
   const createPublisherHeader = params.createPublisherHeader ?? createDefaultPluginInstallationPublisherHeader;
   const client = {
     observeChanges: (runId: string, onChange: () => void, onError: (error: unknown) => void) =>
-      observeAccountChanges({ token: params.token, serverUrl: baseUrl, entityId: `workflow-run:${runId}` }, { onChange, onError }),
+      observeAccountChanges({ token: params.token, serverUrl: readBaseUrl(), entityId: `workflow-run:${runId}` }, { onChange, onError }),
     execute: async (operation: WorkflowRunStorageOperation, options: Readonly<{ signal?: AbortSignal; publisherMachineId?: string }> = {}): Promise<unknown> => {
+      const baseUrl = readBaseUrl();
       const startedAtMs = Date.now();
       try {
         const executorOperation = isWorkflowRunExecutorStorageOperationV1(operation.operation);
@@ -74,21 +92,7 @@ export function createWorkflowRunStorageClient(params: Readonly<{
           return await request();
         });
         if (operation.operation === 'transition') {
-          let run = WorkflowRunSummaryV1Schema.safeParse(response.data);
-          if (run.success && run.data.state === 'running' && run.data.attentionRequired === undefined) {
-            // Mutation summaries need not include attention membership. Read it
-            // from the existing authorized source instead of inventing progress
-            // over a live hold. Failure leaves delivery to Account-change repair.
-            try {
-              const runId = run.data.id;
-              const current = await client.execute({ operation: 'get', runId }, { signal: options.signal });
-              const projected = WorkflowRunSummaryV1Schema.safeParse(current && typeof current === 'object' && 'run' in current ? current.run : null);
-              run = projected.success && projected.data.id === runId ? projected : WorkflowRunSummaryV1Schema.safeParse(null);
-            } catch {
-              const { logger } = await import("@/ui/logger");
-              logger.debug('[workflowRunStorage] Follow occurrence awaits current source projection');
-            }
-          }
+          const run = WorkflowRunSummaryV1Schema.safeParse(response.data);
           const event = run.success ? resolveWorkflowRunFollowEventV1(run.data) : null;
           if (run.success && run.data.revision > 0 && run.data.workflowCustodyState !== null && event) {
             const [{ notifyDaemonSessionActivityChanged }, { logger }] = await Promise.all([import("@/daemon/controlClient"), import("@/ui/logger")]);
