@@ -55,6 +55,21 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Evidence: .project/tmp/compile-reservation-peaks-1104/holder-snapshot.json.
   compilation: { memoryKiB: 38 * 1024 * 1024, diskClass: 'compilation' },
   'compilation-ui': { memoryKiB: 20 * 1024 * 1024, diskClass: 'compilation' },
+  // Host memory: 2026-11-07, 51 live snapshots over 25 minutes, three tsrs UI
+  // holders. Max live VmHWM sum 9,477,228 KiB + measured within-holder RSS
+  // range 41,512 KiB, rounded up to whole GiB, gives 10 GiB. Evidence:
+  // .project/tmp/finalizer-floor-1106/live-holders-summary.json. Microsoft UI
+  // retains 20 GiB (18,909,772 KiB historical peak); general compilation 38.
+  // Waiting diagnostics show this floor; capacity/OOM refusal owns recovery.
+  'compilation-ui-tsrs': { memoryKiB: 10 * 1024 * 1024, diskClass: 'compilation' },
   'compilation-cli': { memoryKiB: 15 * 1024 * 1024, diskClass: 'compilation' },
   'compilation-server': { memoryKiB: 16 * 1024 * 1024, diskClass: 'compilation' },
 });
+
+// Consume the compiler resolver's decision, never infer it from flags or host.
+export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
+  if (admissionClass === 'compilation-ui' || admissionClass === 'compilation-ui-tsrs') {
+    return compiler === 'tsrs' ? 'compilation-ui-tsrs' : 'compilation-ui';
+  }
+  return admissionClass;
+}

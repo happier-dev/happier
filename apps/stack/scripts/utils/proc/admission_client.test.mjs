@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -160,8 +161,13 @@ test('admission reports one waiting line with enqueue facts only when capacity q
       assert.equal(client.stdout(), 'entered');
       const waiting = client.stderr().split('\n').filter(line => line.includes('waiting for admission'));
       assert.equal(waiting.length, queued ? 1 : 0);
-      if (mode === 'older-broker') assert.match(waiting[0], /^\[preferred-execution\] waiting for admission \(class=validation, waiting=1\)$/);
-      else if (queued) assert.match(waiting[0], /^\[preferred-execution\] waiting for admission \(class=validation, position=1, ahead=0, waiting=1\)$/);
+      if (queued) {
+        assert.match(waiting[0], /\bclass=validation\b/);
+        assert.match(waiting[0], /\bfloorKiB=1\b/);
+        assert.match(waiting[0], /\bwaiting=1\b/);
+        if (mode === 'older-broker') assert.doesNotMatch(waiting[0], /\bposition=/);
+        else assert.match(waiting[0], /\bposition=1, ahead=0\b/);
+      }
     });
   });
 

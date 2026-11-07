@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, watch, writeFileSync } from 'node:fs';
@@ -976,6 +977,8 @@ test('measured native workload reservations round the recorded peak without a bl
     ['entry-loads', 2361852],
     // 2026-11-04 admission holder tree RSS; compile-reservation-peaks-1104/holder-snapshot.json.
     ['compilation', 38992620],
+    // Live tsrs UI VmHWM sum plus measured within-holder RSS range.
+    ['compilation-ui-tsrs', 9477228 + 41512],
   ]) {
     await t.test(className, () => {
       const expectedKiB = Math.ceil(peakKiB / (1024 * 1024)) * 1024 * 1024;
@@ -2206,7 +2209,7 @@ test('manifest publisher delegation follows real scripts without bypassing place
     ['@happier-dev/app', 'typecheck', 'apps/ui', 'compilation-ui', '0'],
   ]) await t.test(`${workspace} ${script}`, async () => {
     const policy = await commandPolicy.resolvePackageCommandPolicy(['yarn', 'workspace', workspace, script], {
-      repoRoot: root, cwd: root,
+      repoRoot: root, cwd: root, env: { HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' },
     });
     assert.equal(policy.component, component);
     assert.equal(policy.selfPublisher, selfPublisher,

@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
 import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -18,6 +19,32 @@ import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-com
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
 
 const linux = { skip: process.platform !== 'linux' };
+
+test('two tsrs UI reservations fit exactly and wait one KiB below their combined floor', linux, async t => {
+  const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import('../dev_targets/command_resources.mjs');
+  const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['compilation-ui-tsrs']?.memoryKiB;
+  assert.equal(floorKiB, 10 * 1024 * 1024);
+  let capacityKiB = 2 * floorKiB - 1;
+  const { root, broker } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: capacityKiB, totalMemoryKiB: 64 * 1024 * 1024 }),
+  });
+  const first = await acquire(root, floorKiB, t, { className: 'compilation-ui-tsrs' });
+  await first.admit();
+  const second = await acquire(root, floorKiB, t, { className: 'compilation-ui-tsrs' });
+  const sample = await request(root, { kind: 'sample' });
+  await sample.next();
+  sample.socket.destroy();
+  assert.equal(broker.status().activeCount, 1);
+  assert.equal(broker.status().waitingCount, 1);
+  capacityKiB += 1;
+  const exact = await request(root, { kind: 'sample' });
+  await exact.next();
+  exact.socket.destroy();
+  await second.admit();
+  assert.equal(broker.status().activeCount, 2);
+  assert.equal(broker.status().waitingCount, 0);
+  assert.equal(broker.status().reservedMemoryKiB, 2 * floorKiB);
+});
 
 test('canonical validation floors admit concurrent focused work up to exact capacity', linux, async t => {
   const { resolveRemoteCommandPolicy, resolveHeavyweightMemoryFloorKiB } = await import('../dev_targets/remote_commands.mjs');

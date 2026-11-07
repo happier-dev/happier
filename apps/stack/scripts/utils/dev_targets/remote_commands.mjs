@@ -202,7 +202,8 @@ const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' }
 // observed metrics: UI 18,909,772, CLI 13,688,852, server 14,179,616 KiB.
 // The legacy envelopes add that unmeasured margin and round up to whole GiB:
 // UI 20, CLI 15, server 16. Round 3 owner decision applies these despite
-// incomplete import graphs; general/root/mixed compilation uses UI's 20 GiB.
+// incomplete import graphs. General/root/mixed compilation retains the larger
+// historical peak in command_resources.mjs; tsrs UI has its own calibration.
 // Re-derive these envelopes if a clean graph measures higher. Admission
 // diagnostics and compiler OOMs make insufficient headroom observable;
 // these samples are observations, not certified maximum process limits.
@@ -232,7 +233,7 @@ const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' }
 // recorded peaks above and round without a blanket margin (owner Q1).
 const HEAVYWEIGHT_MEMORY_KIB = Object.freeze(Object.fromEntries(
   Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, resource]) => [name, resource.memoryKiB])));
-const HEAVYWEIGHT_COMPILE_CLASSES = ['compilation', 'compilation-ui', 'compilation-cli', 'compilation-server', 'package-dist', 'runtime-build', 'native-custody'];
+const HEAVYWEIGHT_COMPILE_CLASSES = ['compilation', 'compilation-ui', 'compilation-ui-tsrs', 'compilation-cli', 'compilation-server', 'package-dist', 'runtime-build', 'native-custody'];
 export const SOURCE_WEB_EXPORT_ADMISSION_CLASS = 'source-web-export';
 
 function exportMemorySegment(startThreads, startKiB, endThreads, endKiB) {
@@ -551,7 +552,11 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     let index = 1;
     while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(args[index] ?? '')) index++;
     if (args[index] && !args[index].startsWith('-')) {
-      return normalizeCommandArguments(args.slice(index), cwd, repoRoot);
+      const payload = normalizeCommandArguments(args.slice(index), cwd, repoRoot);
+      return { ...payload, commandEnvironment: { ...Object.fromEntries(args.slice(1, index).map(assignment => {
+        const separator = assignment.indexOf('=');
+        return [assignment.slice(0, separator), assignment.slice(separator + 1)];
+      })), ...payload.commandEnvironment } };
     }
   }
   if (command === 'hstack-exec') {
@@ -1068,6 +1073,7 @@ export async function isSelfPublishingPackageCommand(commandArgs, options = {}) 
 
 async function resolveComposedCommandPolicy(commandArgs, options) {
   const facts = normalizeCommandArguments(commandArgs, options.cwd ?? process.cwd(), options.repoRoot);
+  if (facts.commandEnvironment) options = { ...options, env: { ...(options.env ?? process.env), ...facts.commandEnvironment } };
   if (facts.executorContext || (['node', 'nodejs'].includes(facts.command)
     && facts.entryRepositoryPath === 'packages/tests/scripts/run-extended-db-docker.mjs')) {
     return resolvePackageCommandPolicy(commandArgs, options);
@@ -1079,6 +1085,15 @@ async function resolveComposedCommandPolicy(commandArgs, options) {
   }
   const { policy, facts: policyFacts, skipCompilerSetup } = resolveCommandPolicyContext(commandArgs, options);
   await refineCompilerSuiteSelection(policy, policyFacts, options.repoRoot ?? COMMAND_REPO_ROOT, skipCompilerSetup, options.env);
+  if (policy.kind === 'typecheck' && policy.compilerLeaf === '1' && policy.heavyClass === 'compilation-ui') {
+    // The compiler owner selects tsrs/Microsoft, including inherited config and
+    // overrides. Both outer command admission and the leaf consume its result.
+    const { resolveTypeScriptCliInvocation } = await import('../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs');
+    policy.heavyClass = resolveTypeScriptCliInvocation({ args: facts.entryArguments,
+      workspaceDir: resolve(options.repoRoot ?? COMMAND_REPO_ROOT, options.packageDir ?? options.cwd ?? '.'),
+      repoRoot: options.repoRoot ?? COMMAND_REPO_ROOT, env: options.env, admissionClass: policy.heavyClass,
+    }).admissionClass;
+  }
   if (policy.kind !== 'typecheck' || policy.component !== 'apps/cli'
     || facts.entry !== 'runTypeScriptCli.mjs') return policy;
   const projects = [];
@@ -1104,6 +1119,7 @@ async function resolveComposedCommandPolicy(commandArgs, options) {
  * the selected package before deriving preparation and payload admission. */
 export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
   const facts = normalizeCommandArguments(commandArgs, options.cwd ?? process.cwd(), options.repoRoot);
+  if (facts.commandEnvironment) options = { ...options, env: { ...(options.env ?? process.env), ...facts.commandEnvironment } };
   if (facts.executorContext) {
     const { args, cwd, admissionClass } = facts.executorContext;
     const outer = resolveRemoteCommandPolicy(commandArgs, options);
@@ -1244,7 +1260,7 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     if (resolved.selfPublisher) selfPublisher = '1';
     placementHeavyClass = largestHeavyweightClass(placementHeavyClass, resolved.placementHeavyClass);
     const requiredClass = resolved.selfPublisher || policy.kind === 'typecheck' ? resolved.admissionClass : resolved.knownAdmissionClass;
-    if (resolved.selfPublisher || (requiredClass && (!heavyClass
+    if (resolved.selfPublisher || (policy.kind === 'typecheck' && requiredClass) || (requiredClass && (!heavyClass
       || (heavyClass === 'validation' && requiredClass === 'focused-validation')
       || resolveHeavyweightMemoryFloorKiB(requiredClass) > resolveHeavyweightMemoryFloorKiB(heavyClass)))) {
       heavyClass = requiredClass;

@@ -22,6 +22,7 @@ heavyweight_memory_floor_kib() {
     runtime-build) heavyweight_policy_floor='18874368' ;;
     compilation) heavyweight_policy_floor='39845888' ;;
     compilation-ui) heavyweight_policy_floor='20971520' ;;
+    compilation-ui-tsrs) heavyweight_policy_floor='10485760' ;;
     compilation-cli) heavyweight_policy_floor='15728640' ;;
     compilation-server) heavyweight_policy_floor='16777216' ;;
     targeted-validation) heavyweight_policy_floor='2097152' ;;
@@ -501,6 +502,9 @@ native_command_policy_finish() {
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'compilation-ui' ]; }; then
     policy_heavyClass='compilation-ui'
   fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'compilation-ui-tsrs' ]; }; then
+    policy_heavyClass='compilation-ui-tsrs'
+  fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'compilation-cli' ]; }; then
     policy_heavyClass='compilation-cli'
   fi
@@ -595,7 +599,7 @@ native_command_policy_finish() {
   if { [ "$policy_component" = '.' ]; } && { [ "$policy_script" = 'test:tooling:self' ]; } && { [ "$policy_admissionWrapper" = '0' ]; } && { [ "$policy_heavyClass" = 'validation' ]; }; then
     policy_heavyClass='compilation'
   fi
-  if { [ "$policy_heavyClass" = 'compilation' ] || [ "$policy_heavyClass" = 'compilation-ui' ] || [ "$policy_heavyClass" = 'compilation-cli' ] || [ "$policy_heavyClass" = 'compilation-server' ] || [ "$policy_heavyClass" = 'package-dist' ] || [ "$policy_heavyClass" = 'runtime-build' ] || [ "$policy_heavyClass" = 'native-custody' ]; }; then
+  if { [ "$policy_heavyClass" = 'compilation' ] || [ "$policy_heavyClass" = 'compilation-ui' ] || [ "$policy_heavyClass" = 'compilation-ui-tsrs' ] || [ "$policy_heavyClass" = 'compilation-cli' ] || [ "$policy_heavyClass" = 'compilation-server' ] || [ "$policy_heavyClass" = 'package-dist' ] || [ "$policy_heavyClass" = 'runtime-build' ] || [ "$policy_heavyClass" = 'native-custody' ]; }; then
     policy_localCompile='1'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/checkCommitTypeCoherence.mjs' ]; }; then

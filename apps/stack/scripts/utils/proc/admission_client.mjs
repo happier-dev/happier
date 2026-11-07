@@ -195,7 +195,7 @@ export async function runAdmissionCommand({ root, className, floorKiB, machine, 
           if (response.kind === 'queued') {
             const position = response.queuePosition === undefined ? ''
               : `, position=${response.queuePosition}, ahead=${response.countAhead}`;
-            console.error(`[preferred-execution] waiting for admission (class=${className}${position}, waiting=${response.waitingCount})`);
+            console.error(`[preferred-execution] waiting for admission (class=${className}, floorKiB=${floorKiB}${position}, waiting=${response.waitingCount})`);
           }
           if (response.kind === 'capacity-wait') priorityScope?.suspend();
           if (response.kind === 'reserved') {

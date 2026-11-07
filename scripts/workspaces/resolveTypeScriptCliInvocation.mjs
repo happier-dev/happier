@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { NATIVE_TYPESCRIPT_PACKAGE_JSON, resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
+import { resolveTypeScriptAdmissionClass } from '../../apps/stack/scripts/utils/dev_targets/command_resources.mjs';
 import { isWorkspaceBuildStartup } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -93,11 +94,11 @@ export function resolveTypeScriptCliInvocation(params) {
   const cacheSuffix = options ? '.tsrs' : '';
   const buildInfoPath = options && ts.getTsBuildInfoEmitOutputFilePath(options);
   const cacheArgs = buildInfoPath ? { argsSuffix: ['--tsBuildInfoFile', `${resolve(params.workspaceDir ?? process.cwd(), buildInfoPath)}.tsrs`] } : {};
-  const admissionClass = params.admissionClass ?? resolveRemoteCommandPolicy(
+  const admissionClass = resolveTypeScriptAdmissionClass(params.admissionClass ?? resolveRemoteCommandPolicy(
     ['node', 'scripts/workspaces/runTypeScriptCli.mjs', ...(params.admissionArgs ?? params.args ?? [])],
     { cwd: relative(params.repoRoot ?? REPO_ROOT, params.workspaceDir ?? process.cwd()) || '.',
       repoRoot: params.repoRoot ?? REPO_ROOT },
-  ).heavyClass;
+  ).heavyClass, options ? 'tsrs' : 'microsoft');
   // Preparation is a phase of this compilation, inside its authenticated
   // admission. Microsoft emission and the consumer never reserve twice.
   const prepare = params.prepareWorkspaceDeclarations && Array.isArray(params.args)
@@ -118,6 +119,7 @@ export function resolveTypeScriptCliInvocation(params) {
         `--machine=${env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
         '--exec-admitted', '--', processExecPath, ...compilerArgs],
       compilerPath,
+      admissionClass,
       ...apiExecutable,
       cacheSuffix,
       ...cacheArgs,
@@ -127,6 +129,7 @@ export function resolveTypeScriptCliInvocation(params) {
     command: processExecPath,
     argsPrefix: compilerArgs,
     compilerPath,
+    admissionClass,
     ...apiExecutable,
     cacheSuffix,
     ...cacheArgs,
