@@ -16058,7 +16058,7 @@ return { workflowRunListTranslations };
 const Domain_workflowRunRoleTranslations = (() => {
 const en = Shared_workflowRunRoleTranslations.en;
 
-const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "ca"> = { ca: { rolesTitle: 'Rols per a aquesta execució', rolesYour: 'Els teus rols', rolesChanged: ({ count }) => `${count} canviats per a aquesta execució`, rolesUnchanged: 'Tota la resta continua igual.', useYourRole: 'Fes servir el teu rol', targetsTitle: 'Cada pas s’executa en', targetsSessions: 'Passos en sessions', targetsBackground: 'Passos en segon pla', rolesPrefillFailed: 'No s’han pogut llegir els rols de la teva última execució. Torna-ho a provar.' } };
+const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "ca"> = { ca: { targetsOwn: ({ count }: { count: number }) => count === 1 ? '1 pas tria el seu propi destí' : `${count} passos trien el seu propi destí`, rolesTitle: 'Rols per a aquesta execució', rolesYour: 'Els teus rols', rolesChanged: ({ count }) => `${count} canviats per a aquesta execució`, rolesUnchanged: 'Tota la resta continua igual.', useYourRole: 'Fes servir el teu rol', targetsTitle: 'Cada pas s’executa en', targetsSessions: 'Passos en sessions', targetsBackground: 'Passos en segon pla', rolesPrefillFailed: 'No s’han pogut llegir els rols de la teva última execució. Torna-ho a provar.' } };
 
 return { workflowRunRoleTranslations };
 })();

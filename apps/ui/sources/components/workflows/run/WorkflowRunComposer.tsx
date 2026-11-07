@@ -85,7 +85,7 @@ import {
 } from './WorkflowRunRoles';
 import { useWorkflowRunRolePrefill } from './useWorkflowRunRolePrefill';
 import { useWorkflowRunVisibility } from './useWorkflowRunVisibility';
-import { projectWorkflowRunTargetReview } from './workflowRunTargetReview';
+import { formatWorkflowRunTargetReviewSummary, projectWorkflowRunTargetReview } from './workflowRunTargetReview';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import {
   countWorkflowStepsV1,
@@ -105,7 +105,7 @@ import {
 
 const styles = StyleSheet.create((theme) => ({
   root: { minWidth: 0 },
-  // The request's label and the status/Start footer sit in the composer's own column, so they share
+  // The request's label and status sit in the composer's own column, so they share
   // the card's edges on every host and width (New centres that column on a wide page).
   column: { width: '100%', alignItems: 'center' },
   columnInner: { width: '100%' },
@@ -123,12 +123,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     gap: theme.space.s4,
   },
-  hostedPanel: {
-    borderWidth: 0,
-    borderTopWidth: 0,
-    borderBottomWidth: 0,
-    borderRadius: 0,
-  },
   summary: {
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,
@@ -145,7 +139,6 @@ const styles = StyleSheet.create((theme) => ({
   footerAtFoot: { marginTop: 'auto' },
   footerStacked: { flexDirection: 'column', alignItems: 'stretch' },
   statusStacked: { flex: 0 },
-  startWide: { alignItems: 'stretch' },
   shortcut: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
   keyHint: {
     ...{
@@ -597,7 +590,7 @@ export function WorkflowRunComposer(
       .filter(Boolean)
       .join(' · ');
   }, [props.definition, props.preview, props.workflowName]);
-  // The sheet header already names the workflow; the fixed chip identifies its saved definition.
+  // The identity lead names the workflow; the fixed chip identifies its saved definition.
   const workflowLabel = [
     t('workflows.start.workflow'),
     ...(props.sourceArtifactId && !props.includesUnsavedEdits
@@ -873,6 +866,29 @@ export function WorkflowRunComposer(
       workflowLabel,
     ],
   );
+  const startControl = (
+    <View style={styles.start}>
+      <RoundButton
+        testID={`${prefix}-run`}
+        size={phoneSheet ? 'normal' : 'small'}
+        title={startLabel}
+        accessibilityLabel={startLabel}
+        leading={<Icon name={retained?.unresolved === true ? 'arrow-clockwise' : 'play'}
+          size={ICON_SIZE.xs} color={disabled ? theme.colors.text.tertiary : theme.colors.button.primary.tint} />}
+        disabled={disabled && props.pending !== true}
+        loading={props.pending}
+        accessibilityHint={reason ?? visibilityHint}
+        onPress={submit}
+      />
+      {runShortcut ? (
+        <View testID={`${prefix}-shortcut`} style={styles.shortcut}
+          accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <Text style={styles.keyHint}>{runShortcut}</Text>
+          <Text style={styles.secondary}>{t('workflows.start.shortcutStarts')}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
   return (
     <View testID={prefix} style={[styles.root, phoneSheet ? styles.rootFill : null]}>
       <View testID={`${prefix}-${main === null ? 'preview' : 'main'}`}>
@@ -893,8 +909,7 @@ export function WorkflowRunComposer(
                 ? <WorkflowRunAgentSummary definition={reviewedDefinition} serverId={props.serverId}
                     testID={`${prefix}-review-agent`} /> : null}
               <Item testID={`${prefix}-review-target`} title={t('workflows.page.sections.eachStepRunsIn')}
-                subtitle={reviewedExecutionTarget?.kind === 'detached_run'
-                  ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')}
+                subtitle={formatWorkflowRunTargetReviewSummary(targetReview, reviewedExecutionTarget)}
                 showChevron={false} subtitleLines={0} />
             </> : null}
             {main === null ? (props.definition && props.workflowName ? null : (
@@ -917,8 +932,7 @@ export function WorkflowRunComposer(
           <AgentInput
             placementContext="workflow"
             panelPresentation="document"
-            inputPresentation={main === null ? 'controlsOnly' : 'full'}
-            panelStyle={styles.hostedPanel}
+            trailingAccessory={startControl}
             {...(props.contentPaddingHorizontal === undefined
               ? {}
               : { contentPaddingHorizontal: props.contentPaddingHorizontal })}
@@ -926,15 +940,13 @@ export function WorkflowRunComposer(
             {...props.authoringControls}
             value={
               main === null
-                ? (props.preview ??
+                ? (props.retainedText ?? props.preview ??
                   props.workflowName ??
                   t('workflows.start.preview'))
                 : (rawTextValues[main.definition.name] ??
                   formatWorkflowInputValue(main.value))
             }
-            onChangeText={(text) => {
-              if (main !== null) changeText(main.definition.name, text);
-            }}
+            onChangeText={main === null ? undefined : (text) => changeText(main.definition.name, text)}
             placeholder={
               main === null
                 ? t('workflows.start.preview')
@@ -1035,11 +1047,6 @@ export function WorkflowRunComposer(
                 {t('workflows.start.visibility.chooseTeam')}
               </Text>
             ) : null}
-            {main === null && props.retainedText ? (
-              <Text testID={`${prefix}-retained-text`} style={styles.secondary}>
-                {props.retainedText}
-              </Text>
-            ) : null}
             {reason === null ? null : (
               <View
                 testID={`${prefix}-reason`}
@@ -1073,47 +1080,6 @@ export function WorkflowRunComposer(
               <TechnicalDetailsDisclosure title={t('workflows.run.technicalDetails')}
                 testID={`${prefix}-start-problem-details`}
                 lines={props.startProblem.technicalDetails} />
-            ) : null}
-          </View>
-          {/* Start at the action size, with its key hint quietly beneath it (convo-N7). */}
-          <View style={[styles.start, phoneSheet ? styles.startWide : null]}>
-            <RoundButton
-              testID={`${prefix}-run`}
-              size={phoneSheet ? 'normal' : 'small'}
-              title={startLabel}
-              accessibilityLabel={startLabel}
-              leading={
-                <Icon
-                  name={
-                    retained?.unresolved === true ? 'arrow-clockwise' : 'play'
-                  }
-                  size={ICON_SIZE.xs}
-                  color={
-                    disabled
-                      ? theme.colors.text.tertiary
-                      : theme.colors.button.primary.tint
-                  }
-                />
-              }
-              // A pending Start keeps the primary look under its spinner (as the hold card's does);
-              // `submit` ignores presses until it settles.
-              disabled={disabled && props.pending !== true}
-              loading={props.pending}
-              accessibilityHint={reason ?? visibilityHint}
-              onPress={submit}
-            />
-            {runShortcut ? (
-              <View
-                testID={`${prefix}-shortcut`}
-                style={styles.shortcut}
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-              >
-                <Text style={styles.keyHint}>{runShortcut}</Text>
-                <Text style={styles.secondary}>
-                  {t('workflows.start.shortcutStarts')}
-                </Text>
-              </View>
             ) : null}
           </View>
         </View>

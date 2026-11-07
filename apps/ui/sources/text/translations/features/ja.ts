@@ -16020,7 +16020,7 @@ return { workflowRunListTranslations };
 const Domain_workflowRunRoleTranslations = (() => {
 const en = Shared_workflowRunRoleTranslations.en;
 
-const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "ja"> = { ja: { rolesTitle: 'この実行のロール', rolesYour: 'あなたのロール', rolesChanged: ({ count }) => `この実行で${count}件変更`, rolesUnchanged: 'その他は変わりません。', useYourRole: '自分のロールを使用', targetsTitle: '各ステップの実行先', targetsSessions: 'セッションで実行', targetsBackground: 'バックグラウンドで実行', rolesPrefillFailed: '前回の実行のロールを読み込めませんでした。再試行してください。' } };
+const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "ja"> = { ja: { targetsOwn: ({ count }: { count: number }) => `${count} 個のステップが独自に選択`, rolesTitle: 'この実行のロール', rolesYour: 'あなたのロール', rolesChanged: ({ count }) => `この実行で${count}件変更`, rolesUnchanged: 'その他は変わりません。', useYourRole: '自分のロールを使用', targetsTitle: '各ステップの実行先', targetsSessions: 'セッションで実行', targetsBackground: 'バックグラウンドで実行', rolesPrefillFailed: '前回の実行のロールを読み込めませんでした。再試行してください。' } };
 
 return { workflowRunRoleTranslations };
 })();

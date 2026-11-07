@@ -84,6 +84,25 @@ async function mount(initial: React.ComponentProps<typeof WorkflowRunComposer>['
 }
 
 describe('workflow composer admission', () => {
+    it.each([true, false])('starts from inside the composer card and keeps unconsumed text there (text input=%s)', async hasTextInput => {
+        const onRun = vi.fn();
+        const declaredInputs = hasTextInput ? [{ name: 'brief', valueType: 'string', required: true } as const] : [];
+        const screen = await renderScreen(<WorkflowRunComposer inputs={declaredInputs}
+            values={hasTextInput ? { brief: 'Release notes' } : {}} retainedText={hasTextInput ? undefined : 'Keep this private draft'}
+            definition={createWorkflowDefinitionFixture({ inputs: declaredInputs, defaults: STARTABLE_DEFAULTS })}
+            workflowName="Prepare the release" onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        const card = screen.findByTestId('agent-input-material-surface');
+        expect(card?.findAll(node => node.props.testID === 'workflow-run-inputs-run').length).toBeGreaterThan(0);
+        if (!hasTextInput) {
+            expect(card?.findAll(node => node.props.accessibilityLabel === 'workflows.start.preview').length).toBeGreaterThan(0);
+            expect(card?.findAll(node => typeof node.props.children === 'string' && node.props.children.includes('Keep this private draft')).length).toBeGreaterThan(0);
+            expect(screen.findByTestId('workflow-run-inputs-retained-text')).toBeNull();
+        }
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(hasTextInput ? { brief: 'Release notes' } : undefined, []);
+        await screen.unmount();
+    });
     it('reviews the workflow agent and execution placement before Start', async () => {
         const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
             definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
@@ -590,7 +609,7 @@ describe('workflow composer admission', () => {
         const start = screen.findByTestId('workflow-run-inputs-run');
         // The key hint reads beneath Start (convo-N7), not inside its pill.
         expect(start?.findAllByProps({ testID: 'workflow-run-inputs-shortcut' }).length).toBe(0);
-        expect(screen.findByTestId('workflow-run-inputs-footer')?.findAllByProps({ testID: 'workflow-run-inputs-shortcut' }).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('agent-input-material-surface')?.findAllByProps({ testID: 'workflow-run-inputs-shortcut' }).length).toBeGreaterThan(0);
         expect(start?.props.accessibilityLabel).toBe('workflows.start.start');
         const { act } = await import('react-test-renderer');
         await act(async () => { executeCommand('workflow.run'); });

@@ -1,6 +1,7 @@
 
 
 export const en = {
+    targetsOwn: ({ count }: { count: number }) => count === 1 ? '1 step chooses its own' : `${count} steps choose their own`,
     rolesTitle: 'Roles for this run', rolesYour: 'Your roles',
     rolesChanged: ({ count }: { count: number }) => `${count} changed for this run`,
     rolesUnchanged: 'Everything else stays the same.', useYourRole: 'Use your role',

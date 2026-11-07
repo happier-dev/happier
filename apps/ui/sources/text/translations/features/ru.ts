@@ -16068,7 +16068,7 @@ return { workflowRunListTranslations };
 const Domain_workflowRunRoleTranslations = (() => {
 const en = Shared_workflowRunRoleTranslations.en;
 
-const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "ru"> = { ru: { rolesTitle: 'Роли для этого запуска', rolesYour: 'Ваши роли', rolesChanged: ({ count }) => `${count} изменено для этого запуска`, rolesUnchanged: 'Всё остальное остаётся прежним.', useYourRole: 'Использовать вашу роль', targetsTitle: 'Каждый шаг выполняется в', targetsSessions: 'Шаги в сессиях', targetsBackground: 'Шаги в фоне', rolesPrefillFailed: 'Не удалось прочитать роли вашего последнего запуска. Попробуйте ещё раз.' } };
+const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "ru"> = { ru: { targetsOwn: ({ count }: { count: number }) => `Шаги со своей целью: ${count}`, rolesTitle: 'Роли для этого запуска', rolesYour: 'Ваши роли', rolesChanged: ({ count }) => `${count} изменено для этого запуска`, rolesUnchanged: 'Всё остальное остаётся прежним.', useYourRole: 'Использовать вашу роль', targetsTitle: 'Каждый шаг выполняется в', targetsSessions: 'Шаги в сессиях', targetsBackground: 'Шаги в фоне', rolesPrefillFailed: 'Не удалось прочитать роли вашего последнего запуска. Попробуйте ещё раз.' } };
 
 return { workflowRunRoleTranslations };
 })();

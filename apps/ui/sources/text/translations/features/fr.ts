@@ -16083,7 +16083,7 @@ return { workflowRunListTranslations };
 const Domain_workflowRunRoleTranslations = (() => {
 const en = Shared_workflowRunRoleTranslations.en;
 
-const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "fr"> = { fr: { rolesTitle: 'Rôles pour cette exécution', rolesYour: 'Tes rôles', rolesChanged: ({ count }) => `${count} modifiés pour cette exécution`, rolesUnchanged: 'Tout le reste reste identique.', useYourRole: 'Utiliser ton rôle', targetsTitle: 'Chaque étape s’exécute dans', targetsSessions: 'Étapes dans des sessions', targetsBackground: 'Étapes en arrière-plan', rolesPrefillFailed: 'Impossible de lire les rôles de ta dernière exécution. Réessaie.' } };
+const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "fr"> = { fr: { targetsOwn: ({ count }: { count: number }) => count === 1 ? '1 étape choisit sa propre cible' : `${count} étapes choisissent leur propre cible`, rolesTitle: 'Rôles pour cette exécution', rolesYour: 'Tes rôles', rolesChanged: ({ count }) => `${count} modifiés pour cette exécution`, rolesUnchanged: 'Tout le reste reste identique.', useYourRole: 'Utiliser ton rôle', targetsTitle: 'Chaque étape s’exécute dans', targetsSessions: 'Étapes dans des sessions', targetsBackground: 'Étapes en arrière-plan', rolesPrefillFailed: 'Impossible de lire les rôles de ta dernière exécution. Réessaie.' } };
 
 return { workflowRunRoleTranslations };
 })();

@@ -1,8 +1,20 @@
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { t } from '@/text';
 
 type WorkflowRunTargetReview = Pick<WorkflowMaterializedLeafV1, 'sourceKey' | 'blockId' | 'executionTarget'>;
+
+export function formatWorkflowRunTargetReviewSummary(
+    review: readonly WorkflowRunTargetReview[],
+    executionTarget?: WorkflowRunTargetReview['executionTarget'],
+): string {
+    const kind = executionTarget?.kind ?? 'session';
+    const label = kind === 'detached_run'
+        ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession');
+    const count = review.reduce((total, leaf) => total + Number(leaf.executionTarget.kind !== kind), 0);
+    return count === 0 ? label : `${label} · ${t('workflows.start.targetsOwn', { count })}`;
+}
 
 /** Fresh Starts review authored target overrides; repeats review their accepted targets. */
 export function projectWorkflowRunTargetReview(params: Readonly<{

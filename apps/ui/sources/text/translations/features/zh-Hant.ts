@@ -16015,7 +16015,7 @@ return { workflowRunListTranslations };
 const Domain_workflowRunRoleTranslations = (() => {
 const en = Shared_workflowRunRoleTranslations.en;
 
-const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "zhHant"> = { zhHant: { rolesTitle: '本次執行的角色', rolesYour: '你的角色', rolesChanged: ({ count }) => `本次執行更改了 ${count} 個`, rolesUnchanged: '其他內容保持不變。', useYourRole: '使用你的角色', targetsTitle: '每個步驟執行於', targetsSessions: '步驟在工作階段中執行', targetsBackground: '步驟在背景執行', rolesPrefillFailed: '無法讀取你上次執行的角色。請重試。' } };
+const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "zhHant"> = { zhHant: { targetsOwn: ({ count }: { count: number }) => `${count} 個步驟自行選擇`, rolesTitle: '本次執行的角色', rolesYour: '你的角色', rolesChanged: ({ count }) => `本次執行更改了 ${count} 個`, rolesUnchanged: '其他內容保持不變。', useYourRole: '使用你的角色', targetsTitle: '每個步驟執行於', targetsSessions: '步驟在工作階段中執行', targetsBackground: '步驟在背景執行', rolesPrefillFailed: '無法讀取你上次執行的角色。請重試。' } };
 
 return { workflowRunRoleTranslations };
 })();

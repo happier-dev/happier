@@ -16056,7 +16056,7 @@ return { workflowRunListTranslations };
 const Domain_workflowRunRoleTranslations = (() => {
 const en = Shared_workflowRunRoleTranslations.en;
 
-const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "pl"> = { pl: { rolesTitle: 'Role dla tego uruchomienia', rolesYour: 'Twoje role', rolesChanged: ({ count }) => `${count} zmienionych dla tego uruchomienia`, rolesUnchanged: 'Wszystko inne pozostaje bez zmian.', useYourRole: 'Użyj swojej roli', targetsTitle: 'Każdy krok działa w', targetsSessions: 'Kroki w sesjach', targetsBackground: 'Kroki w tle', rolesPrefillFailed: 'Nie udało się odczytać ról z ostatniego uruchomienia. Spróbuj ponownie.' } };
+const workflowRunRoleTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', typeof en>, "pl"> = { pl: { targetsOwn: ({ count }: { count: number }) => `Kroki z własnym celem: ${count}`, rolesTitle: 'Role dla tego uruchomienia', rolesYour: 'Twoje role', rolesChanged: ({ count }) => `${count} zmienionych dla tego uruchomienia`, rolesUnchanged: 'Wszystko inne pozostaje bez zmian.', useYourRole: 'Użyj swojej roli', targetsTitle: 'Każdy krok działa w', targetsSessions: 'Kroki w sesjach', targetsBackground: 'Kroki w tle', rolesPrefillFailed: 'Nie udało się odczytać ról z ostatniego uruchomienia. Spróbuj ponownie.' } };
 
 return { workflowRunRoleTranslations };
 })();
