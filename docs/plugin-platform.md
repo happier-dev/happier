@@ -5306,6 +5306,10 @@ forge supplies one, `retryNotBeforeMs`. PR and repository-provisioning responses
 share the validated failure fields. Git publishing, PR reads, checkout, clone and
 stacked actions preserve that retry instant without inventing a fallback deadline.
 
+GitHub uses the host purpose owner's selected account or declared native CLI login,
+without a separate adapter-owned credential fallback. Unbound public reads remain
+anonymous only when the provider observes public repository visibility.
+
 ### Connected Account purpose setup (0.3 development)
 
 Source discovery Actions select Connected Accounts through the same host purpose

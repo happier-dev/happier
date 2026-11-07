@@ -32,6 +32,24 @@ function jsonResponse(body: unknown, init?: Readonly<{
 }
 
 describe('GitHub REST repository provisioning adapter', () => {
+  it('uses the host-selected native login to discover a private clone without requiring an imported account', async () => {
+    const adapter = mod.createGithubRepositoryRestAdapter({
+      fetcher: async (_url, init) => new Headers(init?.headers).get('authorization') === 'Bearer native-test-token'
+        ? jsonResponse({ full_name: 'happier-dev/triage-qa-sandbox',
+          html_url: 'https://github.com/happier-dev/triage-qa-sandbox',
+          clone_url: 'https://github.com/happier-dev/triage-qa-sandbox.git', visibility: 'private' })
+        : jsonResponse({ message: 'Not Found' }, { status: 404 }),
+    });
+    await expect(adapter.getRepositoryForClone({ provider: githubProvider, owner: 'happier-dev',
+      repositoryName: 'triage-qa-sandbox', runtimeServices: {
+        // SDK host boundary: bound-only excludes this Machine's selected native login.
+        resolveScmHostingTokenMaterialization: async request => request.boundAccountOnly
+          ? { kind: 'missing', reason: 'account_unbound' }
+          : { kind: 'available', token: 'native-test-token' },
+      },
+    })).resolves.toMatchObject({ repository: { visibility: 'private' }, auth: { state: 'authenticated', profileKind: 'provider_cli' } });
+  });
+
   it('lists REST publish targets for authenticated principals', async () => {
     const requests: Array<Readonly<{ url: string; init?: RequestInit }>> = [];
     const adapter = mod.createGithubRepositoryRestAdapter({

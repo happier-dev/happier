@@ -17,6 +17,8 @@ import type {
 } from '@happier-dev/plugin-sdk/scm';
 import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
 
+import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
 import { readGithubDecodedResponseFacts, readGithubRetryAfterMs } from '../observations/githubApiClient.js';
 import {
@@ -48,6 +50,7 @@ export type GithubRepositoryRestTokenResolution =
     kind: 'available';
     token: string;
     profileKey?: string;
+    account?: ConnectedAccountRef;
   }>
   | Readonly<{
     kind: 'missing';
@@ -83,7 +86,6 @@ async function defaultRuntimeTokenResolver(input: Readonly<{
   if (!resolver) return { kind: 'missing', reason: 'credential_unavailable' };
   const result = await resolver({
     kind: 'scm_hosting_token',
-    boundAccountOnly: true,
     providerId: input.providerId,
     host: input.host,
     provider: input.provider,
@@ -93,6 +95,7 @@ async function defaultRuntimeTokenResolver(input: Readonly<{
     kind: 'available',
     token: result.token,
     ...(result.profileKey ? { profileKey: result.profileKey } : {}),
+    ...(result.account ? { account: result.account } : {}),
   };
 }
 
@@ -188,10 +191,10 @@ function readLabel(raw: unknown, fallback: string): string {
   return fallback;
 }
 
-function createAuthSummary(profileKey: string | undefined): ScmHostingRepositoryAuthSummary {
+function createAuthSummary(profileKey: string | undefined, account?: ConnectedAccountRef): ScmHostingRepositoryAuthSummary {
   return {
     state: 'authenticated',
-    profileKind: 'connected_account',
+    profileKind: account || profileKey ? 'connected_account' : 'provider_cli',
     ...(profileKey ? { profileKey } : {}),
   };
 }
@@ -229,7 +232,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     provider: ScmHostingProviderRef,
     runtimeServices?: ScmHostingProviderRuntimeServices,
     allowAnonymous = false,
-  ): Promise<Readonly<{ token?: string; profileKey?: string }>> {
+  ): Promise<Readonly<{ token?: string; profileKey?: string; account?: ConnectedAccountRef }>> {
     const host = resolveGithubRepositoryHost(provider);
     const result = await tokenResolver({
       providerId: provider.id,
@@ -244,6 +247,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     return {
       token: result.token.trim(),
       ...(result.profileKey ? { profileKey: result.profileKey } : {}),
+      ...(result.account ? { account: result.account } : {}),
     };
   }
 
@@ -253,10 +257,11 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     init?: Omit<RequestInit, 'headers'>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
-    resolvedAuth?: Readonly<{ token?: string; profileKey?: string }>,
+    resolvedAuth?: Readonly<{ token?: string; profileKey?: string; account?: ConnectedAccountRef }>,
   ): Promise<Readonly<{
     raw: unknown;
     profileKey?: string;
+    account?: ConnectedAccountRef;
   }>> {
     const auth = resolvedAuth ?? await resolveToken(provider, runtimeServices);
     const raw = await requestScmForgeJson({
@@ -272,11 +277,12 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     return {
       raw,
       ...(auth.profileKey ? { profileKey: auth.profileKey } : {}),
+      ...(auth.account ? { account: auth.account } : {}),
     };
   }
 
   async function readRepository(input: ScmHostingProviderRepositoryGetInput,
-    auth?: Readonly<{ token?: string; profileKey?: string }>): Promise<ScmHostingRepositorySummary | null> {
+    auth?: Readonly<{ token?: string; profileKey?: string; account?: ConnectedAccountRef }>): Promise<ScmHostingRepositorySummary | null> {
     try {
       const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal, auth);
       const mapped = mapGithubRepositorySummary({ provider: input.provider, raw,
@@ -293,7 +299,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     async describePublishTargets(input) {
       const user = await requestJson(input.provider, '/user', { method: 'GET' }, input.runtimeServices, input.signal);
       const orgs = await requestJson(input.provider, '/user/orgs', { method: 'GET' }, input.runtimeServices, input.signal);
-      const auth = createAuthSummary(user.profileKey);
+      const auth = createAuthSummary(user.profileKey, user.account);
       const targets: ScmHostingRepositoryPublishTarget[] = [];
       const userLogin = readLogin(user.raw);
       if (userLogin) {
@@ -367,7 +373,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       const repository = await readRepository(input, auth);
       // Only observed public visibility admits no-auth cloning, not a saved locator.
       if (!auth.token && repository?.visibility !== 'public') throw createGithubRepositoryAuthRequiredError();
-      const summary: ScmHostingRepositoryAuthSummary = auth.token ? createAuthSummary(auth.profileKey)
+      const summary: ScmHostingRepositoryAuthSummary = auth.token ? createAuthSummary(auth.profileKey, auth.account)
         : { state: 'authenticated', profileKind: 'no_auth' };
       return { repository, auth: summary };
     },

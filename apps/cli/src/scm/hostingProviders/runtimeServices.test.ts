@@ -433,6 +433,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       resolveTarget: async () => null,
       projectTargetAccounts: async () => ({ status: 'complete', accounts: [] }),
       materializeAccount: async () => { throw new Error('There is no selected account'); },
+      materializeNative: async () => ({ kind: 'httpHeaders', headers: {} }),
       assertTargetAccountMaterializable: async () => undefined,
     });
     const request = { kind: 'scm_hosting_token' as const, boundAccountOnly: true as const, providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
@@ -441,6 +442,10 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       resolveConnectedAccountPurposeBindingOwner: () => owner });
     await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github',
       () => unbound.resolveScmHostingTokenMaterialization!(request)))
+      .resolves.toEqual({ kind: 'missing', reason: 'account_unbound' });
+    const { boundAccountOnly: _boundAccountOnly, ...nativeRequest } = request;
+    await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github',
+      () => unbound.resolveScmHostingTokenMaterialization!(nativeRequest)))
       .resolves.toEqual({ kind: 'missing', reason: 'account_unbound' });
     const unavailable = createHostScmHostingProviderRuntimeServices(createRuntimeInput());
     await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github',

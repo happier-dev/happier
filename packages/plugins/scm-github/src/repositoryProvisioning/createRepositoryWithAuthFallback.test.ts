@@ -336,7 +336,7 @@ describe('GitHub repository provisioning authority', () => {
     const calls: boolean[] = [];
     const adapter = createGithubRepositoryProvisioningAdapter({
       restAdapter: createGithubRepositoryRestAdapter({
-        resolveToken: async () => ({ kind: 'available', token: 'test-bound-token' }),
+        resolveToken: async () => ({ kind: 'available', token: 'test-bound-token', profileKey: 'github:work' }),
         fetcher: async (url, init) => {
           expect(url).toBe('https://api.github.com/repos/happier-dev/happier');
           const authenticated = new Headers(init?.headers).has('Authorization');

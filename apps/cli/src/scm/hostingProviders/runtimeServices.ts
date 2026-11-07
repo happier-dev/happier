@@ -460,7 +460,7 @@ export function createHostScmHostingProviderRuntimeServices(
                 ))
                 : undefined;
             if (target.kind === 'unbound' && !nativeService) {
-                return { kind: 'missing', reason: 'credential_unavailable' };
+                return { kind: 'missing', reason: 'account_unbound' };
             }
             const result = await owner.materialize({
                 ...authorization,
@@ -479,7 +479,7 @@ export function createHostScmHostingProviderRuntimeServices(
                 return { kind: 'missing', reason: 'unsupported_materialization' };
             }
             const token = readBearerToken(resultSnapshot.headers);
-            if (!token) return { kind: 'missing', reason: 'credential_unavailable' };
+            if (!token) return { kind: 'missing', reason: target.kind === 'unbound' ? 'account_unbound' : 'credential_unavailable' };
             return {
                 kind: 'available',
                 token,

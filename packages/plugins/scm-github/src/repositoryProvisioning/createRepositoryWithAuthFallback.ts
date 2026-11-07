@@ -171,11 +171,9 @@ function describeRepositoryCloneTargets(input: Readonly<{
 }
 
 /**
- * The bound GitHub Connected Account is the sole authenticated authority for
- * repository reads and mutations. A host with no qualified Connected Account
- * path — every non-`github.com` host, including GitHub Enterprise — is refused
- * typed rather than executed with whatever credentials happen to be present on
- * the machine.
+ * The host purpose owner selects the exact Connected Account or declared native
+ * GitHub CLI login. This adapter never runs its own ambient credential fallback.
+ * Hosts without this adapter's qualified GitHub credential path remain refused.
  */
 function requireBoundAccountHost(provider: ScmHostingProviderRef): void {
   if (shouldTryRest(provider)) return;
