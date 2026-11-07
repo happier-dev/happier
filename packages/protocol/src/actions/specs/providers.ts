@@ -164,11 +164,11 @@ type ProviderActionSpec<Id extends ProviderActionIdV1> = PreNormalizedActionSpec
   id: Id; inputSchema: (typeof inputs)[Id]; outputSchema: (typeof outputs)[Id];
 }>;
 function providerSpec<Id extends ProviderActionIdV1>(id: Id, title: string, summary: string, options: Readonly<{
-  danger?: boolean; read?: boolean; external?: boolean;
+  danger?: boolean; read?: boolean; external?: boolean; confirm?: boolean;
 }>): ProviderActionSpec<Id> {
   const inputHints = { description: summary, fields: providerFields(id) };
   return {
-    id, approvalPolicy: { uiConfirmation: 'policy',
+    id, approvalPolicy: { uiConfirmation: options.confirm ? 'policy' : 'direct',
       ...(id === 'providers.models.experimental.confirm' ? { retainUiFieldIntent: true } : {}),
     }, approval: { result: 'required' }, title, safety: options.danger ? 'danger' : 'safe',
     ...(id === 'providers.connections.update' ? { safetyForInput: (input: unknown) => {
@@ -200,7 +200,7 @@ function createProviderActionSpecsV1() {
   providerSpec('providers.connections.create_custom', 'Add custom Provider',
     'Connect a Provider by entering its address and how it signs in.', { danger: true }),
   providerSpec('providers.connections.enable_detected', 'Enable detected Provider',
-    'Start using a Provider that Happier found already set up on the machine.', { danger: true }),
+    'Start using a Provider that Happier found already set up on the machine.', { danger: true, confirm: true }),
   providerSpec('providers.connections.start_local', 'Start local Provider',
     'Start a Provider that runs on the machine itself, such as a local model server.', { danger: true, external: true }),
   providerSpec('providers.connections.update', 'Update Provider connection',
@@ -210,7 +210,7 @@ function createProviderActionSpecsV1() {
   providerSpec('providers.connections.duplicate', 'Duplicate Provider connection',
     'Make a copy of a Provider connection to adjust.', { danger: true }),
   providerSpec('providers.connections.delete', 'Delete Provider connection',
-    'Remove a Provider connection. Agents can no longer use its models.', { danger: true }),
+    'Remove a Provider connection. Agents can no longer use its models.', { danger: true, confirm: true }),
   providerSpec('providers.connections.enabled.set', 'Turn Provider on or off',
     'Allow or stop agents using this Provider at the selected Account or machine scope.', { danger: true }),
   providerSpec('providers.connections.secrets.bind', 'Choose Provider credential',
@@ -234,7 +234,7 @@ function createProviderActionSpecsV1() {
   providerSpec('providers.models.visibility.bulk', 'Show or hide several Provider models',
     'Choose which of several models appear in the model picker, in one step.', {}),
   providerSpec('providers.models.experimental.confirm', 'Allow experimental Provider model',
-    'Confirm that a model not yet known to work with an agent may be used with it.', { danger: true }),
+    'Confirm that a model not yet known to work with an agent may be used with it.', { danger: true, confirm: true }),
   providerSpec('providers.models.load', 'Load Provider model',
     'Load a model on a Provider that runs models locally, so it is ready to answer.', { danger: true, external: true }),
   providerSpec('providers.models.cancel_load', 'Cancel Provider model loading',

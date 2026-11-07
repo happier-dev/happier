@@ -1,4 +1,5 @@
 import type { McpServerCatalogEntryV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -10,7 +11,7 @@ export type McpSignInView =
   | Readonly<{ state: 'not_connected' }>
   | Readonly<{ state: 'starting' }>
   | Readonly<{ state: 'revoked' }>
-  | Readonly<{ state: 'did_not_finish' }>
+  | Readonly<{ state: 'did_not_finish'; diagnosticCode?: string }>
   | Readonly<{ state: 'no_machine_online' }>
   | Readonly<{ state: 'client_refused' }>
   | Readonly<{ state: 'invalid_client' }>
@@ -34,8 +35,9 @@ export type McpSignInGrantDiagnostics = Readonly<{
   unavailable?: boolean;
 }>;
 
+/** Who the sign-in is, in words a person knows (an email or a name); a provider's opaque account id is not one. */
 export function mcpSignInGrantIdentity(grant: QualifiedConnectedAccountProfileV4): string | null {
-  return grant.providerIdentity?.email ?? grant.displayName ?? grant.providerIdentity?.accountId ?? null;
+  return grant.providerIdentity?.email ?? grant.displayName ?? null;
 }
 
 /** No online machine proves offline only when every supplied presence verdict is known. */
@@ -62,7 +64,7 @@ export function mcpSignInGrantView(server: McpServerCatalogEntryV1, grant: Quali
     try {
       if (canonicalMcpOAuthResourceUrlV1(resource) !== canonicalMcpOAuthResourceUrlV1(server.remote.url)) return { state: 'expired', reason: 'address_changed' };
     } catch { return { state: 'did_not_finish' }; }
-    if (grant.status === 'needs_reauth') return { state: 'expired', reason: 'expired' };
+    if (isConnectedAccountSignedOut(grant.status)) return { state: 'expired', reason: 'expired' };
     if (safe.configuration.revision !== grant.configurationRevision || safe.configuration.status !== 'ready' || !grant.configurationReady) return { state: 'did_not_finish' };
     if (stepUpScopes !== undefined && (!Array.isArray(stepUpScopes) || stepUpScopes.some(scope => typeof scope !== 'string'))) return { state: 'did_not_finish' };
     const requested = Array.isArray(stepUpScopes) ? stepUpScopes.filter((scope): scope is string => typeof scope === 'string') : [];
@@ -72,7 +74,7 @@ export function mcpSignInGrantView(server: McpServerCatalogEntryV1, grant: Quali
   }
   if (anyMachineOnline === false) return { state: 'no_machine_online' };
   if (!grant) return { state: 'not_connected' };
-  if (grant.status === 'needs_reauth') return { state: 'expired', reason: 'expired' };
+  if (isConnectedAccountSignedOut(grant.status)) return { state: 'expired', reason: 'expired' };
   // Profile ids alone cannot establish the resource binding. The existing loading state covers this read.
   return diagnostics?.unavailable ? { state: 'did_not_finish' } : { state: 'starting' };
 }

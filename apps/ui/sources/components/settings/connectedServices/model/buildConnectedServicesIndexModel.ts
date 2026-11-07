@@ -1,10 +1,11 @@
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
-import { canExecuteConnectedServiceAction, type ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { canExecuteConnectedServiceAction, type ConnectedServiceRegistryEntry, type ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
     deriveAccountHealth,
     worstAccountHealth,
@@ -58,7 +59,7 @@ export type ConnectedServicesIndexAgentUse = Readonly<{
 }>;
 
 /** Where a service sits on the page: with the agents' accounts, or with code hosts and tools. */
-export type ConnectedServicesIndexSection = 'agents' | 'tools';
+export type ConnectedServicesIndexSection = 'agents' | 'tools' | 'unknown';
 
 /** What one account does: the pools it is in (and whether each uses it now) and the agents it is the default for. */
 export type ConnectedServicesIndexAccountRoles = Readonly<{
@@ -81,6 +82,8 @@ export type ConnectedServicesIndexSheet = Readonly<{
     canOpen: boolean;
     /** Action admission from the executable projection or the released built-in legacy ingress. */
     canAdd: boolean;
+    /** Descriptor absence alone never establishes that a plugin is not installed. */
+    installationState: 'unknown' | 'installed' | 'not-installed' | 'disabled';
     /** Stable identity order; health updates do not move the account being read. */
     accounts: readonly ConnectedServicesIndexAccount[];
     connectedCount: number;
@@ -157,18 +160,22 @@ function sortAccounts(
 export function buildConnectedServicesIndexModel(input: Readonly<{
     transport: ConnectedAccountUiNegotiation;
     entries: readonly ConnectedServiceRegistryEntry[];
+    /** Registry-backed callers carry the read owner's verdict even for an absent descriptor. */
+    registryStatus?: ConnectedServiceRegistrySnapshot['status'];
     qualifiedAccounts: readonly QualifiedConnectedAccountProfileV4[];
     qualifiedGroups: readonly QualifiedConnectedAccountGroupV4[];
     legacyServices: readonly ConnectedServicesIndexLegacyService[];
     defaultAccountByServiceKey: Readonly<Record<string, string | undefined>>;
-    resolveLabel: (entry: ConnectedServiceRegistryEntry | null) => string;
+    resolveLabel: (entry: ConnectedServiceRegistryEntry | null, service: PluginContributionIdentityV1) => string;
     /** Generated built-in entry for a qualified service no machine publishes, or null. */
     resolveFallbackEntry: (service: PluginContributionIdentityV1) => ConnectedServiceRegistryEntry | null;
     presentDiagnostics: (entry: ConnectedServiceRegistryEntry) => Readonly<{ primary: string | null; supportDetails: string | null }>;
     loadingLabel: string;
+    /** Held Account installation census; incomplete absence is not an uninstall fact. */
+    pluginInstallationCensus?: Readonly<{ pluginIds: ReadonlySet<string>; complete: boolean }> | null;
     /**
      * Which agents sign in with which services, and their defaults; `null` while unknown (no agent
-     * projection yet), in which case every service stays with the agent accounts.
+     * projection yet). Unknown usage never establishes Agent or tool classification.
      */
     agentUses?: readonly ConnectedServicesIndexAgentUse[] | null;
 }>): ConnectedServicesIndexModel {
@@ -183,7 +190,7 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
     const usedByAgentIdsOf = (service: PluginContributionIdentityV1): readonly string[] => agentsUsing(service)
         .flatMap((agent) => agent.agentId ? [agent.agentId] : []);
     const sectionOf = (usedBy: readonly string[]): ConnectedServicesIndexSection => (
-        agentUses === null || usedBy.length > 0 ? 'agents' : 'tools'
+        agentUses === null ? 'unknown' : usedBy.length > 0 ? 'agents' : 'tools'
     );
     const defaultsFor = (matches: (target: QualifiedConnectedAccountPurposeBindingTargetV1) => boolean): string[] => (agentUses ?? [])
         .filter((agent) => agent.defaults.some(matches))
@@ -224,7 +231,13 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
         const groupCount = serviceGroups.length;
         // Pending inputs cannot establish an unavailable verdict from retained
         // descriptor diagnostics. This model owns the state every index surface uses.
-        const pending = input.transport === 'indeterminate' || entry?.projectionStatus === 'loading';
+        const pending = input.transport === 'indeterminate' || entry?.projectionStatus === 'loading'
+            || (!published && input.registryStatus === 'loading');
+        const installationState: ConnectedServicesIndexSheet['installationState'] = pending ? 'unknown'
+            : published && entry?.availability?.state === 'disabled' ? 'disabled'
+            : published && entry?.availability?.state === 'available' ? 'installed'
+            : input.pluginInstallationCensus?.pluginIds.has(service.pluginId) ? 'installed'
+            : input.pluginInstallationCensus?.complete ? 'not-installed' : 'unknown';
         const diagnostics = pending
             ? { primary: input.loadingLabel, supportDetails: null }
             : entry && published
@@ -301,16 +314,17 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
             service,
             entry,
             legacyServiceId,
-            label: input.resolveLabel(entry),
+            label: input.resolveLabel(entry, service),
             canOpen,
             canAdd,
+            installationState,
             accounts: sorted,
             connectedCount: connectedIds.length,
             groupCount,
             defaultAccountId,
             health: worstAccountHealth(sorted.map((account) => healthOf(account.status))),
             attentionAccountId: sorted.find(
-                (account) => normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth',
+                (account) => isConnectedAccountSignedOut(normalizeConnectedServiceCredentialHealthStatus(account.status)),
             )?.accountId ?? null,
             statusLine: diagnostics.primary,
             supportDetails: diagnostics.supportDetails,
@@ -335,7 +349,7 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
                 serviceKey,
                 service: entry.service,
                 entry,
-                label: input.resolveLabel(entry),
+                label: input.resolveLabel(entry, entry.service),
                 usedBy,
                 usedByAgentIds: usedByAgentIdsOf(entry.service),
                 section: sectionOf(usedBy),

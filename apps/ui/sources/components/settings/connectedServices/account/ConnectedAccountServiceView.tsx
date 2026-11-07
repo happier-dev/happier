@@ -10,6 +10,10 @@ import type {
 import type {
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -75,7 +79,6 @@ import {
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
 import {
-    isConnectedServiceCredentialReferencedByGroupError,
     readConnectedServiceSettingsErrorCode,
     readConnectedServiceSettingsErrorDetailsCode,
     readConnectedServiceSettingsErrorRequestId,
@@ -233,7 +236,11 @@ const ConnectedAccountServiceController = React.memo(
         navigation,
     } = controllerProps;
     const locale = getPreferredLanguage();
-    const profile = useProfile();
+    const profile = useProfile(profile => ({
+        id: profile.id,
+        connectedAccountsV4: profile.connectedAccountsV4,
+        connectedServicesV2: profile.connectedServicesV2,
+    }));
     const activeServerId = asStringParam(activeServer.serverId);
     const activeServerGeneration = activeServer.generation;
     const nativeSetup = controllerProps.panel !== undefined;
@@ -547,7 +554,7 @@ const ConnectedAccountServiceController = React.memo(
             const account = { service, accountId: panelIntent.accountId };
             setBusy(true);
             try {
-                const listed = await executeAction('secrets.list', {}, { signal: getAccountSignal() });
+                const listed = await executeAction('secrets.list', { secretId: target.resourceId }, { signal: getAccountSignal() });
                 if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
                 if (!listed.ok) throw Object.assign(new Error(listed.error), { code: listed.errorCode });
                 const record = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(listed.result).secrets
@@ -650,6 +657,7 @@ const ConnectedAccountServiceController = React.memo(
         serverId,
         service,
     });
+    const { present: presentAccountIdentity } = useConnectedAccountIdentityPrivacy();
     const focusedAccountId = route?.focus?.kind === 'account' ? route.focus.accountId : null;
     const focusedPool = route?.focus?.kind === 'group';
     const machineAccounts = React.useMemo<
@@ -1318,7 +1326,12 @@ const ConnectedAccountServiceController = React.memo(
         void beginIntent({ kind: 'connect', service, modeId: selectedSetupMode.id });
     }, [accountDirectMode, attempt, beginIntent, busy, description, machineId, machineRequired, noPendingAttempt, preparesInitialClientConfiguration, selectedSetupMode, service]);
 
-    /** Shared Action approval owns revocation; a deferred review retains this account. */
+    const title = resolveProjectedLocalizedText(description?.descriptor.title, localizeServiceText)
+        || (registryEntry
+            ? resolveConnectedServiceRegistryEntryDisplayName(registryEntry, t, controllerProps.localizePluginText)
+            : t('connectedServices.fallbackName'));
+
+    /** One removal decision precedes the shared Action; managed resources retain their review. */
     const revokeAccount = React.useCallback(async (
         profile: ConnectedAccountServiceProfile,
     ): Promise<boolean> => {
@@ -1326,66 +1339,48 @@ const ConnectedAccountServiceController = React.memo(
         // Bind the incarnation the person was viewing, not a fresh post-approval read.
         const account = profile.ref;
         const expectedCredentialRevision = profile.credentialRevision;
-        const revoke = async (cleanupGroupReferences: boolean, managedResourceDispositions?: ManagedResourceDispositionV1[]) => {
-            try {
-                const result = await executeAction('connectedServices.accounts.revoke', {
-                    ...(machineId && focusedAccountHasMachineAugmentation ? { machineId } : {}), account, expectedCredentialRevision, cleanupGroupReferences,
-                    ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
-                }, { signal: getLifecycleSignal() });
-                if (!isControllerCurrent()) return null;
-                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                const reply = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.revoke'].safeParse(result.result);
-                // Approval receipts are not native settlement and must not remove the detail.
-                return reply.success ? reply.data : null;
-            } catch (error) {
-                // Peers report this conflict either as a thrown failure or as a
-                // `conflict` response; normalize to the response shape so the
-                // cleanup decision below reads exactly one of them.
-                if (isConnectedServiceCredentialReferencedByGroupError(error)) {
-                    return {
-                        status: 'conflict' as const,
-                        code: 'connect_credential_referenced_by_group',
-                    };
-                }
-                throw error;
-            }
+        const memberships = groups.groups.filter((group) => group.members.some((member) => sameQualifiedConnectedAccountRef(member.ref, account)));
+        const cleanupGroupReferences = memberships.length > 0;
+        const pool = memberships.length === 1 ? presentQualifiedConnectedAccountTarget({
+            target: { kind: 'group', ...memberships[0]!.ref },
+            accounts: [], groups: memberships, labelsByKey, serviceTitle: title,
+        }).primaryLabel : null;
+        const name = presentQualifiedConnectedAccountTarget({
+            target: { kind: 'account', account }, accounts: [profile], groups: [], labelsByKey,
+            serviceTitle: title, presentIdentity: presentAccountIdentity,
+        }).primaryLabel;
+        const question = pool ? t('connectedServicesSettings.detailRemovePooledConfirmNamed', { pool })
+            : cleanupGroupReferences ? t('connectedServicesSettings.detailRemovePooledConfirm')
+                : t('connectedServicesSettings.detailRemoveAccountConfirm', { name });
+        const revoke = async (managedResourceDispositions?: ManagedResourceDispositionV1[]) => {
+            const result = await executeAction('connectedServices.accounts.revoke', {
+                ...(machineId && focusedAccountHasMachineAugmentation ? { machineId } : {}), account, expectedCredentialRevision, cleanupGroupReferences,
+                ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
+            }, { signal: getLifecycleSignal(), confirmed: true });
+            if (!isControllerCurrent()) return null;
+            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            const reply = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.revoke'].safeParse(result.result);
+            // Approval receipts are not native settlement and must not remove the detail.
+            return reply.success ? reply.data : null;
         };
 
         setBusy(true);
         try {
-            let cleanupGroupReferences = false;
-            let managedResourceDispositions: ManagedResourceDispositionV1[] | undefined;
-            let result = await revoke(cleanupGroupReferences);
+            const confirmed = await Modal.confirm(t('connectedServicesSettings.detailRemoveAccount'),
+                [question, t('connectedServicesSettings.detailRemoveProviderSignOut', { provider: title })].join('\n\n'), {
+                    confirmText: t('connectedServicesSettings.detailRemoveAccount'),
+                    cancelText: t('common.cancel'), destructive: true,
+                });
+            if (!confirmed || !isControllerCurrent()) return false;
+            let result = await revoke();
             if (!result || !isControllerCurrent()) return false;
-            while (result.status === 'removalReviewRequired' || isConnectedServiceCredentialReferencedByGroupError(result)) {
-                if (result.status === 'removalReviewRequired') {
-                    const dispositions = await reviewManagedResourceRemoval(result.resources);
-                    if (!dispositions || !isControllerCurrent()) return false;
-                    managedResourceDispositions = dispositions;
-                    result = await revoke(cleanupGroupReferences, managedResourceDispositions);
-                    if (!result || !isControllerCurrent()) return false;
-                    continue;
-                }
-                if (cleanupGroupReferences) break;
-                const cleanupConfirmed = await Modal.confirm(
-                    t('modals.disconnect'),
-                    t('connectedServices.errors.credentialReferencedByGroup'),
-                    {
-                        confirmText: t('modals.disconnect'),
-                        cancelText: t('common.cancel'),
-                    },
-                );
-                if (!cleanupConfirmed || !isControllerCurrent()) return false;
-                cleanupGroupReferences = true;
-                result = await revoke(cleanupGroupReferences, managedResourceDispositions);
+            while (result.status === 'removalReviewRequired') {
+                const dispositions = await reviewManagedResourceRemoval(result.resources);
+                if (!dispositions || !isControllerCurrent()) return false;
+                result = await revoke(dispositions);
                 if (!result || !isControllerCurrent()) return false;
             }
-            if (result.status === 'revoked') {
-                if (result.remoteStatus === 'remoteNotAttempted') {
-                    Modal.alert(t('connectedServicesSettings.detailRemoveAccount'), t('connectedServicesSettings.detailRemoteSignOutUnconfirmed'));
-                }
-                return true;
-            }
+            if (result.status === 'revoked') return true;
             setErrorCode(
                 result.status === 'outcomeUnknown'
                     ? 'connected_account_revoke_outcome_unknown'
@@ -1397,10 +1392,9 @@ const ConnectedAccountServiceController = React.memo(
             return false;
         } catch (error) {
             if (!isControllerCurrent()) return false;
-            setErrorCode(
-                readConnectedServiceSettingsErrorCode(error)
-                ?? 'connected_account_daemon_unavailable',
-            );
+            const code = readConnectedServiceSettingsErrorCode(error);
+            if (isActionApprovalDeclinedErrorCode(code)) return false;
+            setErrorCode(code ?? 'connected_account_daemon_unavailable');
             return false;
         } finally {
             if (isControllerCurrent()) setBusy(false);
@@ -1412,7 +1406,10 @@ const ConnectedAccountServiceController = React.memo(
         getLifecycleSignal,
         machineId,
         focusedAccountHasMachineAugmentation,
-        serverId,
+        groups.groups,
+        labelsByKey,
+        presentAccountIdentity,
+        title,
     ]);
 
     if (controllerProps.panel && (!exactRoute || !service)) {
@@ -1498,10 +1495,6 @@ const ConnectedAccountServiceController = React.memo(
         );
     }
 
-    const title = resolveProjectedLocalizedText(description?.descriptor.title, localizeServiceText)
-        || (registryEntry
-            ? resolveConnectedServiceRegistryEntryDisplayName(registryEntry, t, controllerProps.localizePluginText)
-            : t('connectedServices.fallbackName'));
     // ONE projection of the daemon transport (the `accountPeer` memo) answers
     // every peer-capability question on this route, so a second copy cannot drift
     // into a different peer-class answer.

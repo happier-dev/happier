@@ -66,6 +66,18 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('orders available model sources before refused ones and keeps the refusal separate from recovery actions', () => {
+        const unavailable = providerGroup({ connectionId: 'pc_off', modelId: 'off' });
+        const available = providerGroup({ connectionId: 'pc_ready', modelId: 'ready' });
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: 'agent:happier.agent.codex/codex', nativeModels: [], hiddenNativeModelKeys: new Set(),
+            providerProjectionAuthoritative: true, providerGroups: [{ ...unavailable,
+                authorization: { authorized: false, error: createProviderErrorV1('provider_endpoint_unreachable') } }, available],
+        });
+        expect(sections.flatMap(section => section.options.map(option => [option.value?.modelId, option.availability])))
+            .toEqual([['ready', 'available'], ['off', 'unavailable']]);
+        expect(sections[1]?.options[0]?.unavailableReason).toBe(t(presentProviderError('provider_endpoint_unreachable').titleKey));
+    });
     it('allows an unloaded preference without execution readiness while preserving compatibility and visibility', () => {
         const group = providerGroup({ connectionId: 'pc_preference', modelId: 'model',
             modelLoadPreflightPolicy: 'required', loadState: 'unloaded' });
@@ -169,14 +181,17 @@ describe('buildSessionModelPickerSections', () => {
         });
         // Preserve an already-selected model's identity without offering a repair
         // action that could re-admit a model known to lack required capabilities.
+        const refusedSelectionKey = sessionModelSelectionKey(resource.providerModels[0]!.selection);
         const retained = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
             providerGroups: [], teamCredentialResources: [resource],
             selectedTeamCredentialModel: resource.providerModels[0]!.selection,
             onRecoverTeamCredentialResource: vi.fn(),
         });
-        expect(retained[0]?.options[0]).toMatchObject({ disabled: true });
-        expect(retained[0]?.options[0]?.onActivate).toBeUndefined();
+        const retainedOption = retained.flatMap(section => section.options)
+            .find(option => sessionModelSelectionKey(option.value) === refusedSelectionKey);
+        expect(retainedOption).toMatchObject({ disabled: true });
+        expect(retainedOption?.onActivate).toBeUndefined();
         // The producer's hard refusal remains authoritative even if display facts
         // later contradict it; it must never become an enabled repair action.
         const contradicted = { ...resource, providerModels: resource.providerModels.map(row => ({ ...row,
@@ -187,8 +202,10 @@ describe('buildSessionModelPickerSections', () => {
             providerGroups: [], teamCredentialResources: [contradicted], selectedTeamCredentialModel: resource.providerModels[0]!.selection,
             onRecoverTeamCredentialResource: vi.fn(),
         });
-        expect(refused[0]?.options[0]).toMatchObject({ disabled: true });
-        expect(refused[0]?.options[0]?.onActivate).toBeUndefined();
+        const refusedOption = refused.flatMap(section => section.options)
+            .find(option => sessionModelSelectionKey(option.value) === refusedSelectionKey);
+        expect(refusedOption).toMatchObject({ disabled: true });
+        expect(refusedOption?.onActivate).toBeUndefined();
         const withoutCompatibility = { ...contradicted, providerModels: contradicted.providerModels.map(row => ({
             ...row, compatibility: undefined,
         })) };
@@ -197,8 +214,10 @@ describe('buildSessionModelPickerSections', () => {
             providerGroups: [], teamCredentialResources: [withoutCompatibility], selectedTeamCredentialModel: resource.providerModels[0]!.selection,
             onRecoverTeamCredentialResource: vi.fn(),
         });
-        expect(unavailable[0]?.options[0]).toMatchObject({ disabled: true });
-        expect(unavailable[0]?.options[0]?.onActivate).toBeUndefined();
+        const unavailableOption = unavailable.flatMap(section => section.options)
+            .find(option => sessionModelSelectionKey(option.value) === refusedSelectionKey);
+        expect(unavailableOption).toMatchObject({ disabled: true });
+        expect(unavailableOption?.onActivate).toBeUndefined();
         const verified = { ...resource, providerModels: [ { ...selectedTeam,
             descriptor: { ...selectedTeam.descriptor, capabilities: { toolRoundTrips: 'unsupported' as const } },
         } ] };

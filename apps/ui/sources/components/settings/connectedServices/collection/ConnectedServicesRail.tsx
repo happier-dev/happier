@@ -65,7 +65,7 @@ import { NewPoolMenu, selectNewPoolServices } from './NewPoolMenu';
 import { ConnectedServicesAddMenu } from './ConnectedServicesAddMenu';
 import { connectedAccountColumnFacts, connectedServicesColumnAdapter } from './connectedServicesColumnAdapter';
 import { useSettingsColumnFilter } from '@/components/settings/shell/useSettingsColumnFilter';
-import { presentConnectedAccountSignedOut, resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
+import { isConnectedAccountSignedOut, presentConnectedAccountSignedOut, resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
 import type { ConnectedServiceCredentialHealthStatusV1, ConnectedServiceCredentialRefreshFailureKindV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { presentNewConnectedAccountDraftTitle } from '../setup/connectMoreBlocks';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -133,7 +133,7 @@ export type ConnectedServicesRailViewProps = Readonly<{
 }>;
 
 function isSignedOut(account: ConnectedServicesIndexAccount): boolean {
-    return parseDisplayableCredentialHealthStatus(account.status) === 'needs_reauth';
+    return isConnectedAccountSignedOut(parseDisplayableCredentialHealthStatus(account.status));
 }
 
 /**

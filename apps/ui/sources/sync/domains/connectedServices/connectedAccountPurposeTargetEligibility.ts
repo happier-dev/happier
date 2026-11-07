@@ -1,4 +1,5 @@
 import { isQualifiedConnectedAccountProfileActiveV4, isQualifiedConnectedAccountProfileUsableV4, resolveQualifiedConnectedAccountGroupActiveAccountV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { isConnectedAccountSignedOut } from './parseDisplayableCredentialHealthStatus';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
@@ -57,7 +58,7 @@ export function describeConnectedAccountPurposeTargetEligibility(input: TargetEl
     account: QualifiedConnectedAccountProfileV4,
   ): TargetEligibilityDescription => {
     if (!isQualifiedConnectedAccountProfileActiveV4(account, now)) {
-      return { eligibility: 'unusable', reason: account.status === 'needs_reauth' || (typeof account.expiresAt === 'number' && account.expiresAt <= now)
+      return { eligibility: 'unusable', reason: isConnectedAccountSignedOut(account.status) || (typeof account.expiresAt === 'number' && account.expiresAt <= now)
         ? 'accountReconnect' : 'accountUnavailable' };
     }
     const authentication = input.resolveAuthentication(account.ref.service);

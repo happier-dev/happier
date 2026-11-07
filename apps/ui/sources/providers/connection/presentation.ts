@@ -1,4 +1,5 @@
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 
 export type ProviderConnectionPresentationStatus =
@@ -98,7 +99,7 @@ export function presentProviderConnection(connection: DaemonProviderConnectionVi
 }
 
 /** Detail-only check facts; collection rows need only the summary above. */
-export function presentProviderConnectionDetail(connection: DaemonProviderConnectionViewV1):
+export function presentProviderConnectionDetail(connection: DaemonProviderConnectionViewV1, probeError: ProviderErrorV1 | null = null):
     ReturnType<typeof presentProviderConnection> & Readonly<{
         lastCheck: Readonly<{
             checkedAt: number;
@@ -106,17 +107,26 @@ export function presentProviderConnectionDetail(connection: DaemonProviderConnec
             status: ProviderConnectionPresentationStatus;
             failed: boolean;
         }> | null;
+        probeError: ProviderErrorV1 | null;
     }> {
     const presentation = presentProviderConnection(connection);
+    const lastCheck = connection.runtime.health !== 'not_checked' && connection.runtime.checkedAt !== null
+        ? {
+            checkedAt: connection.runtime.checkedAt,
+            errorCode: connection.runtime.endpoints.find(endpoint => endpoint.errorCode)?.errorCode ?? null,
+            status: connection.runtime.health === 'available' ? 'available' as const : presentation.status,
+            failed: connection.runtime.health !== 'available',
+        }
+        : null;
     return {
         ...presentation,
-        lastCheck: connection.runtime.health !== 'not_checked' && connection.runtime.checkedAt !== null
-            ? {
-                checkedAt: connection.runtime.checkedAt,
-                errorCode: connection.runtime.endpoints.find(endpoint => endpoint.errorCode)?.errorCode ?? null,
-                status: connection.runtime.health === 'available' ? 'available' : presentation.status,
-                failed: connection.runtime.health !== 'available',
-            }
-            : null,
+        // Endpoint diagnostics describe the canonical failed observation; an
+        // Action refusal is independent of endpoint health and remains visible.
+        probeError: probeError?.failureCause?.phase.startsWith('providers.probe.')
+            ? lastCheck?.failed === true
+                && connection.runtime.endpoints.some(endpoint => endpoint.errorCode === probeError.code)
+                ? probeError : null
+            : probeError,
+        lastCheck,
     };
 }

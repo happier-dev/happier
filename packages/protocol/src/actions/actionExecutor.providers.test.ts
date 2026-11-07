@@ -19,6 +19,35 @@ import { DaemonProviderConnectionMutationResponseV1Schema } from '../rpc/provide
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
 
 describe('Provider Settings Actions', () => {
+  it.each(['agent', 'mcp'] as const)('holds %s custom Provider creation at one approval with no Account mutation', async surface => {
+    const approvals: ApprovalRequestV2[] = [];
+    let writes = 0;
+    const account = createAccountProviderActionExecuteV1({ assertCurrent() {},
+      readCatalog: async () => ({ status: 'ready', revision: 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 }),
+      readDefinitions: async () => [],
+      writeCatalog: async () => { writes++; return { status: 'updated' }; },
+    });
+    const executor = createActionExecutor({
+      approvalsCreate: async ({ request }) => {
+        approvals.push(ApprovalRequestV2Schema.parse(request));
+        return { artifactId: 'custom-provider-approval' };
+      },
+      providerActionExecute: account,
+    });
+    const result = await executor.execute('providers.connections.create_custom', {
+      action: 'createCustom', connectionId: 'pc_agent', savedSecretId: null, enable: false,
+      template: { v: 1, name: 'Agent source', endpointTemplates: [{ id: 'chat', protocol: 'openai-chat',
+        baseUrl: 'https://example.com/v1', capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown',
+          statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+        catalog: { source: 'manual', manualModelPolicy: 'allowed' } }, manualModels: [],
+    }, { surface, authority: 'account_automation', serverId: 'test-home', actionRequestId: 'custom-provider-request' });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
+      actionId: 'providers.connections.create_custom' } });
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({ actionId: 'providers.connections.create_custom', status: 'open' });
+    expect(writes).toBe(0);
+  });
+
   it('preserves a forwarded refresh approval before parsing Provider output', async () => {
     const input = { machineId: 'hub', agentTargetKey: 'agent:happier.agent.codex/codex',
       forceRefresh: true as const };
@@ -49,21 +78,36 @@ describe('Provider Settings Actions', () => {
     ['providers.models.load', { action: 'load', connectionId: 'gateway', machineId: 'hub', modelId: 'model' }],
     ['providers.connections.enabled.set', { action: 'setEnabled', connectionId: 'gateway', machineId: 'hub', enabled: true, scope: 'machine' }],
   ] as const)('preserves a forwarded %s approval without executing its effect', async (actionId, input) => {
-    const invocation = { ...context, serverId: 'test-home', machineId: 'hub', actionRequestId: 'forward-request' };
-    const receiver = createActionExecutor({
-      approvalsCreate: async ({ request }) => {
-        ApprovalRequestV2Schema.parse(request);
-        return { artifactId: 'forward-approval' };
-      },
-      providerActionExecute: async () => { throw new Error('Effect awaits approval'); },
-    });
-    const produced = await receiver.execute(actionId, input, invocation);
-    expect(produced).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
-    if (!produced.ok) throw new Error('Expected real pending producer');
-    const forward = createProviderActionExecuteV1({ assertCurrent() {}, rpc: async () => produced.result,
-      setDefault: async () => ({ status: 'unchanged' }),
-    });
-    expect(await forward(parseProviderActionRequestV1(actionId, input), invocation)).toEqual(produced);
+    for (const surface of ['ui', 'agent'] as const) {
+      const invocation = { ...context, surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const,
+        serverId: 'test-home', machineId: 'hub', actionRequestId: 'forward-request',
+        ...(surface === 'ui' ? { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+          [actionId]: { approvalRequiredSurfaces: ['ui'] },
+        } }) } : {}),
+      };
+      const approvals: ApprovalRequestV2[] = [];
+      let rpcRequests = 0;
+      const receiver = createActionExecutor({
+        approvalsCreate: async ({ request }) => {
+          approvals.push(ApprovalRequestV2Schema.parse(request));
+          return { artifactId: 'forward-approval' };
+        },
+        providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {},
+          rpc: async () => { rpcRequests++; throw new Error('Effect awaits approval'); },
+          setDefault: async () => ({ status: 'unchanged' }),
+        }),
+      });
+      const produced = await receiver.execute(actionId, input, invocation);
+      expect(produced).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject({ actionId, status: 'open' });
+      expect(rpcRequests).toBe(0);
+      if (!produced.ok) throw new Error('Expected real pending producer');
+      const forward = createProviderActionExecuteV1({ assertCurrent() {}, rpc: async () => produced.result,
+        setDefault: async () => ({ status: 'unchanged' }),
+      });
+      expect(await forward(parseProviderActionRequestV1(actionId, input), invocation)).toEqual(produced);
+    }
   });
 
   it.each([
@@ -107,11 +151,14 @@ describe('Provider Settings Actions', () => {
       }),
     });
     const invocation = { ...context, serverId: 'test-home', actionRequestId: 'probe-request',
-      machineId: 'hub' };
+      machineId: 'hub', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'providers.probe': { approvalRequiredSurfaces: ['ui'] },
+      } }) };
     expect(await executor.execute('providers.probe', { connectionId: 'gateway', machineId: 'hub' }, invocation))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(await executor.execute('approval.request.decide', { artifactId: 'probe-approval', decision: 'approve' }, invocation))
-      .toMatchObject({ ok: true, result: { execution: { ok: true, result: { status: 'error', error } } } });
+      .toMatchObject({ ok: true, result: { execution: { ok: false,
+        errorCode: error.code, error: error.code } } });
   });
   it.each(['updated', 'refused', 'conflict', 'terminal_lost'] as const)(
     'settles a deferred Account gateway slot approval with %s disposition without daemon replay', async disposition => {
@@ -168,7 +215,10 @@ describe('Provider Settings Actions', () => {
           setDefault: async () => ({ status: 'applied' }),
         }),
       });
-      const invocation = { ...context, serverId: 'test-home', actionRequestId: 'slot-request' };
+      const invocation = { ...context, serverId: 'test-home', actionRequestId: 'slot-request',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+          'providers.connections.update': { approvalRequiredSurfaces: ['ui'] },
+        } }) };
       expect(await executor.execute('providers.connections.update', input, invocation))
         .toEqual(expect.objectContaining({ ok: true, result: expect.objectContaining({ kind: 'approval_request_created' }) }));
       const decided = await executor.execute('approval.request.decide', {
@@ -187,7 +237,7 @@ describe('Provider Settings Actions', () => {
         const failed = disposition === 'refused' || disposition === 'conflict';
         expect(decided).toMatchObject({ ok: true, result: { status: failed ? 'failed' : 'executed' } });
         expect(readStored().execution).toMatchObject(failed
-          ? { ok: false, errorCode: disposition === 'refused' ? 'provider_connection_invalid' : 'provider_catalog_conflict' }
+          ? { ok: false, errorCode: disposition === 'refused' ? 'provider_connection_invalid' : 'provider_connection_changed' }
           : { ok: true });
         expect(statuses).toEqual(['open', 'approved', 'executing', failed ? 'failed' : 'executed']);
       }

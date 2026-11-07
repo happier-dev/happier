@@ -687,7 +687,7 @@ describe('QualifiedPoolDetailView', () => {
         const meter = screen.root.findAll((node) => node.props?.testID === 'connected-services-pool-detail:left:5h' && node.props?.remainingPct !== undefined)[0];
         expect(meter?.props).toMatchObject({ remainingPct: 20, resetsAt: NOW + 30 * MIN, resetPrefix: 'next', size: 'wide' });
         const room = screen.root.findAll((node) => node.props?.testID === 'connected-services-pool-detail:left:room' && typeof node.props?.children === 'string')[0];
-        expect(room?.props.children).toBe('connectedServicesPool.roomCount(count=1,total=2) · connectedServicesPool.notReported(count=1)');
+        expect(room?.props.children).toBe('connectedServicesPool.roomCount(count=1,total=3) · connectedServicesPool.notReported(count=1)');
     });
 
     it('names who is in use and what happens when it runs out, and switches by hand to the next member', async () => {

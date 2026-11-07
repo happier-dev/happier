@@ -1,6 +1,9 @@
 import type { ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 import { resolveProviderConnectionIcon } from '@/components/settings/providers/collection/providerCollectionModel';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
+import { presentProviderConnection, PROVIDER_CONNECTION_STATUS_KEY } from '@/providers/connection/presentation';
+import { t } from '@/text';
 
 import { providerConnectionSourceLabel } from './resolveSessionRoutePresentation';
 
@@ -18,6 +21,8 @@ export type SessionRouteSourceRow = Readonly<{
     hiddenFromPicker: boolean;
     /** Set when this Agent cannot use it: the Agents that can (never empty). */
     worksWith: readonly string[] | null;
+    availability: 'available' | 'unavailable';
+    unavailableReason: string | null;
 }>;
 
 /**
@@ -46,6 +51,9 @@ export function buildSessionRouteSourceRows(input: Readonly<{
             ? view.compatibility.filter(summary => summary.status !== 'incompatible').map(summary => summary.agentName)
             : [];
         if (!shown && !hidden && !compatible && worksWith.length === 0) continue;
+        const presentation = presentProviderConnection(view);
+        const available = view.authorized && !incompatible
+            && (presentation.status === 'available' || presentation.status === 'partial' || presentation.status === 'notChecked');
         (input.isGateway(view) ? gateways : providers).push({
             connectionId: view.connectionId,
             contributionKey: view.contributionKey,
@@ -57,8 +65,15 @@ export function buildSessionRouteSourceRows(input: Readonly<{
             modelCount: shown || hidden ? (shown?.rows.length ?? 0) + (hidden?.modelCount ?? 0) : null,
             hiddenFromPicker: hidden !== undefined,
             worksWith: worksWith.length > 0 ? worksWith : null,
+            availability: available ? 'available' : 'unavailable',
+            unavailableReason: available ? null
+                : view.authorizationError ? t(presentProviderError(view.authorizationError).titleKey)
+                    : incompatible ? t('connectedServices.authChip.worksWith', { agents: worksWith.join(', ') })
+                        : t(PROVIDER_CONNECTION_STATUS_KEY[presentation.status]),
         });
     }
-    const byLabel = (left: SessionRouteSourceRow, right: SessionRouteSourceRow) => left.label.localeCompare(right.label);
+    const byLabel = (left: SessionRouteSourceRow, right: SessionRouteSourceRow) =>
+        Number(left.availability === 'unavailable') - Number(right.availability === 'unavailable')
+        || left.label.localeCompare(right.label);
     return { gateways: gateways.sort(byLabel), providers: providers.sort(byLabel) };
 }

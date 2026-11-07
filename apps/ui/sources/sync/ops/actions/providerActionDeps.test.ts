@@ -5,7 +5,7 @@ import { ProviderConnectionsCatalogV1Schema, ProviderConnectionsRowMutationV1Sch
 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { createExperimentalProviderModelProjectionFixture, createProviderModelProjectionFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createExperimentalProviderModelProjectionFixture, createProviderModelProjectionFixture, createProviderConnectionViewFixture, createProviderConnectionsDescribeFixture, createProviderModelsFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -13,7 +13,6 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture, createSessionAccessFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import nacl from 'tweetnacl';
@@ -21,6 +20,13 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
 // Only Socket transport is substituted; Action admission and scoped Machine routing stay real.
@@ -58,6 +64,15 @@ async function executeSourceVisibility(serverId: string, accountId: string, show
 }
 
 describe('Provider Account source visibility Action', () => {
+    it('tests a Provider directly from present-user UI without creating an approval Artifact', async () => {
+        const machine = createMachineFixture({ id: 'probe-machine', activeAt: Date.now() });
+        const { serverId } = await account.restore({ catalog: catalogFixture(), machines: [machine] });
+        const { probeProviderConnection } = await import('@/providers/actions/client');
+        const result = await probeProviderConnection({ serverId, connectionId: 'pc_a', machineId: machine.id });
+        expect(result).toMatchObject({ status: 'success' });
+        expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_PROBE)).toHaveLength(1);
+        expect(account.home.artifacts(serverId).list()).toEqual([]);
+    });
     it.each(['owner', 'view'] as const)('reads the %s Session binding through authenticated UI Action dispatch', async level => {
         const machine = createMachineFixture({ id: 'session-machine', activeAt: Date.now() });
         const { serverId, accountId } = await account.restore({ catalog: catalogFixture(), machines: [machine], currentAccount: true });
@@ -93,7 +108,73 @@ describe('Provider Account source visibility Action', () => {
             expect(paired).toEqual([]);
         }
     });
-    it('carries requester Account custody for foreign-worker picker, current selection, source browse and refresh without raw catalog reads', async () => {
+    it('keeps an unavailable Saved Secret typed through the real Provider Action without a write or retry', async () => {
+        const catalog = catalogFixture();
+        const { serverId } = await account.restore({ catalog,
+            waivedActions: ['providers.connections.secrets.bind'] });
+        // HTTP supplies no material for the selected reference. The real
+        // Saved Secret capture, Provider writer and Action error path run.
+        account.home.answer(serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [] } });
+        let rowWrites = 0;
+        account.home.answer(serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, { select: () => {
+            rowWrites++;
+            return { status: 500, body: { error: 'unexpected_provider_write' } };
+        } });
+        const { mutateProviderConnection } = await import('@/providers/actions/client');
+        const { presentProviderError } = await import('@/providers/connection/errorPresentation');
+        let failure: unknown;
+        try {
+            await mutateProviderConnection({ serverId, request: { action: 'bindSecret', connectionId: 'pc_a',
+                credentialSlotId: 'apiKey', savedSecretId: formatSharedSavedSecretRefV1('missing-provider-key'), scope: 'account' } });
+        } catch (error) { failure = error; }
+        expect(failure).toMatchObject({ code: 'provider_secret_unavailable', retryable: true, action: 'retry' });
+        expect(presentProviderError(failure).titleKey).toBe('settingsProviders.errors.secretUnavailableTitle');
+        expect(rowWrites).toBe(0);
+        expect(account.home.requestsFor('/v1/account/saved-secrets/resources/materials')).toHaveLength(1);
+    });
+    it.each(['providers.connections.describe', 'providers.models.list'] as const)('describes the requester Account Provider on a shared worker without reading the custodian catalog (%s)', async actionId => {
+        const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+        const machine = createMachineFixture({ id: 'foreign-worker', activeAt: Date.now(),
+            installationId: 'foreign-installation', installationPublicKey: encodeBase64(installation.publicKey),
+            access: { custodian: { accountId: 'worker-custodian', displayName: 'Worker owner' },
+                role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+        });
+        const serverIdentityId = 'srv_requester_describe';
+        const { serverId, accountId } = await account.restore({ catalog: catalogFixture(), machines: [machine],
+            currentAccount: true, serverIdentityId });
+        const home = account.home.findByServerUrl('https://provider-settings-account.test');
+        if (!home?.token) throw new Error('Expected requester Home credentials');
+        const described = actionId === 'providers.models.list' ? createProviderModelsFixture() : createProviderConnectionsDescribeFixture({ connections: [
+            createProviderConnectionViewFixture({ connectionId: 'pc_a', displayName: 'Requester Provider' }),
+        ] });
+        const rpcMethod = actionId === 'providers.models.list' ? RPC_METHODS.DAEMON_PROVIDERS_MODELS : RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE;
+        // HTTP/Socket are real system boundaries. A shared grant cannot read the custodian's private catalog.
+        providerHarness.intercept(rpcMethod, () => ({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' }));
+        account.home.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-root', binding: {
+                accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId,
+                machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'worker-custodian',
+                accountEncryptionMode: 'plain', actionId, requestId: request.envelope.requestId,
+                target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+            } }) };
+        } });
+        account.home.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                purpose: { kind: 'external_action' }, machineId: machine.id, installationId: 'foreign-installation',
+                serverIdentityId, installationPrivateKey: installation.secretKey })).toEqual({ token: home.token });
+            expect(JSON.stringify(request)).not.toContain(home.token);
+            return { body: { v: 1, actionId, requestId: request.envelope.requestId,
+                execution: { ok: true, result: described } } };
+        } });
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        await expect(createDefaultActionExecutor().execute(actionId, { machineId: machine.id, connectionId: 'pc_a' },
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, expectedAccountId: accountId }))
+            .resolves.toEqual({ ok: true, result: described });
+        expect(providerHarness.state.requests.filter(request => request.method === rpcMethod)).toHaveLength(0);
+    });
+    it.each(['success', 'refused'] as const)('carries requester Account custody and settles a forwarded refresh approval with %s without raw catalog reads', async outcome => {
         const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const machine = createMachineFixture({ id: 'foreign-worker', activeAt: Date.now(),
             installationId: 'foreign-installation', installationPublicKey: encodeBase64(installation.publicKey),
@@ -110,6 +191,40 @@ describe('Provider Account source visibility Action', () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const currentSelection = { agentTargetKey, providerConnectionId: 'pc_a', modelId: 'model-a' };
         const projected = createExperimentalProviderModelProjectionFixture({ agentTargetKey, modelId: 'requester-model' });
+        const refusal = createProviderErrorV1('provider_authorization_changed', { machineId: machine.id });
+        const finalProjection = outcome === 'success' ? projected : { status: 'error' as const, error: refusal };
+        const approvals = new Map<string, ApprovalRequestV2>();
+        let effects = 0;
+        // Artifact persistence and the Machine RPC are the receiver's boundaries.
+        // The pending receipt, approval decision and final projection are real.
+        const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            isApprovalExecutionOriginCurrent: async () => true,
+            approvalsCreate: async ({ request }) => {
+                approvals.set('remote-refresh-approval', ApprovalRequestV2Schema.parse(request));
+                return { artifactId: 'remote-refresh-approval' };
+            },
+            approvalsGet: async ({ artifactId }) => approvals.get(artifactId) ?? null,
+            approvalsUpdate: async ({ artifactId, request }) => {
+                const previous = approvals.get(artifactId);
+                if (!previous) throw new Error('Missing receiver approval');
+                const next = ApprovalRequestV2Schema.parse(request);
+                const transition = decideApprovalRequestTransition(previous, next);
+                if (!transition.ok) return transition;
+                approvals.set(artifactId, structuredClone(next));
+                return { ok: true };
+            },
+            providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {},
+                rpc: async () => { effects++; return finalProjection; },
+                setDefault: async () => ({ status: 'unchanged' }),
+            }),
+        }));
+        const refreshInput = { machineId: machine.id, agentTargetKey, forceRefresh: true as const };
+        const receiverContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId, runtimeAccountId: accountId, machineId: machine.id, actionRequestId: 'remote-refresh-request' } as const;
+        const pending = await receiver.execute('providers.models.refresh', refreshInput, receiverContext);
+        expect(pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        expect(effects).toBe(0);
+        let forwardPending = false;
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, () => {
             throw createProviderErrorV1('provider_authorization_changed', { machineId: machine.id });
         });
@@ -132,7 +247,7 @@ describe('Provider Account source visibility Action', () => {
                     serverIdentityId, installationPrivateKey: installation.secretKey })).toEqual({ token: home.token });
                 expect(JSON.stringify(request)).not.toContain(home.token);
                 return { body: { v: 1, actionId, requestId: request.envelope.requestId,
-                    execution: { ok: true, result: projected } } };
+                    execution: actionId === 'providers.models.refresh' && forwardPending ? pending : { ok: true, result: projected } } };
             } });
         }
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
@@ -152,6 +267,44 @@ describe('Provider Account source visibility Action', () => {
         expect(reads.map(read => ExternalActionExecutionAuthorizationRequestV1Schema.parse(read.input).envelope))
             .toMatchObject([{ input: { machineId: machine.id, agentTargetKey } },
                 { input: { currentSelection } }, { input: { sourceConnectionId: 'pc_a' } }]);
+        forwardPending = true;
+        const registrations: ActionApprovalContinuation[] = [];
+        const { describeProviderModels } = await import('@/providers/actions/client');
+        const controller = new AbortController();
+        const settling = describeProviderModels({ ...refreshInput, serverId }, {
+            scope: { serverId, accountId }, signal: controller.signal,
+            onApprovalPending: registration => {
+                if (typeof registration === 'string') throw new Error('Expected result continuation');
+                registrations.push(registration);
+            },
+        });
+        let failure: unknown;
+        void settling.catch(error => { failure = error; });
+        try {
+            await vi.waitFor(() => { if (failure) throw failure; expect(registrations).toHaveLength(1); });
+            expect(effects).toBe(0);
+            expect(account.home.requestsFor('/v1/actions/providers.models.refresh')).toHaveLength(2);
+            expect(await receiver.execute('approval.request.decide', {
+                artifactId: 'remote-refresh-approval', decision: 'approve',
+            }, receiverContext)).toMatchObject({ ok: true });
+            const executed = approvals.get('remote-refresh-approval');
+            if (!executed) throw new Error('Missing executed approval');
+            expect(executed.status).toBe('executed');
+            expect(await registrations[0]!.onExecuted({
+                id: 'remote-refresh-approval', title: null, isDecrypted: true,
+                header: buildApprovalRequestArtifactHeaderV1(executed), body: JSON.stringify(executed),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2,
+            })).toBe('consumed');
+            if (outcome === 'success') expect(await settling).toEqual(finalProjection);
+            else await expect(settling).rejects.toMatchObject({ code: refusal.code });
+            expect(effects).toBe(1);
+            // Approval completion never replays discovery or rereads the fleet.
+            expect(account.home.requestsFor('/v1/actions/providers.models.refresh')).toHaveLength(2);
+            expect(account.home.requests.filter(request => new URL(request.path, home.serverUrl).pathname === '/v1/machines')).toHaveLength(censusReadsBeforePicker);
+        } finally {
+            controller.abort();
+            await settling.catch(() => {});
+        }
         const error = createProviderErrorV1('provider_authorization_changed', { machineId: machine.id, connectionId: 'pc_a' });
         account.home.answer(serverId, '/v1/actions/providers.models.projection', { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -365,7 +518,8 @@ describe('Provider Account source visibility Action', () => {
         }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, expectedAccountId: accountId });
         try {
             await vi.waitFor(() => expect(entered).toBe(true));
-            await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1);
+            // The held RPC remains live beyond the retired Provider probe cap.
+            await vi.advanceTimersByTimeAsync(30_001);
             release();
             await expect(pending).resolves.toMatchObject({ ok: true, result: { status: 'success',
                 refreshFailures: [{ connectionId: 'pc_a', error: failure }] } });
@@ -441,7 +595,7 @@ describe('Provider Account source visibility Action', () => {
         const secret = new Uint8Array(32).fill(29);
         const material = mode === 'e2ee' ? { type: 'legacy' as const, secret } : null;
         const { serverId, accountId } = await account.restore({ catalog, waivedActions: [
-            'providers.connections.create_custom', 'providers.connections.update', 'providers.connections.delete',
+            'providers.connections.delete',
         ], ...(mode === 'e2ee' ? { e2eeSecret: secret } : {}) });
         let revision = 1;
         account.home.answer(serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
@@ -490,6 +644,7 @@ describe('Provider Account source visibility Action', () => {
         expect(catalog.connections.some(entry => entry.id === renamed.id)).toBe(false);
         expect(catalog.manualModelsByConnectionId[renamed.id]).toBeUndefined();
         expect(providerHarness.state.requests).toEqual([]);
+        expect(account.home.artifacts(serverId).list()).toEqual([]);
     });
     it('hides, shows and resets one source through captured Account row CAS without Settings or Machine writes', async () => {
         let catalog = catalogFixture();
@@ -547,7 +702,9 @@ describe('Provider Account source visibility Action', () => {
             },
         });
         expect(await executeSourceVisibility(serverId, accountId, false)).toMatchObject({
-            ok: false, details: { status: 'conflict', revision: 2 },
+            ok: false, errorCode: 'provider_connection_changed', details: {
+                code: 'provider_connection_changed', connectionId: 'pc_a', retryable: true, action: 'review_connection',
+            },
         });
         expect(rowWrites).toBe(1);
         expect(providerHarness.state.requests).toEqual([]);

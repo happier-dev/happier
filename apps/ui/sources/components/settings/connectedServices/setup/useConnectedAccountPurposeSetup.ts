@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -107,7 +108,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
     };
     const selected = input.onSelected ? input.selectedTarget ?? null
         : request ? purposeCatalog.value?.bindings.find(binding => qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(request.purpose))?.target ?? null : null;
-    const reconnectAccounts = input.onSelected && declaration && profile ? profile.connectedAccountsV4.filter(account => account.status === 'needs_reauth'
+    const reconnectAccounts = input.onSelected && declaration && profile ? profile.connectedAccountsV4.filter(account => isConnectedAccountSignedOut(account.status)
         || account.status === 'refresh_failed_retryable').filter(account => declaration.serviceRefs.some(service =>
             service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId)) : [];
     const profileRead = typeof profile?.id === 'string' && profile.id.trim() === viewer?.accountId;

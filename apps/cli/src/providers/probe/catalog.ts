@@ -1,4 +1,3 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { applyProviderCatalogRefreshV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import { createProviderCatalogFingerprintV1, createProviderEndpointFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderManagedProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -259,6 +258,7 @@ function providerErrorFromClient(
   return createProviderErrorV1(error.code, {
     connectionId: context.connectionId,
     machineId: context.machineId,
+    ...(error.failureCause ? { failureCause: error.failureCause } : {}),
     ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
   });
 }
@@ -466,7 +466,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
             operationScope?.lifetime ?? {
               ...(input.signal ? { signal: input.signal } : {}),
               wallDeadlineAtMs: input.wallDeadlineAtMs
-                ?? now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+                ?? Infinity,
             },
             now,
           );

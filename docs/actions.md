@@ -1001,18 +1001,20 @@ transport checks; it does not grant authority or relax their target binding.
 
 In 0.3 development, a trusted person's direct app UI press is their decision:
 the shared approval owner does not add a second approval card from the Action's
-default policy. Explicit per-Action/per-surface Ask settings and profile Require
+automation safety default. Designed local reviews and destructive confirmations
+remain declaration-owned. Explicit per-Action/per-surface Ask settings and profile Require
 still win. Agent, CLI and MCP callers retain their declared defaults, and unknown
 surfaces fail closed. Present-user UI authority comes from a host-mediated control,
 excluding external credentials, external execution authorization and Session RPC
 authority. A raw plugin
 `hostApi.executeAction` call retains plugin/automation authority, including when
 a plugin click handler starts it; declaring a direct UI policy does not upgrade
-that caller or its nested Actions. Action declarations retain their confirmation
-metadata for callers that do not represent a direct person UI press. Plugin install
-still owns its first Install & Trust trusted-code disclosure. A designed in-flow
-confirmation answers the default Ask for the exact operation. An explicit
-per-surface Ask the person set, or a new consequence discovered at preflight,
+that caller or its nested Actions. Action declarations retain their local confirmation
+metadata on UI as well as their separate automation defaults. Plugin install
+still owns its first Install & Trust trusted-code disclosure. A completed in-flow
+confirmation consumes the default for that exact operation. Explicit per-surface
+Ask and profile Require remain unless the existing review admission proves they
+were answered. A new consequence discovered at preflight
 still asks in place through the existing inline approval decision. Internal
 steps of the reviewed operation consume its parent admission, rather than asking
 again; predeclared children's explicit Require is included in the parent review.
@@ -1050,8 +1052,11 @@ normalization retain unchanged keyed rows; changing one scope does not wake
 exact CLI subscribers for sibling scopes. Explicit orphan-row
 removal uses `actions.policy.set` with `change.kind: 'scoped_approval_remove'`.
 
-Declared `uiConfirmationForInput` does not add a second card to a trusted person's
-direct app press. A host-discovered consequence uses `defaultUiConfirmation`
+Declared `uiConfirmationForInput` retains the designed in-place product review.
+Otherwise `uiConfirmation: 'policy'` retains local confirmation; an irreversible
+declaration also retains it unless `uiConfirmation: 'direct'` overrides that default.
+A completed confirmation for that exact Action consumes this default once.
+A host-discovered consequence uses `defaultUiConfirmation`
 through the shared approval owner and still asks unless that exact consequence
 was already confirmed or the person waived it.
 In unreleased 0.3 source, reversible own-Session Board upserts and layout writes
@@ -3949,6 +3954,16 @@ carrier aliases, not a second policy path. Inline writes retain dangerous-Action
 approval and expected-hash enforcement. Bounded reads return their existing
 base64 or metadata-shaped result and do not move transfer bytes into an Action
 receipt.
+
+Machine browser roots, browse-directory reads and filename queries also enter
+this family as `daemon.filesystem.listRoots`,
+`daemon.filesystem.browseDirectory` and `daemon.filesystem.listFiles`. They retain
+the original caller, Account, Machine, request and cancellation context through
+ordinary Action availability and confirmation policy. The existing file-browser
+and workspace-file-list request/response schemas and native handlers own path
+restrictions, partial results and query budgets; their retained RPC methods are
+transport aliases. Opening or retrying a browser does not grant UI authority to
+the agent that opened it.
 
 Create-directory, rename, delete and copy reuse the filesystem-policy and
 mutation owners; destructive effects retain configurable dangerous-Action
@@ -7923,15 +7938,6 @@ a mounted Sessions-list group is a mounted current-context command
 same context-qualified device-local key as the group's chevron and the
 `session.list.collapsedGroups` setting; it changes that one key only.
 
-Settings → Sessions → Sections (`session.list.sections`, a navigation anchor with no
-stored value) lists the selected Home's sections in `sortKey` order. Its rows
-create, rename, change the icon of, reorder, archive all and remove sections only
-through these section Actions, with the list's one removal confirmation. Folding
-a mounted Sessions-list group is a mounted current-context command
-(`ui.current_context.read` → `ui.current_context.command.invoke`) that writes the
-same context-qualified device-local key as the group's chevron and the
-`session.list.collapsedGroups` setting; it changes that one key only.
-
 Class-H token-management and security rows remain excluded from public API
 execution. Agent and MCP exposure is still authored per row; other class-H rows
 remain off unless explicitly requestable through mandatory human approval. Ordinary
@@ -8739,16 +8745,17 @@ localized-string shape `{ key, fallback }`; omission uses the host's localized
 “Approve”. `irreversible: true` declares that the effect cannot be undone;
 omission is not irreversible. The confirmation button and its destructive note
 read that fact directly, never infer it from `sideEffectClass` or
-`approvalPolicy.uiConfirmation`. These fields do not add another default approval
-card to a trusted person's direct UI press. They do not change who may approve or
+`approvalPolicy.uiConfirmation`. `confirmVerb` changes presentation only. An
+irreversible declaration retains the local UI confirmation unless the declaration
+explicitly chooses direct UI execution. These fields do not change who may approve or
 override the person's explicit approval settings. Plugin Action
 declarations and the strict daemon Action projection carry the same optional
 fields, resolving plugin keys through the plugin's admitted translation bundle.
 
 An actual completed host confirmation can supply `presentUserConfirmation` for that exact
 Action on UI or CLI; opening a form or pressing its ordinary submit button is not a completed
-policy confirmation. A trusted person's direct UI submit already answers the default
-approval question, but does not answer a contextual review discovered by host preflight.
+policy confirmation. A trusted person's direct UI submit answers the automation
+default, while declared product reviews and contextual host preflight reviews remain.
 Explicit per-surface Ask settings still win, and waivers suppress the
 default for waivable Actions. Contextual safety uses that same policy and preserves these
 overrides; it does not grant execution authority. The executor supplies contextual safety

@@ -1,13 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
 import { createProviderConnectionViewFixture } from '@/dev/testkit/harness/providerSettingsHarness';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
+import { t } from '@/text';
 
 import { buildSessionRouteSourceRows } from './buildSessionRouteSourceRows';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 const CODEX = 'agent:happier.agent.codex/codex';
 const CLAUDE = 'agent:happier.agent.claude/claude';
 
 describe('buildSessionRouteSourceRows', () => {
+    it('orders available sources before refused sources and carries their short refusal', () => {
+        const rows = buildSessionRouteSourceRows({ declarationContext: { kind: 'account' }, agentTargetKey: CODEX,
+            isGateway: () => false,
+            views: [
+                createProviderConnectionViewFixture({ connectionId: 'pc_off', providerName: 'A offline',
+                    authorized: false, authorizationError: createProviderErrorV1('provider_endpoint_unreachable') }),
+                createProviderConnectionViewFixture({ connectionId: 'pc_ready', providerName: 'Z ready', authorized: true }),
+                createProviderConnectionViewFixture({ connectionId: 'pc_unreachable', providerName: 'B unreachable', authorized: true,
+                    runtime: { ...createProviderConnectionViewFixture().runtime, health: 'unreachable' } }),
+            ],
+            shownSources: [{ connectionId: 'pc_off', rows: [{}] }, { connectionId: 'pc_ready', rows: [{}] },
+                { connectionId: 'pc_unreachable', rows: [{}] }], hiddenSources: [],
+        });
+        expect(rows.providers.map(row => [row.connectionId, row.availability])).toEqual([
+            ['pc_ready', 'available'], ['pc_off', 'unavailable'], ['pc_unreachable', 'unavailable'],
+        ]);
+        expect(rows.providers[0]?.unavailableReason).toBeNull();
+        expect(rows.providers[1]?.unavailableReason).toBe(t(presentProviderError('provider_endpoint_unreachable').titleKey));
+        expect(rows.providers[2]?.unavailableReason).toBe(t('settingsProviders.status.unreachable'));
+    });
     it('keeps a compatible source browseable before it has any projected model rows', () => {
         const rows = buildSessionRouteSourceRows({ declarationContext: { kind: 'account' }, agentTargetKey: CODEX, isGateway: () => true,
             views: [createProviderConnectionViewFixture({ connectionId: 'pc_gateway',
@@ -56,12 +79,12 @@ describe('buildSessionRouteSourceRows', () => {
         });
 
         expect(rows.gateways).toEqual([
-            { connectionId: 'pc_gateway', contributionKey: 'acme.plugin/acme', label: 'Main gateway', icon: null, modelCount: 9, hiddenFromPicker: true, worksWith: null },
+            expect.objectContaining({ connectionId: 'pc_gateway', contributionKey: 'acme.plugin/acme', label: 'Main gateway', icon: null, modelCount: 9, hiddenFromPicker: true, worksWith: null }),
         ]);
         expect(rows.providers).toEqual([
-            { connectionId: 'pc_other', contributionKey: 'acme.plugin/acme', label: 'DeepSeek', icon: null, modelCount: null, hiddenFromPicker: false, worksWith: ['Claude Code'] },
-            { connectionId: 'pc_shown', contributionKey: 'acme.plugin/acme', label: 'Ollama', icon: null, modelCount: 4, hiddenFromPicker: false, worksWith: null },
-            { connectionId: 'pc_hidden', contributionKey: 'acme.plugin/acme', label: 'OpenRouter · Work', icon: null, modelCount: 313, hiddenFromPicker: true, worksWith: null },
+            expect.objectContaining({ connectionId: 'pc_shown', contributionKey: 'acme.plugin/acme', label: 'Ollama', icon: null, modelCount: 4, hiddenFromPicker: false, worksWith: null }),
+            expect.objectContaining({ connectionId: 'pc_hidden', contributionKey: 'acme.plugin/acme', label: 'OpenRouter · Work', icon: null, modelCount: 313, hiddenFromPicker: true, worksWith: null }),
+            expect.objectContaining({ connectionId: 'pc_other', contributionKey: 'acme.plugin/acme', label: 'DeepSeek', icon: null, modelCount: null, hiddenFromPicker: false, worksWith: ['Claude Code'], availability: 'unavailable' }),
         ]);
     });
 });

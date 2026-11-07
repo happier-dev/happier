@@ -36,6 +36,10 @@ export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
   scope: Extract<ActionApprovalScopeV1, { kind: 'environment' }> | null;
 }>;
 
+type ApprovalInvocationContext = Pick<ActionExecutorContext,
+  'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'
+  | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'rpcSessionAuthorization'>;
+
 export type ResolveActionApprovalRoutingArgs = Readonly<{
   actionId: ActionId;
   /** Resolved contributed identity when the host Action delegates target classification. */
@@ -45,9 +49,9 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   settings?: ActionsSettingsV1 | null;
   /** Exact scope proved by the host's Action admission, never raw caller context. */
   approvalScope?: ActionApprovalScopeV1;
-  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'bypassApprovals' | 'actionCaller' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'externalActionCredential' | 'approvalProfileId' | 'approvalProfileChange'> | null;
+  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfileChange'> | null;
   requiredByPolicy?: boolean;
-  /** Exact parent review answers the root default; explicit preferences still win. Never caller input. */
+  /** The executor's exact admitted review answers this operation's approval. Never caller input. */
   reviewAdmitted?: boolean;
   /** Host-proved contextual classification, resolved through the same settings/waiver owner. */
   defaultSafety?: ActionSpec['safety'];
@@ -128,7 +132,7 @@ export function isAgentInitiatedApprovalRequiredByDefault(actionId: ActionId): b
 
 function requiresDefaultApprovalFloor(
   actionId: ActionId,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null,
+  ctx?: ApprovalInvocationContext | null,
   defaultSafety?: ActionSpec['safety'],
   input?: unknown,
   defaultUiConfirmation?: boolean,
@@ -136,16 +140,16 @@ function requiresDefaultApprovalFloor(
   const surface = resolveApprovalSurface(ctx);
   const spec = getActionSpec(actionId);
   const policy = spec.approvalPolicy;
-  // The host already proved invocation provenance (including a managed
-  // controller codec). External transport does not add another default Ask.
-  const hostInvocation = ctx?.authority === 'present_user'
-    && (!ctx.actionCaller || ctx.actionCaller.kind === 'host');
-  // UI consequence review is meaningful only for a present person's in-app
-  // intent. Agent/automation approval must never evaluate or consume its waiver.
-  const uiPolicyConfirmation = surface.kind === 'non_agent' && surface.surface === 'ui'
-    && hostInvocation
-    ? defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input) ?? (policy?.uiConfirmation === 'policy')
-    : true;
+  // A direct app press answers the automation default, while the Action's
+  // designed local confirmation and host-discovered consequences still apply.
+  // External and Session origins never consume this present-person default.
+  if (ctx?.surface === 'ui' && isPresentUserHostInvocation(ctx)) {
+    return ctx.presentUserConfirmation?.actionId !== actionId
+      && ((defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input)
+        ?? (policy?.uiConfirmation === 'policy'
+          || policy?.uiConfirmation !== 'direct' && spec.irreversible === true))
+        || defaultSafety === 'danger');
+  }
   defaultSafety ??= spec.safetyForInput?.(input) ?? spec.safety;
   if (policy?.pluginCaptureWaiver === true) return true;
   // Permission answers share the Agent default on MCP too; persisted surface
@@ -154,23 +158,13 @@ function requiresDefaultApprovalFloor(
   // Scoped removal is dangerous metadata, but its own/led Session policy owns
   // admission (FIN 03 §5.4/§5.7); it does not acquire the Account trigger approval floor.
   if (policy?.scopeAdmissionOwnsConfirmation === true && surface.kind !== 'ambiguous') return false;
-  // A person's own reversible in-app intent is direct by default. Danger also
-  // classifies automation authority and is not an irreversibility declaration.
-  // Explicit exposure policy and effects with their own UI review stay intact;
-  // plugin callers cannot acquire the host's default by claiming present_user.
   // Present-person hosts suppress the duplicate default after a completed
   // confirmation for this exact Action. Explicit settings are evaluated first
   // and still win.
   if (
     surface.kind === 'non_agent'
-    && (
-      (surface.surface === 'ui' && !uiPolicyConfirmation
-        && (defaultSafety !== 'danger' || policy?.uiConfirmation === 'direct'
-          || (ctx?.actionCaller?.kind === 'host' && spec.irreversible !== true)))
-      || (isPresentUserHostInvocation({ surface: surface.surface, authority: ctx?.authority, actionCaller: ctx?.actionCaller })
-        && ctx?.presentUserConfirmation?.actionId === actionId)
-    )
-    && hostInvocation
+    && ctx && isPresentUserHostInvocation(ctx)
+    && ctx.presentUserConfirmation?.actionId === actionId
   ) {
     return false;
   }
@@ -204,13 +198,13 @@ function requiresDefaultApprovalFloor(
  * Notes:
  * - This answers “should this action be routed through approvals on this surface?”
  * - It does not decide enablement (use `isActionEnabledByActionsSettings` separately).
- * - Missing/unknown surfaces fail closed by applying the danger/egress floor. Known exposed
- *   surfaces use the dangerous default unless a persisted waiver explicitly opts out.
+ * - Missing/unknown surfaces retain the danger/egress floor. A trusted person's direct UI
+ *   press answers the default; explicit preferences and host-discovered consequences still apply.
  */
 export function isApprovalRequiredByActionsSettings(
   actionId: ActionSettingsActionId,
   settings: ActionsSettingsV1,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller' | 'externalActionCredential'> | null,
+  ctx?: ApprovalInvocationContext | null,
   defaultSafety?: ActionSpec['safety'],
   /** Contributed Action manifest default, resolved by its shared admission owner. */
   contributedApprovalDefault?: boolean,
@@ -294,7 +288,7 @@ export function readExplicitActionApprovalPreferenceV1(
  */
 function resolveUnwiredApprovalDefault(
   actionId: ActionId,
-  context: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null | undefined,
+  context: ApprovalInvocationContext | null | undefined,
   input?: unknown,
 ): boolean {
   return requiresDefaultApprovalFloor(actionId, context, undefined, input);
@@ -308,12 +302,10 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const explicitComputerApproval = args.settings?.actions?.[args.actionId]?.approvalRequiredSurfaces
     .some(surface => surface === args.context?.surface) === true;
   const hasPolicyContext = Boolean(args.settings || args.approvedOperation || args.context?.externalActionCredential);
-  // Native confirmation answers this operation's default Ask, not a deliberate
-  // per-surface preference. Internal reviewed children are admitted separately
-  // by the single child issuer before this preference layer is reached.
+  // The person's exact completed review answers Ask, including a saved preference.
+  // The executor withholds this admission when a new child consequence needs review.
   const requiredByPolicy = args.reviewAdmitted === true
-    ? args.settings != null
-      && readExplicitActionApprovalPreferenceV1(args.profileActionId ?? args.actionId, args.settings, args.context, args.approvalScope) === true
+    ? false
     : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
     : args.defaultConfirmation === true
@@ -340,11 +332,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     || differsFromInherited(reference)
     || (args.actionId === 'session.spawn_new' && Array.isArray(input.initialTriggers)
       && input.initialTriggers.some(trigger => differsFromInherited(readRecord(trigger).approvalProfileId)));
-  const profileControlRequired = changesProfile && (args.reviewAdmitted === true
-    ? args.settings != null && readExplicitActionApprovalPreferenceV1('session.approval_profile.set', args.settings,
-      args.context, args.approvalScope) === true
-    : isApprovalRequiredByActionsSettings('session.approval_profile.set', args.settings ?? { v: 1, actions: {} },
-      args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope));
+  const profileControlRequired = !args.reviewAdmitted && changesProfile
+    && isApprovalRequiredByActionsSettings('session.approval_profile.set', args.settings ?? { v: 1, actions: {} },
+      args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope);
   const selectedProfile = args.context?.approvalProfileId
     ? readApprovalProfileV1(args.settings, args.context.approvalProfileId) : undefined;
   const profileActionId = args.profileActionId ?? args.actionId;
@@ -353,9 +343,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     ?? selectedProfile.profile.defaultMode);
   // Allow inherits existing policy, including egress/authority and person Ask.
   // Ask is a user-waivable default; Require tightens even a deliberate waiver.
-  // Native confirmation answers defaults; Require remains an explicit preference.
-  const profileRequired = profileMode === 'require' || (!args.reviewAdmitted && profileMode === 'ask'
-    && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false));
+  // An exact completed review also answers a profile's Ask or Require.
+  const profileRequired = !args.reviewAdmitted && (profileMode === 'require' || (profileMode === 'ask'
+    && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false)));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)
     && (args.context?.bypassApprovals === true

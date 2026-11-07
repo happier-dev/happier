@@ -299,6 +299,9 @@ export function brokerPoolChoiceLabel(
 
 export function brokerPlacementLabel(resource: TeamCredentialResourceSummaryV1): string {
     if (resource.brokerPlacement === null) return t('teams.credentials.detail.brokerNone');
+    const unnamedPlacement = resource.capabilities.updateBrokerPlacement
+        ? t('teams.credentials.detail.brokerNone')
+        : t('teams.credentials.detail.brokerChosen');
     if (resource.brokerPlacement.kind === 'machine_pool') {
         // A Pool is named as one: "Development" beside a Machine's own display
         // name is otherwise indistinguishable from a single computer, and the
@@ -309,13 +312,22 @@ export function brokerPlacementLabel(resource: TeamCredentialResourceSummaryV1):
             : null;
         return poolName
             ? `${t('machinePools.title')} · ${poolName}`
-            : t('teams.credentials.detail.brokerChosen');
+            : unnamedPlacement;
     }
     const selected = resource.brokerPresentation.selectedTarget;
     if (selected?.machineId !== resource.brokerPlacement.machineId) {
-        return t('teams.credentials.detail.brokerChosen');
+        return unnamedPlacement;
     }
-    return selected.displayName?.trim() || t('teams.credentials.detail.brokerChosen');
+    return selected.displayName?.trim() || unnamedPlacement;
+}
+
+/** Uses the Home's existing edit capability; consumers do not infer ownership. */
+export function teamCredentialBrokerPlacementAction(
+    resource: TeamCredentialResourceSummaryV1,
+): TeamCredentialRecoveryPresentation | null {
+    return resource.capabilities.updateBrokerPlacement
+        ? teamCredentialRecoveryPresentation('select_broker', { isSourceCustodian: true })
+        : null;
 }
 
 /**

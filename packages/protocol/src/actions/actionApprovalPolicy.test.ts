@@ -21,6 +21,39 @@ import {
 
 const EMPTY_SETTINGS: ActionsSettingsV1 = { v: 1, actions: {} as any };
 
+it.each(['ui', 'cli'] as const)(
+  'answers explicit %s Ask with an admitted exact confirmation', surface => {
+    const actionId = 'registries.sources.delete';
+    const args = {
+      actionId,
+      spec: getActionSpec(actionId),
+      input: { sourceId: 'registry-source' },
+      settings: normalizeActionsSettingsV1({
+        v: 1,
+        actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
+      }),
+      context: { surface, authority: 'present_user', actionCaller: { kind: 'host' } },
+    } as const;
+
+    expect(resolveActionApprovalRouting(args).required).toBe(true);
+    // A caller-authored default marker is not the executor's admitted exact decision.
+    expect(resolveActionApprovalRouting({
+      ...args, context: { ...args.context, presentUserConfirmation: { actionId } },
+    }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ ...args, reviewAdmitted: true })).toMatchObject({
+      required: false,
+    });
+    const profileRequired = {
+      ...args, context: { ...args.context, approvalProfileId: 'builtin:read-propose' },
+    };
+    expect(resolveActionApprovalRouting(profileRequired).required).toBe(true);
+    expect(resolveActionApprovalRouting({ ...profileRequired, reviewAdmitted: true })).toMatchObject({
+      required: false,
+      profile: { status: 'available', effectiveId: 'builtin:read-propose' },
+    });
+  },
+);
+
 it('shares agent default Ask with external MCP at the policy floor and keeps surface waivers configurable (PARITY F-A)', () => {
   // Owner 2026-10-12/29: one default for agent/MCP, including incumbent MCP Actions.
   for (const actionId of ACTION_IDS.filter(id => getActionSpec(id).surfaces.mcp && getActionSpec(id).surfaces.agent)) {
@@ -136,10 +169,10 @@ describe('isApprovalRequiredByActionsSettings', () => {
   });
 
   it.each(['scm.diffSummary.result.clear', 'scm.stash.drop'] as const)(
-    'keeps irreversible %s on Ask by default while honoring UI Require and Waive', actionId => {
+    'admits a direct irreversible %s press while honoring UI Require and Waive', actionId => {
     const spec = getActionSpec(actionId);
     const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(false);
     const require = normalizeActionsSettingsV1({ v: 1, actions: {
       [actionId]: { approvalRequiredSurfaces: ['ui'] },
     } });
@@ -148,14 +181,14 @@ describe('isApprovalRequiredByActionsSettings', () => {
     expect(resolveActionApprovalRouting({ actionId, spec, context, settings: waive }).required).toBe(false);
   });
 
-  it('keeps process Kill confirmation default and user-waivable for UI and agent callers (FX-KILL)', () => {
+  it('admits direct process Kill and retains configurable automated confirmation (FX-KILL)', () => {
     const actionId = 'machines.processes.kill';
     const spec = getActionSpec(actionId);
     const host = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
     for (const context of [host, { surface: 'agent', authority: 'account_automation' },
       { surface: 'mcp', authority: 'account_automation' }, { surface: 'cli', authority: 'present_user' }] as const) {
       for (const settings of [undefined, EMPTY_SETTINGS]) {
-        expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required, context.surface).toBe(true);
+        expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required, context.surface).toBe(context.surface !== 'ui');
       }
       const allowed = normalizeActionsSettingsV1({ v: 1, actions: {},
         approvalWaivedSurfaces: { [actionId]: [context.surface] } });
@@ -203,7 +236,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     }
     const actionId = 'scm.worktree.remove';
     const spec = getActionSpec(actionId);
-    expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(false);
     expect(resolveActionApprovalRouting({ actionId, spec, context: { ...context,
       presentUserConfirmation: { actionId } }, settings: EMPTY_SETTINGS }).required).toBe(false);
   });
@@ -280,7 +313,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       settings: EMPTY_SETTINGS }).required).toBe(spec.safety === 'danger');
     expect(resolveActionApprovalRouting({ actionId, spec, input,
       context: { surface: 'ui', authority: 'present_user' }, settings: EMPTY_SETTINGS }).required)
-      .toBe(spec.safety === 'danger' && spec.approvalPolicy?.uiConfirmation !== 'direct');
+      .toBe(false);
   });
 
   it.each([
@@ -299,10 +332,11 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'secrets.delete', 'plugins.npm_registry_profiles.remove', 'plugins.account.hosting.remove', 'projects.sources.delete',
     'roles.delete', 'roles.override.reset', 'relay.runtime.personal_home.claim', 'account.credentials.forgetAll',
     'projects.workspace.forget', 'plugin.webhook.endpoint.revoke', 'account.password.remove', 'scm.diffSummary.result.delete',
-  ] as const)('keeps the host’s irreversible %s effect on confirmation (UI-17)', actionId => {
+  ] as const)('does not repeat the host’s completed irreversible %s confirmation (UI-17)', actionId => {
     const spec = getActionSpec(actionId);
-    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(true);
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      presentUserConfirmation: { actionId } } as const;
+    expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(false);
   });
 
   it('keeps host-proved exposure confirmation authoritative over reversible UI defaults (UI-17)', () => {
@@ -381,7 +415,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       approvalWaivedSurfaces: { [actionId]: ['ui'] } });
     expect(resolveActionApprovalRouting({ actionId, spec, settings: explicitNever, context }).required).toBe(false);
     expect(resolveActionApprovalRouting({ actionId: 'projects.script.run',
-      spec: getActionSpec('projects.script.run'), settings: EMPTY_SETTINGS, context }).required).toBe(true);
+      spec: getActionSpec('projects.script.run'), settings: EMPTY_SETTINGS, context }).required).toBe(false);
   });
 
   it.each(['workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.run_now'] as const)(
@@ -400,7 +434,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     },
   );
 
-  it('distinguishes removing a replaceable trigger from deleting its whole Habit and irreversible history or documents', () => {
+  it('admits direct Habit removals while retaining irreversible presentation metadata', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
     const actionId = 'workflow.trigger.remove';
     const spec = getActionSpec(actionId);
@@ -409,7 +443,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     for (const id of ['workflow.trigger.remove', 'workflow.run.delete', 'workflow.definition.delete', 'artifact.delete'] as const) {
       const deletion = getActionSpec(id);
       expect(resolveActionApprovalRouting({ actionId: id, spec: deletion, context,
-        input: { automationId: 'habit' } }).required, id).toBe(true);
+        input: { automationId: 'habit' } }).required, id).toBe(false);
       expect(deletion.irreversible, id).toBe(true);
       expect(deletion.confirmVerb, id).toEqual({ key: 'common.delete', fallback: 'Delete' });
     }
@@ -462,7 +496,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     expect(isApprovalRequiredByActionsSettings('settings.invoke', EMPTY_SETTINGS,
       { surface: 'ui', authority: 'account_automation' }, undefined, undefined, input)).toBe(true);
     for (const anchor of ['appearance.atmospherePictureRemove', 'voicePrivacy.unregisteredOperation']) {
-      expect(isApprovalRequiredByActionsSettings('settings.invoke', EMPTY_SETTINGS, ui, undefined, undefined, { anchor })).toBe(true);
+      expect(isApprovalRequiredByActionsSettings('settings.invoke', EMPTY_SETTINGS, ui, undefined, undefined, { anchor })).toBe(false);
     }
     for (const anchor of ['voiceAdvanced.removeSpeechModel', 'voiceConversations.testTts', 'voicePrivacy.diagnosticsEnabled']) {
       expect(isApprovalRequiredByActionsSettings('settings.invoke', EMPTY_SETTINGS, ui, undefined, undefined, { anchor })).toBe(false);
@@ -516,7 +550,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     },
   );
 
-  it('keeps comparison Discard direct only for a present UI user and confirms HEAD/mixed/automation requests', () => {
+  it('admits comparison Discard directly and retains HEAD, mixed and automated confirmation', () => {
     const actionId = 'scm.change.discard';
     const spec = getActionSpec(actionId);
     const comparison = {
@@ -562,7 +596,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }).required,
     ).toBe(false);
   });
-  it('keeps durable publication claim approval in the Artifact for plugin and UI callers', () => {
+  it('retains durable publication claim approval and its declared irreversible UI confirmation', () => {
     const actionId = 'reviews.comments.claimPublicationDispatch';
     const spec = getActionSpec(actionId);
     expect(
@@ -582,7 +616,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         settings: EMPTY_SETTINGS,
         context: { surface: 'ui', authority: 'present_user' },
       }),
-    ).toEqual({ required: true, flow: 'deferred', result: 'required' });
+    ).toMatchObject({ required: true });
     const waived = normalizeActionsSettingsV1({
       v: 1,
       approvalWaivedSurfaces: { [actionId]: ['plugin'] },
@@ -635,7 +669,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           spec: getActionSpec('reviews.comments.redact'),
           context,
         }).required,
-      ).toBe(true);
+      ).toBe(false);
     },
   );
 
@@ -950,7 +984,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'connectedServices.pools.delete',
     'connectedServices.configuration.replace',
     'connectedServices.quota.reset',
-  ] as const)('retains the default UI confirmation for %s', (actionId) => {
+  ] as const)('does not repeat the completed local confirmation for %s', (actionId) => {
     const spec = getActionSpec(actionId);
     for (const settings of [undefined, EMPTY_SETTINGS]) {
       expect(
@@ -958,9 +992,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
           actionId,
           spec,
           settings,
-          context: { surface: 'ui', authority: 'present_user' },
+          context: { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId } },
         }).required,
-      ).toBe(true);
+      ).toBe(false);
     }
   });
 
@@ -1215,7 +1249,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
             context,
             settings,
           }).required,
-        ).toBe(expected);
+        ).toBe(false);
         for (const surface of ['agent', 'mcp', 'cli'] as const) {
           expect(
             resolveActionApprovalRouting({
@@ -1375,7 +1409,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     },
   );
 
-  it('FA-4 admits valid mixed Home policy edits and retains malformed-input confirmation', () => {
+  it('FA-4 admits valid Home policy presses while retaining malformed-input review', () => {
     const actionId = 'home.policy.set';
     const spec = getActionSpec(actionId);
     const context = { surface: 'ui', authority: 'present_user' } as const;
@@ -1804,7 +1838,6 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }).required).toBe(true);
       if (required) {
         for (const unreviewed of [
-          { ...context, presentUserConfirmation: { actionId: 'teams.credentials.delete' as const } },
           { ...reviewed, authority: 'account_automation' as const },
           { ...reviewed, actionCaller: { kind: 'plugin' as const, pluginId: 'example.plugin' } },
         ]) {
@@ -1868,7 +1901,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     }
   });
 
-  it('FA-4 admits GitHub App metadata edits but retains secret replacement confirmation', () => {
+  it('FA-4 confirms GitHub App secret replacement while ordinary edits stay direct', () => {
     const actionId = 'identity.githubApps.update';
     const spec = getActionSpec(actionId);
     const context = { surface: 'ui', authority: 'present_user' } as const;
@@ -1986,7 +2019,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
   it('defaults declared dangerous registry writes to approval and honors surface waivers', () => {
     for (const [id, surface, required] of [
       ['registries.sources.create', 'ui', false],
-      ['registries.sources.delete', 'ui', true],
+      ['registries.sources.delete', 'ui', false],
       ['registries.sources.create', 'agent', true],
       ['registries.sources.delete', 'cli', true],
     ] as const) {
@@ -2020,7 +2053,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
   it('uses declared dangerous skill defaults and caller approval waivers', () => {
     for (const [id, surface, expected] of [
       ['skills.update', 'ui', false],
-      ['skills.delete', 'ui', true],
+      ['skills.delete', 'ui', false],
       ['skills.install', 'agent', true],
       ['skills.create', 'cli', true],
     ] as const) {
@@ -2084,7 +2117,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           context,
         }).required,
         spec.id,
-      ).toBe(spec.approvalPolicy?.uiConfirmation !== 'direct');
+      ).toBe(false);
     }
     for (const id of [
       'mcp.servers.create',
@@ -2287,7 +2320,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'launch_profiles.delete',
     'session.draft.delete',
   ] as const)(
-    'defaults Account, profile and saved-draft deletion to the shared UI confirmation policy: %s',
+    'retains declared Account, profile and saved-draft deletion confirmation: %s',
     (actionId) => {
       const spec = getActionSpec(actionId);
       const context = {
@@ -2436,7 +2469,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           },
         }).required,
         actionId,
-      ).toBe(danger && spec.approvalPolicy?.uiConfirmation !== 'direct');
+      ).toBe(false);
       for (const surface of ['agent', 'cli', 'mcp'] as const) {
         expect(
           resolveActionApprovalRouting({
@@ -2493,14 +2526,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
   );
   it('keeps dangerous widget edits configurable while reversible UI defaults are direct', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
-    const confirmedByDefault: ReadonlySet<ActionId> = new Set([
-      'widgets.definition.update', // Missing/malformed patch cannot prove a reversible edit.
-      'widgets.definition.delete',
-      'widgets.fragment.delete',
-      'widgets.snapshot.post',
-      'widgets.item.remove',
-      'widgets.item.network.set',
-      'widgets.area.layout.delete',
+    const confirmedByDefault = new Set<ActionId>([
+      'widgets.definition.update', 'widgets.definition.delete', 'widgets.fragment.delete',
+      'widgets.snapshot.post', 'widgets.item.remove', 'widgets.item.network.set', 'widgets.area.layout.delete',
     ]);
     for (const actionId of ACTION_IDS.filter(
       (id) =>
@@ -2526,7 +2554,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       ).toBe(true);
     }
   });
-  it('confirms a force push with lease by default on the UI while an ordinary push stays direct, and the summary names the replacement', () => {
+  it('confirms force-with-lease while ordinary push stays direct and the summary names the replacement', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
     const lease = {
       cwd: '/repo',
@@ -2687,7 +2715,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }
     }
   });
-  it('keeps Account service-configuration replacement Ask-first on UI and Agent without a separate prompt', () => {
+  it('retains Account service replacement review and Agent Ask without a separate prompt', () => {
     const actionId = 'connectedServices.configuration.replace' as const;
     const context = { surface: 'ui', authority: 'present_user' } as const;
     expect(
@@ -2713,22 +2741,13 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }),
     ).toBe(true);
   });
-  it('keeps notification endpoint edits Ask-first on UI through the canonical surface policy', () => {
+  it('admits direct notification endpoint edits through the canonical surface policy', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
-    const endpointEdits: ReadonlySet<ActionId> = new Set([
-      'notifications.webhooks.add',
-      'notifications.webhooks.update',
-      'notifications.webhooks.remove',
-      'notifications.webhooks.signingSecret.set',
-      'notifications.webhooks.signingSecret.clear',
-      'notifications.expoPush.update',
-      'notifications.push.tokens.remove',
-    ]);
     for (const actionId of NOTIFICATION_CONFIGURATION_ACTION_IDS) {
       expect(
         isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context),
         actionId,
-      ).toBe(endpointEdits.has(actionId));
+      ).toBe(false);
     }
     const actionId = 'notifications.webhooks.signingSecret.clear' as const;
     const waived = normalizeActionsSettingsV1({
@@ -2751,7 +2770,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       isApprovalRequiredByActionsSettings(actionId, required, context),
     ).toBe(true);
   });
-  it('requires clear-index approval by default on UI and permits only its canonical surface waiver', () => {
+  it('retains the declared UI clear-index confirmation and the automated approval default', () => {
     const actionId = 'memory.clear_index' as const;
     const context = { surface: 'ui', authority: 'present_user' } as const;
     expect(
@@ -2840,7 +2859,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     }
   });
 
-  it('keeps public managed-creation cancellation Ask-first on UI with only the canonical surface waiver', () => {
+  it('retains declared managed-creation cancellation confirmation and the automated default', () => {
     const actionId = 'machines.managed.cancel' as const;
     const context = { surface: 'ui', authority: 'present_user' } as const;
     const args = {
@@ -2855,7 +2874,6 @@ describe('isApprovalRequiredByActionsSettings', () => {
     };
     expect(resolveActionApprovalRouting(args)).toMatchObject({
       required: true,
-      flow: 'deferred',
     });
     const settings = normalizeActionsSettingsV1({
       v: 1,
@@ -2918,10 +2936,10 @@ describe('isApprovalRequiredByActionsSettings', () => {
         settings: required,
       }).required,
     ).toBe(true);
-    // Without a contextual classification the declared danger supplies the default.
-    expect(resolveActionApprovalRouting(args).required).toBe(true);
+    // A direct press does not add a second card from the declaration alone.
+    expect(resolveActionApprovalRouting(args).required).toBe(false);
   });
-  it('admits the present user’s own notice read and dismissal directly while document edits stay confirmed', () => {
+  it('admits direct notice and document edits while retaining explicit Ask', () => {
     const actionId = 'artifact.update' as const;
     const spec = getActionSpec(actionId);
     const context = {
@@ -2978,7 +2996,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           input,
           settings: EMPTY_SETTINGS,
         }).required,
-      ).toBe(true);
+      ).toBe(false);
     }
     const required = normalizeActionsSettingsV1({
       v: 1,
@@ -3223,17 +3241,19 @@ describe('isApprovalRequiredByActionsSettings', () => {
     } as const;
     const personal = { ...shared, owner: { kind: 'home' } } as const;
     const edits = [
-      { actionId: 'session.board.layout.update', input: {} },
-      { actionId: 'session.board.item.upsert', input: {} },
-      { actionId: 'widgets.definition.update', input: {} },
-      { actionId: 'widgets.definition.delete', input: {} },
-      { actionId: 'widgets.snapshot.post', input: {} },
+      { actionId: 'session.board.layout.update', input: {}, required: false },
+      { actionId: 'session.board.item.upsert', input: {}, required: false },
+      { actionId: 'widgets.definition.update', input: {}, required: true },
+      { actionId: 'widgets.definition.delete', input: {}, required: true },
+      { actionId: 'widgets.snapshot.post', input: {}, required: true },
       {
         actionId: 'widgets.item.remove',
         input: { ref: { surface: personal, instanceId: 'group' } },
+        required: false,
       },
       {
         actionId: 'widgets.item.remove',
+        required: false,
         input: {
           ref: {
             surface: {
@@ -3247,17 +3267,21 @@ describe('isApprovalRequiredByActionsSettings', () => {
       {
         actionId: 'home.hub.layout.update',
         input: { intent: { kind: 'remove', instanceId: 'group' } },
+        required: false,
       },
       {
         actionId: 'home.hub.layout.update',
         input: { intent: { kind: 'widget_remove', instanceId: 'copy' } },
+        required: false,
       },
       {
         actionId: 'widgets.item.frame.set',
         input: { ref: { surface: shared, instanceId: 'copy' } },
+        required: false,
       },
       {
         actionId: 'widgets.item.move',
+        required: true,
         input: {
           ref: { surface: personal, instanceId: 'copy' },
           to: { surface: shared, index: 0 },
@@ -3273,10 +3297,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       };
       expect
         .soft(resolveActionApprovalRouting(args).required, edit.actionId)
-        .toBe(
-          args.spec.approvalPolicy?.uiConfirmationForInput?.(edit.input) ??
-            args.spec.approvalPolicy?.uiConfirmation !== 'direct',
-        );
+        .toBe(edit.required);
       const waived = normalizeActionsSettingsV1({
         v: 1,
         approvalWaivedSurfaces: { [edit.actionId]: ['ui'] },
@@ -3434,7 +3455,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     },
   );
 
-  it('confirms new source disclosure but admits Stop directly, honoring explicit Ask on either', () => {
+  it('admits direct source disclosure and Stop presses, honoring explicit Ask on either', () => {
     const actionId = 'usage.sources.consent.set' as const;
     const spec = getActionSpec(actionId);
     const context = { surface: 'ui', authority: 'present_user' } as const;
@@ -3453,7 +3474,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           context,
           settings: EMPTY_SETTINGS,
         }).required,
-      ).toBe(enabled);
+      ).toBe(false);
       for (const surface of ['agent', 'cli', 'mcp'] as const) {
         expect(
           resolveActionApprovalRouting({
@@ -3576,7 +3597,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     ).toBe(true);
   });
 
-  it('confirms moving a widget into a different Session Board audience while same-board moves stay direct', () => {
+  it('admits direct widget moves while retaining automated and explicit Ask', () => {
     const actionId = 'widgets.item.move' as const;
     const spec = getActionSpec(actionId);
     const scope = { serverId: 'home', accountId: 'account' };
@@ -4179,7 +4200,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'localServices.actions.terminateDetected',
     'projects.trust.revoke',
   ] as const)(
-    'uses declared danger before the present-user UI exemption: %s',
+    'admits the present-user UI press while retaining explicit Ask: %s',
     (actionId) => {
       const spec = getActionSpec(actionId);
       const context = { surface: 'ui', authority: 'present_user' } as const;
@@ -4187,7 +4208,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       expect(spec.safetyForInput).toBeUndefined();
       expect(
         isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context),
-      ).toBe(true);
+      ).toBe(false);
       expect(
         resolveActionApprovalRouting({
           actionId,
@@ -4195,10 +4216,10 @@ describe('isApprovalRequiredByActionsSettings', () => {
           settings: EMPTY_SETTINGS,
           context,
         }).required,
-      ).toBe(true);
+      ).toBe(false);
       expect(
         resolveActionApprovalRouting({ actionId, spec, context }).required,
-      ).toBe(true);
+      ).toBe(false);
 
       const completed = { ...context, presentUserConfirmation: { actionId } };
       expect(
@@ -4213,7 +4234,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           ...context,
           presentUserConfirmation: { actionId: 'account.password.remove' },
         }),
-      ).toBe(true);
+      ).toBe(false);
       const waived = normalizeActionsSettingsV1({
         v: 1,
         approvalWaivedSurfaces: { [actionId]: ['ui'] },

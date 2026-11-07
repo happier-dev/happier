@@ -2012,6 +2012,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         authority: ctx.authority,
         actionCaller: ctx.actionCaller,
         presentUserConfirmation: ctx.presentUserConfirmation,
+        externalActionCredential: ctx.externalActionCredential,
+        externalActionExecutionAuthorization: ctx.externalActionExecutionAuthorization,
+        rpcSessionAuthorization: ctx.rpcSessionAuthorization,
       }, { defaultSafety: operationSafety ?? defaultSafety, defaultUiConfirmation: defaultUiConfirmation ?? operationPolicy?.uiConfirmationRequired,
         input, approvedOperation, approvalScope });
     },
@@ -4901,7 +4904,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? context?.authority ?? 'account_automation'
       : credentialAuthority === 'present_user' ? context?.authority ?? credentialAuthority : credentialAuthority;
     const actionCaller = context?.actionCaller ?? (credential === 'account' && (surface === 'ui' || surface === 'voice' || surface === 'rpc') && !context?.externalActionCredential
-      && !context?.rpcSessionAuthorization ? { kind: 'host' as const } : undefined);
+      && !context?.externalActionExecutionAuthorization && !context?.rpcSessionAuthorization ? { kind: 'host' as const } : undefined);
     // Ordinary UI callers do not author approval provenance. Retain stronger
     // invocation identities, otherwise bind one attempt at this host before
     // execute/prepare reaches the strict approval-origin owner.

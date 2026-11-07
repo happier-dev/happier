@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Modal } from '@/modal';
 import { isConnectedAccountSignedOut } from '../account/connectedAccountCredentialStatusLabel';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { View, type LayoutChangeEvent } from 'react-native';
@@ -457,10 +458,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         void mutations.setActiveAccount({ group, account });
     }, [group, mutations]);
 
-    const removeMember = React.useCallback(async (account: QualifiedConnectedAccountRef) => {
-        await mutations.removeMember({ group, account });
-    }, [group, mutations]);
-
     const membershipCandidates = React.useMemo<ReadonlyArray<PoolMembershipCandidate>>(
         () => accounts.map((account) => {
             const identity = identityOf(account.ref.accountId);
@@ -478,6 +475,15 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     /** Apply a membership change: removals first, then adds, threading the returned group. */
     const commitMembership = React.useCallback(async (nextSelectedAccountIds: ReadonlyArray<string>) => {
         const { toAdd, toRemove } = computePoolMembershipDiff(memberAccountIds, nextSelectedAccountIds);
+        if (toRemove.length > 0 && !await Modal.confirm(
+            t('connectedServices.detail.groupActions.removeMemberConfirmTitle'),
+            t('connectedServices.detail.groupActions.removeMembersConfirmBody', {
+                count: toRemove.length, members: toRemove.map((accountId) => identityOf(accountId).name).join('\n'),
+            }), {
+                confirmText: t('connectedServices.detail.groupActions.removeMember'),
+                cancelText: t('common.cancel'), destructive: true,
+            },
+        )) return;
         let current = group;
         for (const accountId of toRemove) {
             const member = current.members.find((candidate) => candidate.ref.accountId === accountId);
@@ -493,7 +499,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             if (!next) return;
             current = next;
         }
-    }, [accounts, group, memberAccountIds, mutations]);
+    }, [accounts, group, identityOf, memberAccountIds, mutations]);
 
     const deletePool = React.useCallback(async () => {
         await mutations.delete(group);
@@ -857,7 +863,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                     title: t('connectedServices.detail.groupActions.removeMember'),
                                     icon: 'minus-circle',
                                     destructive: true,
-                                    onPress: () => void removeMember(member.ref),
+                                    onPress: () => void commitMembership(memberAccountIds.filter((id) => id !== member.ref.accountId)),
                                 },
                             ];
                             return (

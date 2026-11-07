@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
-import { presentProviderConnection, presentProviderConnectionIdentity, providerConnectionNeedsAttention } from './presentation';
+import { presentProviderConnection, presentProviderConnectionDetail, presentProviderConnectionIdentity, providerConnectionNeedsAttention } from './presentation';
 import { providerModelConnectionTitle } from '@/providers/models/providerModelConnectionTitle';
 
 const base = DaemonProviderConnectionViewV1Schema.parse({
@@ -16,6 +17,21 @@ const base = DaemonProviderConnectionViewV1Schema.parse({
 });
 
 describe('provider connection presentation', () => {
+    it('keeps the typed probe cause with matching failed health and retires it after canonical recovery', () => {
+        const error = createProviderErrorV1('provider_endpoint_unreachable', {
+            failureCause: { phase: 'providers.probe.resolve_host', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null },
+        });
+        const failed = { ...base, runtime: { ...base.runtime, health: 'unreachable' as const, endpoints: [{
+            endpointTemplateId: 'chat', status: 'unreachable' as const, activity: 'idle' as const,
+            observedAt: 1, errorCode: error.code, retryAt: null,
+        }] } };
+        expect(presentProviderConnectionDetail(failed, error).probeError).toBe(error);
+        expect(presentProviderConnectionDetail(base, error).probeError).toBeNull();
+        const actionRefusal = createProviderErrorV1('agent_error', {
+            failureCause: { phase: 'actions.execute', errorClass: 'Error', errorCode: 'EIO', httpStatus: null },
+        });
+        expect(presentProviderConnectionDetail(base, actionRefusal).probeError).toBe(actionRefusal);
+    });
     it('presents pending source declarations as loading without reporting attention', () => {
         expect(presentProviderConnection({ ...base, sourceStatus: 'loading' })).toMatchObject({ status: 'loading' });
         expect(providerConnectionNeedsAttention('loading')).toBe(false);

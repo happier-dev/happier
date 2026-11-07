@@ -6,6 +6,7 @@ import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInp
 import {
     audienceSummary,
     brokerPlacementLabel,
+    teamCredentialBrokerPlacementAction,
     orderTeamCredentialResources,
     resourceAccessibilityLabel,
     resourceAdministrationSummaryLines,
@@ -20,6 +21,20 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it('offers broker selection only to the source owner instead of handing the owner to themselves', () => {
+        const owner = teamCredentialResourceFixture({
+            brokerPlacement: { kind: 'machine', machineId: 'private-machine' },
+        });
+        const member = teamCredentialResourceFixture({
+            ...owner,
+            capabilities: { ...owner.capabilities, updateBrokerPlacement: false },
+        });
+        expect(brokerPlacementLabel(owner)).not.toBe(brokerPlacementLabel(member));
+        expect(teamCredentialBrokerPlacementAction(owner)).toEqual({
+            destination: 'broker_selection', labelKey: 'teams.credentials.recovery.selectBroker',
+        });
+        expect(teamCredentialBrokerPlacementAction(member)).toBeNull();
+    });
     it('presents recipient-only reconnect readiness without requiring manager-private fields or models', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
             id: 'shared-resource', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,

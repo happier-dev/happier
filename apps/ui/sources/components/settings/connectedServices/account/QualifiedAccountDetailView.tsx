@@ -3,7 +3,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { View } from 'react-native';
 import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
-import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMenu, type PageHeaderMenuIntent } from '@/components/ui/layout/PageHeaderEntityParts';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
@@ -34,7 +34,7 @@ import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { AgentDefaultMenuButton } from '../defaults/AgentDefaultMenuButton';
 import type { AgentDefaultChoice } from '../defaults/agentDefaultChoices';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
+import { useCredentialShareAction } from '@/components/sharing/credentials/CredentialShareSheet';
 import type { TeamCredentialSourceHint } from '@/components/settings/teams/teamsRoutes';
 import { AccountDetailUsedBySectionView, type AccountDetailUsedBySlots } from './AccountDetailSections';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -203,6 +203,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
     const [disconnectPending, setDisconnectPending] = React.useState(false);
     const [renameOpen, setRenameOpen] = React.useState(false);
     const { copyProviderAccountId, onMenuOpenChange } = useCopyProviderAccountId();
+    const share = useCredentialShareAction({ name: presentation.primaryLabel, source: props.shareSource });
     const [compact, setCompact] = React.useState(false);
     const renameAnchorRef = React.useRef<View>(null);
 
@@ -363,8 +364,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ? <RoundButton testID={`${testID}:refresh`} display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
                         : null}
                     {/* The ⋯ menu holds rare actions, on a phone too: the provider's raw id is copied from here, never a page row. */}
-                    {props.shareSource ? <CredentialShareButton testID={`${testID}:share`} name={presentation.primaryLabel} source={props.shareSource} /> : null}
-                    {rename || onReconnect || onDisconnect || providerAccount ? <PageHeaderMenu
+                    {rename || onReconnect || onDisconnect || providerAccount || share ? <PageHeaderMenu
                         triggerTestID={`${testID}:more`}
                         accessibilityLabel={t('connectedServicesPool.moreActions')}
                         onOpenChange={onMenuOpenChange}
@@ -372,6 +372,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             ...(rename ? [{ id: 'rename', title: t('connectedServicesPool.rename'), onSelect: () => setRenameOpen(true) }] : []),
                             ...(providerAccount ? [{ id: 'copy-account-id', title: t('connectedServicesSettings.detailCopyAccountId'), onSelect: () => copyProviderAccountId(providerAccount) }] : []),
                             ...(onReconnect ? [{ id: 'reconnect', title: t('connectedServicesSettings.signInAgain'), onSelect: onReconnect }] : []),
+                            ...(share ? [{ id: 'share', testID: `${testID}:share`, title: t('secretsSettings.share'), onSelect: (intent?: PageHeaderMenuIntent) => share(intent?.anchor) }] : []),
                             ...(onDisconnect ? [{ id: 'disconnect', title: t('connectedServicesSettings.detailRemoveAccount'), destructive: true, loading: disconnectPending, onSelect: handleDisconnect }] : []),
                         ]}
                     /> : null}

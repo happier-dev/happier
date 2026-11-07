@@ -1,4 +1,4 @@
-import { parseDisplayableCredentialHealthStatus } from './parseDisplayableCredentialHealthStatus';
+import { isConnectedAccountSignedOut, parseDisplayableCredentialHealthStatus } from './parseDisplayableCredentialHealthStatus';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 import {
     getLegacyConnectedServiceRegistryEntry,
@@ -33,7 +33,7 @@ export type ConnectedAccountNeedingSignIn = Readonly<{
 }>;
 
 export function connectedAccountNeedsSignIn(status: unknown): boolean {
-    return parseDisplayableCredentialHealthStatus(status) === 'needs_reauth';
+    return isConnectedAccountSignedOut(parseDisplayableCredentialHealthStatus(status));
 }
 
 /**

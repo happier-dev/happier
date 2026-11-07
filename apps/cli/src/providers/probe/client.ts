@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
@@ -150,16 +151,18 @@ export class ProviderProbeClientError extends Error {
   readonly retryAfterMs?: number;
   /** Exact response status for caller-owned recovery policy. No response or credential material is retained. */
   readonly httpStatus?: number;
+  readonly failureCause?: ActionFailureCauseV1;
 
   constructor(
     code: ProviderProbeClientError['code'],
-    options: Readonly<{ retryAfterMs?: number; httpStatus?: number }> = {},
+    options: Readonly<{ retryAfterMs?: number; httpStatus?: number; failureCause?: ActionFailureCauseV1 }> = {},
   ) {
     super(code);
     this.name = 'ProviderProbeClientError';
     this.code = code;
     this.retryAfterMs = options.retryAfterMs;
     this.httpStatus = options.httpStatus;
+    this.failureCause = options.failureCause;
   }
 }
 
@@ -411,7 +414,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       if (error instanceof ProviderOperationAbandonedError && error.reason === 'cancelled') {
         throw new ProviderProbeCancelledError();
       }
-      throw new ProviderProbeClientError('provider_endpoint_unreachable');
+      throw new ProviderProbeClientError('provider_endpoint_unreachable', {
+        failureCause: projectActionFailureCauseV1(error, 'providers.probe.resolve_host'),
+      });
     }
     const operationLifetime = {
       ...(input.signal ? { signal: input.signal } : {}),
@@ -506,7 +511,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         if (input.signal?.aborted || error instanceof ProviderProbeCancelledError) {
           throw new ProviderProbeCancelledError();
         }
-        throw new ProviderProbeClientError('provider_endpoint_unreachable');
+        throw new ProviderProbeClientError('provider_endpoint_unreachable', {
+          failureCause: projectActionFailureCauseV1(error, 'providers.probe.transport'),
+        });
       }
     } catch (error) {
       credentialLease?.close();

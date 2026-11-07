@@ -23,24 +23,28 @@ import { MachineAdministrationTargetSelector } from '@/components/settings/machi
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionApprovalNotice';
 import { ConnectedAccountPurposeTargetChooser } from '../account/ConnectedAccountPurposeTargetChooser';
-import { resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
+import { isConnectedAccountSignedOut, resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
+import { ConnectKeySheetBody } from './ConnectKeySheetBody';
 import {
   ConnectedServiceSetupPanel,
   presentConnectedServiceSetupHeading,
 } from './ConnectedServiceSetupPanel';
 import type {
   ConnectSheetAccountRequest,
-  ConnectSheetKeyRequest,
   ConnectSheetContentProps,
+  ConnectSheetKeyRequest,
 } from './ConnectedServiceSetupModal';
-import { useConnectAccountSheetModel } from './useConnectAccountSheetModel';
-import { useConnectSheetHeading } from './useConnectSheetHeading';
-
-import { ConnectKeySheetBody } from './ConnectKeySheetBody';
-
 import { isConnectSheetKeyRequest } from './connectSheetOpening';
-
+import { useConnectAccountSheetModel } from './useConnectAccountSheetModel';
 import { useConnectKeySheetModel } from './useConnectKeySheetModel';
+import { ConnectNpmRegistrySheetContent } from '../npm/ConnectNpmRegistrySheetContent';
+import { useConnectSheetHeading } from './useConnectSheetHeading';
+import { resolveConnectSheetKeyPresentation } from './connectSheetKeyPresentation';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { isConnectSheetNpmRegistryRequest } from './connectSheetOpening';
+
+const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
 type SheetMode = 'new' | 'saved';
 
@@ -81,6 +85,13 @@ function ConnectKeySheetLeaf(
   const { theme } = useUnistyles();
   const model = useConnectKeySheetModel(props.request);
   const suggestedName = props.request.service.suggestedName;
+  const localizePluginText = useProjectedPluginLocalizedTextResolver();
+  const presentation = React.useMemo(() => resolveConnectSheetKeyPresentation({
+    bindingTarget: props.request.bindingTarget,
+    providers: voiceProviderRegistry.list().flatMap(entry => 'declaration' in entry && entry.declaration
+      ? [{ pluginId: entry.pluginId, declaration: entry.declaration }] : []),
+    localize: (text, pluginId) => localizePluginText(pluginId, text),
+  }), [localizePluginText, props.request.bindingTarget]);
   // A key asked for by something (a provider, a field) is "Add a key"; Credentials' own "+" is a new secret.
   const requested = Boolean(
     props.request.bindingTarget ||
@@ -93,9 +104,11 @@ function ConnectKeySheetLeaf(
       (requested
         ? t('connectedServicesSetup.keyTitle')
         : t('connectedServicesCollection.newSecret')),
-    subtitle: '',
-    leading: <Icon name="key" size={18} color={theme.colors.text.secondary} />,
-    leadingKey: 'key',
+    subtitle: presentation?.purpose ?? '',
+    leading: presentation
+      ? <ConnectedServiceMark legacyServiceId={null} pluginId={presentation.pluginId} size="title" />
+      : <Icon name="key" size={18} color={theme.colors.text.secondary} />,
+    leadingKey: presentation?.pluginId ?? 'key',
     bodyScroll: 'none',
   });
   return (
@@ -110,6 +123,7 @@ function ConnectKeySheetLeaf(
         currentRef={props.request.current ?? null}
         sameTargetRefs={model.sameTargetRefs}
         suggestedName={suggestedName}
+        guide={presentation?.guide}
         submitLabel={requested ? t('connectedServicesSettings.keySave') : undefined}
         onResult={props.onResult}
         onCancel={() => props.onResult({ kind: 'dismissed' })}
@@ -254,7 +268,8 @@ function ConnectAccountSheetLeaf(
     leading: selectedEntry ? (
       <ConnectedServiceMark
         legacyServiceId={selectedEntry.legacyServiceId}
-        size="row"
+        pluginId={selectedEntry.service.pluginId}
+        size="title"
       />
     ) : (
       <Icon name="plug" size={18} color={theme.colors.text.secondary} />
@@ -331,7 +346,7 @@ function ConnectAccountSheetLeaf(
           >
             {model.savedAccounts.map((profile) => {
               const name = names.get(profile.ref.accountId);
-              const signedOut = profile.status === 'needs_reauth';
+              const signedOut = isConnectedAccountSignedOut(profile.status);
               return (
                 <SelectableRow
                   key={profile.ref.accountId}
@@ -343,6 +358,7 @@ function ConnectAccountSheetLeaf(
                   left={
                     <ConnectedServiceMark
                       legacyServiceId={selectedEntry?.legacyServiceId ?? null}
+                      pluginId={selectedEntry?.service.pluginId ?? null}
                       size="row"
                     />
                   }
@@ -376,7 +392,7 @@ function ConnectAccountSheetLeaf(
                       })
                     : t('connectedServicesSetup.accountSaved')
                 }
-                disabled={!chosen || chosen.status === 'needs_reauth'}
+                disabled={!chosen || isConnectedAccountSignedOut(chosen.status)}
                 onPress={() => {
                   if (chosen) model.onSelected(chosen.ref);
                 }}
@@ -397,6 +413,8 @@ function ConnectAccountSheetLeaf(
  */
 export function ConnectSheetContent(props: ConnectSheetContentProps) {
   const request = props.request;
+  if (isConnectSheetNpmRegistryRequest(request))
+    return <ConnectNpmRegistrySheetContent {...props} request={request} />;
   if (isConnectSheetKeyRequest(request))
     return <ConnectKeySheetLeaf {...props} request={request} />;
   return <ConnectAccountSheetLeaf {...props} request={request} />;

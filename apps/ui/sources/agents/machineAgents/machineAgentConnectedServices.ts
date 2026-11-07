@@ -1,4 +1,6 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isConnectedAccountSignedOut, parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { isQualifiedConnectedAccountProfileUsableV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { isConnectedServiceProfileStatusSelectable, type ConnectedServicesProfileOption } from '@happier-dev/agents';
@@ -43,7 +45,7 @@ export function projectMachineAgentConnectedServices(params: Readonly<{
         const projectedTitle = entry?.projectedTitle ?? entry?.projectedDescriptor?.title;
         const title = entry && params.titleForService
             ? params.titleForService(entry)
-            : entry?.shortName ?? (typeof projectedTitle === 'string' ? projectedTitle : projectedTitle?.fallback) ?? serviceId;
+            : entry?.shortName ?? (projectedTitle == null ? undefined : resolvePluginLocalizedStringV2Text(projectedTitle)) ?? serviceId;
         const disconnected: MachineAgentConnectedService = { serviceId, title, connected: false, healthy: false, profileLabel: null };
         if (!entry || params.accountTransport === 'indeterminate' || entry.executable !== true) return disconnected;
 
@@ -64,7 +66,7 @@ export function projectMachineAgentConnectedServices(params: Readonly<{
                 return { profileId: option.profileId, profileLabel: option.label ?? option.providerEmail ?? null,
                     healthy: Boolean(isConnectedServiceProfileStatusSelectable(option.status) && profile
                         && isQualifiedConnectedAccountProfileUsableV4({ profile, authentication, now: params.now })),
-                    ...(profile?.status === 'needs_reauth' ? { reconnectRequired: true } : {}) };
+                    ...(isConnectedAccountSignedOut(profile?.status) ? { reconnectRequired: true } : {}) };
             });
             const usable = profiles.find((profile) => profile.healthy);
             const selected = usable ?? profiles[0];
@@ -86,7 +88,7 @@ export function projectMachineAgentConnectedServices(params: Readonly<{
         })[serviceId] ?? [];
         const profiles = restricted.map((option) => ({ profileId: option.profileId, profileLabel: option.label ?? option.providerEmail ?? null,
             healthy: option.status !== 'unsupported_kind' && isConnectedServiceProfileStatusSelectable(option.status),
-            ...(option.status === 'needs_reauth' ? { reconnectRequired: true } : {}) }));
+            ...(isConnectedAccountSignedOut(parseDisplayableCredentialHealthStatus(option.status)) ? { reconnectRequired: true } : {}) }));
         const usable = profiles.find((profile) => profile.healthy);
         const selected = usable ?? profiles[0];
         return {

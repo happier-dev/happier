@@ -1228,8 +1228,9 @@ describe('ProviderConnectionDetailScreen', () => {
         await pressAndFlush(testRow);
 
         await waitForHomeGovernance(() => {
-            expect(findTestRow(screen)?.props.subtitle).toContain('settingsProviders.errors.unreachableDescription');
-            expect(findTestRow(screen)?.props.subtitle).toContain('connectedServicesCollection.checkedAt');
+            const probeResult = findComposite(screen, 'provider-connection-probe-result', 'text')?.props.text;
+            expect(probeResult).toContain('settingsProviders.errors.unreachableDescription');
+            expect(probeResult).toContain('connectedServicesCollection.checkedAt');
             const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as
                 Array<{ key: string; text: string }> | undefined;
             expect(meta?.find(fact => fact.key === 'status')?.text).toBe('settingsProviders.status.unreachable');

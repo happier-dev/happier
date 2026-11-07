@@ -1,7 +1,3 @@
-import { definePlugin } from '@happier-dev/plugin-sdk';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +13,6 @@ import {
   AccountSettingsSchema,
   FeaturesResponseSchema,
   sealSavedSecretResourceStoredContentV1,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderConnectionIdSchema,
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
@@ -44,13 +39,23 @@ import {
   createProviderProbeHttpClient,
   type ProviderProbeTransportRequest,
 } from './client';
-import { PROVIDER_HEALTH_REFRESH_TTL_MS } from './scheduler';
 import { createProviderLocalCatalogFallbackRunner } from './localCommand';
 import type { ProviderLocalCommandRunner } from './localCommand';
+import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc';
+import { presentProviderConnectionDetail } from '../../../../ui/sources/providers/connection/presentation';
+import { presentProviderError } from '../../../../ui/sources/providers/connection/errorPresentation';
+import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
+import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { composeProviderSettingsV1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { DaemonProviderProbeResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { configuration } from '@/configuration';
@@ -95,6 +100,7 @@ const contribution: ResolvedProviderContribution = {
   definition,
 };
 const registry = { providersByContributionKey: new Map([[contributionKey, contribution]]) };
+
 it.each([false, true])('acquires one vault field for a catalog phase with several authenticated probe requests (detach caller: %s)', async detachCaller => {
   const secretId = formatSharedSavedSecretRefV1('catalog-vault');
   const vaultDefinition = ProviderContributionV1Schema.parse({ ...definition,
@@ -185,7 +191,6 @@ it.each([false, true])('acquires one vault field for a catalog phase with severa
   } finally { releaseAcquisition.resolve(); await fixture.dispose(); }
 });
 
-
 function providerSnapshot(providerSettings: ProviderSettingsV1): ActiveAccountSettingsSnapshot {
   const { catalog, defaults } = splitProviderSettingsV1(providerSettings);
   return {
@@ -230,6 +235,148 @@ function grantedSettings(providerRegistry = registry) {
 }
 
 describe('runtime provider services', () => {
+  it('settles the first empty catalog read with its DNS cause and retains models after a later failed refresh', async () => {
+    const probeDefinition = ProviderContributionV1Schema.parse({ ...definition,
+      catalog: { source: 'probe', manualModelPolicy: 'allowed',
+        probes: [{ endpointTemplateId: 'chat', path: '/models', parser: 'openai-models' }] },
+    });
+    const probeRegistry = { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: probeDefinition }]]) };
+    const settings = ProviderSettingsV1Schema.parse({ ...grantedSettings(probeRegistry), manualModelsByConnectionId: {} });
+    const snapshot = providerSnapshot(settings);
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-cold-model-failure-'));
+    temporaryPaths.push(happyHomeDir);
+    let unresolved = true;
+    const resolveProbeAddresses = vi.fn(async () => {
+      if (unresolved) throw Object.assign(new Error('secret-free fixture resolver failure'), { code: 'ENOTFOUND' });
+      return ['1.1.1.1'];
+    });
+    const transport = vi.fn(async () => ({ status: 200, headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"data":[{"id":"probe-a"}]}') }));
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry: probeRegistry,
+      getAccountSettingsSnapshot: () => snapshot, resolveAddresses: async () => ['1.1.1.1'],
+      featureGate: { isEnabled: () => true },
+      client: createProviderProbeHttpClient({ resolveAddresses: resolveProbeAddresses, transport }),
+    });
+    const identity = { connectionId, machineId: 'machine-a' };
+    const failure = { status: 'error', error: { code: 'provider_endpoint_unreachable',
+      failureCause: { phase: 'providers.probe.resolve_host', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null } } };
+    await expect(services.models(identity)).resolves.toMatchObject(failure);
+    expect(resolveProbeAddresses).toHaveBeenCalledTimes(1);
+    expect(transport).not.toHaveBeenCalled();
+    unresolved = false;
+    await expect(services.probe(identity)).resolves.toMatchObject({ status: 'success' });
+    await expect(services.models(identity)).resolves.toMatchObject({ status: 'success', models: [{ id: 'probe-a' }] });
+    await services.scheduleDemandRefresh(identity, 'picker_open');
+    unresolved = true;
+    await expect(services.probe(identity)).resolves.toMatchObject(failure);
+    await expect(services.models(identity)).resolves.toMatchObject({ status: 'success', models: [{ id: 'probe-a', stale: true }] });
+    await services.scheduleDemandRefresh(identity, 'picker_open');
+  });
+
+  it('reports an Account-created empty Gateway as configuration requiring review and settles without endpoint requests', async () => {
+    const gatewayDefinition = ProviderContributionV1Schema.parse({ ...definition,
+      catalog: { ...definition.catalog, sourceRegistryVersion: 'empty-gateway-test:v1' },
+      managedRuntime: { kind: 'managed', endpointTemplateIds: ['chat'],
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
+        connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'acme.accounts', localId: 'upstream' }, required: false }] },
+    });
+    let catalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
+    const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 1,
+      readCatalog: async () => ({ status: 'ready', revision: 1, catalog }),
+      readDefinitions: async () => [{ contributionKey, definition: gatewayDefinition, provenance: 'external' }],
+      writeCatalog: async input => { catalog = input.catalog; return { status: 'updated' }; },
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId, contributionKey, displayName: 'Empty Gateway', savedSecretId: null,
+      enable: true, deployment: { kind: 'managedLocal', purposeBindingDefaults: {} },
+    }), {})).toMatchObject({ ok: true });
+    const snapshot = providerSnapshot(composeProviderSettingsV1(catalog, {}));
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-empty-gateway-probe-'));
+    temporaryPaths.push(happyHomeDir);
+    const transport = vi.fn(async () => { throw new Error('Unbound Gateway must not issue endpoint requests'); });
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir,
+      registry: { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: gatewayDefinition }]]) },
+      getAccountSettingsSnapshot: () => snapshot, featureGate: { isEnabled: () => true },
+      client: createProviderProbeHttpClient({ transport }) });
+    const result = DaemonProviderProbeResponseV1Schema.parse(await services.probe({ connectionId, machineId: 'machine-a' }));
+    expect(result).toMatchObject({ status: 'error', error: {
+      code: 'provider_connection_invalid', retryable: false, action: 'review_connection', connectionId, machineId: 'machine-a',
+      reason: 'managed_purpose_bindings_missing',
+    } });
+    if (result.status !== 'error') throw new Error('Expected configuration refusal');
+    expect(presentProviderError(result.error)).toMatchObject({ action: 'review_connection' });
+    expect(transport).not.toHaveBeenCalled();
+    expect(snapshot.providerConnectionsCatalog).toMatchObject({ status: 'ready', catalog: { connections: [{ id: connectionId, revision: 1 }] } });
+  });
+
+  it.each(['preferences', 'catalog'] as const)('revalidates %s advances between catalog and health without losing a permitted health observation', async (change) => {
+    const healthDefinition = ProviderContributionV1Schema.parse({ ...definition,
+      endpointTemplates: [...definition.endpointTemplates, { ...definition.endpointTemplates[0], id: 'health', protocol: 'openai-responses' }],
+      discovery: { v: 1, listener: { executableBasenames: ['provider-health-fixture'], defaultPorts: [1234] },
+        availabilityProbe: { endpointTemplateId: 'health', path: '/health', parser: 'openai-models' } },
+    });
+    const healthRegistry = { providersByContributionKey: new Map([[contributionKey, { ...contribution, definition: healthDefinition }]]) };
+    const initial = providerSnapshot(grantedSettings(healthRegistry));
+    let snapshot = initial;
+    const transport = vi.fn(async (request: ProviderProbeTransportRequest) => {
+      if (request.url.endsWith('/models')) {
+        snapshot = { ...initial, settings: { ...initial.settings }, settingsVersion: initial.settingsVersion + 1,
+          ...(change === 'catalog' ? { providerConnectionsCatalog: providerSnapshot(ProviderSettingsV1Schema.parse({
+            ...grantedSettings(healthRegistry), accountGrants: [],
+          })).providerConnectionsCatalog } : {}) };
+      }
+      return { status: 200, headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"data":[{"id":"probe-a"}]}') };
+    });
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-health-currentness-'));
+    temporaryPaths.push(happyHomeDir);
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry: healthRegistry,
+      getAccountSettingsSnapshot: () => snapshot, resolveAddresses: async () => ['1.1.1.1'],
+      featureGate: { isEnabled: () => true },
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }) });
+    const result = await services.scheduleDemandRefresh({ connectionId, machineId: 'machine-a' }, 'detail_open');
+    const state = await services.runtimeStore.read();
+    const health = state.endpointHealth.filter(row => row.key.endpointTemplateId === 'health');
+    expect(result).toBeNull();
+    expect(health).toEqual([expect.objectContaining({ state: expect.objectContaining({ status: 'available' }) })]);
+    expect(transport.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual(['/models', '/health']);
+  });
+
+  it('keeps retained catalog membership in the summary through failed refreshes and removes only models absent from a successful catalog', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-summary-continuity-'));
+    temporaryPaths.push(happyHomeDir);
+    let status = 200;
+    let models = Array.from({ length: 466 }, (_, i) => ({ id: `model-${i}` }));
+    const transport = vi.fn(async () => {
+      if (status === 0) throw new Error('ECONNRESET');
+      return { status, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({ data: models })) };
+    });
+    const snapshot = providerSnapshot(grantedSettings());
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry,
+      getAccountSettingsSnapshot: () => snapshot, resolveAddresses: async () => ['1.1.1.1'],
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+      featureGate: { isEnabled: () => true } });
+    const identity = { machineId: 'machine-a', connectionId };
+    await expect(services.probe(identity)).resolves.toMatchObject({ status: 'success' });
+    // The fixture also owns one static and one manual model.
+    await expect(services.summary(identity)).resolves.toMatchObject({ status: 'success', summary: { modelCount: 468 } });
+    for (const failure of [503, 0]) {
+      status = failure;
+      await expect(services.probe(identity)).resolves.toMatchObject({ status: 'error' });
+      const state = await services.runtimeStore.read();
+      expect(state.catalogs[0]?.state.snapshot?.models).toHaveLength(466);
+      const summary = await services.summary(identity);
+      await services.scheduleDemandRefresh(identity, 'detail_open');
+      expect(summary).toMatchObject({ status: 'success',
+        summary: { modelCount: 468, health: failure === 503 ? 'needs_attention' : 'unreachable' } });
+    }
+    status = 200;
+    models = [{ id: 'model-0' }];
+    await expect(services.probe(identity)).resolves.toMatchObject({ status: 'success' });
+    await expect(services.summary(identity)).resolves.toMatchObject({ status: 'success', summary: { modelCount: 3 } });
+    await services.scheduleDemandRefresh(identity, 'detail_open');
+  });
+
   it.each(['catalog', 'usage', 'command'] as const)('keeps %s parser retirement at its natural admission boundary', async (kind) => {
     const pluginDefinition = ProviderContributionV1Schema.parse({ ...definition,
       catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'chat', path: '/models', parser: 'credits-v1' }] },
@@ -532,17 +679,23 @@ describe('runtime provider services', () => {
           body: Buffer.from(JSON.stringify({ data: [{ id: 'probe-a' }] })) }) }),
     });
     const identity = { connectionId, machineId: 'machine-a' };
-    const initialResult = await services[operation](identity);
-    expect(initialResult, JSON.stringify(initialResult)).toMatchObject({ status: 'success' });
-    catalog = { ...catalog, manualModelsByConnectionId: { [connectionId]: [{ id: 'manual-current', addedAt: 2 }] } };
-    revision += 1;
-    const result = await services[operation](identity);
-    expect(result).toMatchObject({ status: 'success' });
-    expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog).toMatchObject({ status: 'ready', revision,
-      catalog: { manualModelsByConnectionId: { [connectionId]: [{ id: 'manual-current' }] } } });
-    if (operation === 'models') expect(result).toMatchObject({ models: expect.arrayContaining([
-      expect.objectContaining({ id: 'manual-current' }),
-    ]) });
+    try {
+      const initialResult = await services[operation](identity);
+      expect(initialResult, JSON.stringify(initialResult)).toMatchObject({ status: 'success' });
+      catalog = { ...catalog, manualModelsByConnectionId: { [connectionId]: [{ id: 'manual-current', addedAt: 2 }] } };
+      revision += 1;
+      const result = await services[operation](identity);
+      expect(result).toMatchObject({ status: 'success' });
+      expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog).toMatchObject({ status: 'ready', revision,
+        catalog: { manualModelsByConnectionId: { [connectionId]: [{ id: 'manual-current' }] } } });
+      if (operation === 'models') expect(result).toMatchObject({ models: expect.arrayContaining([
+        expect.objectContaining({ id: 'manual-current' }),
+      ]) });
+    } finally {
+      // Warm model reads own advisory demand beyond their projection response.
+      // Join that existing owner before the test removes its runtime store.
+      await services.scheduleDemandRefresh(identity, 'picker_open');
+    }
   });
 
   it('spends the existing Provider operation deadline while opening a demanded Account catalog', async () => {
@@ -679,36 +832,138 @@ describe('runtime provider services', () => {
     await expect(services.scheduleDemandRefresh({ connectionId, machineId: 'machine-a' }, 'picker_open')).resolves.toBeNull();
     // Catalog and health are two requests in one admitted demand operation.
     expect(get).toHaveBeenCalledTimes(4);
+    // Drive the real HTTP classifier, durable observation, summary and UI
+    // presenters. A public catalog success is not proof of a valid paid key.
+    const identity = { connectionId, machineId: 'machine-a' };
+    for (const [status, code, health, presentationStatus] of [
+      [401, 'provider_endpoint_unauthorized', 'needs_attention', 'needsAttention'],
+      [403, 'provider_endpoint_unauthorized', 'needs_attention', 'needsAttention'],
+      [503, 'provider_endpoint_unavailable', 'needs_attention', 'needsAttention'],
+      [200, null, 'available', 'available'],
+    ] as const) {
+      transport.mockImplementation(async () => ({ status,
+        headers: { 'content-type': 'application/json' }, body: Buffer.from('{"data":[{"id":"probe-a"}]}') }));
+      expect(await services.probe(identity)).toMatchObject(code
+        ? { status: 'error', error: { code } } : { status: 'success' });
+      const summary = await services.summary(identity);
+      if (summary.status !== 'success') throw new Error('Expected current connection summary');
+      expect(summary.summary.health).toBe(health);
+      expect(summary.summary.endpoints[0]?.errorCode).toBe(code);
+      const view = DaemonProviderConnectionViewV1Schema.parse({ connectionId, contributionKey,
+        displayName: 'Static provider', providerName: 'Static provider', icon: null,
+        role: 'default', displayNameMode: 'automatic', sourceStatus: 'available',
+        grants: { accountEnabled: true, enabledMachineIds: [] }, scope: 'account',
+        probeCapability: 'catalog', manualModelPolicy: 'allowed', compatibility: [],
+        credential: null, endpoints: [], authorized: true, authorizationError: null,
+        revision: 0, runtime: summary.summary });
+      expect(presentProviderConnectionDetail(view)).toMatchObject({ status: presentationStatus,
+        lastCheck: { errorCode: code, status: presentationStatus, failed: code !== null,
+          checkedAt: summary.summary.checkedAt } });
+      if (status === 401 || status === 403) {
+        expect(presentProviderError(summary.summary.endpoints[0]!.errorCode).titleKey)
+          .toBe('settingsProviders.errors.unauthorizedTitle');
+      }
+      const requests = transport.mock.calls.length;
+      const demand = await services.scheduleDemandRefresh(identity, 'detail_open');
+      if (code) expect(demand).toMatchObject({ code });
+      else expect(demand).toBeNull();
+      expect(transport.mock.calls.length).toBe(requests + 1);
+    }
     const current = getActiveAccountSettingsSnapshot()!;
     get.mockImplementationOnce(async () => {
-      setActiveAccountSettingsSnapshot({ ...current, settingsVersion: current.settingsVersion + 1 });
+      setActiveAccountSettingsSnapshot({ ...current, settings: { ...current.settings },
+        settingsVersion: current.settingsVersion + 1 });
       return materialResponse(3, 'rotated-value');
     });
     transport.mockClear();
+    transport.mockImplementation(async () => ({ status: 403,
+      headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') }));
     await expect(services.probe({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject({
-      status: 'error', error: { code: 'provider_authorization_changed' },
+      status: 'error', error: { code: 'provider_endpoint_unauthorized' },
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+    const authorized = getActiveAccountSettingsSnapshot()!;
+    get.mockImplementationOnce(async () => {
+      const revoked = providerSnapshot(ProviderSettingsV1Schema.parse({
+        ...grantedSettings(credentialRegistry), accountGrants: [],
+      }));
+      setActiveAccountSettingsSnapshot({ ...authorized,
+        providerConnectionsCatalog: revoked.providerConnectionsCatalog,
+        settingsVersion: authorized.settingsVersion + 1 });
+      return materialResponse(3, 'rotated-value');
+    });
+    transport.mockClear();
+    await expect(services.probe(identity)).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_endpoint_unauthorized' },
+    });
+    transport.mockClear();
+    await expect(services.probe(identity)).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_connection_disabled' },
     });
     expect(transport).not.toHaveBeenCalled();
+
+    // These withdrawals travel through the real materials response and
+    // selected-binding/credential owners, not a stubbed authorization port.
+    for (const withdrawal of ['unbind', 'team_access_removed'] as const) {
+      const bound = getActiveAccountSettingsSnapshot()!;
+      setActiveAccountSettingsSnapshot({ ...authorized, settingsVersion: bound.settingsVersion + 1 });
+      const restored = materialResponse(3, 'rotated-value');
+      const restoredRow = restored.data.resources[0]!;
+      const sharedEntry = { ...restoredRow.entry,
+        accessSources: [{ kind: 'team', teamId: 'team-provider', name: 'Provider Team' }] };
+      get.mockResolvedValue({ status: 200, data: { resources: [{ ...restoredRow, entry: sharedEntry }] } });
+      await hydrateSavedSecretCatalog({ token });
+      expect(getActiveAccountSettingsSnapshot()?.savedSecretResources).toMatchObject([{ materialStatus: 'ready' }]);
+      get.mockImplementationOnce(async () => {
+        if (withdrawal === 'unbind') {
+          const latest = getActiveAccountSettingsSnapshot()!;
+          const unbound = providerSnapshot(ProviderSettingsV1Schema.parse({
+            ...grantedSettings(credentialRegistry), secretBindingsByConnectionId: {},
+          }));
+          setActiveAccountSettingsSnapshot({ ...latest, providerConnectionsCatalog: unbound.providerConnectionsCatalog,
+            settingsVersion: latest.settingsVersion + 1 });
+          return materialResponse(3, 'rotated-value');
+        }
+        return { status: 200, data: { resources: [{ ...restoredRow, storedContent: null,
+          entry: { ...sharedEntry,
+            materialStatus: 'access_removed', capabilities: { ...sharedEntry.capabilities, use: false } },
+        }] } };
+      });
+      transport.mockClear();
+      await expect(services.probe(identity)).resolves.toMatchObject({ status: 'error', error: {
+        code: withdrawal === 'unbind' ? 'provider_endpoint_unauthorized' : 'provider_secret_missing',
+      } });
+      if (withdrawal === 'unbind') {
+        expect(transport).toHaveBeenCalledTimes(1);
+        transport.mockClear();
+        await expect(services.probe(identity)).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_missing' } });
+      }
+      expect(transport).not.toHaveBeenCalled();
+      if (withdrawal === 'team_access_removed') {
+        expect(getActiveAccountSettingsSnapshot()?.savedSecretResources).toMatchObject([{ materialStatus: 'access_removed' }]);
+      }
+    }
   });
 
-  it('settles a picker read through the existing operation deadline when DNS never resolves', async () => {
+  it('keeps a probe DNS read cancellable without imposing a local deadline', async () => {
     vi.useFakeTimers();
     try {
       const services = createRuntimeProviderServices({
         machineId: 'machine-a',
         registry,
         resolveAddresses: () => new Promise<readonly string[]>(() => {}),
+        client: createProviderProbeHttpClient({ resolveAddresses: () => new Promise<readonly string[]>(() => {}) }),
         getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(grantedSettings()); return () => snapshot; })(),
         featureGate: { isEnabled: () => true },
       });
-      const result = services.models({ connectionId, machineId: 'machine-a' });
-
-      await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs);
-
-      await expect(result).resolves.toMatchObject({
-        status: 'error',
-        error: { code: 'provider_endpoint_unavailable' },
-      });
+      const controller = new AbortController();
+      const result = services.probe({ connectionId, machineId: 'machine-a' }, 'manual_refresh', { signal: controller.signal });
+      let settled = false;
+      void result.finally(() => { settled = true; }).catch(() => {});
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(settled).toBe(false);
+      controller.abort();
+      await expect(result).resolves.toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unavailable' } });
     } finally {
       vi.useRealTimers();
     }
@@ -843,65 +1098,6 @@ describe('runtime provider services', () => {
     expect(homeHttp).not.toHaveBeenCalled();
   });
 
-  it('drops queued saved work when the root feature is revoked before scheduler dispatch', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-revoked-queue-'));
-    temporaryPaths.push(happyHomeDir);
-    const settings = grantedSettings();
-    let enabled = true;
-    const transport = vi.fn(async () => {
-      throw new Error('a revoked queued saved probe must not reach transport');
-    });
-    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
-    const getAccountSettingsSnapshot = vi.fn((() => { const snapshot = providerSnapshot(settings); return () => snapshot; })());
-    const resolveAddresses = vi.fn(async () => ['1.1.1.1']);
-    const services = createRuntimeProviderServices({
-      machineId: 'machine-a',
-      happyHomeDir,
-      registry,
-      runtimeStore,
-      resolveAddresses,
-      client: createProviderProbeHttpClient({
-        resolveAddresses: async () => ['1.1.1.1'],
-        transport,
-      }),
-      getAccountSettingsSnapshot,
-      featureGate: { isEnabled: () => enabled },
-    });
-    const scheduler = services.probeInfrastructure.scheduler;
-    const scheduled = vi.spyOn(scheduler, 'runCatalog');
-    const releases: Array<() => void> = [];
-    const occupied = [0, 1, 2, 3].map((index) => scheduler.runCatalog(
-      `occupied-${index}`,
-      'manual_refresh',
-      () => new Promise<Readonly<{ status: 'not_supported' }>>((resolve) => {
-        releases.push(() => resolve({ status: 'not_supported' }));
-      }),
-      { unavailable: () => ({ status: 'not_supported' as const }) },
-    ));
-    await vi.waitFor(() => expect(releases).toHaveLength(4));
-
-    const queued = services.probe({ connectionId, machineId: 'machine-a' });
-    // DNS is the first admitted Provider operation. It is queued behind the
-    // occupied catalog work, so no catalog request or resolver may start yet.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(scheduled).toHaveBeenCalledTimes(4);
-    expect(resolveAddresses).not.toHaveBeenCalled();
-    const settingsReadsAtAdmission = getAccountSettingsSnapshot.mock.calls.length;
-    enabled = false;
-    for (const release of releases.splice(0)) release();
-
-    await expect(queued).resolves.toMatchObject({
-      status: 'error',
-      error: { code: 'provider_feature_disabled' },
-    });
-    await expect(Promise.all(occupied)).resolves.toHaveLength(4);
-    expect(getAccountSettingsSnapshot).toHaveBeenCalledTimes(settingsReadsAtAdmission);
-    expect(resolveAddresses).not.toHaveBeenCalled();
-    expect(scheduled).toHaveBeenCalledTimes(4);
-    expect(transport).not.toHaveBeenCalled();
-    expect(await runtimeStore.read()).toEqual(createEmptyProviderRuntimeStateFileV1('machine-a'));
-  });
-
   it('detaches an aborted draft-probe caller while a second caller retains the shared transport', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-draft-scheduler-'));
     temporaryPaths.push(happyHomeDir);
@@ -986,10 +1182,12 @@ describe('runtime provider services', () => {
       featureGate: { isEnabled: () => true },
     });
     const identity = { connectionId, machineId: 'machine-a' };
+    const scheduled = vi.spyOn(services.probeInfrastructure.scheduler, 'runCatalog');
     const firstController = new AbortController();
     const first = services.probe(identity, 'manual_refresh', { signal: firstController.signal });
     await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
     const second = services.probe(identity);
+    await vi.waitFor(() => expect(scheduled).toHaveBeenCalledTimes(2));
 
     firstController.abort();
     releaseTransport();
@@ -1001,7 +1199,7 @@ describe('runtime provider services', () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
-  it('keeps identical post-load work live for a current caller while a cancelled waiter gets typed unavailable', async () => {
+  it('gives each explicit Load its own fresh observation while cancellation retires its waiter', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-model-load-scheduler-'));
     temporaryPaths.push(happyHomeDir);
     const settings = grantedSettings();
@@ -1032,22 +1230,19 @@ describe('runtime provider services', () => {
     const refreshInput = {
       connectionId,
       machineId: 'machine-a',
-      modelId: 'probe-a',
-      refreshFrontier: 'dispatch-a',
       ticket: { revision: 1 },
-      scope: { lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs } },
+      scope: { lifetime: { wallDeadlineAtMs: Infinity } },
     };
     const first = services.modelLoadCatalog.refresh({ ...refreshInput, signal: firstController.signal });
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
     const second = services.modelLoadCatalog.refresh({ ...refreshInput, signal: secondController.signal });
     const retryAfterAnotherDispatch = services.modelLoadCatalog.refresh({
       ...refreshInput,
-      refreshFrontier: 'dispatch-b',
       signal: secondController.signal,
     });
     firstController.abort();
     releaseTransport();
-    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(transport.mock.calls.length).toBeGreaterThanOrEqual(2));
     await expect(Promise.all([first, second, retryAfterAnotherDispatch])).resolves.toEqual([
       expect.objectContaining({
         status: 'error',
@@ -1056,14 +1251,14 @@ describe('runtime provider services', () => {
       expect.objectContaining({ status: 'success' }),
       expect.objectContaining({ status: 'success' }),
     ]);
-    expect(transport).toHaveBeenCalledTimes(2);
+    expect(transport).toHaveBeenCalledTimes(3);
 
     transportGate = Promise.resolve();
     await expect(services.modelLoadCatalog.refresh({
       ...refreshInput,
       signal: secondController.signal,
     })).resolves.toMatchObject({ status: 'success' });
-    expect(transport).toHaveBeenCalledTimes(3);
+    expect(transport).toHaveBeenCalledTimes(4);
   });
 
   it('does not confirm a model load from catalog work that started before that model mutation', async () => {
@@ -1097,11 +1292,9 @@ describe('runtime provider services', () => {
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
     const confirmation = services.modelLoadCatalog.refresh({
       ...identity,
-      modelId: 'probe-a',
-      refreshFrontier: 'dispatch-a',
       ticket: { revision: 1 },
       signal: new AbortController().signal,
-      scope: { lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs } },
+      scope: { lifetime: { wallDeadlineAtMs: Infinity } },
     });
     releaseDemandRefresh();
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
@@ -1435,7 +1628,7 @@ describe('runtime provider services', () => {
       savedSecretResources: initialSavedSecretResources,
       registry: initialRegistry,
       dnsEvidence: initialDnsEvidenceByEndpointUrl,
-      lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs },
+      lifetime: { wallDeadlineAtMs: Infinity },
     })).resolves.toMatchObject({
       status: 'success',
       probeObservationIdentity: initialIdentity,
@@ -1443,7 +1636,7 @@ describe('runtime provider services', () => {
     await expect(services.scheduleDemandRefresh(requestIdentity, 'detail_open')).resolves.toBeNull();
   });
 
-  it('refreshes declared endpoint health on picker demand without replacing fresher catalog or load state', async () => {
+  it('refreshes catalog and health on new picker demand without a freshness TTL', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-health-'));
     temporaryPaths.push(happyHomeDir);
     const localConnectionId = ProviderConnectionIdSchema.parse('pc_lmstudio_health');
@@ -1558,17 +1751,6 @@ describe('runtime provider services', () => {
       modelLoadStates: [{ key: { modelId: 'publisher/model-a' }, loadState: 'loaded' }],
     });
 
-    // Age only the health observation through the real store. Faking the wall
-    // clock here compromises the store's owner-lock lease timers and tests the
-    // lock implementation instead of picker-demand freshness.
-    const staleHealthObservedAt = Date.now() - PROVIDER_HEALTH_REFRESH_TTL_MS - 1;
-    await services.runtimeStore.update((state) => ({
-      ...state,
-      endpointHealth: state.endpointHealth.map((row) => 'observedAt' in row.state
-        ? { ...row, state: { ...row.state, observedAt: staleHealthObservedAt } }
-        : row),
-    }));
-
     transport.mockClear();
     nativeModels = [{
       key: 'publisher/health-only', type: 'llm', loaded_instances: [],
@@ -1591,17 +1773,16 @@ describe('runtime provider services', () => {
       ]);
       expect(state.endpointHealth[0]?.state).toMatchObject({ observedAt: expect.any(Number) });
       if (state.endpointHealth[0]?.state.status !== 'available') throw new Error('Expected available endpoint health');
-      expect(state.endpointHealth[0].state.observedAt).toBeGreaterThan(staleHealthObservedAt);
       expect(state.endpointHealth[0].state.observedAt).toBeLessThanOrEqual(Date.now());
+      expect(state.catalogs[0]?.state.snapshot?.models).toMatchObject([{ id: 'publisher/health-only' }]);
     }, { timeout: 10_000 });
     expect(transport).toHaveBeenCalledTimes(1);
     expect(transport.mock.calls[0]?.[0].url).toBe('http://127.0.0.1:1234/api/v1/models');
     const refreshed = await services.runtimeStore.read();
-    expect(refreshed.catalogs).toEqual(baseline.catalogs);
-    expect(refreshed.modelLoadStates).toEqual(baseline.modelLoadStates);
+    expect(refreshed.catalogs[0]?.state.snapshot?.models).toMatchObject([{ id: 'publisher/health-only' }]);
   });
 
-  it.each([false, true])('threads the remaining catalog lifetime through the saved command fallback (expired=%s)', async expired => {
+  it('keeps a valid saved command fallback beyond the former local operation deadline', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-local-fallback-'));
     temporaryPaths.push(happyHomeDir);
     const localConnectionId = ProviderConnectionIdSchema.parse('pc_ollama_fixture');
@@ -1672,7 +1853,7 @@ describe('runtime provider services', () => {
       request.signal?.addEventListener('abort', () => {
         if (commandOutcome === null) commandOutcome = 'aborted';
       }, { once: true });
-      await vi.advanceTimersByTimeAsync(expired ? 11_000 : 6_000);
+      await vi.advanceTimersByTimeAsync(11_000);
       commandOutcome = request.signal?.aborted ? 'aborted' : 'completed';
       return request.signal?.aborted ? { ok: false, reasonCode: 'aborted' }
         : { ok: true, exitCode: 0,
@@ -1697,11 +1878,6 @@ describe('runtime provider services', () => {
 
     vi.useFakeTimers();
     const pending = services.probe({ connectionId: localConnectionId, machineId: 'machine-a' });
-    if (expired) {
-      await expect(pending).rejects.toMatchObject({ reason: 'deadline' });
-      expect(commandOutcome).toBe('aborted');
-      return;
-    }
     const result = await pending;
     expect(commandOutcome).toBe('completed');
     expect(result).toMatchObject({ status: 'success', models: [{ id: 'qwen3:8b' }] });
@@ -1713,7 +1889,7 @@ describe('runtime provider services', () => {
     await expect(services.summary({ connectionId: localConnectionId, machineId: 'machine-a' }))
       .resolves.toMatchObject({
         status: 'success',
-        summary: { health: 'unreachable', modelCount: 1 },
+        summary: { health: 'needs_attention', modelCount: 1 },
       });
     // Join the real advisory demand before removing its runtime-store directory.
     await services.scheduleDemandRefresh({ connectionId: localConnectionId, machineId: 'machine-a' }, 'detail_open');
