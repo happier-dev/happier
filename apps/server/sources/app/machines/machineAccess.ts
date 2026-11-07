@@ -1,3 +1,4 @@
+import type { ApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { isDeepStrictEqual } from 'node:util';
 import type { Machine, MachineKeyEnvelope, Prisma } from '@prisma/client';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
@@ -9,26 +10,31 @@ import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/en
 import { MachineRecipientKeyEnvelopePageQueryV1Schema, type AccessibleMachineAccessV1, type MachineAdmission, type MachineAccessRoleV1, type MachineAccessRefusalV1, type MachineAccessRefusalCode, type MachineAccessGrantRowV1, type MachineAccessGrantsListResultV1, type MachineAccessMutationResultV1, type MachineAccessRecipientCensusResponseV1, type MachineRecipientKeyEnvelopeCommitInputV1, type MachineRecipientKeyEnvelopeCommitResponseV1, type MachineRecipientKeyEnvelopePageQueryV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { type PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isBrowserExtensionActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
+import { isBrowserExtensionActionIdV1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions';
-import { getActionSpec, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
 import { isProviderActionIdV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
-import { inTx, TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
 import { isEffectiveTeamGroupMembership } from '@/app/teams/groups/effectiveGroupMembership';
+import { validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/app/account/profile/accountDisplayProfile';
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
-import { classifyMachineAvailabilityState } from './machineStateGuards';
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
-import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineRecipientWorkInTx, readMachineAudienceAccountIdsInTx } from './machineRecipientWork';
+import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
+import { classifyMachineAvailabilityState } from './machineStateGuards';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 type MachineActor = Readonly<{ actorAccountId: string; machineId: string }>;
 export interface MachineAccessFacts {
@@ -105,6 +111,22 @@ const MACHINE_PERMISSION_FACTS_SELECT = {
 } as const;
 type MachinePermissionFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>;
 
+function buildMachineActorPermissionFactsSelect(actorAccountId: string) {
+    const { accountGrants, teamGrants, groupGrants } = MACHINE_PERMISSION_FACTS_SELECT;
+    return {
+        ...MACHINE_PERMISSION_FACTS_SELECT,
+        accountGrants: { ...accountGrants, where: { accountId: actorAccountId } },
+        teamGrants: { select: { ...teamGrants.select, team: { select: {
+            ...teamGrants.select.team.select,
+            memberships: { ...teamGrants.select.team.select.memberships, where: { accountId: actorAccountId } },
+        } } } },
+        groupGrants: { select: { ...groupGrants.select, teamGroup: { select: {
+            ...groupGrants.select.teamGroup.select,
+            memberships: { ...groupGrants.select.teamGroup.select.memberships, where: { teamMembership: { accountId: actorAccountId } } },
+        } } } },
+    } as const;
+}
+
 async function readFactsInTx(tx: Tx, machineId: string, actorAccountId?: string) {
     return tx.machine.findUnique({ where: { id: machineId },
         select: actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId) });
@@ -141,8 +163,22 @@ function effectiveRole(row: MachineFacts | MachinePermissionFacts, actorAccountI
 
 /** Permission only: current grants/current membership, never key presence or Session history. */
 export async function resolveEffectiveMachineRoleInTx(tx: Tx, input: MachineActor): Promise<MachineAccessRoleV1 | null> {
-    const row = await readFactsInTx(tx, input.machineId);
+    const row = await readFactsInTx(tx, input.machineId, input.actorAccountId);
     return row ? effectiveRole(row, input.actorAccountId) : null;
+}
+
+/** Current grant lookup for work whose Session binding was already admitted.
+ * This does not admit a new Machine operation or reopen recipient key material.
+ */
+export function projectActiveMachineAdmissionFromFacts(
+    row: MachineAdmissionFacts, actorAccountId: string,
+): SocketRpcMachineAdmissionContextV1 | null {
+    const role = effectiveRole(row, actorAccountId);
+    const encryptionMode = resourceMode(row);
+    if (!role || !encryptionMode || !row.installationId
+        || classifyMachineAvailabilityState(row) !== 'available') return null;
+    return { actorAccountId, custodianAccountId: row.accountId, machineId: row.id,
+        installationId: row.installationId, role, encryptionMode };
 }
 function resolveMachineRpcRequiredRole(input: Readonly<{
     method: string; owned: boolean; requiredRole: MachineAccessRoleV1; actionId?: string;
@@ -153,14 +189,18 @@ function resolveMachineRpcRequiredRole(input: Readonly<{
     return policy === 'manage' || input.actionId === 'machines.capabilities.install' ? 'manage' : input.requiredRole;
 }
 
-export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input: Readonly<{ machineIds: readonly string[]; accountIds: readonly string[]; rpcMethod?: string }>): Promise<Map<string, Map<string, MachineAccessRoleV1 | null>>> {
+export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input: Readonly<{
+    machineIds: readonly string[]; accountIds: readonly string[]; rpcMethod?: string;
+}>): Promise<Map<string, Map<string, MachineAccessRoleV1 | null>>> {
     const result = new Map<string, Map<string, MachineAccessRoleV1 | null>>();
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return result;
     const byId = new Map<string, MachinePermissionFacts>();
-    // Prisma 6.19.2 emits eight fixed relation-projection bindings in addition to IDs.
-    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 8 })) {
-        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_PERMISSION_FACTS_SELECT });
+    const actorAccountId = input.accountIds.length === 1 ? input.accountIds[0] : undefined;
+    const select = actorAccountId === undefined ? MACHINE_PERMISSION_FACTS_SELECT : buildMachineActorPermissionFactsSelect(actorAccountId);
+    // Eight relation-projection bindings; singleton reads add three actor predicates.
+    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 8 : 11 })) {
+        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select });
         for (const row of rows) byId.set(row.id, row);
     }
     for (const machineId of machineIds) {
@@ -172,6 +212,28 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
                 owned: row.accountId === accountId, requiredRole: 'use' }) : 'use';
             return [accountId, required !== null && (required !== 'manage' || role === 'manage') ? role : null] as const;
         })));
+    }
+    return result;
+}
+
+/** Workload authority is the explicit Source principal, never a member's personal share. */
+export async function resolveMachinePrincipalAccessForMachinesInTx(tx: Tx, input: Readonly<{
+    machineIds: readonly string[]; principal: Extract<PrincipalRefV1, { kind: 'account' | 'team' }>;
+}>): Promise<Map<string, MachineAccessRoleV1 | null>> {
+    const principal = input.principal;
+    if (principal.kind === 'account') {
+        const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: input.machineIds, accountIds: [principal.accountId] });
+        return new Map([...access].map(([id, roles]) => [id, roles.get(principal.accountId) ?? null]));
+    }
+    const result = new Map<string, MachineAccessRoleV1 | null>();
+    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
+        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: {
+            id: true, kind: true, teamGrants: { where: { teamId: principal.teamId, team: { archivedAt: null } }, select: { accessLevel: true } },
+        } });
+        for (const row of rows) {
+            const grant = row.kind === 'persistent' ? row.teamGrants[0] : undefined;
+            result.set(row.id, grant ? grant.accessLevel === 'admin' ? 'manage' : 'use' : null);
+        }
     }
     return result;
 }
@@ -190,10 +252,14 @@ export async function listMachineCandidatesInTx(
         tx.teamMembership.findMany({ where: { accountId: actorAccountId }, select: { teamId: true } }),
         tx.teamGroupMembership.findMany({ where: { teamMembership: { accountId: actorAccountId } }, select: { teamGroupId: true } }),
     ]);
-    const [teams, groups] = await Promise.all([
-        tx.machineTeamGrant.findMany({ where: { teamId: { in: memberships.map(member => member.teamId) } }, select: { machineId: true } }),
-        tx.machineGroupGrant.findMany({ where: { teamGroupId: { in: groupMemberships.map(member => member.teamGroupId) } }, select: { machineId: true } }),
-    ]);
+    const teams: { machineId: string }[] = [];
+    const groups: { machineId: string }[] = [];
+    for (const ids of portableQueryChunks({ values: memberships.map(member => member.teamId), bindingsPerValue: 1, fixedBindings: 1 })) {
+        teams.push(...await tx.machineTeamGrant.findMany({ where: { teamId: { in: [...ids] } }, select: { machineId: true } }));
+    }
+    for (const ids of portableQueryChunks({ values: groupMemberships.map(member => member.teamGroupId), bindingsPerValue: 1, fixedBindings: 1 })) {
+        groups.push(...await tx.machineGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { machineId: true } }));
+    }
     return [...new Set([...owned.map(row => row.id), ...direct.map(row => row.machineId), ...teams.map(row => row.machineId), ...groups.map(row => row.machineId)])].sort();
 }
 
@@ -225,7 +291,7 @@ async function readRecipientAccessMaterialInTx(tx: Tx, actorAccountId: string, m
             for (const row of rows) envelopes.set(row.machineId, row);
         }
     }
-    return { readiness, envelopes };
+    return { recipient, readiness, envelopes };
 }
 
 async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: string,
@@ -234,17 +300,17 @@ async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: st
     const role = admittedRole ?? effectiveRole(row, actorAccountId, sources);
     if (!role) return null;
     const owned = row.accountId === actorAccountId;
-    if (!owned && (row.revokedAt || row.replacedByMachineId)) return null;
+    if (!owned && classifyMachineAvailabilityState(row) !== 'available') return null;
     const encryptionMode = resourceMode(row);
     if (encryptionMode === null) return null;
     let accessState: MachineAccessFacts['accessState'] = resourceContentMatchesMode(row, encryptionMode) ? 'ready' : 'refused';
     let reason: MachineAccessRefusalCode | null = accessState === 'refused' ? 'encryption_material_unavailable' : null;
     let canPrepareKeys = false;
     if (accessState === 'ready' && !owned && encryptionMode === 'plain' && !safePlainContent(row)) {
-        accessState = 'key_pending'; reason = 'encryption_material_unavailable';
+        accessState = 'refused'; reason = 'content_unpublished';
     }
     if (accessState === 'ready' && !owned && encryptionMode === 'e2ee') {
-        const { readiness, envelopes } = material ?? await readRecipientAccessMaterialInTx(tx, actorAccountId, [row.id]);
+        const { recipient, readiness, envelopes } = material ?? await readRecipientAccessMaterialInTx(tx, actorAccountId, [row.id]);
         if (readiness?.status === 'unavailable' && readiness.reason === 'plain_account') {
             accessState = 'refused'; reason = 'recipient_encryption_incompatible';
         } else if (readiness?.status !== 'available') {
@@ -252,10 +318,9 @@ async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: st
         }
         else {
             const envelope = envelopes.get(row.id);
-            accessState = row.dataEncryptionKey !== null && parseEncryptedDataKeyEnvelopeV1(row.dataEncryptionKey) !== null && envelope
-                && envelope.machineOwnerEnvelopeFingerprint === computeMachineOwnerEnvelopeFingerprintV1(row.dataEncryptionKey)
-                && envelope.recipientContentPublicKeyFingerprint === readiness.binding.contentPublicKeyFingerprint
-                && parseEncryptedDataKeyEnvelopeV1(envelope.encryptedDataKey) !== null ? 'ready' : 'key_pending';
+            accessState = row.dataEncryptionKey !== null && recipient
+                && projectMachineRecipientWork(recipient, envelope ?? null,
+                    computeMachineOwnerEnvelopeFingerprintV1(row.dataEncryptionKey), readiness).current ? 'ready' : 'key_pending';
             if (accessState === 'key_pending') { reason = 'recipient_key_pending'; canPrepareKeys = true; }
         }
     }
@@ -304,6 +369,7 @@ export interface MachineAdmissionInput extends MachineActor, Partial<MachineOper
     /** Reviewed composite effects retain role custody while checking their actual operation. */
     operationRpcMethod?: string;
     actionId?: string;
+    sessionSpawnAdmission?: ApiTokenSessionSpawnAdmissionV1;
 }
 /** Workflow ownership predates installation identity and published Machine content.
  * Preserve those owned records; shared execution still consumes strict admission.
@@ -316,8 +382,13 @@ export type WorkflowMachineAdmission = Exclude<MachineAdmission, { kind: 'admitt
     });
 type WorkflowMachineAdmissionInput = MachineActor & Readonly<{ purpose: 'workflow' }>;
 export async function resolveMachineAdmissionInTx(tx: Tx, input: MachineAdmissionInput): Promise<MachineAdmission> {
+    return resolveMachineAdmissionFromFactsInTx(tx, await readMachineAdmissionFactsInTx(tx, input), input);
+}
+
+/** Request-local facts serve namespace selection and the single admission decision. */
+export async function readMachineAdmissionFactsInTx(tx: Tx, input: MachineActor): Promise<MachineFacts | null> {
     const rows = await readMachineFactsInTx(tx, input.actorAccountId, [input.machineId]);
-    return resolveMachineAdmissionFromFactsInTx(tx, rows.get(input.machineId) ?? null, input);
+    return rows.get(input.machineId) ?? null;
 }
 
 /** Ownership decides the role without reading unrelated foreign grant graphs. */
@@ -331,7 +402,7 @@ async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: 
     }
     const foreignIds = rows.filter(row => row.accountId !== actorAccountId).map(row => row.id);
     if (foreignIds.length > 0) {
-        const foreignRows = await tx.machine.findMany({ where: { id: { in: foreignIds } }, select: MACHINE_ACCESS_FACTS_SELECT });
+        const foreignRows = await tx.machine.findMany({ where: { id: { in: foreignIds } }, select: buildMachineAdmissionFactsSelect(actorAccountId) });
         for (const row of foreignRows) result.set(row.id, row);
     }
     return result;
@@ -350,40 +421,47 @@ interface AccessibleMachineOpening {
 export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; machineIds: readonly string[];
     includeRecipientWork?: true;
+    /** Host-verified finite admission; does not waive mode or recipient-envelope readiness. */
+    admission?: SocketRpcMachineAdmissionContextV1;
 }>): Promise<ReadonlyMap<string, AccessibleMachineOpening>> {
     const result = new Map<string, AccessibleMachineOpening>();
     if (input.machineIds.length === 0) return result;
     const rows: MachineOpeningRow[] = [];
     // An owner's grants cannot change their role. Do not load their foreign grant graph.
-    const foreignGrant = { machine: { accountId: { not: input.actorAccountId } } };
-    // Eight relation-projection bindings plus the three foreign-custody predicates.
-    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 11 })) {
+    const actorFacts = buildMachineAdmissionFactsSelect(input.actorAccountId);
+    // Eight relation-projection bindings plus three custody and three actor predicates.
+    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 14 })) {
         rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: {
             ...MACHINE_OPENING_INCLUDE,
-            accountGrants: { ...MACHINE_OPENING_INCLUDE.accountGrants, where: foreignGrant },
-            teamGrants: { ...MACHINE_OPENING_INCLUDE.teamGrants, where: foreignGrant },
-            groupGrants: { ...MACHINE_OPENING_INCLUDE.groupGrants, where: foreignGrant },
+            accountGrants: actorFacts.accountGrants,
+            teamGrants: actorFacts.teamGrants,
+            groupGrants: actorFacts.groupGrants,
         } }));
     }
     const foreignEncryptedIds = rows.filter(row => row.accountId !== input.actorAccountId && resourceMode(row) === 'e2ee').map(row => row.id);
     const material = foreignEncryptedIds.length > 0
         ? await readRecipientAccessMaterialInTx(tx, input.actorAccountId, foreignEncryptedIds) : undefined;
     for (const row of rows) {
-        const facts = await accessFromFactsInTx(tx, row, input.actorAccountId, material);
+        const admission = input.admission;
+        if (admission && (admission.actorAccountId !== input.actorAccountId || admission.machineId !== row.id
+            || admission.custodianAccountId !== row.accountId || admission.installationId !== row.installationId
+            || admission.encryptionMode !== resourceMode(row))) continue;
+        const facts = await accessFromFactsInTx(tx, row, input.actorAccountId, material, undefined, admission?.role);
         if (!facts) continue;
         const key = facts.owned ? row.dataEncryptionKey
             : facts.accessState === 'ready' && facts.encryptionMode === 'e2ee' ? material?.envelopes.get(row.id)?.encryptedDataKey : null;
         result.set(row.id, {
             machine: row,
             access: { custodian: { accountId: row.accountId, displayName: resolveAccountDisplayLabelV1(row.account) ?? '' },
-                role: facts.role, resourceMode: facts.encryptionMode, accessState: facts.accessState },
+                role: facts.role, resourceMode: facts.encryptionMode, accessState: facts.accessState,
+                ...(facts.accessState !== 'ready' && facts.reason ? { reason: facts.reason } : {}) },
             owned: facts.owned,
             callerDataEncryptionKey: key ? new Uint8Array(key) : null,
         });
     }
     const managed = input.includeRecipientWork ? [...result.values()].filter(opening => opening.access.role === 'manage'
         && opening.access.resourceMode === 'e2ee' && opening.access.accessState === 'ready'
-        && opening.machine.revokedAt === null && opening.machine.replacedByMachineId === null) : [];
+        && classifyMachineAvailabilityState(opening.machine) === 'available') : [];
     const recipientWork = await readMachineRecipientWorkInTx(tx, { actorAccountId: input.actorAccountId,
         ownerFingerprints: new Map(managed.map(({ machine }) => [machine.id, machine.dataEncryptionKey
             ? computeMachineOwnerEnvelopeFingerprintV1(machine.dataEncryptionKey) : null])) });
@@ -414,7 +492,6 @@ export async function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissi
 export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: WorkflowMachineAdmissionInput): Promise<WorkflowMachineAdmission>;
 export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput): Promise<MachineAdmission>;
 export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>): Promise<MachineAdmission | WorkflowMachineAdmission> {
-
     const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId);
     if (!row || !access) return { kind: 'denied', code: 'access_denied' };
     if (input.purpose === 'workflow' && access.owned) {
@@ -437,7 +514,8 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
     // A template creates the same requester-owned Session as ordinary New Session.
     // Keep its signed root while consuming the existing spawn role/isolation policy.
     const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;
-    let requiredRole = input.requiredRole ?? 'use';
+    const spawnSetup = input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.sessionSpawnAdmission?.machineSetupRequested === true;
+    let requiredRole = spawnSetup ? 'manage' : input.requiredRole ?? 'use';
     const browserExtensionAction = input.actionId !== undefined && isBrowserExtensionActionIdV1(input.actionId);
     if (input.actionId && requiredMachineRoleForBrowserAction(input.actionId) === 'manage') requiredRole = 'manage';
     let method = input.rpcMethod;
@@ -447,9 +525,16 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
         const spec = actionId.success ? getActionSpec(actionId.data) : null;
         // Session creation/resume uses admitted requester custody at the Action ingress.
         // Its private raw RPC binding remains custodian-only when requested directly.
-        method = requesterSessionLifecycle ? undefined : isProviderActionIdV1(input.actionId)
+        // Publication reads/prepare consume the same selected private profile as
+        // upload. Reuse its Manage policy for admission, not an RPC binding.
+        method = Object.hasOwn(PluginPublicationActionOutputSchemas, input.actionId) ? RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE
+            : Object.hasOwn(NpmRegistryProfileActionOutputSchemasV1, input.actionId)
+            ? spec?.sideEffectClass === 'read' ? RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_GET
+                : RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE
+            : requesterSessionLifecycle ? undefined : isProviderActionIdV1(input.actionId)
             ? resolveProviderActionRpcRouteV1(input.actionId)?.method : spec?.bindings?.rpcMethod;
-        if (!method && !access.owned && !requesterSessionLifecycle && !browserExtensionAction && !isRequesterProjectExecutionActionV1(input.actionId)) {
+        if (!method && !access.owned && !requesterSessionLifecycle && !browserExtensionAction && !isRequesterProjectExecutionActionV1(input.actionId)
+            && !isStoredDeploymentExecutionActionIdV1(input.actionId)) {
             return { kind: 'denied', code: 'unsupported_operation' };
         }
     }
@@ -458,14 +543,16 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
         if (rpcRole === null) return { kind: 'denied', code: 'custodian_only' };
         requiredRole = rpcRole;
     }
-    if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied' };
+    if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied',
+        ...(spawnSetup ? { diagnostic: { reason: 'machine_setup_requires_manage',
+            requiredFact: 'machine_manage_role', remedy: 'request_machine_manage_access' } } : {}) };
     if (!isMachineOperationSupportedForRequester({ actorAccountId: input.actorAccountId, machine: row,
         rpcMethod: input.operationRpcMethod ?? method, actionId: operationActionId,
         callerAuthority: input.callerAuthority, sessionActionOrigin: input.sessionActionOrigin,
         executionBinding: input.executionBinding })) {
         return { kind: 'denied', code: 'daemon_upgrade_required' };
     }
-    if (access.accessState === 'refused') return { kind: 'denied', code: 'recipient_encryption_incompatible' };
+    if (access.accessState === 'refused') return { kind: 'denied', code: access.reason ?? 'recipient_encryption_incompatible' };
     if (access.accessState !== 'ready') return { kind: 'denied', code: 'recipient_key_pending' };
     return { kind: 'admitted', actorAccountId: input.actorAccountId, custodianAccountId: row.accountId,
         machineId: row.id, installationId: row.installationId, role: access.role, encryptionMode: access.encryptionMode,
@@ -503,7 +590,8 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
                 canPrepareKeys: states[index]?.canPrepareKeys === true })),
             removal: { losesAccessAccountIds: source.accountIds.filter(accountId => effectiveRole(row, accountId, sources.filter(candidate => candidate !== source)) === null) } });
     }
-    return { machineId: row.id, custodian, access: { custodian, role: access.role, resourceMode: access.encryptionMode, accessState: access.accessState },
+    return { machineId: row.id, custodian, access: { custodian, role: access.role, resourceMode: access.encryptionMode, accessState: access.accessState,
+        ...(access.accessState !== 'ready' && access.reason ? { reason: access.reason } : {}) },
         canManage, grants, ownDirectGrant: row.accountGrants.some(grant => grant.accountId === input.actorAccountId),
         ...(currentRequesterDisplayIdentities ? { currentRequesterDisplayIdentities } : {}),
         ownAccessSources: sources.filter(source => source.accountIds.includes(input.actorAccountId)).map(source => ({ principal: source.principal, displayName: source.displayName })) };
@@ -514,7 +602,7 @@ async function managerInTx(tx: Tx, input: MachineActor, options: Readonly<{ requ
     const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId);
     return row && access?.role === 'manage' && resourceContentMatchesMode(row, access.encryptionMode)
         && (!options.requireCurrentKeyHolder || access.accessState === 'ready')
-        && !row.revokedAt && !row.replacedByMachineId ? row : null;
+        && classifyMachineAvailabilityState(row) === 'available' ? row : null;
 }
 async function mutationImpactInTx(tx: Tx, machineId: string, accountIds: readonly string[]) {
     return captureMachineAccessImpactsInTx(tx, { machineIds: [machineId], accountIds });
@@ -552,11 +640,6 @@ export async function acquireMachineAccessPublicationLocksInTx(tx: Tx, machineId
     const captured = new Set(await readAudience());
     await acquireAccountChangePublicationLocksInTx(tx, [...captured], { includeSingleAccount: true });
     await lockMachinePublicationInTx(tx, machineId);
-    // ReadCommitted can observe audience growth during the wait. Replay through
-    // inTx rather than extending a sorted lock set with a lower-id recipient.
-    if ((await readAudience()).some(accountId => !captured.has(accountId))) {
-        throw new TransactionReplayRequiredError('transaction-account-audience-changed');
-    }
     beforeAccountChangePublication(tx, [...captured], async () => {
         assertAccountChangePublicationAudienceInTx(tx, await readAudience());
     });
@@ -569,43 +652,43 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     if (row.kind !== 'persistent') return refusal('unsupported_operation');
     const principal = input.principal;
     if (principal.kind === 'account' && principal.accountId === row.accountId) return refusal('custodian_protected');
+    const data = { accessLevel: input.level, createdByAccountId: input.actorAccountId };
+    let previous: Readonly<{ accessLevel: string }> | null;
+    let upsert: () => Promise<unknown>;
+    if (principal.kind === 'account') {
+        const where = { machineId_accountId: { machineId: row.id, accountId: principal.accountId } };
+        previous = await tx.machineAccountGrant.findUnique({ where });
+        upsert = () => tx.machineAccountGrant.upsert({ where, create: { machineId: row.id, accountId: principal.accountId, ...data }, update: data });
+    } else if (principal.kind === 'team') {
+        const where = { machineId_teamId: { machineId: row.id, teamId: principal.teamId } };
+        previous = await tx.machineTeamGrant.findUnique({ where });
+        upsert = () => tx.machineTeamGrant.upsert({ where, create: { machineId: row.id, teamId: principal.teamId, ...data }, update: data });
+    } else {
+        const where = { machineId_teamGroupId: { machineId: row.id, teamGroupId: principal.groupId } };
+        previous = await tx.machineGroupGrant.findUnique({ where });
+        upsert = () => tx.machineGroupGrant.upsert({ where, create: { machineId: row.id, teamGroupId: principal.groupId, ...data }, update: data });
+    }
+    const principalError = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
+        ownerAccountId: row.accountId, principal, hasExistingGrant: previous !== null });
+    if (principalError) return refusal(principalError === 'subject_not_found' ? 'principal_not_found' : 'principal_ineligible');
     let targetAccountIds: string[] = [];
     if (principal.kind === 'account') {
-        const account = await tx.account.findUnique({ where: { id: principal.accountId }, select: { status: true, ...RECIPIENT_READINESS_SELECT } });
-        if (!account) return refusal('principal_not_found');
-        if (account.status !== 'active') return refusal('principal_ineligible');
         if (resourceMode(row) === 'e2ee') {
+            const account = await tx.account.findUniqueOrThrow({ where: { id: principal.accountId }, select: RECIPIENT_READINESS_SELECT });
             const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
             if (readiness.status === 'unavailable' && readiness.reason === 'plain_account') return refusal('recipient_encryption_incompatible');
         }
         targetAccountIds = [principal.accountId];
     } else if (principal.kind === 'team') {
-        const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: { archivedAt: true, memberships: { select: { accountId: true } } } });
-        if (!team) return refusal('principal_not_found');
-        if (team.archivedAt) return refusal('principal_ineligible');
+        const team = await tx.team.findUniqueOrThrow({ where: { id: principal.teamId }, select: { memberships: { select: { accountId: true } } } });
         targetAccountIds = team.memberships.map(member => member.accountId);
     } else {
-        const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId }, select: { teamId: true, archivedAt: true, team: { select: { archivedAt: true } }, memberships: { select: { teamMembership: { select: { accountId: true } } } } } });
-        if (!group || group.teamId !== principal.teamId) return refusal('principal_not_found');
-        if (group.archivedAt || group.team.archivedAt) return refusal('principal_ineligible');
+        const group = await tx.teamGroup.findUniqueOrThrow({ where: { id: principal.groupId }, select: { memberships: { select: { teamMembership: { select: { accountId: true } } } } } });
         targetAccountIds = group.memberships.map(member => member.teamMembership.accountId);
     }
     const impacts = await mutationImpactInTx(tx, row.id, [...new Set([row.accountId, ...targetAccountIds])]);
-    const data = { accessLevel: input.level, createdByAccountId: input.actorAccountId };
-    let changed = false;
-    if (principal.kind === 'account') {
-        const where = { machineId_accountId: { machineId: row.id, accountId: principal.accountId } };
-        changed = (await tx.machineAccountGrant.findUnique({ where }))?.accessLevel !== input.level;
-        if (changed) await tx.machineAccountGrant.upsert({ where, create: { machineId: row.id, accountId: principal.accountId, ...data }, update: data });
-    } else if (principal.kind === 'team') {
-        const where = { machineId_teamId: { machineId: row.id, teamId: principal.teamId } };
-        changed = (await tx.machineTeamGrant.findUnique({ where }))?.accessLevel !== input.level;
-        if (changed) await tx.machineTeamGrant.upsert({ where, create: { machineId: row.id, teamId: principal.teamId, ...data }, update: data });
-    } else {
-        const where = { machineId_teamGroupId: { machineId: row.id, teamGroupId: principal.groupId } };
-        changed = (await tx.machineGroupGrant.findUnique({ where }))?.accessLevel !== input.level;
-        if (changed) await tx.machineGroupGrant.upsert({ where, create: { machineId: row.id, teamGroupId: principal.groupId, ...data }, update: data });
-    }
+    const changed = previous?.accessLevel !== input.level;
+    if (changed) await upsert();
     if (changed) await publishMutationInTx(tx, impacts, principal.kind === 'account' ? principal.accountId : undefined);
     const current = await readFactsInTx(tx, row.id);
     const source = current && contributions(current).find(candidate => isDeepStrictEqual(candidate.principal, principal));
@@ -644,7 +727,7 @@ export async function readMachineRecipientCensusInTx(tx: Tx, input: MachineActor
     if (!row) return refusal('access_denied');
     const encryptionMode = resourceMode(row);
     if (encryptionMode === null || !resourceContentMatchesMode(row, encryptionMode)) return refusal('encryption_material_unavailable');
-    if (encryptionMode === 'plain' && !safePlainContent(row)) return refusal('encryption_material_unavailable');
+    if (encryptionMode === 'plain' && !safePlainContent(row)) return refusal('content_unpublished');
     const callerKey = encryptionMode === 'plain' ? null : await readMachineDataKeyForCallerInTx(tx, input);
     if (encryptionMode === 'e2ee' && (!callerKey || !row.dataEncryptionKey || !parseEncryptedDataKeyEnvelopeV1(row.dataEncryptionKey))) return refusal('encryption_material_unavailable');
     const query = input.query ?? MachineRecipientKeyEnvelopePageQueryV1Schema.parse({});
@@ -654,29 +737,14 @@ export async function readMachineRecipientCensusInTx(tx: Tx, input: MachineActor
     const recipients: MachineAccessRecipientCensusResponseV1['recipients'] = [];
     let nextCursor: string | null = null;
     if (encryptionMode === 'e2ee') {
-        const ids = (await resolveCurrentMachineRecipientAccountIdsInTx(tx, row.id))
-            .filter(accountId => accountId !== row.accountId && (after === null || accountId > after));
-        for (let offset = 0; offset < ids.length && nextCursor === null;) {
-            // The response page owns the scan batch; one further qualifying row proves continuation.
-            const batchIds = ids.slice(offset, offset + query.limit + 1);
-            offset += batchIds.length;
-            const accounts = await tx.account.findMany({
-                where: { id: { in: batchIds } }, select: RECIPIENT_READINESS_SELECT,
-            });
-            const envelopes = await tx.machineKeyEnvelope.findMany({
-                where: { machineId: row.id, recipientAccountId: { in: batchIds } },
-            });
-            const accountsById = new Map(accounts.map(account => [account.id, account]));
-            const envelopesByAccountId = new Map(envelopes.map(envelope => [envelope.recipientAccountId, envelope]));
-            for (const accountId of batchIds) {
-                const account = accountsById.get(accountId);
-                if (!account) continue;
-                const projected = projectMachineRecipientWork(account, envelopesByAccountId.get(accountId) ?? null, fingerprint);
-                if (query.state === 'action_required' && !isMachineRecipientWorkPending(projected)) continue;
-                if (recipients.length === query.limit) { nextCursor = encodeSessionDataKeyEnvelopeCursorV1(recipients[recipients.length - 1].recipientAccountId); break; }
-                const { current: _current, ...recipient } = projected;
-                recipients.push(recipient);
-            }
+        const work = await readMachineRecipientWorkInTx(tx, { actorAccountId: input.actorAccountId,
+            ownerFingerprints: new Map([[row.id, fingerprint]]) });
+        const page = (work.get(row.id)?.recipients ?? []).filter(recipient =>
+            (after === null || recipient.recipientAccountId > after)
+            && (query.state !== 'action_required' || isMachineRecipientWorkPending(recipient)));
+        for (const { current: _current, ...recipient } of page.slice(0, query.limit)) recipients.push(recipient);
+        if (page.length > query.limit) {
+            nextCursor = encodeSessionDataKeyEnvelopeCursorV1(recipients[recipients.length - 1]!.recipientAccountId);
         }
     }
     return { machineId: row.id, custodianAccountId: row.accountId, encryptionMode, machineOwnerEnvelopeFingerprint: fingerprint,
@@ -693,7 +761,11 @@ export async function commitMachineRecipientKeyEnvelopesInTx(tx: Tx, input: Mach
     if (encryptionMode === 'plain') return refusal('data_key_not_required');
     if (!row.dataEncryptionKey || !parseEncryptedDataKeyEnvelopeV1(row.dataEncryptionKey)) return refusal('encryption_material_unavailable');
     const fingerprint = computeMachineOwnerEnvelopeFingerprintV1(row.dataEncryptionKey);
-    if (fingerprint !== input.expectedMachineOwnerEnvelopeFingerprint || row.metadataVersion !== input.expectedMetadataVersion || row.daemonStateVersion !== input.expectedDaemonStateVersion) return refusal('machine_key_changed');
+    const currentBasis = { machineOwnerEnvelopeFingerprint: fingerprint, metadataVersion: row.metadataVersion,
+        daemonStateVersion: row.daemonStateVersion };
+    const expectedBasis = { machineOwnerEnvelopeFingerprint: input.expectedMachineOwnerEnvelopeFingerprint,
+        metadataVersion: input.expectedMetadataVersion, daemonStateVersion: input.expectedDaemonStateVersion };
+    if (!isDeepStrictEqual(currentBasis, expectedBasis)) return refusal('machine_key_changed');
     const callerKey = await readMachineDataKeyForCallerInTx(tx, input);
     if (!callerKey || !isDeepStrictEqual(callerKey, decodeBase64(input.expectedCallerDataEncryptionKey))) return refusal('recipient_binding_changed');
     const recipientIds = [...new Set(input.recipientKeyEnvelopes.map(envelope => envelope.recipientAccountId))];
@@ -720,25 +792,3 @@ export async function commitMachineRecipientKeyEnvelopesInTx(tx: Tx, input: Mach
     await markAccountsChanged(tx, { accountIds: prepared.map(envelope => envelope.recipientAccountId), kind: 'machine', entityId: row.id });
     return { appliedRecipientAccountIds: prepared.map(envelope => envelope.recipientAccountId), skippedRecipientAccountIds: [] };
 }
-
-export async function resolveMachinePrincipalAccessForMachinesInTx(tx: Tx, input: Readonly<{
-    machineIds: readonly string[]; principal: Extract<PrincipalRefV1, { kind: 'account' | 'team' }>;
-}>): Promise<Map<string, MachineAccessRoleV1 | null>> {
-    const principal = input.principal;
-    if (principal.kind === 'account') {
-        const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: input.machineIds, accountIds: [principal.accountId] });
-        return new Map([...access].map(([id, roles]) => [id, roles.get(principal.accountId) ?? null]));
-    }
-    const result = new Map<string, MachineAccessRoleV1 | null>();
-    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
-        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: {
-            id: true, kind: true, teamGrants: { where: { teamId: principal.teamId, team: { archivedAt: null } }, select: { accessLevel: true } },
-        } });
-        for (const row of rows) {
-            const grant = row.kind === 'persistent' ? row.teamGrants[0] : undefined;
-            result.set(row.id, grant ? grant.accessLevel === 'admin' ? 'manage' : 'use' : null);
-        }
-    }
-    return result;
-}
-/** The current structural audience includes the original custodian, irrespective of key delivery. */

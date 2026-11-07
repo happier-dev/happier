@@ -1,10 +1,11 @@
 import { createNativeSoftwareOsFixture, nativeTerminal, packageOs } from './nativeSoftwareOs';
-import { randomBytes } from 'node:crypto';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
+import { randomBytes } from 'node:crypto';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { expect, onTestFailed, onTestFinished, vi } from 'vitest';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
@@ -12,9 +13,13 @@ import { isDeepStrictEqual } from 'node:util';
 import { MachineSetupDesiredV1Schema, MachineSetupSourceV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema,
   ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema,
-  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResult } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { SOCKET_RPC_EVENTS, SocketRpcRequestIdSchema, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS, SocketRpcRequestIdSchema, WorkspaceSyncSourceExecutionV1Schema,
+  type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { SESSION_AGENT_TRANSITION_ACTION_IDS } from '@happier-dev/protocol/actions/sessionAgentTransitionActionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { openWorkflowProgressStoredEnvelopeV1,
@@ -54,11 +59,15 @@ import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvel
 import type { SignedRootActionId } from '@happier-dev/protocol/actions/actionSpecs';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
-import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '@/daemon/workflows/workflowRunStorage.testkit';
+import type { WorkflowClaimForCoordination } from '@/daemon/workflows/worker';
+import { projectAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
+import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMachineTransport';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 
 const osStore = vi.hoisted(() => ({
   identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null,
@@ -87,16 +96,30 @@ type NativeSoftwareActionDeps = ActionExecutorDeps & Required<Pick<ActionExecuto
 /** The real installed Machine/recipe/task path; only native OS and Home IO are substituted. */
 export async function createNativeSoftwareInstallFixture(options: Readonly<{
   scenario: NativeSoftwareScenario;
+  packageName?: 'jq' | 'hello';
+  beforeInstall?: () => Promise<void>;
+  installFails?: boolean;
   unprivilegedPackageFactUnavailable?: 'presence' | 'locks';
   accountEncryptionMode?: 'plain' | 'e2ee';
+  adminAccessMode?: 'none' | 'preauthorized';
   agentIsolation?: import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['agentIsolation'];
   machineId?: string;
   homeId?: string;
   accountId?: string;
   token?: string;
+  installedToken?: string;
   serverId?: string;
   serverHttpBaseUrl?: string;
   installationKeyPair?: ReturnType<typeof tweetnacl.sign.keyPair>;
+  runtimeOptions?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['runtimeOptions'];
+  additionalPlugins?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'];
+  sessionStartup?: Pick<Parameters<typeof createRequesterSessionControlRuntimeFixture>[0],
+    'trackedSessions' | 'pidToAwaiter' | 'processEnv' | 'startup'
+    | 'resolveRequesterSessionRuntimeContext' | 'releaseRequesterSessionRuntimeContext'> & Readonly<{
+      useRealSessionSpawn?: boolean;
+      onExternalActionIngressOwnerReady?: (owner: import('@/rpc/handlers/externalAction').ExternalActionIngressOwner)
+        => import('@/rpc/handlers/externalAction').ExternalActionIngressOwner;
+    }>;
 }>) {
   const { scenario, machineId = 'alice-machine', homeId = 'srv_home', accountId = 'alice' } = options;
   const nativeConfirmed = scenario === 'native-confirm';
@@ -114,10 +137,11 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   const excludedToSelected = scenario === 'excluded-to-selected';
   const encryptionMode = options.accountEncryptionMode ?? (scenario.endsWith('-e2ee') ? 'e2ee' : 'plain');
   recordFixturePhase('os_fixture.begin');
-  const os = await createNativeSoftwareOsFixture({ manager, initiallyPresent,
+  const os = await createNativeSoftwareOsFixture({ manager, initiallyPresent, packageName: options.packageName,
+    beforeInstall: options.beforeInstall, installFails: options.installFails,
     unprivilegedPackageFactUnavailable: options.unprivilegedPackageFactUnavailable });
   recordFixturePhase('os_fixture.end');
-  const { directory, statePath, rootLaunches, rootPlans, nativeCommands, runNative } = os;
+  const { directory, statePath, rootLaunches, rootPlans, rootResults, nativeCommands, runNative } = os;
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID']);
   onTestFinished(async () => {
     osStore.identity = null; osStore.credentials = null;
@@ -135,7 +159,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   await writeFile(installedCli, `#!${process.execPath}\nprocess.exitCode = 1;\n`, { mode: 0o755 });
   recordFixturePhase('authored_runtime.begin');
   const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
-    controller: pluginReloadController, plugins: os.plugins });
+    controller: pluginReloadController, plugins: [...os.plugins, ...(options.additionalPlugins ?? [])], runtimeOptions: options.runtimeOptions });
   recordFixturePhase('authored_runtime.end');
   onTestFinished(() => runtime.dispose());
   const pair = options.installationKeyPair ?? tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
@@ -152,9 +176,9 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   })).toString('base64url')}.signature`;
   // Match the installed service fixture: the app retains its UI Account bearer,
   // while the daemon stores an independently issued terminal credential.
-  const token = nativeConfirmed ? `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
+  const token = options.installedToken ?? (nativeConfirmed ? `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
     provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' }),
-  })).toString('base64url')}.installed-signature` : issuerToken;
+  })).toString('base64url')}.installed-signature` : issuerToken);
   const accountMachineKey = new Uint8Array(32).fill(23);
   const credentials: StoredCredentials = encryptionMode === 'plain'
     ? { token, encryption: null, credentialProvenance: 'stored_session' }
@@ -167,11 +191,11 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   const issuerCredentials: StoredCredentials = nativeConfirmed ? { ...credentials, token: issuerToken } : credentials;
   const sources = MachineSetupSourceV1Schema.parse([{ kind: 'direct', setup: { items: [{
     kind: 'softwareRecipe', selection: {
-      ref: { pluginId: 'com.example.public-package', recipeId: 'jq', revision: '1' }, inputs: {},
+      ref: { pluginId: 'com.example.public-package', recipeId: options.packageName ?? 'jq', revision: '1' }, inputs: {},
     },
   }] } }]);
   const initialDesired = excludedToSelected ? MachineSetupDesiredV1Schema.parse({ version: 1, revision: 0, sources,
-    exclusions: [{ ref: { pluginId: 'com.example.public-package', recipeId: 'jq', revision: '1' }, reason: 'not_selected' }],
+    exclusions: [{ ref: { pluginId: 'com.example.public-package', recipeId: options.packageName ?? 'jq', revision: '1' }, reason: 'not_selected' }],
   }) : undefined;
   const machine: Machine = { id: machineId, ...(encryptionMode === 'plain' ? { encryptionMode } : {
     encryptionMode, encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'dataKey',
@@ -179,7 +203,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey, randomBytes })).toString('base64'),
   }), metadata: {
     host: 'worker', platform: 'linux', happyCliVersion: 'dev', homeDir: directory, happyHomeDir: configuration.happyHomeDir,
-    adminAccess: { version: 1, mode: scenario === 'apt' || firstPresence || excludedToSelected || nativeConfirmed ? 'preauthorized' : 'none' },
+    adminAccess: { version: 1, mode: options.adminAccessMode ?? (scenario === 'apt' || firstPresence || excludedToSelected || nativeConfirmed ? 'preauthorized' : 'none') },
     ...(options.agentIsolation ? { agentIsolation: { enabled: true } } : {}),
     ...(initialDesired ? { setup: initialDesired } : {}),
   }, metadataVersion: 0, daemonState: { status: 'running' }, daemonStateVersion: 0 };
@@ -191,12 +215,16 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   let capabilitiesRevision = 0;
   recordFixturePhase('machine_client.begin');
   const client = new ApiMachineClient(token, machine, undefined,
-    options.agentIsolation ? { agentIsolation: options.agentIsolation } : undefined);
+    { ...(options.agentIsolation ? { agentIsolation: options.agentIsolation } : {}),
+      ...(options.sessionStartup?.startup?.resolveServerFeaturesSnapshot ? {
+        resolveServerFeaturesSnapshot: async () => options.sessionStartup?.startup?.resolveServerFeaturesSnapshot?.(),
+      } : {}) });
   recordFixturePhase('machine_client.end');
   recordFixturePhase('initial_rpc_registration.begin');
   let registration = client.setRPCHandlers({ spawnSession: async () => { throw new Error('Not a Session'); },
     stopSession: async () => ({ status: 'not_found' }), requestShutdown() {} });
   recordFixturePhase('initial_rpc_registration.end');
+  let additionalMachineSocketEvent: ((event: string, payload: unknown) => Promise<unknown>) | undefined;
   Reflect.set(client, 'socket', createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
     if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) {
       const request = MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.parse(payload);
@@ -210,6 +238,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
     if (event === 'machine-update-state') return {
       result: 'success', version: machine.daemonStateVersion + 1, daemonState: Reflect.get(payload, 'daemonState'),
     };
+    if (event !== 'machine-update-metadata' && additionalMachineSocketEvent) return additionalMachineSocketEvent(event, payload);
     expect(event).toBe('machine-update-metadata');
     expect(Reflect.get(payload, 'expectedDataEncryptionKey')).toBe(encryptionMode === 'plain' ? null : machine.dataEncryptionKey);
     const stored: unknown = Reflect.get(payload, 'metadata');
@@ -326,6 +355,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   }, { runActionOperation: operations.runActionOperation, machineSetupPlan: nativeDeps.machineSetupPlan,
     ...overrides }).executor;
   let startup: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
+  const connectedServiceRegistry = new ConnectedServiceRuntimeRegistry();
   const startInstalledRuntime = async () => {
     if (!nativeConfirmed || startup) throw new Error('Native startup must be installed once');
     const serverId = options.serverId ?? configuration.activeServerId;
@@ -348,22 +378,37 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       serverHttpBaseUrl: options.serverHttpBaseUrl ?? configuration.apiServerUrl,
       machineId, custodianAccountId: accountId, credentials,
       connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
-      registry: new ConnectedServiceRuntimeRegistry(), trackedSessions: new Map(), getRequester: () => null,
+      registry: connectedServiceRegistry, trackedSessions: options.sessionStartup?.trackedSessions ?? new Map(), getRequester: () => null,
+      ...(options.sessionStartup?.resolveRequesterSessionRuntimeContext
+        ? { resolveRequesterSessionRuntimeContext: options.sessionStartup.resolveRequesterSessionRuntimeContext } : {}),
+      ...(options.sessionStartup?.releaseRequesterSessionRuntimeContext
+        ? { releaseRequesterSessionRuntimeContext: options.sessionStartup.releaseRequesterSessionRuntimeContext } : {}),
+      ...(options.sessionStartup?.pidToAwaiter ? { pidToAwaiter: options.sessionStartup.pidToAwaiter } : {}),
+      ...(options.sessionStartup?.processEnv ? { processEnv: options.sessionStartup.processEnv } : {}),
       getApiMachineForSessions: () => client, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       startup: { pluginRuntimeController: runtime.controller,
+        deviceLocalSecretStorage: await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile }),
         resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
           serverUrl: options.serverHttpBaseUrl ?? configuration.apiServerUrl,
           resolveCurrentMachineId: () => machineId, resolveCurrentServerIdentityId: () => homeId,
-        }) },
+        }), ...options.sessionStartup?.startup },
     });
     recordFixturePhase('installed_runtime.end');
     const owner = startup.runtime.externalActionIngressOwner;
     if (!owner) throw new Error('Native startup did not install its external Action owner');
+    const handlerOwner = options.sessionStartup?.onExternalActionIngressOwnerReady?.(owner) ?? owner;
     recordFixturePhase('installed_rpc_registration.begin');
     await registration.dispose();
-    registration = client.setRPCHandlers({ spawnSession: async () => { throw new Error('Not a Session'); },
-      stopSession: async () => ({ status: 'not_found' }), requestShutdown() {} }, { externalActionIngressOwner: owner });
+    registration = client.setRPCHandlers({ spawnSession: options.sessionStartup?.useRealSessionSpawn
+      ? options => startup!.runtime.spawnSession(options)
+      : async () => { throw new Error('Not a Session'); },
+      ...(options.sessionStartup?.useRealSessionSpawn ? { sessionSpawnV1OutcomeRequired: true as const } : {}),
+      stopSession: async () => ({ status: 'not_found' }), requestShutdown() {} }, { externalActionIngressOwner: handlerOwner });
     recordFixturePhase('installed_rpc_registration.end');
+    // This fixture attaches its connected socket before registering the daemon's
+    // real handlers. Refresh once after registration, as the normal connection
+    // readiness publication does when those handlers are already installed.
+    if (options.sessionStartup?.useRealSessionSpawn) await client.setProjectFiniteExecutionLive(false);
     // Local catalog reads cross the same authenticated control HTTP boundary as
     // production. This publication lives only in this fixture's temporary Home.
     writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
@@ -384,14 +429,19 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       ...(invocation.signal ? { signal: invocation.signal } : {}),
     }); } finally { recordFixturePhase(`${phase}.end`); }
   } };
-  const receive = async (request: Readonly<{ actionId: SignedRootActionId; envelope: ExternalActionRequestEnvelope;
+  const receiveDispatch = async (request: Readonly<{ actionId: SignedRootActionId; envelope: ExternalActionRequestEnvelope;
     authorization: ExternalActionExecutionAuthorizationV1; authority?: 'present_user' | 'account_automation' }>) => {
     const binding = request.authorization.binding;
-    if (!('authentication' in binding)) throw new Error('Native Store fixture expects an Account-authorized request');
     if (!startup) throw new Error('Native receiving owner has not started');
     const dispatch = ExternalActionDaemonDispatchRequestSchema.parse({ actionId: request.actionId, envelope: request.envelope,
       executionAuthorization: request.authorization,
-      principal: { accountId: binding.accountId, authentication: binding.authentication, authority: request.authority ?? 'present_user' },
+      principal: { accountId: binding.accountId,
+        ...('authentication' in binding
+          ? { authentication: binding.authentication, authority: request.authority ?? 'present_user' }
+          : { principalId: binding.principalId, credentialId: binding.credentialId, grant: binding.grant,
+            authority: 'account_automation' }),
+        ...(binding.sessionActionOrigin ? { sessionActionOrigin: binding.sessionActionOrigin } : {}),
+        ...(binding.workflowActionOrigin ? { workflowActionOrigin: binding.workflowActionOrigin } : {}) },
       placement: { machineId, target: request.envelope.target } });
     const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
     if (!(manager instanceof RpcHandlerManager)) throw new Error('Expected installed native RPC owner');
@@ -399,15 +449,14 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
     recordFixturePhase(`${phase}.begin`);
     let received: unknown;
     try { received = await manager.handleRequest({ method: `${machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
-      params: dispatch, authorization: ACTION_API_SERVER_ORIGIN,
-      machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: accountId, machineId,
-        installationId: installation.installationId, role: 'manage', encryptionMode } });
+      params: dispatch, authorization: ACTION_API_SERVER_ORIGIN });
     } finally { recordFixturePhase(`${phase}.end`); }
-    const outcome = parseExternalActionDaemonDispatchResultV1(received);
+    const outcome = parseExternalActionDaemonDispatchResult(received);
     if (!outcome || outcome.kind !== 'response') throw new Error('Installed native receiver refused Home delivery');
-    return outcome.prepared.response;
+    return outcome;
   };
-  const receiveRpc = async (packet: SocketRpcRequestPayload) => {
+  const receive = async (request: Parameters<typeof receiveDispatch>[0]) => (await receiveDispatch(request)).prepared.response;
+  const receiveRpc = async (packet: SocketRpcRequestPayload, admittedMachine?: SocketRpcMachineAdmissionContextV1) => {
     if (!startup || typeof packet.method !== 'string' || !packet.method.startsWith(`${machineId}:`)
       || !Object.hasOwn(packet, 'params')) throw new Error('Invalid native Home Machine RPC request');
     const requestId = packet.requestId === undefined ? undefined : SocketRpcRequestIdSchema.parse(packet.requestId);
@@ -418,34 +467,60 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
     if (execution) expect(verifyExternalActionMachineRpcRequestV1({
       authorizationToken: execution.authorization.token,
       requesterAccountContext: execution.authorization.requesterAccountContext,
+      reviewedChild: execution.reviewedChild,
       effectActionId: execution.effectActionId, target: execution.target, installationId: execution.installationId,
       event: SOCKET_RPC_EVENTS.CALL, method: packet.method, requestId: requestId!, params: packet.params,
       signature: execution.machineSignature, publicKey: pair.publicKey,
     })).toBe(true);
+    const binding = execution?.authorization.binding;
+    // This loopback replaces Home's socket forwarder, so translate its signed
+    // root facts as the production daemon does; never replace the actor or grant.
+    const machineAdmission = admittedMachine ?? (binding?.admittedMachineRole ? {
+      actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
+      machineId: binding.machineId, installationId: binding.installationId,
+      role: binding.admittedMachineRole, encryptionMode,
+    } satisfies SocketRpcMachineAdmissionContextV1 : undefined);
+    // Mirror registerSocketRpcHandlers' retained-root projection for this fixture's
+    // Machine RPCs. Ordinary signed reads retain Home's Machine admission only;
+    // origins, private admissions and original envelopes also retain their root.
+    const callerInputAuthorization = execution && (binding?.actionId === SESSION_AGENT_TRANSITION_ACTION_IDS[1]
+      || binding?.sessionActionOrigin || binding?.workflowActionOrigin || binding?.handoffAdmission
+      || binding?.managedContinuation || originalActionEnvelope) ? execution.authorization : undefined;
+    const setupPlanExecution = execution && originalActionEnvelope && isMachineSetupPlanRpcChildV1({
+      rootActionId: execution.authorization.binding.actionId, effectActionId: execution.effectActionId,
+      method: packet.method.slice(packet.method.indexOf(':') + 1),
+    }) ? WorkspaceSyncSourceExecutionV1Schema.parse({ method: packet.method,
+      ...(requestId ? { requestId } : {}), params: packet.params, externalActionExecution: execution,
+      originalActionEnvelope }) : undefined;
     const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
     if (!(manager instanceof RpcHandlerManager)) throw new Error('Expected installed native RPC owner');
     const result = await manager.handleRequest({ method: packet.method, params: packet.params,
       ...(requestId ? { requestId } : {}),
       callerAuthority: execution ? resolveExternalActionRootInvocationAuthority(execution.authorization)
         : packet.callerAuthority === 'account_automation' ? 'account_automation' : 'present_user',
-      machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId,
-        installationId: installation.installationId, role: 'manage', encryptionMode },
+      ...(machineAdmission ? { machineAdmission } : {}),
       ...(originalActionEnvelope ? { originalActionEnvelope } : {}),
-      ...(execution ? { callerInputAuthorization: execution.authorization,
-        ...(execution.authorization.binding.sessionActionOrigin
-          ? { sessionActionOrigin: execution.authorization.binding.sessionActionOrigin } : {}) } : {}),
+      ...(setupPlanExecution ? { workspaceSyncSourceExecution: setupPlanExecution } : {}),
+      ...(callerInputAuthorization ? { callerInputAuthorization,
+        ...('grant' in callerInputAuthorization.binding ? { callerInputConstraints: {
+          models: callerInputAuthorization.binding.grant.models,
+          permissionModes: callerInputAuthorization.binding.grant.permissionModes,
+        } } : {}) } : {}),
+      ...(binding?.sessionActionOrigin ? { sessionActionOrigin: binding.sessionActionOrigin } : {}),
     });
     return { ok: true, result };
   };
   let workflowStorage: ReturnType<typeof createWorkflowRunStorageTestkit> | undefined;
-  let coordinate: Promise<unknown> | undefined;
+  type SoftwareWorkflowCoordinator = ReturnType<ReturnType<typeof createProductionDaemonWorkflowRuntime>['createCoordinatorForMachine']>;
+  let coordinate: ReturnType<SoftwareWorkflowCoordinator> | undefined;
   let coordinatePhase = 'not_started';
   let coordinateState: string | undefined;
   let coordinateErrorCode: string | undefined;
   const workflowLifetime = new AbortController();
+  let diagnosticRunDataKey: Uint8Array | undefined;
   const openStoredProgress = (row: ReturnType<ReturnType<typeof createWorkflowRunStorageTestkit>['rows']>[number]) => {
     const index = row.index;
-    return openWorkflowProgressStoredEnvelopeV1({ mode: encryptionMode,
+    return openWorkflowProgressStoredEnvelopeV1({ mode: encryptionMode, runDataKey: diagnosticRunDataKey,
       binding: { v: 1, purpose: 'invocation_progress', accountId, runId: index.runId,
         recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
         memberOrdinal: index.memberOrdinal, attempt: index.attempt },
@@ -486,6 +561,51 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         errorCode: diagnostic.errorCode, httpStatus: diagnostic.httpStatus, stackFrames }];
     });
   };
+  const coordinateWorkflowClaim = (claim: WorkflowClaimForCoordination, requester?: Readonly<{
+    credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
+  }>) => {
+    if (coordinate && coordinatePhase !== 'settled' && coordinatePhase !== 'rejected')
+      throw new Error('Native software fixture already coordinates a claimed Run');
+    coordinate = (async () => {
+      coordinatePhase = 'coordinator_factory';
+      const serverId = options.serverId ?? configuration.activeServerId;
+      const attribution = requester?.attribution ?? { serverId, accountId, machineId, installationId: installation.installationId };
+      const selectedCredentials = requester?.credentials ?? credentials;
+      const runtime = createProductionDaemonWorkflowRuntime({ credentials: selectedCredentials,
+        accountId: attribution.accountId, serverId });
+      const requesterTransport = nativeConfirmed ? createWorkflowRunMachineTransport({ runId: claim.runId,
+        credentials: selectedCredentials, requesterWorkAttributionV1: attribution,
+        isCurrent: async () => !workflowLifetime.signal.aborted && configuration.activeServerId === serverId
+          && osStore.identity?.installationId === installation.installationId
+          && sameStoredCredentials(credentials, osStore.credentials), signal: workflowLifetime.signal,
+        boundary: { serverId, serverHttpBaseUrl: options.serverHttpBaseUrl ?? configuration.apiServerUrl,
+          happyHomeDir: configuration.happyHomeDir, getObservedServerIdentityId: () => homeId },
+        transport: { machineId, invoke: (method, input, options) => client.invokeLocalMachineAction(method, input, options) },
+      }) : undefined;
+      const run = runtime.createCoordinatorForMachine({ machineId,
+        ...(nativeConfirmed ? { requesterWorkAttributionV1: attribution } : {}),
+        machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options),
+        machineActionDirectTargetTransport: requesterTransport?.transport ?? directTransport,
+        installationIdentity: installation, serverIdentityId: homeId });
+      try {
+        coordinatePhase = 'run_coordinator';
+        recordFixturePhase('coordinator.begin');
+        const result = await run({ ...claim, signal: workflowLifetime.signal });
+        coordinateState = result.state;
+        coordinatePhase = 'settled';
+        recordFixturePhase('coordinator.settled');
+        return result;
+      } finally { await requesterTransport?.dispose(); }
+    })().catch(error => {
+      coordinatePhase = 'rejected';
+      coordinateErrorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+        && /^[a-zA-Z0-9_.:-]+$/u.test(error.code) ? error.code : undefined;
+      throw error;
+    });
+    // Cleanup and the real wait boundary observe this same coordinator lifetime.
+    void coordinate.catch(() => {});
+    return coordinate;
+  };
   // Only the opaque Home storage/worker-claim boundary is substituted. The
   // daemon factory owns materialization, workspace, currentness and execution.
   const respondWorkflowStorage = async (body: unknown): Promise<unknown> => {
@@ -498,54 +618,28 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       if ((request.operation !== 'get' && request.operation !== 'admit') || typeof request.runId !== 'string')
         throw new Error('Expected an exact Workflow lookup or admission');
       workflowStorage = createWorkflowRunStorageTestkit({ runId: request.runId, machineId, accountId,
+        keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId: request.runId, accountId }),
+            encryptionMode, ownerAccountCurrentness: projectAutomationAccountCurrentnessWitnessV1(accountEncryptionCurrentness)! },
         origin: { kind: 'direct' }, onBeforeWait: async () => { await coordinate; } });
     }
     const storage = workflowStorage;
     const response = await storage.execute(request);
+    if (request.operation === 'admit' && encryptionMode === 'e2ee' && credentials.encryption?.type === 'dataKey') {
+      // Diagnostics open the actual admitted owner envelope; Home storage
+      // remains opaque and execution still uses the production key owner.
+      const ownerKey = WorkflowRunRecipientKeyEnvelopesV1Schema.parse(request.recipientKeyEnvelopes ?? [])
+        .find(value => value.recipientAccountId === accountId);
+      if (ownerKey) diagnosticRunDataKey = openEncryptedDataKeyEnvelopeV1({
+        envelope: Buffer.from(ownerKey.encryptedDataKey, 'base64'),
+        recipientSecretKeyOrSeed: credentials.encryption.machineKey,
+      }) ?? undefined;
+    }
     if (request.operation === 'admit' && !coordinate) {
-      coordinate = (async () => {
-        coordinatePhase = 'account_encryption';
-        const encryption = await resolveAutomationWorkerAccountEncryption({ token, credentials, signal: workflowLifetime.signal });
-        if (encryption.kind !== 'available') throw new Error('Native Workflow Account currentness is unavailable');
-        coordinatePhase = 'coordinator_factory';
-        const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId,
-          serverId: options.serverId ?? configuration.activeServerId });
-        const serverId = options.serverId ?? configuration.activeServerId;
-        const attribution = { serverId, accountId, machineId, installationId: installation.installationId };
-        const requesterTransport = nativeConfirmed ? createWorkflowRunMachineTransport({ runId: storage.run().id,
-          credentials, requesterWorkAttributionV1: attribution,
-          isCurrent: async () => !workflowLifetime.signal.aborted && configuration.activeServerId === serverId
-            && osStore.identity?.installationId === installation.installationId
-            && sameStoredCredentials(credentials, osStore.credentials), signal: workflowLifetime.signal,
-          boundary: { serverId, serverHttpBaseUrl: options.serverHttpBaseUrl ?? configuration.apiServerUrl,
-            happyHomeDir: configuration.happyHomeDir, getObservedServerIdentityId: () => homeId },
-          transport: { machineId, invoke: (method, input, options) => client.invokeLocalMachineAction(method, input, options) },
-        }) : undefined;
-        const run = runtime.createCoordinatorForMachine({ machineId,
-          ...(nativeConfirmed ? { requesterWorkAttributionV1: attribution } : {}),
-          machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options),
-          machineActionDirectTargetTransport: requesterTransport?.transport ?? directTransport,
-          installationIdentity: installation, serverIdentityId: homeId });
-        try {
-          coordinatePhase = 'run_coordinator';
-          recordFixturePhase('coordinator.begin');
-          const result = await run({ runId: storage.run().id, attempt: 0, expectedRevision: storage.run().revision,
-            acceptedEnvelope: storage.acceptedEnvelope()!, accountCurrentness: encryption.witness,
-            signal: workflowLifetime.signal });
-          coordinateState = result.state;
-          coordinatePhase = 'settled';
-          recordFixturePhase('coordinator.settled');
-          return result;
-        } finally { await requesterTransport?.dispose(); }
-      })().catch(error => {
-        coordinatePhase = 'rejected';
-        coordinateErrorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-          && /^[a-zA-Z0-9_.:-]+$/u.test(error.code) ? error.code : undefined;
-        throw error;
-      });
-      // Preserve failures for the real wait boundary without an unhandled
-      // rejection while the caller is still awaiting its admission response.
-      void coordinate.catch(() => {});
+      coordinatePhase = 'account_encryption';
+      const encryption = await resolveAutomationWorkerAccountEncryption({ token, credentials, signal: workflowLifetime.signal });
+      if (encryption.kind !== 'available') throw new Error('Native Workflow Account currentness is unavailable');
+      coordinateWorkflowClaim({ runId: storage.run().id, attempt: 0, expectedRevision: storage.run().revision,
+        acceptedEnvelope: storage.acceptedEnvelope()!, accountCurrentness: encryption.witness });
     }
     return response;
   };
@@ -569,7 +663,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         capabilitiesDetectRegistered: manager.hasHandler(RPC_METHODS.CAPABILITIES_DETECT),
       } } : {}),
       metadataPublications: [...metadataPublications], rootLaunchCount: rootLaunches.length,
-      rootPlanCount: rootPlans.length, elapsedMs: Math.round(performance.now() - diagnosticStartedAt),
+      rootPlanCount: rootPlans.length, rootResults, elapsedMs: Math.round(performance.now() - diagnosticStartedAt),
     };
   };
   let beforeCleanup: ReturnType<typeof workflowDiagnostic> | undefined;
@@ -594,13 +688,19 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   return { machine, client, runtime, installation, pair, sources, context, apply, statePath, metadataWrites, rootLaunches, rootPlans, nativeCommands,
     machineSetupPlan: nativeDeps.machineSetupPlan, machineSetupApply: nativeDeps.machineSetupApply, machineSetupRemove: nativeDeps.machineSetupRemove,
     startInstalledRuntime, publicExecutor, createExecutor,
+    sessionControlRuntime: () => startup?.runtime, connectedServiceRegistry,
     controlHttpOrigin: () => startup ? `http://127.0.0.1:${startup.runtime.controlPort}` : null,
     setHomeRead: (read: NonNullable<typeof additionalHomeRead>) => { additionalHomeRead = read; },
+    setMachineSocketHomeEvent: (emit: NonNullable<typeof additionalMachineSocketEvent>) => { additionalMachineSocketEvent = emit; },
     workflowDiagnostic: () => ({ ...workflowDiagnostic(), beforeCleanup }), captureNativeDiagnostics,
     recordNativePhase: recordFixturePhase,
-    operations, receive, receiveRpc, nativeDeps, readHomeMachine, respondWorkflowStorage, readActionFailureDiagnostics,
-    workflowStorage: () => workflowStorage,
-    credentials, issuerCredentials, accountEncryptionMode: encryptionMode,
+    operations, receive, receiveDispatch, receiveRpc, nativeDeps, readHomeMachine, respondWorkflowStorage, coordinateWorkflowClaim, readActionFailureDiagnostics,
+    workflowStorage: () => workflowStorage, waitForWorkflowCoordinator: () => coordinate,
+    setInstallerFailure: async (fail: boolean) => {
+      const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+      await writeFile(statePath, JSON.stringify({ ...state, installFails: fail }));
+    },
+    credentials, issuerCredentials, accountEncryptionMode: encryptionMode, accountEncryptionCurrentness,
     readInstalled: async () => JSON.parse(await readFile(statePath, 'utf8')) as { installed: boolean; version: string | null; effects: string[] },
     dispose };
 }

@@ -1,17 +1,14 @@
-import { redactObservationInputPaths } from '../observationRedaction.js';
-
-/** Raw launch environment and private account selections never enter shared Action history. */
-export const projectSessionSpawnNewObservationInput = redactObservationInputPaths('environmentVariables', 'connectedServices');
-
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { projectSessionSpawnNewActionInputV2 } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../../../sessions/creation/sessionSpawnNewResultV1.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
+import { actionInputServerId } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { SessionForkRpcParamsSchema } from '../../../sessions/fork.js';
 import { SessionResumeRequestV1Schema } from '../../../sessions/control/sessionResumeRequestV1.js';
 import { z } from 'zod/mini';
-import { SCM_COMPARISON_VIEWS, ScmComparisonSourceSchema } from '../../../scm/comparison.js';
+import { SessionOpenDestinationSchema } from '../../sessionOpenDestination.js';
 import { type ActionInputHints } from '../../metadata.js';
 import type { ExternalActionTargetV1 } from '../../externalActionApi.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
@@ -29,6 +26,13 @@ import { HandoffWorkspaceActionV1Schema } from '../../../sessions/control/handof
 import { SessionContinueWithReplayRpcParamsSchema } from '../../../sessions/continueWithReplay.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../rpc/methods.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
+import { readRecord, readNonEmptyString } from '../../../inputs/inputRecords.js';
+import { resolveSessionIdFromInput } from '../../executor/sessionScope.js';
+import { redactObservationInputPaths } from '../observationRedaction.js';
+import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '../../../machines/managed/actionIdsV1.js';
+
+/** Raw launch environment and private account selections never enter shared Action history. */
+export const projectSessionSpawnNewObservationInput = redactObservationInputPaths('environmentVariables', 'connectedServices');
 
 
 export const SessionOpenInputSchema = lazyZodSchema(() => z.strictObject({
@@ -40,13 +44,7 @@ export const SessionOpenInputSchema = lazyZodSchema(() => z.strictObject({
   approvedNewDirectoryCreation: z.optional(z.boolean()),
   intent: z.optional(z.literal('resume')),
   resumeRequest: z.optional(SessionResumeRequestV1Schema),
-  destination: z.optional(z.strictObject({
-    kind: z.literal('scmReview'),
-    comparison: ScmComparisonSourceSchema,
-    view: z.enum(SCM_COMPARISON_VIEWS),
-    explain: z.optional(z.boolean()),
-    comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
-  })),
+  destination: z.optional(SessionOpenDestinationSchema),
 }).check(z.superRefine((value, ctx) => {
   if (value.resumeRequest && (value.intent !== 'resume' || value.tabId || value.destination || value.presentation
     || value.resumeRequest.sessionId !== value.sessionId)) ctx.addIssue({
@@ -129,6 +127,7 @@ export const SessionSpawnNewInputHints = {
     { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
     { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
     { path: 'directory', title: 'Directory intent', widget: 'json', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
+    { path: 'machineSetupPlanInput', title: 'Machine software setup', description: 'Install the selected software on this Machine before starting the Agent. This spawn approval includes setup.', widget: 'json' },
     { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
     { path: 'agentTarget', title: 'Agent target', description: 'Backend options carry target keys. For agent:<pluginId>/<localId>, use {kind:"agent",identity:{pluginId,localId}}; retain definitionId for a configured Agent.', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
     { path: 'modelSelection', title: 'Model selection', description: 'Native model options carry a model id in option.value. Use {v:1,ref:{agentTargetKey,providerConnectionId:null,modelId:option.value},updatedAt:<milliseconds>}, with the selected Agent target key. Provider catalog choices retain their structured ref. A Connected Account profile is not a providerConnectionId.', widget: 'json', optionsSourceId: 'agents.models.available' },
@@ -223,9 +222,15 @@ export const CHECKPOINT_SOURCE_INPUT_OPTIONS: ActionInputOption[] = [
   { value: 'composed', label: 'Composed' },
 ];
 
-export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
+function createSessionLifecycleActionSpecs() {
+  return Object.freeze([
   {
-    id: 'session.open', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.open', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: (input, context) => {
+      if (readRecord(input).intent !== 'resume') return null;
+      const sessionId = resolveSessionIdFromInput(input, context);
+      return sessionId ? { target: { kind: 'session', sessionId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
+    },
     executionPlacements: ['session', 'client'],
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     // Navigation belongs to the answering client, including CLI requests.
@@ -268,7 +273,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     cli: { commands: [{ path: ['session', 'open'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.fork', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.fork', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     operation: {
       version: 1,
       visibility: 'activity',
@@ -280,7 +285,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     description: 'Create a new session from the latest state or a selected message using Native or Replay.',
     safety: 'safe',
     placements: ['session_action_menu', 'session_info', 'command_palette', 'slash_command', 'voice_panel', 'agent_input_chips'],
-    slash: { tokens: ['fork'] },
+    slash: { tokens: ['/fork'] },
     bindings: {
       voiceClientToolName: 'forkSession',
       mcpToolName: 'session_fork',
@@ -314,7 +319,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     cli: { commands: [{ path: ['session', 'fork'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.continue_with_replay', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.continue_with_replay', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Continue session with replay',
     description: 'Create a continuation session from a replay seed while preserving the existing RPC wire contract.',
     safety: 'safe',
@@ -341,7 +346,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionContinueWithReplayRpcParamsSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.rollback', approval: {result: 'required',flow: 'deferred'},
+    id: 'session.rollback', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
     title: 'Rollback conversation',
     description: 'Roll back conversation state in the selected session.',
     safety: 'danger',
@@ -364,7 +369,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionRollbackInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.checkpoint_code_rollback', approval: {result: 'required',flow: 'deferred'},
+    id: 'session.checkpoint_code_rollback', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
     title: 'Rollback code to checkpoint',
     description: 'Apply a checkpoint-backed code rollback for the selected session turn.',
     safety: 'danger',
@@ -391,7 +396,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: CheckpointCodeRollbackActionRequestSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.checkpoint', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.checkpoint', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Create checkpoint',
     description: 'Create a source-qualified checkpoint for the selected session.',
@@ -418,7 +423,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionCheckpointRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.restore', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.restore', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     title: 'Restore checkpoint',
     description: 'Restore a selected session checkpoint source.',
     safety: 'danger',
@@ -445,7 +450,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionRestoreRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.handoff', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     sideEffectClass: 'write',
     operation: {
@@ -501,7 +506,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff.prepare_target', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.handoff.prepare_target', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Prepare session handoff target',
     description: 'Prepare a target machine to receive an in-progress session handoff.',
     safety: 'safe',
@@ -532,7 +537,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHandoffPrepareTargetRequestSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff.prepare_target_result.get', sideEffectClass: 'read', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
+    id: 'session.handoff.prepare_target_result.get', executionPlacement: 'session', sideEffectClass: 'read', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
     title: 'Get session handoff target preparation result',
     description: 'Read the prepared-target result for an in-progress session handoff.',
     safety: 'safe',
@@ -558,7 +563,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHandoffPrepareTargetResultGetRequestSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff.prepare_target.resume', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.handoff.prepare_target.resume', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Resume interrupted session handoff target preparation',
     description: 'Explicitly continue one interrupted prepare-target job at its current durable revision.',
     safety: 'safe',
@@ -586,7 +591,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHandoffPrepareTargetResumeRequestSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff.commit', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.handoff.commit', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Commit session handoff',
     description: 'Finalize a prepared session handoff.',
     safety: 'safe',
@@ -612,7 +617,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHandoffCommitRequestSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff.abort', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.handoff.abort', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Abort session handoff',
     description: 'Cancel an in-progress session handoff.',
     safety: 'safe',
@@ -641,7 +646,7 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHandoffAbortRequestSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.handoff.status.get', sideEffectClass: 'read', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
+    id: 'session.handoff.status.get', executionPlacement: 'session', sideEffectClass: 'read', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'required'},
     title: 'Get session handoff status',
     description: 'Read scalar status for an in-progress session handoff.',
     safety: 'safe',
@@ -667,12 +672,33 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHandoffStatusGetRequestSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_LIFECYCLE_ACTION_SPECS: ReturnType<typeof createSessionLifecycleActionSpecs> = lazyActionSpecArray(createSessionLifecycleActionSpecs);
 
 
 
-export const SESSION_SPAWN_ACTION_SPECS = Object.freeze([
+function createSessionSpawnActionSpecs() {
+  return Object.freeze([
   {
-    id: 'session.spawn_new', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.spawn_new', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' }, approval: {result: 'optional',flow: 'deferred'},
+    requesterAccountContentDemandForInput: input => Boolean(readRecord(input).machineSetupPlanInput),
+    projectObservationInput: projectSessionSpawnNewObservationInput,
+    approvalPresentation: { summary: () => null, projectInput: projectSessionSpawnNewObservationInput, inputSchema: SessionSpawnNewInputSchema },
+    hostReviewedChildren: normalizedInput => {
+      const setup = SessionSpawnNewInputSchema.parse(normalizedInput).machineSetupPlanInput;
+      if (!setup) return [];
+      return [
+        { ...SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan, input: StrictJsonValueSchema.parse({ ...setup, mode: 'effects' }) },
+        { ...SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply, scopeInput: { homeId: setup.homeId, machineId: setup.machineId } },
+      ];
+    },
+    machineRuntimeDemandForInput: input => {
+      const target = readRecord(readRecord(input).executionTarget);
+      const machineId = readNonEmptyString(target.machineId);
+      const serverId = readNonEmptyString(target.serverId);
+      return machineId ? { target: { kind: 'machine', machineId }, ...(serverId ? { serverId } : {}) } : null;
+    },
     approvalPolicy: { uiConfirmation: 'direct' },
     operation: {
       version: 1,
@@ -682,12 +708,12 @@ export const SESSION_SPAWN_ACTION_SPECS = Object.freeze([
     },
     operationReentry: snapshot => {
       if (snapshot.state === 'running') return 'resume';
-      if (snapshot.state === 'succeeded') {
+      if (snapshot.state === 'succeeded' || snapshot.state === 'failed') {
         const settlement = SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result);
         if (settlement.success && settlement.data.type === 'error' && settlement.data.retryable) return 'fresh';
         return 'replay';
       }
-      return snapshot.state === 'failed' || snapshot.state === 'cancelled' ? 'replay' : 'refuse';
+      return snapshot.state === 'cancelled' ? 'replay' : 'refuse';
     },
     title: 'Create session',
     description: 'Create a new session on the requested machine using the selected Agent. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for no folder: Happier creates a private folder for this session.',
@@ -727,8 +753,10 @@ export const SESSION_SPAWN_ACTION_SPECS = Object.freeze([
     inputHints: SessionSpawnNewInputHints,
     cli: { commands: [], inputSchema: SessionSpawnNewTerminalInputSchema, wholeInputSchema: SessionSpawnNewTerminalInputSchema },
     outputSchema: SessionSpawnNewActionResultV1Schema,
-    projectObservationInput: projectSessionSpawnNewObservationInput,
-    approvalPresentation: { summary: () => null, projectInput: projectSessionSpawnNewObservationInput, inputSchema: SessionSpawnNewInputSchema },
     inputSchema: SessionSpawnNewInputSchema,
+    invocationServerIdForInput: actionInputServerId(SessionSpawnNewActionInputV2Schema, input => input.executionTarget.serverId),
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_SPAWN_ACTION_SPECS: ReturnType<typeof createSessionSpawnActionSpecs> = lazyActionSpecArray(createSessionSpawnActionSpecs);

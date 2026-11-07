@@ -1,8 +1,7 @@
-import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
-export { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
-import { InputPathSchema } from '../inputs/inputPredicates.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
+export { WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1.js';
 import { z } from 'zod/mini';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { workflowDefinitionDisplayTitleV1 } from './workflowStepLabel.js';
@@ -23,6 +22,7 @@ import { WorkflowDefinitionIdV1Schema, WorkflowRunIdV1Schema } from './workflowI
 import { DiscussionAddressV1Schema, DiscussionMessageRefV1Schema } from '../discussions/references.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { StrictJsonValueSchema, sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { InputPathSchema } from '../inputs/inputPredicates.js';
 import { AgentPermissionIntentV1Schema, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { resolvePermissionPrivilegeOrdinal } from '../actions/permissionPrivilege.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -39,10 +39,13 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { ActionSessionAddressV1Schema } from '../actions/sessionTargetV1.js';
 import { ExecutableParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
 import { SessionSpawnNewSelectionV2Schema } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
-import { ActionRequestAttributionV1Schema } from '../actions/actionRequestAttributionV1.js';
+import { ActionRequestAttributionV1Schema, ActionRequestRequesterV1Schema } from '../actions/actionRequestAttributionV1.js';
 import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
+import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 import { ActionRequiredAuthoritySchema, ActionSurfaceSchema } from '../actions/metadata.js';
 import { WorkflowDiscussionOriginV1Schema, WorkflowResultDeliveryV1Schema } from './workflowDestinationsV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema, ReviewedActionChildHttpProofV1Schema,
+  type ExternalActionExecutionAuthorizationV1 } from '../actions/externalActionApi.js';
 export { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1, readWorkflowLeafTargetSessionIdsV1,
   resolveWorkflowDestinationsV1, WorkflowDestinationsV1Schema, type WorkflowDestinationsV1 } from './workflowDestinationsV1.js';
 
@@ -213,6 +216,7 @@ export const WorkflowRunStartedByV1Schema = lazyZodSchema(() => z.enum(['user', 
 export type WorkflowRunStartedByV1 = z.infer<typeof WorkflowRunStartedByV1Schema>;
 export const WorkflowFrozenChildrenV1Schema = lazyZodSchema(() => z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema));
 
+
 /** Private relation frozen by admission, inside the existing Run envelope. */
 const WorkflowAcceptedTargetSessionIdsV1Schema = lazyZodSchema(() => z.optional(z.array(preservedBoundedNfcString(191, 'Session ids'))));
 
@@ -234,11 +238,17 @@ export const WorkflowAcceptedOriginV1Schema = lazyZodSchema(() => z.strictObject
   originSessionId: zMini.optional(preservedBoundedNfcString(191, 'Session ids')),
   discussion: z.optional(WorkflowDiscussionOriginV1Schema),
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
+  /** Authenticated direct starter; a participant supplies its real persona later. */
+  authenticatedStarterV1: z.optional(z.strictObject({
+    requestRef: ActionRequestAttributionV1Schema.shape.requestRef,
+    requester: ActionRequestRequesterV1Schema,
+  })),
   /** Invoking policy for contained effects, never a durable present-person grant. */
   actionPolicy: z.optional(z.strictObject({
     surface: z.optional(z.keyof(ActionSurfaceSchema)),
     authority: ActionRequiredAuthoritySchema,
     actionsSettings: z.optional(ActionsSettingsV1Schema),
+    approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   })),
 }));
 export type WorkflowAcceptedOriginV1 = z.infer<typeof WorkflowAcceptedOriginV1Schema>;
@@ -284,7 +294,7 @@ const WorkflowAcceptedSnapshotAutomationV1Schema = lazyZodSchema(() => z.strictO
   }
 })));
 
-export const WorkflowAcceptedAuthorizationV1Schema = lazyZodSchema(() => z.strictObject({
+const WorkflowAcceptedAuthorizationBaseV1Schema = lazyZodSchema(() => z.strictObject({
   admittedPermissionCeiling: asProtocolZod(AgentPermissionIntentV1Schema),
   principal: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('host') }),
@@ -304,7 +314,33 @@ export const WorkflowAcceptedAuthorizationV1Schema = lazyZodSchema(() => z.stric
   ]),
   sourceAuthority: zMini.optional(SessionInputSourceAuthorityV1Schema),
 }));
-export type WorkflowAcceptedAuthorizationV1 = z.infer<typeof WorkflowAcceptedAuthorizationV1Schema>;
+
+// A signed root can itself carry a Workflow origin. Name this recursive wire
+// boundary instead of asking inference to expand the root back into its Run.
+export type WorkflowAcceptedAuthorizationV1 = z.infer<typeof WorkflowAcceptedAuthorizationBaseV1Schema> & Readonly<{
+  externalActionExecutionAuthorization?: Pick<ExternalActionExecutionAuthorizationV1, 'v' | 'token' | 'binding'>;
+  reviewedChild?: z.infer<typeof ReviewedActionChildHttpProofV1Schema>;
+}>;
+
+const WorkflowAcceptedExternalActionAuthorizationV1Schema: z.ZodMiniType<NonNullable<WorkflowAcceptedAuthorizationV1['externalActionExecutionAuthorization']>> = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), token: z.string().check(z.minLength(1)),
+  binding: ExternalActionExecutionAuthorizationV1Schema.shape.binding,
+}));
+
+export const WorkflowAcceptedAuthorizationV1Schema: z.ZodMiniType<WorkflowAcceptedAuthorizationV1> = lazyZodSchema(() => z.extend(WorkflowAcceptedAuthorizationBaseV1Schema, {
+  /** Original signed authority; no requester codec, Account material or host-private readers. */
+  externalActionExecutionAuthorization: z.optional(WorkflowAcceptedExternalActionAuthorizationV1Schema),
+  reviewedChild: z.optional(ReviewedActionChildHttpProofV1Schema),
+}).check(z.superRefine((value, context) => {
+  const binding = value.externalActionExecutionAuthorization?.binding;
+  if (binding && ('authentication' in binding ? value.principal.kind === 'api'
+    : value.principal.kind !== 'api' || value.principal.accountId !== binding.accountId
+      || value.principal.principalId !== binding.principalId || value.principal.credentialId !== binding.credentialId)
+    || value.reviewedChild && !binding) {
+    context.addIssue({ code: 'custom', path: ['externalActionExecutionAuthorization'],
+      message: 'Retained external authority must match the accepted principal' });
+  }
+})));
 
 const WORKFLOW_PERMISSION_CEILING_BY_ORDINAL = [
   'read-only',
@@ -315,8 +351,9 @@ const WORKFLOW_PERMISSION_CEILING_BY_ORDINAL = [
 
 /**
  * Derives the least privileged canonical ceiling that admits every effective
- * leaf in one normalized frozen Workflow program. Omission has the same
- * canonical `default` meaning used by Session and Execution Run admission.
+ * leaf in one normalized frozen Workflow program. Agent steps use the canonical
+ * `default` permission when omitted; other leaves grant only declared authority.
+ * Materialized child starts contribute their effective permissions separately.
  * Same-privilege aliases (`plan`, `acceptEdits`, `bypassPermissions`) collapse
  * to one stable admitted intent rather than making definition order authority.
  */
@@ -335,9 +372,10 @@ export function deriveWorkflowAcceptedPermissionCeilingV1(
     const pending: WorkflowBlock[] = [...program.blocks];
     while (pending.length > 0) {
       const block = pending.pop()!;
-      if (block.kind === 'step') {
+      if (block.kind === 'step' || block.kind === 'action' || block.kind === 'wait' || block.kind === 'workflow') {
         const ordinal = resolvePermissionPrivilegeOrdinal(
-          resolveWorkflowStepSelectionV1({ defaults: program.defaults, step: block.execution }).selection.permissionMode ?? 'default',
+          resolveWorkflowStepSelectionV1({ defaults: program.defaults, step: block.execution }).selection.permissionMode
+            ?? (block.kind === 'step' ? 'default' : 'read-only'),
         );
         if (ordinal === null) throw new TypeError('Workflow step permission mode is invalid');
         maximumOrdinal = Math.max(maximumOrdinal, ordinal);
@@ -421,8 +459,6 @@ export const WorkflowAcceptedSnapshotV1Schema = lazyZodSchema(() => z.union([
   WorkflowAcceptedSnapshotDirectV1Schema,
 ]));
 export type WorkflowAcceptedSnapshotV1 = z.infer<typeof WorkflowAcceptedSnapshotV1Schema>;
-
-export { type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1.js';
 
 /**
  * The accepted facts a Run list row shows: names, starter, origin, place and

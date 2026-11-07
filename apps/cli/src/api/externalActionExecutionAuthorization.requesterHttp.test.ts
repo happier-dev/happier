@@ -1,9 +1,12 @@
+import { openManagedControllerActionCodecV1, openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, MachineSetupApplyInputV1Schema, accountSettingsParse, createRoleSourceReaderV1 } from '@happier-dev/protocol';
 import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -13,16 +16,23 @@ import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/ex
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import * as executionAuthorizationOwner from './externalActionExecutionAuthorization';
 import { openExternalActionRequestV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAccountMachineKeyFromRecoverySecret, openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
-import { createDaemonPatVerifier } from '@/daemon/auth/daemonPatVerifier';
-import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { prepareExternalActionRequesterAccountAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
 import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SessionActionRpcOriginV1Schema, SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { logger } from '@/ui/logger';
+import { createDaemonPatVerifier } from '@/daemon/auth/daemonPatVerifier';
+import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
+import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
+import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 
 const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
 // Only the Home HTTP boundary is mocked; exercise the real local provenance reader.
@@ -44,39 +54,680 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 });
 
 describe('requester HTTP authority on the existing external Action carrier', () => {
-  it.each(['diagnosed', 'bare', 'unavailable'] as const)('preserves the Machine availability mint refusal through the daemon ingress (%s)', async reply => {
-    const diagnostic = { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' };
-    const requestId = 'daemon-machine-availability';
-    vi.spyOn(axios, 'post').mockResolvedValue(reply === 'unavailable'
-      ? { status: 503, data: { error: 'auth_unavailable' } }
-      : { status: 409, data: { error: 'invalid_request', code: 'target_unavailable', requestId,
-        ...(reply === 'diagnosed' ? { diagnostic } : {}) } });
-    // Session birth is the OS/process boundary; the real Action admission and dispatch stay in place.
-    const sessionSpawnNew = vi.fn(async () => ({ type: 'pending' as const, retryWithSameCreationKey: true, outcome: 'accepted' as const }));
-    const app = fastify();
-    registerDaemonExternalActionRoute(app, {
-      currentMachineId: target.machineId, currentServerId: 'bob-profile',
-      verifyPat: createDaemonPatVerifier({ accountId: 'bob', introspect: async () => ({ ok: true, ...principal, expiresAt: null }) }),
-      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
-      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: accountToken, encryption: null } }),
-      mintExecutionAuthorization: request => executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
-        ...request, serverHttpBaseUrl: 'https://home.test',
-      }),
-    });
-    try {
-      const response = await app.inject({ method: 'POST', url: '/v1/actions/session.spawn_new',
-        headers: { authorization: `Bearer hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}` },
-        payload: { v: 1, requestId, target, input: { creationKey: 'own-start', agentTarget: { kind: 'agent',
-          identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } } } });
-      if (reply === 'diagnosed') {
-        expect([response.statusCode, response.json()]).toEqual([409, { error: 'invalid_request', code: 'target_unavailable', requestId, diagnostic }]);
-        expect(sessionSpawnNew).not.toHaveBeenCalled();
-      } else {
-        expect(response.statusCode).toBe(200);
-        expect(response.json()).toMatchObject({ execution: { ok: true, result: { type: 'pending' } } });
-        expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
+  it.each([{ accountEncryptionMode: 'plain' as const, custodianAccountId: 'alice', terminalTransport: false },
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: false },
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true }])('delivers only invocation codec for reviewed setup ($accountEncryptionMode)', async ({ accountEncryptionMode, custodianAccountId, terminalTransport }) => {
+    const requestId = crypto.randomUUID();
+    const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'captured-parent', binding: {
+      accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+      machineId: target.machineId, custodianAccountId, installationId: 'alice-installation',
+      actionId: 'session.spawn_new', requestId: crypto.randomUUID(), target, admittedMachineRole: 'manage',
+      accountEncryptionMode, requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const childInput = { homeId: 'srv_bob_home', machineId: target.machineId, targets: [] };
+    const reviewedChild = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
+      role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
+      inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', childInput) };
+    const runId = deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_bob_home', accountId: 'bob',
+      requestId: parent.binding.requestId, reviewedChild });
+    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId, authorization: {
+        principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
+        externalActionExecutionAuthorization: parent, reviewedChild,
+      } } } satisfies ActionExecutorContext;
+    vi.spyOn(axios, 'get').mockImplementation(async () => { throw new Error('No fresh Account or Machine lookup for admitted setup'); });
+    let delivered = false;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+      if (String(url).endsWith('/execution-authorization')) {
+        expect(request.executionAuthorization).toEqual(parent);
+        expect(request.workflowActionOrigin).toEqual({ runId, requestId, reviewedChild });
+        return { status: 200, data: { v: 1, token: 'scoped-setup-leaf', binding: {
+          ...parent.binding, actionId: 'machines.setup.apply', requestId,
+          workflowActionOrigin: request.workflowActionOrigin,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        } } };
       }
-    } finally { await app.close(); }
+      delivered = true;
+      const opening = { authorization: request.executionAuthorization, machineId: target.machineId,
+        installationId: 'alice-installation', serverIdentityId: 'srv_bob_home', installationPrivateKey: keys.secretKey };
+      const codec = openManagedControllerActionCodecV1(opening);
+      expect(codec?.machineKey).toHaveLength(32);
+      if (request.envelope.v === 2) expect(openExternalActionRequestV2({
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope,
+        binding: { serverIdentityId: parent.binding.serverIdentityId, accountId: parent.binding.accountId,
+          authentication: { kind: 'account', tokenEpoch: 7 }, actionId: 'machines.setup.apply', requestId, target },
+        material: codec!,
+      })?.input).toEqual(childInput);
+      expect(codec?.machineKey).not.toEqual(new Uint8Array(32).fill(57));
+      expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'external_action' } })).toBeNull();
+      expect(request.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId,
+        admittedMachineRole: 'manage', installationId: 'alice-installation' });
+      return { status: 409, data: { error: 'invalid_request', code: 'target_unavailable' } };
+    });
+    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'machines.setup.apply',
+      input: childInput, requestId, target, credentials: { token: terminalTransport ? `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({
+        sub: 'bob', tokenEpoch: 7, provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
+      })}.signature` : accountToken, encryption: accountEncryptionMode === 'plain' ? null : {
+        type: 'dataKey', machineKey: new Uint8Array(32).fill(57), publicKey: keys.publicKey } },
+      serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
+      installedWorkflow: { context, machineId: target.machineId, installationId: 'alice-installation', privateKey: keys.secretKey },
+    })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(delivered).toBe(true);
+  });
+
+  it.each([
+    ...[
+    { mode: 'plain' as const, publisher: 'alice', denial: 'none' },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'none' },
+    { mode: 'e2ee' as const, publisher: 'bob', denial: 'none' },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'grant' },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'revoked' },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'credential_substitution' },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'grant_substitution' },
+    ].map(row => ({ ...row, origin: 'spawn' as const })),
+    { mode: 'plain' as const, publisher: 'alice', denial: 'none', origin: 'direct' as const },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'none', origin: 'direct' as const },
+    { mode: 'e2ee' as const, publisher: 'alice', denial: 'none', origin: 'template' as const },
+  ])('preserves retained PAT setup authority and only its invocation codec ($mode/$publisher/$denial/$origin)', async ({ mode, publisher, denial, origin }) => {
+    const requestId = crypto.randomUUID();
+    const credentialId = crypto.randomUUID();
+    const rootActionId = origin === 'direct' ? 'machines.setup.apply' : origin === 'template' ? 'template.instantiate' : 'session.spawn_new';
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, approve: false,
+      actions: { families: [], ids: denial === 'grant' ? [rootActionId] : [...new Set([rootActionId, 'machines.setup.apply'])] } };
+    const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'captured-pat-parent', binding: {
+      accountId: 'bob', principalId: 'bob', credentialId, grant,
+      serverIdentityId: 'srv_bob_home', machineId: target.machineId, custodianAccountId: publisher,
+      installationId: 'alice-installation', actionId: rootActionId, requestId: crypto.randomUUID(), target,
+      admittedMachineRole: 'manage', accountEncryptionMode: mode, requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const childInput = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_bob_home', machineId: target.machineId, targets: [{
+      homeId: 'srv_bob_home', machineId: target.machineId, desiredRevision: 0, recipePlans: [],
+      sources: [{ kind: 'direct', setup: {} }],
+    }] });
+    const reviewedChild = origin === 'direct' ? undefined : { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
+      role: origin === 'template' ? BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 : SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
+      inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', childInput) };
+    const runId = deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_bob_home', accountId: 'bob',
+      requestId: parent.binding.requestId, reviewedChild });
+    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId, authorization: {
+        principal: { kind: 'api', accountId: 'bob', principalId: 'bob', credentialId },
+        admittedPermissionCeiling: 'default', externalActionExecutionAuthorization: parent, reviewedChild,
+      } } } satisfies ActionExecutorContext;
+    const publisherToken = `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({ sub: publisher, tokenEpoch: 9,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })}.signature`;
+    vi.spyOn(axios, 'get').mockImplementation(async () => { throw new Error('Admitted PAT Setup must not acquire publisher Account content or refresh grants'); });
+    let minted = false;
+    let delivered = false;
+    let boundaryFailure: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, raw, config) => {
+      try {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+      expect(config?.headers?.Authorization).toBe(`Bearer ${publisherToken}`);
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(JSON.stringify(raw)));
+      if (String(url).endsWith('/execution-authorization')) {
+        minted = true;
+        expect(request.executionAuthorization).toEqual(parent);
+        expect(request.workflowActionOrigin).toEqual({ runId, requestId, reviewedChild });
+        expect(verifyMachineInstallationProof({ publicKey: keys.publicKey, proof: request.installationProof!, payload: {
+          version: 1, accountId: publisher, machineId: target.machineId, installationId: 'alice-installation',
+          externalActionOrigin: { homeId: 'srv_bob_home', actionId: 'machines.setup.apply', requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), origin: request.workflowActionOrigin! },
+        } })).toBe(true);
+        if (denial === 'grant' || denial === 'revoked') return denial === 'grant'
+          ? { status: 403, data: { error: 'credential_scope_denied' } }
+          : { status: 401, data: { error: 'invalid_token' } };
+        return { status: 200, data: { v: 1, token: 'scoped-pat-setup-leaf', binding: {
+          ...parent.binding, actionId: 'machines.setup.apply', requestId, workflowActionOrigin: request.workflowActionOrigin,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+          ...(denial === 'credential_substitution' ? { credentialId: crypto.randomUUID() } : {}),
+          ...(denial === 'grant_substitution' ? { grant: API_TOKEN_FULL_GRANT_V1 } : {}),
+        } } };
+      }
+      delivered = true;
+      const opening = { authorization: request.executionAuthorization, machineId: target.machineId,
+        installationId: 'alice-installation', serverIdentityId: 'srv_bob_home', installationPrivateKey: keys.secretKey };
+      const codec = openManagedControllerActionCodecV1(opening);
+      expect(codec?.machineKey).toHaveLength(32);
+      if (request.envelope.v === 2) expect(openExternalActionRequestV2({
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope,
+        binding: { serverIdentityId: 'srv_bob_home', accountId: 'bob', credentialId,
+          actionId: 'machines.setup.apply', requestId, target }, material: codec!,
+      })?.input).toEqual(childInput);
+      expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'external_action' } })).toBeNull();
+      expect(request.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', principalId: 'bob',
+        credentialId, grant, custodianAccountId: publisher });
+      expect(request.executionAuthorization?.binding).not.toHaveProperty('authentication');
+      return { status: 409, data: { error: 'invalid_request', code: 'target_unavailable' } };
+      } catch (error) { boundaryFailure = error; throw error; }
+    });
+    const outcome = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'machines.setup.apply',
+      input: childInput, requestId, target, credentials: { token: publisherToken, encryption: null },
+      serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
+      installedWorkflow: { context, machineId: target.machineId, installationId: 'alice-installation', privateKey: keys.secretKey },
+    });
+    if (boundaryFailure) throw boundaryFailure;
+    expect(outcome).toMatchObject({ ok: false, errorCode: denial === 'grant' ? 'credential_scope_denied'
+      : denial === 'revoked' ? 'invalid_token' : denial === 'none' ? 'target_unavailable' : 'admission_unavailable' });
+    expect(minted).toBe(true);
+    expect(delivered).toBe(denial === 'none');
+  });
+
+  it('keeps public Docker-only encrypted Apply on ordinary requester Account custody without a reviewed child', async () => {
+    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true,
+      installationId: 'alice-installation', revokedAt: null, replacedByMachineId: null,
+      dataEncryptionKey: null, runnerContentKeyBinding: null,
+      installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage',
+        resourceMode: 'e2ee', accessState: 'ready' } };
+    // Home mode and installed publication are genuine HTTP boundaries. There is
+    // no requester Account key or admitted Run child in this public invocation.
+    vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
+      ? { status: 200, data: { mode: 'e2ee', updatedAt: 1 } }
+      : String(url).endsWith('/v1/machines') ? { status: 200, data: [machine] }
+      : { status: 200, data: { machine } });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async () => { throw new Error('No mint or effect without requester custody'); });
+    const input = { homeId: 'srv_bob_home', machineId: target.machineId, targets: [{
+      homeId: 'srv_bob_home', machineId: target.machineId, desiredRevision: 0, recipePlans: [],
+      sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+        ref: { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' }, inputs: {},
+      } }] } }],
+    }] };
+    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'machines.setup.apply', input,
+      requestId: 'public-docker-setup', target, credentials: { token: accountToken, encryption: null },
+      serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
+      authority: 'present_user', invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' },
+    })).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('projects encrypted setup presence from the original CLI Account transport', async () => {
+    const machineKey = new Uint8Array(32).fill(57);
+    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true,
+      installationId: 'installation', revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+      installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } };
+    vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
+      ? { status: 200, data: { mode: 'e2ee', updatedAt: 1 } }
+      : String(url).endsWith('/v1/machines') ? { status: 200, data: [machine] } : { status: 200, data: { machine } });
+    let received: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      received = body; return { status: 403, data: { error: 'permission_denied' } };
+    });
+    const input = { executionTarget: { serverId: 'srv_bob_home', machineId: target.machineId },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      directory: { kind: 'managed' }, machineSetupPlanInput: { homeId: 'srv_bob_home', machineId: target.machineId,
+        sources: [{ kind: 'direct', setup: { scripts: [{ body: 'private CLI setup' }] } }] } };
+    const result = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'session.spawn_new', input,
+      requestId: 'cli-spawn-setup', target, credentials: { token: accountToken,
+        encryption: { type: 'dataKey', machineKey, publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey } },
+      serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home' });
+    expect(received, JSON.stringify(result)).toBeDefined();
+    const envelope = ExternalActionRequestEnvelopeV2Schema.parse(received && typeof received === 'object'
+      && 'envelope' in received ? received.envelope : received);
+    expect(envelope.sessionSpawnAdmission).toMatchObject({ machineSetupRequested: true });
+    expect(JSON.stringify(envelope)).not.toContain('private CLI setup');
+  });
+
+  it('projects encrypted Session-authored setup presence before Home spawn admission', async () => {
+    const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 },
+      sourceTurnId: 'setup-turn', callerPermissionMode: 'yolo', causalPermissionAuthority: null, requestId: 'spawn-setup' });
+    const input = { executionTarget: { serverId: 'srv_bob_home', machineId: target.machineId },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      directory: { kind: 'managed' }, machineSetupPlanInput: { homeId: 'srv_bob_home', machineId: target.machineId,
+        sources: [{ kind: 'direct', setup: { scripts: [{ body: 'private setup' }] } }] } };
+    let received: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      received = body; return { status: 403, data: { error: 'permission_denied' } };
+    });
+    await executionAuthorizationOwner.prepareExternalActionRequesterAccountAuthorizationWithEnvelope({
+      actionId: 'session.spawn_new', input, requestId: sessionActionOrigin.requestId,
+      sessionActionOrigin, sourceMachineId: target.machineId, target, machineId: target.machineId,
+      accountId: 'bob', accountEncryptionMode: 'e2ee', tokenEpochHint: 7, token: accountToken,
+      serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
+      installationId: 'alice-installation', privateKey: keys.secretKey,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
+    });
+    const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(received);
+    expect(request.envelope).toMatchObject({ v: 2, sessionSpawnAdmission: { machineSetupRequested: true } });
+    expect(JSON.stringify(request.envelope)).not.toContain('private setup');
+  });
+  it('mints an ordinary Apply root for a software install selection', async () => {
+    const input = { sessionRef: { serverId: 'srv_bob_home', sessionId: 'c000000000000000000000011' },
+      expectedVersion: '1.1.0', setup: { software: [{ key: 'tools', selection: { action: 'install', inputs: {} } }],
+        accounts: [], mcpServers: [] } };
+    const requests: Array<ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>> = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      requests.push(request);
+      const data = { v: 1, token: 'ordinary-update-root', binding: {
+        serverIdentityId: 'srv_bob_home', accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
+        actionId: 'template.updates.apply', requestId: request.envelope.requestId, target, machineId: target.machineId,
+        custodianAccountId: 'bob', installationId: 'alice-installation', accountEncryptionMode: 'plain',
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+      } };
+      return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse(data) };
+    });
+    const prepared = await executionAuthorizationOwner.prepareExternalActionRequesterAccountAuthorizationWithEnvelope({
+      actionId: 'template.updates.apply', input, requestId: 'apply-with-install', target, machineId: target.machineId,
+      accountId: 'bob', accountEncryptionMode: 'plain', tokenEpochHint: 7, token: accountToken,
+      serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
+      installationId: 'alice-installation', privateKey: keys.secretKey,
+    });
+    expect(requests).toHaveLength(1);
+    expect(prepared?.authorization.binding.actionId).toBe('template.updates.apply');
+  });
+
+  it('keeps a restricted template PAT root signed after replay without a private HTTP projection', () => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['template.updates.apply'] } };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
+      ...authorization.binding, actionId: 'template.updates.apply', grant,
+    } });
+    const context: ActionExecutorContext = { surface: 'rpc', authority: 'account_automation',
+      externalActionTarget: target, externalActionExecutionAuthorization: root,
+      externalActionCredential: { accountId: 'bob', principalId: 'bob', credentialId: 'bob-service', grant } };
+    const request = { effectActionId: 'template.updates.apply', method: 'GET', path: '/v1/artifacts/template-release',
+      daemonToken: 'installed-account-token', serverIdentityId: 'srv_bob_home',
+      installationId: 'alice-installation', privateKey: keys.secretKey };
+    const signed = executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ context, ...request });
+    expect(signed.ok).toBe(true);
+    if (!signed.ok) throw new Error('Missing PAT root signature');
+    expect(signed.headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+      [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: expect.any(String) });
+    expect(signed.headers).not.toHaveProperty('Authorization');
+    expect(signed).not.toHaveProperty('machineRpcAuthorization');
+    expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, target,
+      installationId: root.binding.installationId, requestId: root.binding.requestId,
+      effectActionId: request.effectActionId, method: request.method, path: request.path,
+      signature: signed.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey })).toBe(true);
+    expect(executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ ...request,
+      context: { ...context, externalActionExecutionAuthorization: undefined } })).toEqual({ ok: false });
+    expect(executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ ...request,
+      context: { surface: 'rpc', authority: 'account_automation' } })).toMatchObject({ ok: true,
+        headers: { Authorization: 'Bearer installed-account-token' } });
+  });
+
+  it('uses the installed Account bearer for an admitted same-Account template Release share child', async () => {
+    const actionId = 'template.release' as const;
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'account-release-root', binding: {
+      accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+      machineId: target.machineId, custodianAccountId: 'bob', installationId: 'alice-installation',
+      actionId, requestId: 'account-release', target, requestEnvelopeDigest: 'a'.repeat(43), accountEncryptionMode: 'plain',
+    } });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', runtimeAccountId: 'bob',
+      externalActionTarget: target, externalActionExecutionAuthorization: root };
+    const child = { action: 'artifact.public_link.create' as const, role: 'signed_in_link', input: { artifactId: 'artifact-1' } };
+    const headersFor = (context: ActionExecutorContext, daemonToken: string) => executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({
+      context, effectActionId: child.action, method: 'POST', path: '/v1/artifact-signed-in-links',
+      daemonToken, serverIdentityId: 'srv_bob_home', installationId: 'alice-installation', privateKey: keys.secretKey,
+    });
+    const run = (daemonToken: string) => invokeHostReviewedChildV1({ parent: { actionId, input: {} }, context, child,
+      admittedReview: { action: child.action, role: child.role, surface: 'cli' },
+      execute: async (_input, childContext) => headersFor(childContext, daemonToken) });
+    expect(await run(accountToken)).toMatchObject({ ok: true, machineRpcAuthorization: 'account',
+      headers: { Authorization: `Bearer ${accountToken}` } });
+    const aliceToken = `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({ sub: 'alice' })}.signature`;
+    expect(await run(aliceToken)).toEqual({ ok: false });
+    const bareRoot = headersFor(context, accountToken);
+    expect(bareRoot).not.toHaveProperty('machineRpcAuthorization');
+    expect(bareRoot.ok && bareRoot.headers).not.toHaveProperty('Authorization');
+  });
+
+  it('keeps the exact reviewed child purpose on signed Workflow storage beneath a scoped parent', async () => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1,
+      actions: { families: [], ids: ['template.instantiate', 'machines.setup.apply'] } };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
+      ...authorization.binding, actionId: 'template.instantiate', admittedMachineRole: 'manage', grant,
+    } });
+    const context: ActionExecutorContext = { surface: 'api', authority: 'account_automation', runtimeAccountId: 'bob',
+      externalActionTarget: target, externalActionExecutionAuthorization: root,
+      externalActionCredential: { ...principal, grant } };
+    const setup = { homeId: root.binding.serverIdentityId, machineId: target.machineId,
+      targets: [{ homeId: root.binding.serverIdentityId, machineId: target.machineId,
+        sources: [{ kind: 'direct', setup: {} }], desiredRevision: 1, recipePlans: [] }] };
+    const reviewedChild = { actionId: 'machines.setup.apply' as const, role: BOT_TEMPLATE_SETUP_APPLY_ROLE_V1,
+      inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', setup) };
+    const body = { operation: 'get', publisherMachineId: target.machineId,
+      runId: deriveMachineSetupCombinedRunIdV1({ homeId: root.binding.serverIdentityId,
+        accountId: root.binding.accountId, requestId: root.binding.requestId, reviewedChild }) };
+    const result = await invokeHostReviewedChildV1({ parent: { actionId: root.binding.actionId, input: {} }, context,
+      child: { action: 'machines.setup.apply', role: reviewedChild.role, input: setup },
+      admittedReview: { action: 'machines.setup.apply', role: reviewedChild.role, surface: 'api' },
+      execute: async (_input, childContext) => {
+        const carried = executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ context: childContext,
+          effectActionId: 'machines.setup.apply', method: 'POST', path: WORKFLOW_RUN_STORAGE_HTTP_PATH, body,
+          daemonToken: 'installed-custodian-must-not-be-spent', serverIdentityId: root.binding.serverIdentityId,
+          installationId: root.binding.installationId, privateKey: keys.secretKey });
+        expect(carried.ok).toBe(true);
+        if (!carried.ok) throw new Error('Missing signed Workflow storage headers');
+        expect(carried.headers.Authorization).toBeUndefined();
+        expect(carried.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(root.token);
+        expect(carried.headers['x-happier-action-effect']).toBe('machines.setup.apply');
+        const encoded = carried.headers['x-happier-action-reviewed-child'];
+        expect(encoded).toBeTypeOf('string');
+        expect(JSON.parse(Buffer.from(encoded!, 'base64url').toString('utf8'))).toEqual(reviewedChild);
+        expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, target,
+          installationId: root.binding.installationId, requestId: root.binding.requestId,
+          effectActionId: 'machines.setup.apply', method: 'POST', path: WORKFLOW_RUN_STORAGE_HTTP_PATH, body,
+          reviewedChild, signature: carried.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey })).toBe(true);
+        return { ok: true as const, result: {} };
+      } });
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it.each(['deployments.environments.create', 'deployments.targets.link'] as const)(
+    'carries the issuer-reviewed retention child on ordinary signed HTTP under %s', async actionId => {
+    const scoped = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
+      binding: { ...authorization.binding, actionId } });
+    const root = { ...contextForReviewedChild(), externalActionExecutionAuthorization: scoped };
+    const input = { homeId: scoped.binding.serverIdentityId, managedId: 'allocation', expectedIntentRevision: 4,
+      retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: true };
+    const child = { action: 'machines.managed.retention.update' as const, role: 'target-retention:guest', input };
+    const request = { effectActionId: child.action, method: 'POST', path: '/v1/machines/managed/controller/admit-control',
+      body: { action: child.action, requestId: scoped.binding.requestId, input } };
+    const headersFor = (context: ActionExecutorContext) => executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({
+      context, ...request, daemonToken: 'must-not-be-spent', serverIdentityId: scoped.binding.serverIdentityId,
+      installationId: scoped.binding.installationId, privateKey: keys.secretKey });
+    const result = await invokeHostReviewedChildV1({ parent: { actionId, input: {} }, context: root, child,
+      admittedReview: { action: child.action, role: child.role, surface: 'cli' },
+      execute: async (_input, context) => {
+        const carried = headersFor(context);
+        expect(carried.ok).toBe(true);
+        if (!carried.ok) throw new Error('Missing scoped child headers');
+        expect(carried.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(scoped.token);
+        expect(carried.headers.Authorization).toBeUndefined();
+        const encoded = carried.headers['x-happier-action-reviewed-child'];
+        expect(typeof encoded).toBe('string');
+        const reviewedChild = JSON.parse(Buffer.from(encoded!, 'base64url').toString('utf8'));
+        expect(reviewedChild).toEqual({ actionId: child.action, role: child.role,
+          inputDigest: computeActionInputApprovalDigestV1(child.action, input) });
+        expect(verifyExternalActionMachineRequestV1({ authorizationToken: scoped.token, target,
+          installationId: scoped.binding.installationId, requestId: scoped.binding.requestId, ...request,
+          reviewedChild, signature: carried.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey })).toBe(true);
+        return { ok: true as const, result: {} };
+      } });
+    expect(result).toMatchObject({ ok: true });
+    const rootHeaders = headersFor(root);
+    if (!rootHeaders.ok) throw new Error('Missing scoped root headers');
+    expect(rootHeaders.headers).not.toHaveProperty('x-happier-action-reviewed-child');
+  });
+
+  it('signs the admitted local reviewed child without replacing root authorization or requester custody', async () => {
+    const admitted = await executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
+      authorization, target, serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
+      serverHttpBaseUrl: 'https://home.test', installationId: 'alice-installation', privateKey: keys.secretKey,
+      rootAdmitted: true,
+    });
+    if (!admitted?.requesterHttpProjection) throw new Error('Missing requester HTTP projection');
+    const root = { ...contextForReviewedChild(), externalActionExecutionAuthorization: admitted };
+    const input = { environmentId: 'new-environment', expectedRevision: 1, bindings: [] };
+    const child = { action: 'deployments.bindings.set' as const, role: 'copied-bindings', input };
+    const parent = { actionId: authorization.binding.actionId, input: envelope.input };
+    const request = { effectActionId: child.action, method: 'POST', path: '/v1/deployments/environments/new-environment/bindings', body: input };
+    const result = await invokeHostReviewedChildV1({ parent, context: root, child,
+      admittedReview: { action: child.action, role: child.role, surface: 'cli' },
+      execute: async (_input, childContext) => {
+        const carried = childContext.externalActionExecutionAuthorization!;
+        expect(carried.binding).toBe(admitted.binding);
+        expect(carried.token).toBe(admitted.token);
+        expect(childContext.externalActionTarget).toBe(root.externalActionTarget);
+        const headers = await carried.requesterHttpProjection!.createRequestHeaders(request);
+        const encoded = headers?.['x-happier-action-reviewed-child'];
+        expect(typeof encoded).toBe('string');
+        const reviewedChild = JSON.parse(Buffer.from(encoded!, 'base64url').toString('utf8'));
+        expect(reviewedChild).toEqual({ actionId: child.action, role: child.role,
+          inputDigest: computeActionInputApprovalDigestV1(child.action, input) });
+        const verification = { authorizationToken: admitted.token, target,
+          installationId: 'alice-installation', requestId: admitted.binding.requestId, ...request,
+          signature: headers![EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey };
+        expect(verifyExternalActionMachineRequestV1({ ...verification, reviewedChild })).toBe(true);
+        expect(verifyExternalActionMachineRequestV1(verification)).toBe(false);
+        return { ok: true as const, result: {} };
+      } });
+    expect(result).toMatchObject({ ok: true });
+    expect(await admitted.requesterHttpProjection.createRequestHeaders(request)).not.toHaveProperty('x-happier-action-reviewed-child');
+  });
+
+  it('signs an admitted Workflow Session target from its captured Run baseline without a principal refresh predicate', async () => {
+    const actionId = 'session.notes.set';
+    const requestId = 'run/role-input/0';
+    const sessionTarget = { kind: 'session' as const, sessionId: 'owned-session' };
+    const start = resolveCliAgentStartContextV1({ sessionId: sessionTarget.sessionId,
+      metadata: { machineId: 'publisher', path: '/work' }, machineId: 'publisher', directory: '/work',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings: accountSettingsParse({}),
+      roleSourceInventory: await createRoleSourceReaderV1({})(), accountRoleOverrides: { status: 'ready', overrides: {} },
+      runCaller: { runId: 'run', runDepth: 0 } });
+    if ('ok' in start) throw new Error('Missing admitted Workflow start baseline');
+    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      executionRunWorkflowRunId: 'run', agentStartContext: start, workspaceWrites: 'allow',
+      actionCaller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' },
+        admittedPermissionCeiling: 'default' } } } satisfies ActionExecutorContext;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      expect(String(url)).toBe('https://home.test/v1/account/encryption/currentness');
+      return { status: 200, data: { mode: 'plain', version: 1, updatedAt: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null } };
+    });
+    let mints = 0;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+      mints++;
+      expect(request.workflowActionOrigin).toMatchObject({ runId: 'run', requestId,
+        sessionAuthority: { authorization: context.actionCaller.authorization, runDepth: 0,
+          directory: '/work', workspaceWrites: 'allow' } });
+      expect(verifyMachineInstallationProof({ publicKey: keys.publicKey, proof: request.installationProof!, payload: {
+        version: 1, machineId: 'publisher', installationId: 'publisher-installation', accountId: 'bob',
+        externalActionOrigin: { homeId: 'srv_bob_home', actionId, requestId,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), origin: request.workflowActionOrigin! },
+      } })).toBe(true);
+      return { status: 200, data: { v: 1, token: 'session-home-proof', binding: {
+        accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'srv_bob_home', machineId: 'publisher',
+        installationId: 'publisher-installation', actionId, requestId, target: sessionTarget,
+        workflowActionOrigin: request.workflowActionOrigin,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+      } } };
+    });
+    const request = { credentials: { token: accountToken, encryption: null }, context, actionId,
+      input: { sessionId: sessionTarget.sessionId, notes: 'Admitted notes' }, target: sessionTarget,
+      machineId: 'publisher', serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
+      serverHttpBaseUrl: 'https://home.test', installationId: 'publisher-installation', privateKey: keys.secretKey };
+    expect(await executionAuthorizationOwner.prepareInstalledWorkflowActionAuthorization(request))
+      .toMatchObject({ binding: { target: sessionTarget, workflowActionOrigin: { runId: 'run', requestId } } });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(mints).toBe(1);
+    expect(await executionAuthorizationOwner.prepareInstalledWorkflowActionAuthorization({ ...request,
+      context: { ...context, agentStartContext: { ...start, baseline: { ...start.baseline, machineId: 'another-publisher' } } },
+    })).toBeNull();
+    expect(await executionAuthorizationOwner.prepareInstalledWorkflowActionAuthorization({ ...request,
+      context: { ...context, executionRunWorkflowRunId: 'another-run' },
+    })).toBeNull();
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(mints).toBe(1);
+  });
+
+  it.each(['deployments.prepare', 'deployments.publish.prepare'] as const)('retains exact %s admission and refuses substitution before direct Account delivery', async actionId => {
+    const input = actionId === 'deployments.prepare' ? { projectSourceId: 'source', sourceRevision: 1,
+      workspace: { kind: 'workspace-ref', serverId: 'srv_bob_home', id: 'workspace' },
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' }, baseCommit: 'a'.repeat(40) }
+      : { serverId: 'srv_bob_home', machineId: target.machineId, installationId: 'installation',
+        projectSourceId: 'source', sourceRevision: 1, templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+          ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } };
+    // Finite Prepare retains an offline target; Session-create refusal must not become a blanket guard.
+    const machine = { id: target.machineId, kind: 'persistent', active: actionId !== 'deployments.prepare', installationId: 'installation',
+      revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null, installationPublicKey: null,
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+    vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
+      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+      : String(url).endsWith('/v1/machines') ? { status: 200, data: [machine] } : { status: 200, data: { machine } });
+    let minted = false;
+    let delivered = false;
+    let substitute = false;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/execution-authorization')) {
+        minted = true;
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { status: 200, data: { v: 1, token: 'prepare-proof', binding: {
+          accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+          machineId: target.machineId, custodianAccountId: 'bob', installationId: 'installation', actionId,
+          requestId: 'direct-prepare', target, accountEncryptionMode: 'plain',
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+          deploymentPreparationAdmission: actionId === 'deployments.prepare'
+            ? { operation: 'prepare', source: { id: 'source', revision: 1 },
+              workspace: { kind: 'workspace-ref', id: substitute ? 'another' : 'workspace' } }
+            : { operation: 'catalog', source: { id: substitute ? 'another' : 'source', revision: 1 },
+              machineId: target.machineId, installationId: 'installation' },
+        } } };
+      }
+      delivered = true;
+      return { status: 200, data: { v: 1, actionId, requestId: 'direct-prepare',
+        execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'prepared-read', actionId } } } };
+    });
+    const request = { actionId, input, requestId: 'direct-prepare', target,
+      credentials: { token: accountToken, encryption: null }, serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home' };
+    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'prepared-read', actionId } });
+    expect(minted && delivered).toBe(true);
+    minted = false;
+    delivered = false;
+    substitute = true;
+    const result = await executionAuthorizationOwner.dispatchOriginalAccountAction(request);
+    expect(minted).toBe(true);
+    expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+    expect(delivered).toBe(false);
+  });
+  it('retains exact Prepare references through minting and refuses a substituted workspace', async () => {
+    const actionId = 'deployments.prepare';
+    const prepareInput = { projectSourceId: 'source', sourceRevision: 1,
+      workspace: { kind: 'workspace-ref', serverId: 'srv_bob_home', id: 'workspace' },
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' }, baseCommit: 'a'.repeat(40) };
+    const admission = projectDeploymentPreparationAdmissionV1(actionId, prepareInput)!;
+    let substitute = false;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      expect(request.envelope).toMatchObject({ deploymentPreparationAdmission: admission });
+      expect(JSON.stringify(request.envelope)).not.toContain('private/project');
+      return { status: 200, data: { v: 1, token: 'prepare-proof', binding: {
+        accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+        machineId: target.machineId, custodianAccountId: 'bob', installationId: 'alice-installation', actionId,
+        requestId: 'prepare-request', target, accountEncryptionMode: 'e2ee',
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        deploymentPreparationAdmission: substitute ? { ...admission, workspace: { kind: 'workspace-ref', id: 'another' } } : admission,
+      } } };
+    });
+    const request = { actionId, input: prepareInput, requestId: 'prepare-request', target, machineId: target.machineId,
+      accountId: 'bob', accountEncryptionMode: 'e2ee' as const, tokenEpochHint: 7, token: accountToken,
+      serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://home.test',
+      installationId: 'alice-installation', privateKey: keys.secretKey,
+      material: { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) } };
+    expect(await prepareExternalActionRequesterAccountAuthorization(request))
+      .toMatchObject({ binding: { deploymentPreparationAdmission: admission } });
+    substitute = true;
+    expect(await prepareExternalActionRequesterAccountAuthorization(request)).toBeNull();
+  });
+  it('retains the exact deployment read projection through Home minting without publishing service names', async () => {
+    const actionId = 'deployments.health.read';
+    const readInput = { serverId: 'srv_bob_home', environmentId: 'environment', deploymentId: 'receipt', targetLinkId: 'runtime',
+      machineId: target.machineId, installationId: 'alice-installation', service: { kind: 'deployment', machineId: target.machineId,
+        environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'private-service', serviceId: 'instance/private-service' } };
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) };
+    let substitute = false;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      const admission = projectDeploymentReadAdmissionV1(actionId, readInput)!;
+      expect(request.envelope).toMatchObject({ deploymentReadAdmission: admission });
+      expect(JSON.stringify(request.envelope)).not.toContain('private-service');
+      return { status: 200, data: { v: 1, token: 'deployment-read-proof', binding: {
+        accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+        machineId: target.machineId, custodianAccountId: 'bob', installationId: 'alice-installation', actionId,
+        requestId: 'deployment-read-request', target, accountEncryptionMode: 'e2ee',
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        deploymentReadAdmission: substitute ? { ...admission, deploymentId: 'another-receipt' } : admission,
+      } } };
+    });
+    const request = { actionId, input: readInput, requestId: 'deployment-read-request', target, machineId: target.machineId,
+      accountId: 'bob', accountEncryptionMode: 'e2ee' as const, tokenEpochHint: 7, token: accountToken,
+      serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://home.test',
+      installationId: 'alice-installation', privateKey: keys.secretKey, material };
+    expect(await prepareExternalActionRequesterAccountAuthorization(request))
+      .toMatchObject({ binding: { deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, readInput) } });
+    substitute = true;
+    expect(await prepareExternalActionRequesterAccountAuthorization(request)).toBeNull();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(['structured', 'legacy'] as const)('dispatches an installed Workflow with %s Account custody using only the publisher key and exact Account-mode read', async kind => {
+    const token = kind === 'structured' ? accountToken
+      : `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({ sub: 'bob' })}.signature`;
+    const actionId = 'machines.setup.apply';
+    const requestId = 'run/invocation/0';
+    const childInput = { homeId: 'srv_bob_home', machineId: target.machineId, sources: [
+      { kind: 'accountPreset', presetId: 'reviewed', presetRevision: 1, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
+      { kind: 'direct', setup: {} },
+    ] };
+    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      executionRunWorkflowRunId: 'run', actionCaller: { kind: 'workflowRun', runId: 'run',
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } } satisfies ActionExecutorContext;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      // No Machine inventory, receiver installation lookup or publisher key is needed at the source.
+      expect(String(url)).toBe('https://home.test/v1/account/encryption');
+      return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+      expect(String(url)).toBe(`https://home.test/v1/actions/${actionId}`);
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+      expect(request).toMatchObject({ machineId: 'publisher', envelope: { v: 1, target, input: childInput },
+        workflowActionOrigin: { runId: 'run', requestId } });
+      expect(verifyMachineInstallationProof({ publicKey: keys.publicKey, proof: request.installationProof!,
+        payload: { version: 1, machineId: 'publisher', installationId: 'publisher-installation', accountId: 'bob',
+          externalActionOrigin: { homeId: 'srv_bob_home', actionId, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), origin: request.workflowActionOrigin! } } })).toBe(true);
+      return { status: 200, data: { v: 1, actionId, requestId, execution: { ok: true,
+        result: { operationId: 'f4114889-b83c-4c13-aad9-818ab1da8534' } } } };
+    });
+    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId, input: childInput, requestId, target,
+      credentials: { token, encryption: null }, serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
+      installedWorkflow: { context, machineId: 'publisher', installationId: 'publisher-installation', privateKey: keys.secretKey } }))
+      .toMatchObject({ ok: true, result: { operationId: expect.any(String) } });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['action_not_admitted', 'action_outcome_unknown', 'project_requester_home_unavailable', 'target_not_local', 'target_unavailable'] as const)('preserves original Account correlation for %s and refuses a mismatched reply', async code => {
+    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true, installationId: 'installation',
+      revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+    vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
+      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+      : url.endsWith(`/v1/machines/${machine.id}`) ? { status: 200, data: { machine } } : { status: 200, data: [machine] });
+    const response = (id: string) => {
+      const refusal = projectExternalActionHttpError(code, id);
+      return { status: refusal.statusCode, data: { ...refusal.payload,
+        ...(code === 'action_not_admitted' ? { failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null } } : {}),
+        ...(code === 'target_not_local' ? { phase: 'target_installation' } : {}),
+        ...(code === 'target_unavailable' ? { diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } } : {}),
+        ...(code === 'action_outcome_unknown' ? { diagnostic: { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' } } : {}) } };
+    };
+    vi.spyOn(axios, 'post').mockResolvedValueOnce(response(envelope.requestId)).mockResolvedValueOnce(response('other-request'));
+    const request = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
+      target, credentials: { token: accountToken, encryption: null, credentialProvenance: 'stored_session' as const },
+      serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_bob_home' };
+    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
+      .toMatchObject({ ok: false, errorCode: code,
+        ...(code === 'action_not_admitted' ? { failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null } } : {}),
+        ...(code === 'target_unavailable' ? { details: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } }
+          : code === 'project_requester_home_unavailable' ? {} : { details: { requestId: envelope.requestId,
+          ...(code === 'target_not_local' ? { phase: 'target_installation' } : {}),
+          ...(code === 'action_outcome_unknown' ? { diagnostic: { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' } } : {}) } }) });
+    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
 
   it.each(['matching', 'mismatched', 'malformed'] as const)('preserves the Machine availability mint refusal through the original Account Action (%s)', async reply => {
@@ -104,31 +755,6 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       : { ok: false, errorCode: 'auth_unavailable' });
     if (reply !== 'matching') expect(result).not.toHaveProperty('details');
     expect(post).toHaveBeenCalledTimes(1);
-  });
-
-  afterEach(() => vi.restoreAllMocks());
-
-  it.each(['action_not_admitted', 'action_outcome_unknown', 'target_unavailable'] as const)('preserves original Account correlation for %s and refuses a mismatched reply', async code => {
-    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true, installationId: 'installation',
-      revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
-    vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
-      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
-      : url.endsWith(`/v1/machines/${machine.id}`) ? { status: 200, data: { machine } } : { status: 200, data: [machine] });
-    const response = (id: string) => {
-      const refusal = projectExternalActionHttpError(code, id);
-      return { status: refusal.statusCode, data: { ...refusal.payload,
-      ...(code === 'target_unavailable' ? { diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } } : {}) } };
-    };
-    vi.spyOn(axios, 'post').mockResolvedValueOnce(response(envelope.requestId)).mockResolvedValueOnce(response('other-request'));
-    const request = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
-      target, credentials: { token: accountToken, encryption: null, credentialProvenance: 'stored_session' as const },
-      serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_bob_home' };
-    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
-      .toMatchObject({ ok: false, errorCode: code, details: code === 'target_unavailable'
-      ? { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } : { requestId: envelope.requestId } });
-    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction(request))
-      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
 
   it('preserves retryable Home mint transport failure during requester preparation', async () => {
@@ -177,14 +803,140 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     })).resolves.toEqual({ ok: false, code: 'credential_scope_denied' });
   });
 
-  it('preserves a typed Machine admission refusal instead of reporting unavailable authentication', async () => {
-    const refusal = projectExternalActionHttpError('target_unavailable');
-    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: refusal.statusCode, data: refusal.payload });
+  it('carries the recorded controller refusal through mint and public daemon ingress without dispatch', async () => {
+    const machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
+    const controllerMachineId = '6b2f67f1-dc3d-40c7-9080-0ec6d4515822';
+    const details = { reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${controllerMachineId}`,
+      remedy: `Run this action on Machine ${controllerMachineId}, or make that controller reachable, then retry` };
+    const failureCause = { phase: 'deployment.controller.placement', errorClass: 'Error', errorCode: 'credential_scope_denied', httpStatus: null };
+    // Home HTTP is the boundary; the mint parser, PAT verifier and public daemon route remain real.
+    const payload = { error: 'credential_scope_denied', details, failureCause };
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: payload });
+    const app = fastify();
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: machineId, currentServerId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
+      verifyPat: createDaemonPatVerifier({ accountId: 'bob', introspect: async () => ({ ok: true, ...principal, expiresAt: null }) }),
+      executor: createActionExecutor(createUnavailableActionTransportDeps()),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: accountToken, encryption: null } }),
+      mintExecutionAuthorization: request => executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+        ...request, serverHttpBaseUrl: 'https://home.test' }),
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v1/actions/deployments.teardown',
+        headers: { authorization: `Bearer hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}` },
+        payload: { v: 1, requestId: 'qa-domain-1104-persisted-g-teardown-r76', target: { kind: 'machine', machineId },
+          input: { serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN', environmentId: 'cmw424voq00cbmcskx8q38dvv',
+            targetLinkId: 'cmw424vpr00cdmcsk85jcci67', requestKey: 'qa-domain-1104-r76-retained-g-teardown', reason: 'decommission' } } });
+      expect.soft([response.statusCode, response.json()]).toEqual([403, payload]);
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(await executionAuthorizationOwner.deliverExternalActionRequest({ actionId: 'deployments.teardown',
+        serverHttpBaseUrl: 'https://home.test', body: {}, envelope, headers: {}, isCurrent: async () => true }))
+        .toMatchObject({ ok: false, errorCode: 'credential_scope_denied', details, failureCause });
+    } finally { await app.close(); }
+  });
+
+  it('settles an insufficient-authority mint refusal once with the canonical code', async () => {
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: { error: 'present_user_required' } });
     await expect(executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
-      actionId: 'providers.models.projection', machineId: target.machineId, envelope,
+      actionId: 'machines.terminal.list', machineId: target.machineId, envelope,
       pat: 'terminal-credential', serverHttpBaseUrl: 'https://home.test',
+    })).resolves.toEqual({ ok: false, code: 'present_user_required' });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the Home authority refusal through the daemon public ingress without dispatch or another mint', async () => {
+    const refusal = projectExternalActionHttpError('present_user_required');
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: refusal.statusCode, data: refusal.payload });
+    const app = fastify();
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: target.machineId, currentServerId: 'bob-profile',
+      verifyPat: createDaemonPatVerifier({ accountId: 'bob', introspect: async () => ({
+        ok: true, ...principal, expiresAt: null,
+      }) }),
+      executor: createActionExecutor(createUnavailableActionTransportDeps()),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: accountToken, encryption: null } }),
+      mintExecutionAuthorization: request => executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+        ...request, serverHttpBaseUrl: 'https://home.test',
+      }),
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v1/actions/machines.terminal.list',
+        headers: { authorization: `Bearer hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}` },
+        payload: { ...envelope, input: { serverId: 'bob-profile', machineId: target.machineId } } });
+      expect([response.statusCode, response.json()]).toEqual([403, refusal.payload]);
+      expect(post).toHaveBeenCalledTimes(1);
+    } finally { await app.close(); }
+  });
+
+  it.each(['diagnosed', 'bare', 'unavailable'] as const)('preserves the Machine availability mint refusal through the daemon ingress (%s)', async reply => {
+    const diagnostic = { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' };
+    const requestId = 'daemon-machine-availability';
+    vi.spyOn(axios, 'post').mockResolvedValue(reply === 'unavailable'
+      ? { status: 503, data: { error: 'auth_unavailable' } }
+      : { status: 409, data: { error: 'invalid_request', code: 'target_unavailable', requestId,
+        ...(reply === 'diagnosed' ? { diagnostic } : {}) } });
+    // Session birth is the OS/process boundary; the real Action admission and dispatch stay in place.
+    const sessionSpawnNew = vi.fn(async () => ({ type: 'pending' as const, retryWithSameCreationKey: true, outcome: 'accepted' as const }));
+    const app = fastify();
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: target.machineId, currentServerId: 'bob-profile',
+      verifyPat: createDaemonPatVerifier({ accountId: 'bob', introspect: async () => ({ ok: true, ...principal, expiresAt: null }) }),
+      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: accountToken, encryption: null } }),
+      mintExecutionAuthorization: request => executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+        ...request, serverHttpBaseUrl: 'https://home.test',
+      }),
+    });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v1/actions/session.spawn_new',
+        headers: { authorization: `Bearer hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}` },
+        payload: { v: 1, requestId, target, input: { creationKey: 'own-start', agentTarget: { kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } } } });
+      if (reply === 'diagnosed') {
+        expect([response.statusCode, response.json()]).toEqual([409, { error: 'invalid_request', code: 'target_unavailable', requestId, diagnostic }]);
+        expect(sessionSpawnNew).not.toHaveBeenCalled();
+      } else {
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ execution: { ok: true, result: { type: 'pending' } } });
+        expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
+      }
+    } finally { await app.close(); }
+  });
+
+  it.each(['scm.diffSummary.result.list', 'providers.models.projection', 'private-authored-action'])
+  ('records a safe non-Session mint refusal for %s while preserving the public result', async actionId => {
+    const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const refusal = projectExternalActionHttpError('target_unavailable');
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: refusal.statusCode,
+      data: { ...refusal.payload, requestId: 'private-response-request' } });
+    await expect(executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+      actionId, machineId: 'private-machine-key',
+      envelope: { ...envelope, requestId: 'private-authored-request',
+        input: { cwd: '/private/workspace', requesterKey: 'private-requester-key', body: 'private-input' } },
+      pat: 'private-terminal-credential', serverHttpBaseUrl: 'https://private-home.test',
     })).resolves.toEqual({ ok: false, code: 'target_unavailable' });
     expect(post).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith('[external-action-phase]', {
+      phase: 'authorization_mint_http_status', httpStatus: 409, refusalBranch: 'target_unavailable',
+      errorClass: 'PhaseRefused', message: 'External Action phase refused',
+      ...(actionId === 'private-authored-action' ? {} : { actionId }),
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private-');
+  });
+
+  it('records only the status for an unrecognized mint response without leaking its body', async () => {
+    const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    vi.spyOn(axios, 'post').mockResolvedValue({ status: 403,
+      data: { error: 'private-refusal-code', token: 'private-response-token', body: 'private-response-body' } });
+    await expect(executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+      actionId: 'scm.diffSummary.result.list', machineId: 'private-machine-key', envelope,
+      pat: 'private-terminal-credential', serverHttpBaseUrl: 'https://private-home.test',
+    })).resolves.toEqual({ ok: false, code: 'invalid_token' });
+    expect(log).toHaveBeenCalledWith('[external-action-phase]', {
+      phase: 'authorization_mint_http_status', httpStatus: 403, actionId: 'scm.diffSummary.result.list',
+      errorClass: 'PhaseRefused', message: 'External Action phase refused',
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private-');
   });
 
   it.each([401, 403])('correlates a native Home mint refusal (%s) without disclosing its proof or response', async status => {
@@ -389,6 +1141,23 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       requestId: rpc.requestId, params: rpc.params, signature: execution.machineSignature };
     expect(verifyExternalActionMachineRpcRequestV1({ ...verification, publicKey: keys.publicKey })).toBe(true);
     expect(verifyExternalActionMachineRpcRequestV1({ ...verification, publicKey: destination.publicKey })).toBe(false);
+    const domainInput = { serverId: 'bob-profile', environmentId: 'environment', domainId: 'domain' };
+    const child = { action: 'deployments.domains.add' as const, role: 'template.domain:web', input: domainInput };
+    await invokeHostReviewedChildV1({ parent: { actionId: args.actionId, input: args.input },
+      context: { surface: 'cli', runtimeAccountId: 'bob', externalActionExecutionAuthorization: admitted,
+        externalActionTarget: target }, child,
+      admittedReview: { action: child.action, role: child.role, surface: 'cli' },
+      execute: async (_input, context) => {
+        const childRpc = { ...rpc, context, effectActionId: child.action };
+        const childExecution = createSourceExecution(childRpc);
+        const reviewedChild = { actionId: child.action, role: child.role,
+          inputDigest: computeActionInputApprovalDigestV1(child.action, domainInput) };
+        expect(childExecution?.reviewedChild).toEqual(reviewedChild);
+        expect(verifyExternalActionMachineRpcRequestV1({ ...verification, effectActionId: child.action,
+          reviewedChild, signature: childExecution.machineSignature, publicKey: keys.publicKey })).toBe(true);
+        expect(createSourceExecution({ ...childRpc, context: JSON.parse(JSON.stringify(context)) })?.reviewedChild).toBeUndefined();
+        return { ok: true as const, result: {} };
+      } });
     expect(createSourceExecution({ ...rpc, sourceMachineId: 'different-source' })).toBeNull();
     expect(createSourceExecution({ ...rpc, sourceInstallationId: 'retired-installation' })).toBeNull();
     events.length = 0;
@@ -409,7 +1178,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
       caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 },
       sourceTurnId: 'turn-2', callerPermissionMode: 'yolo', causalPermissionAuthority: null, requestId: 'session-acquire' });
-    const args = { actionId: 'machines.managed.acquire', input: { selection: { kind: 'one-off',
+    const args = { actionId: 'machines.managed.acquire', input: { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'one-off',
       homeId: 'srv_bob_home', controller: { machineId: target.machineId, installationId: 'alice-installation' },
       launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
@@ -621,3 +1390,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(current).toBe(false);
   });
 });
+
+function contextForReviewedChild(): ActionExecutorContext {
+  return { surface: 'cli', authority: 'account_automation', runtimeAccountId: 'bob', externalActionTarget: target };
+}

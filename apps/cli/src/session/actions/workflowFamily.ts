@@ -1,9 +1,8 @@
-import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
-import type { PublishWorkflowInvocationRead } from '@/workspaces/publishProject';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readApiTokenAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { readProjectAccountRows, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
@@ -15,7 +14,7 @@ import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protoco
 import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
 import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
-import type { ActionExecutorDeps, ActionExecutorContext, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ActionExecutorContext, WorkflowActionExecuteArgs, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { WorkflowStepExecutionSelectionSchema, WorkflowIngressContextV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/actions/sessionSpawnMachineTarget';
@@ -23,7 +22,6 @@ import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/r
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { resolveActionAgentStartContextV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import type { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
 import { configuration } from '@/configuration';
@@ -36,10 +34,11 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationPreferences';
 import type { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } from './workflowActionExecutor';
 import type { createWorkflowRunActionOwner } from './workflowRunActions';
-import type { PublishWorkflowStart } from '@/workspaces/publishProject';
+import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from './workflowMaterializationHost';
 import { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
+import { createCredentialedWorkflowRunEncryptionResolver } from '@/daemon/workflows/workflowActionAdmission';
 import type { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence, resolveWorkflowSessionConversation } from '@/daemon/workflows/invocationRecoveryObserver';
 import type { createWorkflowInvocationRecoveryFactWriter } from '@/daemon/workflows/recovery';
 import type { createWorkflowRunPushNotificationClient } from '@/daemon/workflows/production';
@@ -50,6 +49,7 @@ import type { prepareWorkflowAcceptedWorkspaceTarget, restoreRecordedWorkflowWor
 import { createAutomationAccountEncryptionMaterialSnapshotV1, resolveValidatedAutomationAccountEncryptionV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import type { fetchChangesAccountId } from '@/api/changes';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
+import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import type { resolveWorkflowDiscussionOrigin } from '@/daemon/workflows/workflowDiscussion';
@@ -68,12 +68,15 @@ import type { SessionPullRequestBindingResultV1 } from '@happier-dev/channels-pr
 import type { WorkflowIngressContextV1 } from '@happier-dev/protocol';
 
 export type CliWorkflowFamilyHost = Readonly<{
+  nativeAccount?: Parameters<typeof createCliWorkflowTriggerActions>[0]['nativeAccount'];
+  deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']>;
   roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;
   readRoleSources: RoleSourceReader;
   projectHomeId: string;
   actionHomeId: string;
   callMachineAction: CliMachineActionCall;
   sessionList: ActionExecutorDeps['sessionList'];
+  sessionRead?: ActionExecutorDeps['sessionRead'];
   approvalsStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
   readCurrentSessionMetadata: ReturnType<typeof createCliBoundSessionMetadataReader>;
   resolveAgentStartContext: NonNullable<ActionExecutorDeps['resolveAgentStartContext']>;
@@ -84,7 +87,7 @@ export type CliWorkflowFamilyHost = Readonly<{
   resolveProjectHomeIdentity: () => Promise<string>;
   readServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined>;
   resolveActionCallerSession: (context: ActionExecutorContext) => ReturnType<typeof resolveCliActionCallerSession>;
-  resolveSessionAgentIdentity: (metadata: Record<string, unknown> | null | undefined, backendTarget?: BackendTargetRefV2 | null) => Promise<Extract<NonNullable<WorkflowIngressContextV1['agentTarget']>, { kind: 'agent' }>['identity'] | undefined>;
+  resolveSessionAgentIdentity: (metadata: Record<string, unknown> | null | undefined, backendTarget?: PersistedBackendTargetRefV2 | null) => Promise<Extract<NonNullable<WorkflowIngressContextV1['agentTarget']>, { kind: 'agent' }>['identity'] | undefined>;
   invokeSessionPullRequestBinding: (input: SessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => Promise<SessionPullRequestBindingResultV1>;
   resolveTransportForSession: (idOrPrefix: string, signal?: AbortSignal, caller?: Readonly<{ context: ActionExecutorContext; actionId: ActionId }>, expectedSessionAddress?: ActionExecutorContext['expectedSessionAddress']) => Promise<ResolvedSessionTransport | Readonly<{
     ok: false;
@@ -102,19 +105,19 @@ export type CliWorkflowFamilyHost = Readonly<{
 export type CliWorkflowFamily = Readonly<{
   workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null;
   resolveWorkflowMaterializer: ReturnType<typeof createCredentialedWorkflowMaterializationHostV1> | null;
-  readWorkflowApprovedOperation: ActionExecutorDeps['readWorkflowApprovedOperation'];
+  readWorkflowApprovedOperation: ReturnType<typeof createWorkflowApprovedOperationReader> | undefined;
   workflowAction: ActionExecutorDeps['workflowAction'] | null;
   workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']>;
-  startCombinedWorkflow: (request: PublishWorkflowStart) => Promise<unknown>;
-  waitForCombinedWorkflow: (request: PublishWorkflowStart, runId: string) => Promise<unknown>;
-  readCombinedWorkflowInvocations: (request: PublishWorkflowStart, input: PublishWorkflowInvocationRead) => Promise<unknown>;
+  startCombinedWorkflow: (request: WorkflowCombinedRunStartV1) => Promise<unknown>;
+  waitForCombinedWorkflow: (request: WorkflowCombinedRunStartV1, runId: string) => Promise<unknown>;
+  readCombinedWorkflowInvocations: (request: WorkflowCombinedRunStartV1, input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']) => Promise<unknown>;
 }>;
 export function createCliWorkflowFamily(
   params: CliActionDepsParams,
   host: CliWorkflowFamilyHost,
   runStorage: CliWorkflowRunStorage,
 ): CliWorkflowFamily {
-  const { roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId } = host;
+  const { roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId } = host;
   const { workflowRunServerHttpBaseUrl, createWorkflowRunStorage, workflowRunStorage } = runStorage;
 
   const workflowDefinitions: ReturnType<typeof createWorkflowDefinitionActions> | null = params.credentials
@@ -161,7 +164,11 @@ export function createCliWorkflowFamily(
     }) : null;
   const workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null = params.credentials && workflowDefinitions
     ? createCliWorkflowTriggerActions({ credentials: params.credentials,
+      ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
+      ...(host.nativeAccount ? { nativeAccount: host.nativeAccount } : {}),
+      deploymentAction: host.deploymentAction,
       sessionList,
+      sessionRead,
       pullRequests: {
         listLinks: async (sessionId, caller) => {
           const result = await invokeSessionPullRequestBinding({ kind: 'list', sessionId }, caller);
@@ -184,7 +191,7 @@ export function createCliWorkflowFamily(
           readArtifact: (definitionId, signal) => workflowDefinitions.get({ definitionId, ...(signal ? { signal } : {}) }),
         });
         if (!resolved) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
-        return resolved.definition;
+        return resolved;
       },
       resolveSession: async (sessionId, caller, options) => {
         const transport = await resolveTransportForSession(sessionId, caller?.signal);
@@ -271,7 +278,9 @@ export function createCliWorkflowFamily(
     });
   };
   const resolveWorkflowEncryption = async (context: ActionExecutorContext, signal?: AbortSignal, actionId?: string) => {
-    const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
+    const authorization = context.externalActionExecutionAuthorization;
+    const requester = readRequesterAccountActionContext(authorization);
+    const requesterHttp = requester ? undefined : authorization?.requesterHttpProjection;
     const credentials = requester?.credentials ?? params.credentials;
     if (!credentials) {
       throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
@@ -282,31 +291,35 @@ export function createCliWorkflowFamily(
         if (requester) return Promise.resolve(requester.accountEncryptionCurrentness);
         // Session birth keeps its existing signed requester transport. It has
         // no finite Account context and cannot borrow Machine custody instead.
-        if (context.externalActionExecutionAuthorization && actionId) {
+        if (authorization && actionId) {
           const authorizationHeaders = resolveServerRequestHeaders(context, actionId, {
             method: 'GET', path: '/v1/account/encryption/currentness',
           });
           if (!authorizationHeaders) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-          return fetchAccountEncryptionCurrentness({ token: credentials.token, credentials,
-            serverBaseUrl: workflowRunServerHttpBaseUrl, authorizationHeaders, signal: currentnessSignal });
+          // HTTP-only requester authority carries no installed Account custody.
+          // The exact signed proof's custody is keyless unless its own owner supplied material.
+          return fetchAccountEncryptionCurrentness({ token: requesterHttp ? authorization.token : credentials.token,
+            ...(requesterHttp ? {} : { credentials }),
+            serverBaseUrl: requesterHttp?.serverHttpBaseUrl ?? workflowRunServerHttpBaseUrl, authorizationHeaders, signal: currentnessSignal });
         }
         const scope = { token: credentials.token, serverBaseUrl: workflowRunServerHttpBaseUrl,
           ...(currentnessSignal ? { signal: currentnessSignal } : {}) };
         return readObservedAccountEncryptionCurrentnessWitness(scope)
           ?? fetchAccountEncryptionCurrentness({ ...scope, credentials });
       },
-      resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(credentials),
+      resolveAccountEncryptionMaterial: async () => requesterHttp
+        ? readApiTokenAccountEncryptionMaterialSnapshot(authorization)
+        : createAutomationAccountEncryptionMaterialSnapshotV1(credentials),
     });
   };
   const readWorkflowApprovedOperation = params.credentials ? createWorkflowApprovedOperationReader({
     storage: workflowRunStorage,
-    resolveEncryption: async context => {
-      const resolved = await resolveWorkflowEncryption(context);
-      return resolved.kind === 'available' ? resolved : null;
-    },
+    readSavedTriggerConsent: input => workflowTriggers?.readSavedConsent(input, input.context) ?? Promise.resolve(null),
+    resolveEncryption: createCredentialedWorkflowRunEncryptionResolver({ credentials: params.credentials,
+      serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),
   }) : undefined;
   const resolveWorkflowRunEncryption = async (
-    caller: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0],
+    caller: Readonly<{ actionId: string; context: ActionExecutorContext }>,
     signal?: AbortSignal,
   ) => {
     const resolved = await resolveWorkflowEncryption(caller.context, signal, caller.actionId);
@@ -318,9 +331,12 @@ export function createCliWorkflowFamily(
   };
 
   const ownedWorkflowAction = workflowDefinitions && params.credentials
-    ? async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], combined?: PublishWorkflowStart) => {
+    ? async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], combined?: WorkflowCombinedRunStartV1) => {
       // Each invocation retains its original proof; concurrent Session calls
       // must never spend another caller's authority through a shared closure.
+      // A combined Run spends its retained parent's currentness purpose, not
+      // the internal workflow.run.start/wait effect under that parent's proof.
+      const encryptionCaller = { actionId: combined?.parent.actionId ?? args.actionId, context: args.context };
       const workflowRunStorage = createWorkflowRunStorage(combined
         ? { parent: combined.parent, context: args.context } : args);
       const [{ createWorkflowActionExecutor }, { logger }, { createWorkflowRunActionOwner }, { createCommittedInputTypeDeps }, { doesWorkflowImmediateEligibleStepTargetSession }] = await Promise.all([import("./workflowActionExecutor"), import("@/ui/logger"), import("./workflowRunActions"), import("@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps"), import("@/daemon/workflows/coordinator")]);
@@ -375,6 +391,7 @@ export function createCliWorkflowFamily(
         ...(workflowTriggers ? { triggers: workflowTriggers } : {}),
         runs: (() => {
           const owner = createWorkflowRunActionOwner({
+          ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
           resolveServerProfileScopeId: identifier => isSameActionHomeId(identifier) ? actionHomeId : null,
           resolveDiscussionOrigin: async ({ origin, context }) => {
             const [{ readRequesterAccountActionContext }, { resolveWorkflowDiscussionOrigin }] = await Promise.all([import("@/daemon/sessionEncryption/requesterAccountActionContext"), import("@/daemon/workflows/workflowDiscussion")]);
@@ -420,12 +437,13 @@ export function createCliWorkflowFamily(
           },
           resolveAgentStartContext,
           sessionList,
+          sessionRead,
           inputTypeDeps: createCommittedInputTypeDeps(),
-          resolveMaterializationContext: async (args, target) => {
+          resolveMaterializationContext: async (args, target, readAgentStartContext) => {
             if (!resolveWorkflowMaterializer) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
             if (args.context.surface !== 'agent'
-              && (!args.context.actionCaller || args.context.actionCaller.kind === 'host')
-              && args.context.defaultSessionId) {
+              && (!args.context.actionCaller || args.context.actionCaller.kind === 'host')) {
+              if (!args.context.defaultSessionId) return await resolveWorkflowMaterializer({ ...target, signal: args.context.signal });
               const sessionId = args.context.defaultSessionId;
               const [{ readRequesterAccountActionContext }, { resolveWorkflowSessionConversation }] = await Promise.all([import("@/daemon/sessionEncryption/requesterAccountActionContext"), import("@/daemon/workflows/invocationRecoveryObserver")]);
               const requester = readRequesterAccountActionContext(args.context.externalActionExecutionAuthorization);
@@ -443,18 +461,23 @@ export function createCliWorkflowFamily(
               return await resolveWorkflowMaterializer({ ...target, signal: args.context.signal,
                 roleSelection: projectWorkflowConversationRoleSelection(origin, target.machineId) });
             }
-            const metadata = await readCurrentSessionMetadata();
-            const startContext = await resolveActionAgentStartContextV1({ resolveAgentStartContext }, args.context);
-            const baseline = startContext?.baseline.configuration;
-            const sameMachine = startContext?.baseline.machineId === target.machineId;
-            return await resolveWorkflowMaterializer({ ...target, signal: args.context.signal,
-              roleSelection: {
-                sessionRoles: readSessionRolesV1(metadata) ?? undefined,
-                ...(sameMachine && baseline?.profileId ? { defaultProfileId: baseline.profileId } : {}),
-                defaultConnectedServices: sameMachine ? baseline?.connectedServices : undefined,
-                ...(baseline?.agentTarget ? { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(baseline.agentTarget),
-                  ...(baseline.modelSelection ? { modelId: 'ref' in baseline.modelSelection
-                    ? baseline.modelSelection.ref.modelId : baseline.modelSelection.modelId } : {}) } } : {}),
+            return resolveWorkflowMaterializer({ ...target, signal: args.context.signal,
+              roleSelection: async () => {
+                const metadata = await readCurrentSessionMetadata();
+                const startContext = await readAgentStartContext();
+                if (startContext && 'ok' in startContext) throw Object.assign(new Error(startContext.error), {
+                  code: startContext.errorCode, details: startContext.details,
+                });
+                const baseline = startContext?.baseline.configuration;
+                const sameMachine = startContext?.baseline.machineId === target.machineId;
+                return {
+                  sessionRoles: readSessionRolesV1(metadata) ?? undefined,
+                  ...(sameMachine && baseline?.profileId ? { defaultProfileId: baseline.profileId } : {}),
+                  defaultConnectedServices: sameMachine ? baseline?.connectedServices : undefined,
+                  ...(baseline?.agentTarget ? { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(baseline.agentTarget),
+                    ...(baseline.modelSelection ? { modelId: 'ref' in baseline.modelSelection
+                      ? baseline.modelSelection.ref.modelId : baseline.modelSelection.modelId } : {}) } } : {}),
+                };
               },
             });
           },
@@ -471,7 +494,7 @@ export function createCliWorkflowFamily(
           storage: workflowRunStorage,
           definitions: workflowDefinitions,
           readPluginWorkflows: workflowDefinitions.readPluginWorkflows,
-          resolveEncryption: (signal) => resolveWorkflowRunEncryption(args, signal),
+          resolveEncryption: (signal) => resolveWorkflowRunEncryption(encryptionCaller, signal),
           observeRecovery: async ({ run, progress, signal }) => {
             const { observeWorkflowInvocationRecoveryEvidence } = await import("@/daemon/workflows/invocationRecoveryObserver");
             return await observeWorkflowInvocationRecoveryEvidence({
@@ -490,12 +513,13 @@ export function createCliWorkflowFamily(
             const census = WorkflowRunRecipientCensusResponseV1Schema.parse(await workflowRunStorage.execute({
               operation: 'run-key.census', runId: run.id,
             }, signal ? { signal } : {}));
-            const resolved = resolveWorkflowRunDataKeyV1({ encryption: await resolveWorkflowRunEncryption(args, signal), census });
+            const resolved = resolveWorkflowRunDataKeyV1({ encryption: await resolveWorkflowRunEncryption(encryptionCaller, signal), census });
             if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
             const [{ createWorkflowInvocationRecoveryFactWriter }, { createWorkflowRunReviewEntryNotificationHandler }, { createWorkflowRunPushNotificationClient }, { createWorkflowInvocationRecoveryObserver }] = await Promise.all([import("@/daemon/workflows/recovery"), import("@/notifications/activity/dispatchWorkflowRunUpdateNotification"), import("@/daemon/workflows/production"), import("@/daemon/workflows/invocationRecoveryObserver")]);
             const writer = createWorkflowInvocationRecoveryFactWriter({ accountId: census.ownerAccountId, run, expectedRevision: run.revision,
               encryption: resolved.encryption,
               onReviewEntered: createWorkflowRunReviewEntryNotificationHandler({
+                operationContext: params.savedSecretOperationContext,
                 expoPushSender: createWorkflowRunPushNotificationClient(params.token),
               }),
               storage: { execute: async (operation, options) => await workflowRunStorage.execute(operation, {
@@ -573,6 +597,9 @@ export function createCliWorkflowFamily(
           });
           return combined ? { execute: (request, ingress) => request.actionId === 'workflow.run.start'
             ? owner.startCombined({ ...combined, start: request.input, context: request.context }, ingress)
+            : request.actionId === 'workflow.run.wait'
+              ? owner.waitCombined({ ...combined, start: { ...combined.start, runId: request.input.runId },
+                context: request.context }, ingress)
             : owner.execute(request, ingress) } satisfies Parameters<typeof createWorkflowActionExecutor>[0]['runs'] : owner;
         })(),
       });

@@ -26,6 +26,7 @@ import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionPartici
 import { SessionAttestedContextV1Schema } from './sessionAttestedContextV1.js';
 import { SessionSectionPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 import { PluginUiNewSessionSeedOriginV1Schema } from '../../plugins/ui/newSessionSeedOrigin.js';
+import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
 export { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from './sessionAttestedContextV1.js';
 
 /**
@@ -46,6 +47,12 @@ export const SessionSpawnNewInitialInputV1Schema = lazyZodSchema(() => z.strictO
 }).check(z.superRefine(requireSessionInputContent)));
 export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitialInputV1Schema>;
 
+/** Ordinary spawn installs software; removal, app execution and updates have separate reviews. */
+export const SessionSpawnMachineSetupInputV1Schema = lazyZodSchema(() => {
+  const { homeId, machineId, sources, exclusions } = MachineSetupPlanInputV1Schema.shape;
+  return z.strictObject({ homeId, machineId, sources, exclusions });
+});
+
 /**
  * The sole public request for an ordinary authored hosted Session. Legacy flat
  * spawn fields are normalized before this boundary and are never accepted as a
@@ -54,6 +61,8 @@ export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitia
 export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObject({
   ...SessionSpawnNewSelectionV2BaseSchema.shape,
   creationKey: zMini.optional(SessionCreationKeyV1Schema),
+  /** Reviewed software setup completes on the selected Machine before Agent startup. */
+  machineSetupPlanInput: z.optional(SessionSpawnMachineSetupInputV1Schema),
   /** Transport observer preference; send only after negotiating Session-spawn epoch three. */
   observeSessionCommit: z.optional(z.literal(true)),
   /** Owner-private original authoring destination, negotiated with the target daemon. */
