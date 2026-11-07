@@ -1,6 +1,6 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
-import { SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
+import { SESSION_AGENT_READINESS_CHILDREN_V1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
@@ -205,6 +205,7 @@ import { preparePublicProfileAction, executePublicProfileAction } from './execut
 import { executeUsageCoachAction } from './executor/usageCoachActions.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
 import { isFilesystemActionId } from './filesystemActionFamily.js';
+import { DaemonWorkspaceFileListResponseSchema } from '../machines/workspaceFiles.js';
 import { isProjectActionIdV1 } from './projectActionIdsV1.js';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../projects/openProjectV1.js';
 import { isSessionTerminalActionId } from './sessionTerminalActionFamily.js';
@@ -5248,7 +5249,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Native filename capability failures are declared domain results. Keep
         // them distinct from Action refusals so only the former can fall back.
         if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles) {
-          const native = spec.outputSchema.safeParse(result);
+          const native = DaemonWorkspaceFileListResponseSchema.safeParse(result);
           if (native.success) return { ok: true, result: native.data };
         }
         return completeActionResult(result);
@@ -5816,14 +5817,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const args = { ...spawnArgs, admittedInput: admittedSpawnInput,
-            invokeAgentReadinessAction: (childId: SessionAgentReadinessActionIdV1, childInput: unknown) => {
+            invokeAgentReadinessAction: (childId: SessionAgentReadinessActionIdV1, childInput: unknown,
+              childOptions?: Readonly<{ result: 'optional' }>) => {
               const role = readSessionAgentReadinessRoleV1(childId);
               if (!role) return Promise.resolve<ActionExecuteResult>({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
               const normalized = getActionSpec(childId).inputSchema.parse(childInput);
               return invokeHostReviewedChildV1({
                 parent: { actionId, input: projectNativeJsonValueForTransport(admittedSpawnInput) as Record<string, JsonValue> },
                 context: ctx, child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
-                execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput, childContext),
+                // An optional update has no blocking review recipient. Ordinary
+                // admission still refuses it when review is required; Setup can
+                // later invoke the existing Manage Action with a review surface.
+                execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput,
+                  childOptions?.result === 'optional'
+                    && childId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
+                    && readRecord(normalized).intent === 'update'
+                    ? { ...childContext, interactivePresentation: 'unavailable' } : childContext),
               });
             } };
           const continuation = ctx.invocationServices?.sessionCreation;
