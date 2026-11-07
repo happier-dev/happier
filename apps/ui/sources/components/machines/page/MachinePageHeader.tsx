@@ -24,7 +24,7 @@ import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { describeMachineStartUnavailable, machineStartSessionDisplay } from './machineStartAvailability';
+import { describeMachineStartUnavailable, machineHeaderPrimary } from './machineStartAvailability';
 import type { MachinePageTabId } from './machinePageTabQuery';
 import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -252,6 +252,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const { onRename, renaming } = props;
     const terminalInMenu = needsYouAction !== null && canOpenTerminal;
+    const headerPrimary = machineHeaderPrimary({ tab: props.tab ?? 'overview', online: target.online === true, needsYou: needsYouAction !== null });
     const menuActions = React.useMemo((): PageHeaderMenuAction[] => {
         if (!machine) return [];
         const rename: PageHeaderMenuAction = {
@@ -310,6 +311,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     {needsYouAction ? (
                         <RoundButton
                             testID="machine-detail-needs-you-action"
+                            display={headerPrimary === 'needsYou' ? undefined : 'secondary'}
                             title={needsYouAction.label}
                             onPress={() => {
                                 if (target.machineId) beginMachinePageTabIntent({ serverId: target.serverId, machineId: target.machineId }, needsYouAction.tab);
@@ -320,7 +322,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     <RoundButton
                         testID="machine-detail-start-session"
                         // An offline machine keeps the action's place but not its weight: a disabled filled button would be the page's loudest thing.
-                        display={machineStartSessionDisplay({ tab: props.tab ?? 'overview', online: target.online === true, needsYou: needsYouAction !== null }) === 'secondary' ? 'secondary' : undefined}
+                        display={headerPrimary === 'startSession' ? undefined : 'secondary'}
                         title={t('machineDetailPage.startAction')}
                         disabled={!machineCanSpawn}
                         disabledReason={startUnavailableReason}

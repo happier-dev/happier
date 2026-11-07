@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-const { describeMachineStartUnavailable, machineStartSessionDisplay } = await import('./machineStartAvailability');
+const { describeMachineStartUnavailable, machineHeaderPrimary } = await import('./machineStartAvailability');
 
 describe('Start session says why it is disabled (MR6)', () => {
     it('names the reason the canonical readiness owner gives, never a raw status', () => {
@@ -20,13 +20,15 @@ describe('Start session says why it is disabled (MR6)', () => {
         expect(describeMachineStartUnavailable({ status: 'missing' }, 'Lima')).toBeUndefined();
     });
 
-    it('is the page primary only on Overview of an online Machine that needs nothing else (one primary per view)', () => {
-        expect(machineStartSessionDisplay({ tab: 'overview', online: true, needsYou: false })).toBe('primary');
-        expect(machineStartSessionDisplay({ tab: 'overview', online: true, needsYou: true })).toBe('secondary');
-        expect(machineStartSessionDisplay({ tab: 'overview', online: false, needsYou: false })).toBe('secondary');
-        // A tab's own review or form leads its page; the header steps back.
+    it('fills at most one header action, and only on Overview: a tab’s own review or staged change leads its page', () => {
+        expect(machineHeaderPrimary({ tab: 'overview', online: true, needsYou: false })).toBe('startSession');
+        expect(machineHeaderPrimary({ tab: 'overview', online: true, needsYou: true })).toBe('needsYou');
+        expect(machineHeaderPrimary({ tab: 'overview', online: false, needsYou: true })).toBe('needsYou');
+        expect(machineHeaderPrimary({ tab: 'overview', online: false, needsYou: false })).toBeNull();
+        // Setup's "Review changes", Network's staged "Review changes", any tab's own form: the header steps back.
         for (const tab of ['services', 'processes', 'storage', 'guard', 'setup', 'security', 'plugin'] as const) {
-            expect(machineStartSessionDisplay({ tab, online: true, needsYou: false })).toBe('secondary');
+            expect(machineHeaderPrimary({ tab, online: true, needsYou: true })).toBeNull();
+            expect(machineHeaderPrimary({ tab, online: true, needsYou: false })).toBeNull();
         }
     });
 });

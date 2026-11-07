@@ -48,6 +48,10 @@ import { selectMachineNavigationItem, useMachinePageNavigation } from './machine
 import { resolveMachineNavigationCustomizer } from './machineNavigationCustomizer';
 import { MachinePhonePageStrip } from './MachinePhonePageStrip';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { PhoneDestinationBackLine, usePageBackControl } from '@/components/ui/layout/usePageBackControl';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { machinesIndexHref } from './machinePageHref';
 
 const styles = StyleSheet.create(() => ({
     // The tab strip is the one divider between the identity and the tab's body: the same breath above and below it,
@@ -142,6 +146,12 @@ export function MachinePageScreen() {
     const hostedInCollection = useHappierCollectionLayout() !== null;
     const deviceType = useDeviceType();
     const phone = deviceType === 'phone';
+    // A phone's Machine page hides the native header, so it draws its way back to Machines on its own line above the
+    // header (R2). A Back the page inherits (the Settings door's) keeps its place; a wide page beside its list has none.
+    const inheritedBack = useNavigationBackControl();
+    const goToMachines = React.useCallback(() => safeRouterBack({ router, fallbackHref: machinesIndexHref(door) }), [router, door]);
+    const phoneBack = usePageBackControl('machine-page-back', goToMachines);
+    const backLine = phone && !inheritedBack ? <PhoneDestinationBackLine control={phoneBack} /> : null;
     const cockpit = isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience: useSetting('mobileWorkspaceExperienceV1') });
     const scope = useActiveServerAccountScope(serverId);
     const navigation = useMachinePageNavigation({ serverId, machineId, scope, tabs, activeId: machinePageTabEntryKey(tab.entry),
@@ -184,6 +194,7 @@ export function MachinePageScreen() {
             <>
                 <Stack.Screen options={screenOptions} />
                 <ItemList pageColumn={MACHINE_PAGE_COLUMN}>
+                    {backLine}
                     <MachinePageHeader target={target} managedIdentity={null} renaming={false} onRename={rename.start} tab={tab.entry.id} />
                     <ItemGroup surface="none">
                         {target.isHydratingMachine ? (
@@ -204,6 +215,7 @@ export function MachinePageScreen() {
     const pushedOnPhone = phone && isMachinePageTabPushed(tab.params);
     const chrome = pushedOnPhone ? <>{rename.editor}</> : (
         <>
+            {backLine}
             <ManagedMachinePageHeader target={target} managedEnrolled={managedEnrolled} renaming={rename.saving} onRename={rename.start} tab={tab.entry.id} />
             {cockpit ? <MachinePhonePageStrip model={navigation.model} onSelect={onSelectPage} /> : tabs.length > 1 ? (
                 // In the page column like every section, so the tabs line up with the header and the sheets.

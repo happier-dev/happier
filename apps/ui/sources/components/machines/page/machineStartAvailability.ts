@@ -22,10 +22,13 @@ export function describeMachineStartUnavailable(readiness: MachineSpawnReadiness
 }
 
 /**
- * Whether Start session is the page's filled primary. It leads only the Overview of an online Machine with nothing that
- * needs the person first; every other tab's own review or form leads its page, so the header steps back (one primary per
- * view).
+ * Which header action is the page's one filled primary. The header leads only on Overview: there the Machine's
+ * needs-you action leads when it has one, else Start session on an online Machine. On every other tab the tab's own
+ * review, staged change or form leads its page (Setup's and Network's "Review changes"), so both header actions step
+ * back (one primary per view).
  */
-export function machineStartSessionDisplay(input: Readonly<{ tab: MachinePageTabId; online: boolean; needsYou: boolean }>): 'primary' | 'secondary' {
-    return input.tab === 'overview' && input.online && !input.needsYou ? 'primary' : 'secondary';
+export function machineHeaderPrimary(input: Readonly<{ tab: MachinePageTabId; online: boolean; needsYou: boolean }>): 'needsYou' | 'startSession' | null {
+    if (input.tab !== 'overview') return null;
+    if (input.needsYou) return 'needsYou';
+    return input.online ? 'startSession' : null;
 }
