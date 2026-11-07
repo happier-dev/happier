@@ -1,6 +1,3 @@
-import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +11,9 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginProjectedResourceV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginDynamicResourceContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RpcError, RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { notifyExecutionRunActivity, notifyExecutionRunActivityReconnect } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -22,11 +22,13 @@ import { SetSessionAttentionStandingRequestSchema, SetSessionAttentionStandingRe
 import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/sessions/readState/actions';
 import { SessionQuestionContextV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 
-import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, createSessionFixture, createSessionViewerFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createPlainAccountEncryptionCurrentnessFixture, createSessionFixture, createSessionViewerFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, FeaturesResponseSchema, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { clearPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
@@ -36,13 +38,14 @@ import { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } from '@/syn
 import { createAutomationRunFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { WorkflowRunListPage } from '@/sync/domains/workflows/workflowRunListActions';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useSessionManagedWorkflowRuns, type SessionManagedWorkflowRunsState } from '@/components/workflows/run/useContextManagedWorkflowRuns';
 import { projectWork, resolveWorkReadPresentation } from '@/components/sessions/work/workProjection';
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { createAccountNoticeArtifactFixture, createUsageNoticeArtifactFixture, usageNoticeFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
+import { createAccountNoticeArtifactFixture, createServiceHealthNoticeArtifactFixture, createUsageNoticeArtifactFixture, usageNoticeFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import { buildVoiceBrief, type VoiceBriefItem } from '@/voice/context/buildVoiceBrief';
@@ -70,8 +73,15 @@ import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageN
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { InboxPluginSessionLines } from '@/components/inbox/InboxPluginSessionLines';
 import { InboxContent } from '@/components/inbox/InboxContent';
-import { createArtifactReadBatchHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactReadBatchHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture, seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
@@ -92,6 +102,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 const discussionBoundary = vi.hoisted(() => ({ request: vi.fn() }));
 const artifactReadBoundary = vi.hoisted(() => ({ request: vi.fn() }));
 const executionRunBoundary = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), follows: vi.fn(), rules: vi.fn() }));
+let executionRunRelay: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
 let artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 function seedArtifacts(artifacts: Record<string, DecryptedArtifact>, opaqueRows: readonly Artifact[] = []) {
     artifactStore.clear();
@@ -104,7 +115,7 @@ function seedArtifacts(artifacts: Record<string, DecryptedArtifact>, opaqueRows:
             artifactStore.seedAccountGrant(stored.id, 'account-a', stored.access);
         }
     }
-    storage.setState({ artifacts });
+    seedAdmittedArtifactRows(Object.values(artifacts), storage);
 }
 let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
@@ -118,6 +129,8 @@ function page(runs: ReturnType<typeof createWorkflowRunSummaryFixture>[]): Workf
 }
 
 let model: InboxModel | null = null;
+let managedMachines: ManagedMachineV1[] = [];
+let managedMachineReads = 0;
 const readExecutor = createActionExecutor(createActionExecutorBoundaryFixture({ appShellAction: invokeMountedWorkRead }));
 function readInbox(accountId = 'account-a') {
     return readExecutor.execute('inbox.get', {}, { surface: 'agent', authority: 'account_automation',
@@ -162,6 +175,109 @@ function enableDiscussionReads() {
 }
 
 describe('useInboxModel work groups (ORC R-10)', () => {
+    it('keeps Home summary and open Inbox hook order and commit and read cost stable across unrelated Home updates', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const machine = createMachineFixture({ id: 'deletion-reachability', installationId: 'installation-a', activeAt: Date.now() });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        recordMachineRequestFailed({ serverId, accountId: 'account-a', machineId: machine.id });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [{
+            version: 1, operationId: 'deletion-reachability-reboot', revision: 1, actionId: 'machines.reboot', state: 'running',
+            scope: { accountId: 'account-a', machineId: machine.id }, title: 'Reboot', createdAt: Date.now(), cancellation: 'unsupported',
+            domainRef: { kind: 'machineReboot', serverId, machineId: machine.id, installationId: 'installation-a',
+                task: { id: 'reboot-task', taskKind: 'machine.reboot.v1' },
+                basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: [], expectedRunningServicesKnown: true } },
+        }] });
+        managedMachines = [ManagedMachineV1Schema.parse({ id: 'cost-deletion-box', homeId: 'srv_inbox_home', custodianAccountId: 'account-a',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Cost build box', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native-box' } },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: Date.now(), availability: 'present', power: 'stopped', storage: 'retained',
+                deletionNotices: [{ kind: 'stopped-storage', at: Date.now() + 86_400_000,
+                    rule: { kind: 'after-stop', afterMs: 14 * 86_400_000 }, consequence: 'disk-deleted' }] },
+        })];
+        const hookErrors: string[] = [];
+        const reportError = console.error;
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+            const message = args.map(String).join(' ');
+            if (/order of Hooks|Rendered (?:more|fewer) hooks|Maximum update depth/i.test(message)) hookErrors.push(message);
+            reportError(...args);
+        });
+        let commits = 0;
+        function Surface({ open }: Readonly<{ open: boolean }>) {
+            return <InboxSummaryProvider>{open ? <InboxModelProvider><Probe />
+                <MountedInboxContent /><MountedInboxContent view="updates" />
+            </InboxModelProvider> : null}</InboxSummaryProvider>;
+        }
+        const view = (open: boolean) => <React.Profiler id="inbox-machines" onRender={() => { commits += 1; }}>
+            <Surface open={open} />
+        </React.Profiler>;
+        const screen = await renderScreen(view(false));
+        try {
+            await screen.update(view(true));
+            await vi.waitFor(() => expect(isArtifactInventoryReady(storage.getState(), 'inboxOpen')).toBe(true));
+            await vi.waitFor(() => expect(screen.findByTestId('inbox.machine-deletion.cost-deletion-box')).not.toBeNull());
+            expect(screen.findByTestId(`inbox.machine.${machine.id}`)).not.toBeNull();
+            const settledCommits = commits;
+            const settledMachineReads = managedMachineReads;
+            // Real publications from another Home must cost zero commits in these owners.
+            for (let update = 0; update < 8; update += 1) {
+                await act(async () => storage.getState().applyMachines([
+                    createMachineFixture({ id: `other-home-${update}`, activeAt: Date.now() }),
+                ], false, { sourceServerId: 'unrelated-home' }));
+            }
+            expect(storage.getState().machineListByServerId['unrelated-home']).toHaveLength(8);
+            expect(commits - settledCommits).toBe(0);
+            expect(managedMachineReads - settledMachineReads).toBe(0);
+            managedMachines = managedMachines.map(row => ({ ...row, observation: { ...row.observation!, deletionNotices: [] } }));
+            await act(async () => publishHomeAccountChange(serverId));
+            await vi.waitFor(() => expect(screen.findByTestId('inbox.machine-deletion.cost-deletion-box')).toBeNull());
+            expect(managedMachineReads).toBeGreaterThan(settledMachineReads);
+            expect(commits).toBeGreaterThan(settledCommits);
+            await screen.update(view(false));
+            await screen.update(view(true));
+            expect(hookErrors).toEqual([]);
+        } finally { await screen.unmount(); errorSpy.mockRestore(); }
+    });
+
+    it('renders a due provider deletion reminder from the pushed managed inventory and removes a withdrawn deadline', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const deletionAt = Date.now() + 86_400_000;
+        managedMachines = [ManagedMachineV1Schema.parse({ id: 'deletion-box', homeId: 'srv_inbox_home', custodianAccountId: 'account-a',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native-box' } },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: Date.now(), availability: 'present', power: 'stopped', storage: 'retained',
+                deletionNotices: [{ kind: 'stopped-storage', at: deletionAt,
+                    rule: { kind: 'after-stop', afterMs: 14 * 86_400_000 }, consequence: 'disk-deleted' }] },
+        })];
+        const screen = await renderModel(<MountedInboxContent />);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('inbox.machine-deletion.deletion-box')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('Build box');
+            expect(model!.hasPrimaryAttention).toBe(true);
+            const reminderItems = model!.items.filter(item => item.focus.kind === 'managed_machine');
+            expect(reminderItems).toHaveLength(1);
+            expect(countInboxNeedsYou(model!)).toBe(1);
+            expect(reminderItems[0]!.context).toContain(formatAsOfTime(deletionAt));
+            expect(reminderItems[0]).toMatchObject({ view: 'needs_you',
+                focus: { kind: 'managed_machine', id: 'deletion-box', serverId },
+                pageRoute: `/settings/machines/managed/deletion-box?serverId=${serverId}` });
+            const actionRead = await readInbox();
+            expect(actionRead.ok).toBe(true);
+            if (actionRead.ok) expect(actionRead.result).toMatchObject({ items: expect.arrayContaining([
+                expect.objectContaining({ focus: reminderItems[0]!.focus, context: reminderItems[0]!.context }),
+            ]) });
+            managedMachines = managedMachines.map(machine => ({ ...machine, observation: { ...machine.observation!, deletionNotices: [] } }));
+            await act(async () => publishHomeAccountChange(appliedSnapshot().serverId));
+            await vi.waitFor(() => expect(screen.findByTestId('inbox.machine-deletion.deletion-box')).toBeNull());
+            expect(model!.items.filter(item => item.focus.kind === 'managed_machine')).toEqual([]);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps one C1 health condition in Updates during its readable operation and restores blocking after settlement', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
@@ -196,6 +312,91 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 .toMatchObject({ type: 'blocked', healthPhase: 'open', resolved: false });
         } finally { await screen.unmount(); actionOperationStore.reset(); }
     });
+
+    it('exposes exact readable reboot downtime in Updates and returns to actual presence after settlement', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const machine = createMachineFixture({ id: 'inbox-reboot-target', installationId: 'installation-a', activeAt: Date.now() });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        recordMachineRequestFailed({ serverId, accountId: 'account-a', machineId: machine.id });
+        const reboot: ActionOperationSnapshotV1 = {
+            version: 1, operationId: 'inbox-reboot', revision: 1, actionId: 'machines.reboot', state: 'running',
+            scope: { accountId: 'account-a', machineId: machine.id }, title: 'Reboot', createdAt: Date.now(),
+            cancellation: 'unsupported', domainRef: { kind: 'machineReboot', serverId, machineId: machine.id,
+                installationId: 'installation-a', task: { id: 'reboot-task', taskKind: 'machine.reboot.v1' },
+                basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: [], expectedRunningServicesKnown: true } },
+        };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [reboot] });
+        const screen = await renderModel();
+        try {
+            expect(model!.machineReachabilityEntries).toEqual([expect.objectContaining({
+                serverId, accountId: 'account-a', machineId: machine.id, installationId: 'installation-a',
+                view: 'updates', reachability: 'unreachable', expectedDuring: 'reboot',
+                operation: expect.objectContaining({ snapshot: reboot }),
+            })]);
+            const before = model!.machineReachabilityEntries;
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'unrelated-machine', activeAt: Date.now() })], false,
+                { sourceServerId: serverId }));
+            expect(model!.machineReachabilityEntries).toBe(before);
+            await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...reboot,
+                revision: 2, state: 'failed', settledAt: Date.now(), error: { errorCode: 'action_outcome_unknown', error: 'Unknown' } }] }));
+            expect(model!.machineReachabilityEntries).toEqual([expect.objectContaining({
+                reachability: 'unreachable', expectedDuring: null, operation: expect.objectContaining({ snapshot: expect.objectContaining({ state: 'failed' }) }),
+            })]);
+            await act(async () => recordMachineRequestSucceeded({ serverId, accountId: 'account-a', machineId: machine.id }));
+            expect(model!.machineReachabilityEntries).toEqual([expect.objectContaining({ reachability: 'reachable', expectedDuring: null })]);
+        } finally { await screen.unmount(); actionOperationStore.reset(); }
+    });
+
+    it('never infers expected downtime from cancelled, undispatched, stale or uncertain reboot custody', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const machine = createMachineFixture({ id: 'inbox-reboot-invalid', installationId: 'installation-a', activeAt: Date.now() });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        recordMachineRequestFailed({ serverId, accountId: 'account-a', machineId: machine.id });
+        const reboot: ActionOperationSnapshotV1 = {
+            version: 1, operationId: 'inbox-reboot-invalid', revision: 1, actionId: 'machines.reboot', state: 'running',
+            scope: { accountId: 'account-a', machineId: machine.id }, title: 'Reboot', createdAt: Date.now(),
+            cancellation: 'unsupported', domainRef: { kind: 'machineReboot', serverId, machineId: machine.id,
+                installationId: 'installation-a', task: { id: 'reboot-task', taskKind: 'machine.reboot.v1' },
+                basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: [], expectedRunningServicesKnown: true } },
+        };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [reboot] });
+        const screen = await renderModel();
+        try {
+            expect(model!.machineReachabilityEntries[0]?.expectedDuring).toBe('reboot');
+            const attachment = reboot.domainRef!;
+            if (attachment.kind !== 'machineReboot') throw new Error('Expected reboot fixture');
+            const invalid: readonly ActionOperationSnapshotV1[] = [
+                { ...reboot, state: 'cancelled', settledAt: Date.now() },
+                { ...reboot, state: 'failed', settledAt: Date.now(), error: { errorCode: 'permission_denied', error: 'Rejected' } },
+                { ...reboot, state: 'accepted', domainRef: { ...attachment, basis: undefined } },
+                { ...reboot, observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } },
+                { ...reboot, domainRef: { ...attachment, installationId: 'old-installation' } },
+                { ...reboot, domainRef: { ...attachment, serverId: 'different-home' } },
+                { ...reboot, domainRef: { ...attachment, machineId: 'different-machine' } },
+            ];
+            for (const snapshot of invalid) {
+                await act(async () => { actionOperationStore.reset(); actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] }); });
+                expect(model!.machineReachabilityEntries[0]).toMatchObject({ reachability: 'unreachable', expectedDuring: null });
+            }
+            await act(async () => {
+                actionOperationStore.reset(); actionOperationStore.mergeSnapshots({ serverId, snapshots: [reboot] });
+                actionOperationStore.reconcileMachineProjection({ serverId, accountId: 'account-a', machineId: machine.id,
+                    snapshots: [], knownOperationKeys: new Set([actionOperationAddressKey({ serverId, operationId: reboot.operationId })]) });
+            });
+            expect(model!.machineReachabilityEntries[0]).toMatchObject({ expectedDuring: null,
+                operation: { isUnavailableProjection: true, observation: 'unavailable' } });
+            for (const input of [
+                { serverId: 'different-home', snapshots: [reboot] },
+                { serverId, snapshots: [{ ...reboot, scope: { ...reboot.scope, accountId: 'different-account' } }] },
+            ]) {
+                await act(async () => { actionOperationStore.reset(); actionOperationStore.mergeSnapshots(input); });
+                expect(model!.machineReachabilityEntries).toEqual([]);
+            }
+        } finally { await screen.unmount(); actionOperationStore.reset(); }
+    });
+
     it('keeps a list-only lead title current and private without reading transcript bodies on unrelated arrivals', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
@@ -231,6 +432,18 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             } })));
             expect(model!.items.find(item => item.focus.id === worker.id)).toBe(row);
             expect(bodyReads).toBe(0);
+            const appearanceKey = buildSessionOrganizationSessionKey(serverId, worker.id);
+            await act(async () => { storage.getState().setSessionAppearanceOptimistic(serverId, worker.id, {
+                sessionId: worker.id, display: { t: 'plain', v: { color: { kind: 'accent', key: 'purple' } } },
+                displayState: { status: 'available', value: null }, updatedAt: Date.now(),
+            }); });
+            await vi.waitFor(() => expect(model?.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === worker.id)?.appearanceColor)
+                .toEqual({ kind: 'accent', key: 'purple' }));
+            expect(model?.items.find(item => item.focus.id === worker.id)).toHaveProperty('appearanceColor', { kind: 'accent', key: 'purple' });
+            expect(storage.getState().sessionOrganizationAppearancesBySessionKey[appearanceKey]).toBeDefined();
+            await act(async () => { storage.getState().setSessionAppearanceOptimistic(serverId, worker.id, null); });
+            await vi.waitFor(() => expect(model?.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === worker.id)?.appearanceColor).toBeNull());
+            expect(model?.items.find(item => item.focus.id === worker.id)).toHaveProperty('appearanceColor', null);
             await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
                 ...state.sessionListRowsByServerId, [serverId]: { ...state.sessionListRowsByServerId[serverId],
                     [lead.id]: { ...lead, metadata: { ...lead.metadata!, name: 'Revised lead' } },
@@ -245,6 +458,114 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             await vi.waitFor(() => expect(model?.items.find(item => item.focus.id === worker.id)?.reportsTo?.title).toBeNull());
             expect(screen.getTextContent()).not.toContain('Payments rollout');
             expect(screen.getTextContent()).not.toContain('Revised lead');
+        } finally { await screen.unmount(); }
+    });
+
+    it('groups a background-Home list-only worker under its lead, and a focused-Home worker likewise', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const focusedHome = appliedSnapshot().serverId;
+        const backgroundHome = 'background-home';
+        const rowsFor = (serverId: string, prefix: string) => {
+            const lead = createSessionListRenderableSessionFixture({ id: `${prefix}-lead`, serverId,
+                metadata: { name: `${prefix} rollout`, path: '/project', host: 'qa-host' } });
+            const worker = createSessionFixture({ id: `${prefix}-worker`, serverId, active: true,
+                manager: { sessionId: lead.id }, pendingPermissionRequestCount: 1, pendingRequestObservedAt: Date.now() });
+            return { lead, worker, rows: {
+                [lead.id]: lead,
+                [worker.id]: createSessionListRenderableSessionFixture({ ...worker, hasPendingPermissionRequests: true }),
+            } };
+        };
+        const focused = rowsFor(focusedHome, 'focused');
+        const background = rowsFor(backgroundHome, 'background');
+        storage.setState({ sessions: {}, sessionMessages: {},
+            sessionListRowsByServerId: { [focusedHome]: focused.rows, [backgroundHome]: background.rows },
+            ordinarySessionListMembershipByServerId: {
+                [focusedHome]: [focused.lead.id, focused.worker.id], [backgroundHome]: [background.lead.id, background.worker.id],
+            } });
+        const screen = await renderModel();
+        try {
+            await vi.waitFor(() => expect(model?.workGroups.flatMap(group => group.items.map(item => item.kind === 'session'
+                ? item.entry.candidate.sessionId : null))).toEqual(expect.arrayContaining([focused.worker.id, background.worker.id])));
+            expect(model!.workGroups.map(group => ({
+                root: group.root.kind === 'lead' ? group.root.sessionId : group.root.kind,
+                workers: group.items.flatMap(item => item.kind === 'session' ? [item.entry.candidate.sessionId] : []),
+            }))).toEqual(expect.arrayContaining([
+                { root: focused.lead.id, workers: [focused.worker.id] },
+                { root: background.lead.id, workers: [background.worker.id] },
+            ]));
+            expect(model!.workGroups.some(group => group.root.kind === 'other')).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+
+    it('reads separate equal-id leads and workers on different Homes through inbox.get', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const homes = [appliedSnapshot().serverId, 'background-home'];
+        const rows = Object.fromEntries(homes.map(serverId => [serverId, {
+            lead: createSessionListRenderableSessionFixture({ id: 'lead', serverId }),
+            worker: createSessionListRenderableSessionFixture({ id: 'worker', serverId, active: true,
+                manager: { sessionId: 'lead' }, hasPendingPermissionRequests: true }),
+        }]));
+        storage.setState({ sessions: {}, sessionMessages: {}, sessionListRowsByServerId: rows,
+            ordinarySessionListMembershipByServerId: Object.fromEntries(homes.map(home => [home, ['lead', 'worker']])) });
+        const screen = await renderModel();
+        try {
+            await vi.waitFor(() => expect(model?.sessionPresentation.sessionsNeedingAttention).toHaveLength(2));
+            const response = await readInbox();
+            expect(response).toMatchObject({ ok: true, result: { status: 'ready', groups: expect.arrayContaining(homes.map(serverId => expect.objectContaining({
+                root: { kind: 'lead', serverId, sessionId: 'lead' },
+                items: [expect.objectContaining({ kind: 'session', serverId, sessionId: 'worker' })],
+            }))) } });
+            expect(model!.workGroups).toHaveLength(2);
+            expect(new Set(model!.workGroups.map(group => group.key)).size).toBe(2);
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps a background same-id snooze beside focused-Home attention through inbox.get', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const background = createSessionFixture({ id: 'same-worker', serverId: 'background-home',
+            manager: { sessionId: 'lead' } });
+        const remindAt = Date.now() + 60_000;
+        storage.setState({ sessions: { [background.id]: background }, sessionMessages: {},
+            sessionListRowsByServerId: { [serverId]: {
+                [background.id]: createSessionListRenderableSessionFixture({ id: background.id, serverId,
+                    active: true, manager: { sessionId: 'lead' }, hasPendingPermissionRequests: true }),
+            } }, ordinarySessionListMembershipByServerId: { [serverId]: [background.id] },
+            sessionOrganizationAttentionStandingsBySessionKey: {
+                [buildSessionOrganizationSessionKey('background-home', background.id)]: {
+                    sessionId: background.id, standing: true, remindAt, updatedAt: 1,
+                },
+            } });
+        const screen = await renderModel();
+        try {
+            await vi.waitFor(() => expect(model?.sessionPresentation.sessionsNeedingAttention).toHaveLength(1));
+            expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', groups: [
+                { root: { kind: 'lead', serverId, sessionId: 'lead' },
+                    items: [{ kind: 'session', serverId, sessionId: background.id }] },
+                { root: { kind: 'lead', serverId: 'background-home', sessionId: 'lead' },
+                    items: [{ kind: 'snoozed', serverId: 'background-home', sessionId: background.id, remindAt }] },
+            ] } });
+        } finally { await screen.unmount(); }
+    });
+
+    it('does not borrow a hydrated foreign ancestor for a missing background lead in inbox.get', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const ancestor = createSessionFixture({ id: 'missing-lead', serverId, manager: { sessionId: 'foreign-root' } });
+        const worker = createSessionListRenderableSessionFixture({ id: 'background-worker', serverId: 'background-home',
+            active: true, manager: { sessionId: ancestor.id }, hasPendingPermissionRequests: true });
+        storage.setState({ sessions: { [ancestor.id]: ancestor }, sessionMessages: {},
+            sessionListRowsByServerId: { 'background-home': { [worker.id]: worker } },
+            ordinarySessionListMembershipByServerId: { 'background-home': [worker.id] } });
+        const screen = await renderModel();
+        try {
+            await vi.waitFor(() => expect(model?.sessionPresentation.sessionsNeedingAttention).toHaveLength(1));
+            expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', groups: [
+                { root: { kind: 'lead', serverId: 'background-home', sessionId: ancestor.id },
+                    items: [{ kind: 'session', serverId: 'background-home', sessionId: worker.id }] },
+            ] } });
+            expect(model!.workGroups[0]?.root).toEqual({ kind: 'lead', serverId: 'background-home',
+                sessionId: ancestor.id, session: null });
         } finally { await screen.unmount(); }
     });
 
@@ -272,11 +593,11 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         try {
             await vi.waitFor(() => expect(model?.items.find(item => item.focus.id === worker.id)).toMatchObject({
                 reportsTo: { address: { serverId, sessionId: lead.id }, title: 'Payments rollout' },
-                workerUpdateHeadline: 'Runbook drafted',
+                workerUpdateHeadline: expect.stringContaining('Runbook drafted'),
             }));
             await act(async () => { storage.getState().applyMessages(lead.id, [notice(2, 'Runbook revised')]); });
             await vi.waitFor(() => expect(model?.items.find(item => item.focus.id === worker.id)?.workerUpdateHeadline)
-                .toBe('Runbook revised'));
+                .toContain('Runbook revised'));
             const row = model!.items.find(item => item.focus.id === worker.id);
             await act(async () => { storage.getState().applyMessages(otherLead.id, [
                 { id: 'unrelated-prompt', seq: 1, localId: null, createdAt: 1, role: 'user', isSidechain: false,
@@ -310,7 +631,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             await import('../../../../../packages/plugins/channels/src/testkit/sessionPullRequestBindingFixture');
         const state = new MemoryCollection();
         for (const [id, number] of [['one', 1], ['two', 2]] as const) {
-            const binding = sessionPullRequestBindingFixture(id, 'linked-session', number);
+            const binding = sessionPullRequestBindingFixture(id, 'linked-session', number, 'open');
             await state.put(withChannelStateSessionIdentity(binding, binding.payload.target), { expectedRevision: 'absent' });
         }
         // Only persistent Data, Settings IO and host Session discovery are boundaries; both plugin owners stay real.
@@ -338,9 +659,11 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 set: async () => { throw new Error('Read only'); }, reset: async () => { throw new Error('Read only'); } }) },
         } satisfies Pick<import('@happier-dev/plugin-sdk').PluginServices, 'storage' | 'actions' | 'settings' | 'targetedContributions'>;
         const channels = await createPluginTestkit({ manifest: CHANNELS_PLUGIN.manifest, module: CHANNELS_PLUGIN, services });
-        const session = createSessionFixture({ id: 'linked-session', serverId, updatedAt: 123 });
-        storage.setState({ sessions: { [session.id]: session },
-            sessionListRowsByServerId: { [serverId]: { [session.id]: createSessionListRenderableSessionFixture(session) } },
+        const session = createSessionFixture({ id: 'linked-session', serverId, updatedAt: 123,
+            metadataLayoutVersion: 1, metadata: null,
+            ownerMetadataView: { name: 'Payments rollout', path: '/project', host: 'qa-host' } });
+        storage.setState({ sessions: {},
+            sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
             ordinarySessionListMembershipByServerId: { [serverId]: [session.id] } });
         const pluginId = PLUGIN_MANIFEST.id;
         const resources = (PLUGIN_MANIFEST.contributes?.resources ?? [])
@@ -417,12 +740,24 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} };
             const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
             const view = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>
-                <AppShellPluginUiProjectionValueProvider value={value}><InboxModelProvider><Probe /></InboxModelProvider>
+                <AppShellPluginUiProjectionValueProvider value={value}><InboxModelProvider><Probe /><MountedInboxContent view="updates" /></InboxModelProvider>
                 </AppShellPluginUiProjectionValueProvider></PluginSurfaceFocusEligibilityProvider>;
             screen = await renderScreen(view(false));
             expect(queries).not.toHaveBeenCalled();
             await screen.update(view(true));
             await vi.waitFor(() => expect(model?.items.filter(item => item.focus.kind === 'session')).toHaveLength(1));
+            expect(model!.workGroups.flatMap(group => group.items)).toEqual([
+                expect.objectContaining({ kind: 'landing', session: expect.objectContaining({ id: session.id }),
+                    link: expect.objectContaining({ number: 1, url: 'https://github.com/acme/widgets/pull/1', state: 'open', observedAt: 10 }) }),
+            ]);
+            expect(screen.findHostByTestId(`inbox.landing.${session.id}`)).not.toBeNull();
+            expect(screen.findHostByTestId(`inbox.landing.${session.id}.settle`)).not.toBeNull();
+            expect(screen.getTextContent()).toContain('Payments rollout');
+            expect(model!.items[0]!.title).toBe('Payments rollout');
+            const read = await readInbox();
+            expect(read).toMatchObject({ ok: true, result: { groups: [expect.objectContaining({ items: [expect.objectContaining({
+                kind: 'landing', sessionId: session.id, pullRequestUrl: 'https://github.com/acme/widgets/pull/1', pullRequestState: 'open',
+            })] })] } });
             expect(model!.items[0]).toMatchObject({ producer: 'live', type: 'update', createdAt: 123,
                 focus: { kind: 'session', id: session.id, serverId }, pluginSessionRows: [expect.objectContaining({ pluginId })] });
             expect(model!.items[0]!.pluginSessionRows![0]!.detailBinding).toMatchObject({ machineId: null,
@@ -430,6 +765,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             expect(watchReads.length).toBeGreaterThan(0);
             expect(watchReads.every(input => input !== null && typeof input === 'object' && 'kind' in input && input.kind === 'list')).toBe(true);
             const initialReads = watchReads.length;
+            const unchangedLanding = model!.workGroups;
+            await act(async () => { storage.setState({ machines: {} }); });
+            expect(model!.workGroups).toBe(unchangedLanding);
             const now = Date.now();
             const requested = createSessionFixture({ ...session, active: true, pendingUserActionRequestCount: 1,
                 pendingRequestObservedAt: now, agentState: { requests: { question: { tool: 'AskUserQuestion', kind: 'user_action',
@@ -448,7 +786,19 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             await act(async () => { storage.setState({ sessionOrganizationAttentionStandingsBySessionKey: {} }); });
             await vi.waitFor(() => expect(model?.items.filter(item => item.focus.id === session.id)).toHaveLength(1));
             expect(watchReads).toHaveLength(initialReads); // Session/request/standing changes never reread retained PR metadata.
-            await act(async () => { for (const id of ['one', 'two']) await state.delete(id, { expectedRevision: 1 }); });
+            await act(async () => {
+                const binding = sessionPullRequestBindingFixture('one', session.id, 1, 'merged');
+                await state.put(withChannelStateSessionIdentity(binding, binding.payload.target), { expectedRevision: 1 });
+            });
+            await vi.waitFor(() => expect(model!.workGroups.flatMap(group => group.items))
+                .toEqual([expect.objectContaining({ kind: 'landing', link: expect.objectContaining({ number: 2, state: 'open' }) })]));
+            await screen.pressByTestIdAsync(`inbox.landing.${session.id}.settle`);
+            expect(executed).toEqual([
+                { actionId: 'session.attention.set', input: { sessionId: session.id, standing: false } },
+                { actionId: 'session.read_state.set', input: { sessionId: session.id, state: 'read' } },
+            ]);
+            await vi.waitFor(() => expect(model!.workGroups.flatMap(group => group.items)).toEqual([]));
+            await act(async () => { for (const id of ['one', 'two']) await state.delete(id, { expectedRevision: id === 'one' ? 2 : 1 }); });
             await vi.waitFor(() => expect(model?.items.filter(item => item.focus.id === session.id)).toEqual([]));
             expect(resourceBoundary.request).not.toHaveBeenCalled();
         } finally { await screen?.unmount(); unpublish(); await composition.invalidatePlugin(pluginId); await channels.dispose(); }
@@ -466,9 +816,10 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1, pendingRequestObservedAt: observedAt,
             agentState: { requests: { 'external-question': { tool: 'AskUserQuestion', kind: 'user_action',
                 arguments: { questions: [{ question: 'Which direction?' }] }, createdAt: observedAt, questionV1: question } } } });
+        const landingSession = createSessionFixture({ id: 'external-session-1', serverId });
         storage.setState({ sessions: { [session.id]: session },
             sessionListRowsByServerId: { [serverId]: { [session.id]: createSessionListRenderableSessionFixture({ ...session,
-                hasPendingUserActionRequests: true }) } },
+                hasPendingUserActionRequests: true }), [landingSession.id]: createSessionListRenderableSessionFixture(landingSession) } },
             ordinarySessionListMembershipByServerId: { [serverId]: [session.id] } });
         const index = PluginProjectedResourceV2Schema.parse({ id: 'inbox', pluginId, occurrenceId: 'external-1',
             resourceKind: 'config', scope: 'surface', contentType: 'application/json', sessionInbox: { detailResourceId: 'detail' } });
@@ -476,13 +827,14 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             resourceKind: 'config', scope: 'session', contentType: 'application/json' });
         const rows = Array.from({ length: 1_000 }, (_, i) => ({ id: `row-${i}`,
             session: { serverId, sessionId: `external-session-${i}` }, title: `External ${i}`, detail: null,
+            ...(i === 1 ? { landing: { number: 42, url: 'https://forge.example/owner/repo/pulls/42', state: 'open', observedAt: 10 } } : {}),
             detailResource: { pluginId, resourceId: 'detail' }, ...(i < 2 ? { controls: [
                 { id: 'See / details', label: { key: 'details', fallback: 'See details' },
                     effect: { kind: 'open', page: { pageId: 'review', subPath: 'items/42' } } },
                 ...['review', 'disabled', 'absent'].map(localId => ({ id: localId, label: 'Review this',
                     effect: { kind: 'action', invocation: { action: { pluginId: 'acme.other', localId }, input: { expectedRevision: 1 } } } })),
             ] } : {}) }));
-        const { PluginProjectedActionV2Schema, formatQualifiedPluginActionId, normalizeActionsSettingsV1 } = await import('@happier-dev/protocol');
+        const [{ PluginProjectedActionV2Schema}, { formatQualifiedPluginActionId}, { normalizeActionsSettingsV1}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/plugins/actions/qualifiedActionId'), import('@happier-dev/protocol/actions/actionSettings')]);
         const reviewAction = PluginProjectedActionV2Schema.parse({ id: 'review', pluginId: 'acme.other', occurrenceId: 'other-1',
             title: 'Current catalog title', icon: 'checkmark', scopes: ['global'], surfaces: ['ui'],
             execution: { target: 'daemon' }, dangerLevel: 'safe', available: true });
@@ -539,6 +891,10 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(watches).toEqual([]);
         await screen.update(render(true));
         await vi.waitFor(() => expect(model?.items.filter(item => item.source.kind === 'session')).toHaveLength(1_000));
+        expect(model!.workGroups.flatMap(group => group.items).filter(item => item.kind === 'landing')).toEqual([
+            expect.objectContaining({ session: expect.objectContaining({ id: landingSession.id }),
+                link: expect.objectContaining({ number: 42, url: 'https://forge.example/owner/repo/pulls/42', state: 'open' }) }),
+        ]);
         expect(reads).toHaveLength(2);
         expect(detailReads).toEqual([]);
         expect(reads[0]).toMatchObject({ context: { kind: 'surface',
@@ -622,6 +978,8 @@ describe('useInboxModel work groups (ORC R-10)', () => {
     });
     afterAll(() => disposeActionLoader?.());
     beforeEach(async () => {
+        managedMachines = [];
+        managedMachineReads = 0;
         clearPluginAccountAvailabilityProjection();
         const runtime = await import('@/sync/domains/server/serverRuntime');
         appliedSnapshot = runtime.getActiveServerSnapshot;
@@ -637,6 +995,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         executionRunBoundary.get.mockReset();
         executionRunBoundary.follows.mockReset().mockResolvedValue({ follows: [] });
         executionRunBoundary.rules.mockReset().mockResolvedValue({ rules: [] });
+        executionRunRelay = undefined;
         automationBoundary.request.mockImplementation(async () => new Response(JSON.stringify({ runs: [], nextCursor: null }), { status: 200 }));
         const base = createRootLayoutFeaturesResponse();
         const features = FeaturesResponseSchema.parse({
@@ -644,7 +1003,8 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 sessions: { ...base.features.sessions, enabled: true, following: { enabled: true } },
                 social: { ...base.features.social, friends: { enabled: false } } },
         });
-        connection = await restoreServerAccountForTest({ serverUrl: 'http://inbox-home.test', accountId: 'account-a',
+        connection = await restoreServerAccountForTest({ serverUrl: 'http://inbox-home.test', serverIdentityId: 'srv_inbox_home', accountId: 'account-a',
+            credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
             configureSocket: socket => {
                 configureConnectedServerSocketBoundary(socket);
                 socket.emitWithAck = vi.fn(async (event: string, payload: unknown) => {
@@ -662,9 +1022,15 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 });
             }, request: createSessionReadBatchFetchBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
+            const relayed = await executionRunRelay?.handle(new URL(String(url)), init);
+            if (relayed) return relayed;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/machines/managed/actions/list') {
+                managedMachineReads += 1;
+                return Response.json({ machines: managedMachines });
+            }
             if (path === '/v2/account/session-follows') return Response.json(
                 ListAccountSessionFollowsResponseV1Schema.parse(await executionRunBoundary.follows()));
             if (path === '/v2/account/session-follow-rules') return Response.json(await executionRunBoundary.rules());
@@ -735,6 +1101,67 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         deleteServerFeaturesSnapshot();
         (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
         (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
+    });
+
+    it.each([
+        { observation: { phase: 'offline', lastSuccessAt: 1_000 }, reasonKey: 'session.homeFreshness.offline' },
+        { observation: { phase: 'error', lastSuccessAt: 1_000, failure: { reason: 'network', code: null } },
+            reasonKey: 'session.homeFreshness.stale' },
+    ] as const)('disables single and bulk read writes for an unavailable Home ($observation.phase), then recovers from the existing Home observation', async ({ observation, reasonKey }) => {
+        listRuns.mockResolvedValue(page([]));
+        // Retained Home rows remain visible while that Home has no active query/connection.
+        const serverId = 'retained-offline-home';
+        const session = createSessionFixture({ id: 'offline-ready', serverId, active: false, seq: 3, latestReadyEventSeq: 3,
+            viewer: createSessionViewerFixture({ readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 1_000 },
+                relevance: { relevant: true, reasons: ['owned_by_me'] },
+                attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' } }) });
+        storage.setState({ sessions: { [session.id]: session }, ordinarySessionListMembershipByServerId: { [serverId]: [session.id] },
+            sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
+            concurrentSessionListCacheByServerId: { [serverId]: { serverName: 'Personal Home',
+                listObservation: observation } } });
+        await renderModel();
+        const targets = model!.sessionPresentation.markAllReadTargets;
+        expect(targets).toHaveLength(1);
+        const reason = (await import('@/text')).t(reasonKey);
+        expect(model!.readUnavailableReasonBySessionAddress.get(targets[0]!.key)).toBe(reason);
+        expect(model!.markAllReadUnavailableReason).toBe(reason);
+        await act(async () => {
+            await model!.markRead([targets[0]!]);
+            await model!.markRead(targets);
+        });
+        expect(executed.filter(entry => entry.actionId === 'session.read_state.set')).toHaveLength(0);
+        expect(model!.pendingReadKeys.size).toBe(0);
+
+        await act(async () => {
+            storage.setState({ concurrentSessionListCacheByServerId: { [serverId]: { serverName: 'Personal Home',
+                listObservation: { phase: 'ready', lastSuccessAt: 2_000 } } } });
+        });
+        expect(model!.readUnavailableReasonBySessionAddress.has(targets[0]!.key)).toBe(false);
+        expect(model!.markAllReadUnavailableReason).toBeNull();
+        // Availability recovery does not replay either previously refused intent.
+        expect(executed.filter(entry => entry.actionId === 'session.read_state.set')).toHaveLength(0);
+    });
+
+    it('exposes notice investigation eligibility through the mounted Account lifetime', async () => {
+        await renderModel();
+        const artifact = createAccountNoticeArtifactFixture({ header: { investigation: {
+            kind: 'alertEntry', entry: {
+                entryRef: { source: { pluginId: 'acme.review', localId: 'issues' },
+                    kindId: 'issue', collisionScope: 'project', entryId: '42' },
+                sourceInstanceId: '11111111-1111-4111-8111-111111111111',
+            },
+        } } });
+        const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, 'account-a')! };
+        const investigation = model!.noticeInvestigation;
+        expect(investigation.isEligible(entry)).toBe(true);
+        (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
+        // A new press re-admits the same Account after reconnect. Only an
+        // actual Account change must retire this captured facade.
+        expect(investigation.isEligible(entry)).toBe(true);
+        await act(async () => {
+            storage.setState({ profileScope: { serverId: appliedSnapshot().serverId, accountId: 'other-account' } });
+        });
+        expect(investigation.isEligible(entry)).toBe(false);
     });
 
     it('keeps Inbox readiness truthful while a followed Run baseline or empty refresh is unavailable', async () => {
@@ -809,7 +1236,8 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await vi.waitFor(() => expect(executionRunBoundary.list).toHaveBeenCalledTimes(2));
         expect(model!.items.find(item => item.source.kind === 'execution_run')).toBe(row);
         expect(model!.executionRunAttention.failed).toBe(true);
-        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', refreshFailed: true } });
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', refreshFailed: true,
+            coverage: { sources: expect.arrayContaining([{ source: 'live_items', status: 'partial', reason: 'content_unavailable' }]) } } });
         await act(async () => {
             for (let index = 0; index < 1_000; index++) publishHomeAccountChange(serverId, undefined, { source: 'catch-up-pending' });
         });
@@ -840,9 +1268,23 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(summary.current!.count).toBe(0);
     });
 
-    it('displays one consumed terminal Run receipt in Updates despite an unreadable neighboring notice', async () => {
+    it.each([false, true])('keeps a delivered terminal Run through a warm source outage and recovers its cold projection (notice degraded: %s)', async degradedNotice => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
+        // Session RPC and the retained Account relay are independent network routes.
+        // An outage of both must retain the same typed failure at the real read owner.
+        executionRunRelay = await createExternalActionAccountHttpBoundary({ serverUrl: 'http://inbox-home.test',
+            serverIdentityId: 'srv_inbox_home', accountId: 'account-a', machineId: 'machine-1',
+            actionId: 'execution.run.get', tokenEpoch: 0,
+            execute: async () => {
+                try { return ExecutionRunGetResponseSchema.parse(await executionRunBoundary.get()); }
+                catch (error) { const code = readRpcErrorCode(error) ?? 'content_unavailable';
+                    return { ok: false, errorCode: code, error: code }; }
+            },
+            failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+                && 'errorCode' in result && typeof result.errorCode === 'string'
+                ? { errorCode: result.errorCode, error: result.errorCode } : null,
+        });
         const run = ExecutionRunPublicStateSchema.parse({ runId: 'settled-run', callId: 'call', sidechainId: 'sidechain',
             intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, display: { title: 'Review changes' },
             permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
@@ -854,21 +1296,60 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         }] });
         executionRunBoundary.get.mockResolvedValue({ run });
         const malformed = createUsageNoticeArtifactFixture({ id: 'unreadable-notice', body: '{}' });
-        seedArtifacts({ [malformed.id]: malformed });
+        if (degradedNotice) seedArtifacts({ [malformed.id]: malformed });
         const screen = await renderModel(<MountedInboxContent view="updates" />);
         await vi.waitFor(() => expect(model!.items.filter(item => item.focus.id === run.runId)).toHaveLength(1));
         expect(screen.findByTestId(`inbox.run.${run.runId}`)).not.toBeNull();
-        expect(model!.artifactSource.phase).toBe('partial');
+        expect(model!.artifactSource.phase).toBe(degradedNotice ? 'partial' : 'current');
         expect(model!.openAccountNotices).toEqual([]);
-        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', refreshFailed: true,
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: degradedNotice ? 'partial' : 'ready', refreshFailed: degradedNotice,
             items: [expect.objectContaining({ producer: 'live', view: 'updates', read: false,
                 focus: { kind: 'execution_run', serverId, sessionId: source.sessionId, id: run.runId } })] } });
+        const admitted = model!.items.find(item => item.focus.id === run.runId);
+        executionRunBoundary.get.mockRejectedValue(new RpcError('RPC target unavailable', degradedNotice ? RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE : 'target_unavailable'));
+        expect(await createFrontDoorActionExecute()('execution.run.get', { sessionId: source.sessionId, runId: run.runId },
+            { surface: 'ui', serverId })).toMatchObject({ ok: false, errorCode: degradedNotice ? RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE : 'target_unavailable' });
+        await act(async () => notifyExecutionRunActivity({ serverId, sessionId: source.sessionId }, { runId: run.runId }));
+        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(true));
+        expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([admitted]);
+        expect(model!.items.find(item => item.focus.id === run.runId)).toBe(admitted);
+        expect(screen.findByTestId(`inbox.run.${run.runId}`)).not.toBeNull();
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', refreshFailed: true,
+            coverage: { sources: expect.arrayContaining([{ source: 'live_items', status: 'partial', reason: 'content_unavailable' }]) },
+            items: [expect.objectContaining({ focus: expect.objectContaining({ id: run.runId }) })] } });
         const reads = executionRunBoundary.get.mock.calls.length;
         await act(async () => { for (let index = 0; index < 100; index++)
             storage.getState().addArtifact({ ...malformed, id: `unrelated-${index}`, header: { kind: 'markdown', title: 'Document' } }); });
         expect(executionRunBoundary.get).toHaveBeenCalledTimes(reads);
         expect(model!.items.filter(item => item.focus.id === run.runId)).toHaveLength(1);
         await screen.unmount();
+
+        // A cold mount has the private occurrence identity, not a copied Run header.
+        const cold = await renderModel(<MountedInboxContent view="updates" />);
+        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(true));
+        expect(model!.isLoading).toBe(false);
+        expect(model!.showCaughtUp).toBe(false);
+        expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([]);
+        expect(cold.findByTestId(`inbox.run.${run.runId}`)).toBeNull();
+        const followReads = executionRunBoundary.follows.mock.calls.length;
+        const sourceReads = executionRunBoundary.get.mock.calls.length;
+        executionRunBoundary.get.mockResolvedValue({ run });
+        await act(async () => notifyExecutionRunActivityReconnect(serverId));
+        await vi.waitFor(() => expect(model!.items.filter(item => item.focus.id === run.runId)).toHaveLength(1));
+        expect(model!.executionRunAttention.failed).toBe(false);
+        expect(cold.findByTestId(`inbox.run.${run.runId}`)).not.toBeNull();
+        expect(executionRunBoundary.get).toHaveBeenCalledTimes(sourceReads + 1);
+        expect(executionRunBoundary.follows).toHaveBeenCalledTimes(followReads);
+        executionRunBoundary.get.mockRejectedValue(new RpcError('Access revoked', 'run_access_denied'));
+        await act(async () => notifyExecutionRunActivity({ serverId, sessionId: source.sessionId }, { runId: run.runId }));
+        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(true));
+        expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([]);
+        expect(cold.findByTestId(`inbox.run.${run.runId}`)).toBeNull();
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        await act(async () => storage.setState({ profileScope: null }));
+        expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([]);
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        await cold.unmount();
     });
 
     it.each(['retirement', 'unmount'] as const)('quietly cancels an Inbox Discussion refresh on %s', async reason => {
@@ -1032,6 +1513,16 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         seedArtifacts({ [artifact.id]: artifact });
         const screen = await renderModel();
         expect(model!.items.find(item => item.source.kind === 'approval')?.source.displayName).toBe('Payments coordinator');
+        const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+        await act(async () => {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic(serverId, bot.id, ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        try {
+            expect(model!.items.find(item => item.source.kind === 'approval')?.source.displayName).toBeNull();
+        } finally { await act(async () => { setScreenSharingPrivacyActive(false); }); }
+        expect(model!.items.find(item => item.source.kind === 'approval')?.source.displayName).toBe('Payments coordinator');
         await act(async () => { storage.setState({ sessions: { [bot.id]: { ...bot, serverId: 'another-home' } } }); });
         expect(model!.items.find(item => item.source.kind === 'approval')?.source.displayName).toBeNull();
         await act(async () => { storage.setState({ sessions: { [bot.id]: { ...bot, encryptionMode: 'e2ee',
@@ -1072,19 +1563,20 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         </KeyboardShortcutProvider>);
         await vi.waitFor(() => expect(model!.items.some(item => item.focus.id === open.id)).toBe(true));
         artifactReadBoundary.request.mockImplementation(() => hydration.promise);
-        await act(async () => storage.setState({ artifacts: { [open.id]: { ...open, body: undefined }, [next.id]: next } }));
-        expect(model!.items.some(item => item.focus.id === open.id)).toBe(false);
+        await act(async () => seedAdmittedArtifactRows([{ ...open, body: undefined }, next], storage));
+        // The header index keeps an open request listed while its body is unread.
+        expect(model!.items.some(item => item.focus.id === open.id)).toBe(true);
         expect(focus).toMatchObject({ id: open.id });
-        await act(async () => storage.setState({ artifacts: { [open.id]: open, [next.id]: next } }));
+        await act(async () => seedAdmittedArtifactRows([open, next], storage));
         expect(focus).toMatchObject({ id: open.id });
         const answered = ApprovalRequestV2Schema.parse({ ...request, status: 'canceled', updatedAtMs: 3 });
         const terminal = { ...open, header: buildApprovalRequestArtifactHeaderV1(answered), headerVersion: 2, bodyVersion: 2, updatedAt: 3 };
-        await act(async () => storage.setState({ artifacts: { [open.id]: terminal, [next.id]: next } }));
+        await act(async () => seedAdmittedArtifactRows([terminal, next], storage));
         expect(focus).toMatchObject({ id: open.id });
-        await act(async () => storage.setState({ artifacts: { [open.id]: { ...terminal, body: JSON.stringify(answered) }, [next.id]: next } }));
+        await act(async () => seedAdmittedArtifactRows([{ ...terminal, body: JSON.stringify(answered) }, next], storage));
         expect(focus).toMatchObject({ id: next.id });
-        await act(async () => storage.setState({ artifacts: { [open.id]: { ...terminal, body: JSON.stringify(answered) },
-            [next.id]: { ...next, body: undefined } } }));
+        await act(async () => seedAdmittedArtifactRows([{ ...terminal, body: JSON.stringify(answered) },
+            { ...next, body: undefined }], storage));
         expect(focus).toMatchObject({ id: next.id });
         hydration.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
         await screen.unmount();
@@ -1114,6 +1606,70 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(await hook.rerender({ focus, input: settled })).toBe(true);
         await act(async () => storage.setState({ profileScope: null }));
         expect(hook.getCurrent()).toBe(false);
+    });
+
+    it.each([['read', 'host'], ['dismiss', 'host'], ['read', 'plugin'], ['dismiss', 'plugin']] as const)(
+        'settles recovered health on %s for %s in both stored header and body', async (intent, source) => {
+        listRuns.mockResolvedValue(page([]));
+        const artifact = source === 'host'
+            ? createServiceHealthNoticeArtifactFixture(appliedSnapshot().serverId, { header: { healthPhase: 'recovered' } })
+            : createAccountNoticeArtifactFixture({ header: { healthPhase: 'recovered' } });
+        seedArtifacts({ [artifact.id]: artifact });
+        const screen = await renderModel();
+        try {
+            const row = model!.items.find(item => item.source.id === artifact.id)!;
+            expect(row).toMatchObject({ read: false, view: 'updates' });
+            await act(async () => {
+                if (intent === 'read') await model!.markItemOpened(row);
+                else await model!.dismissAccountNotice(model!.accountNotices[0]!);
+            });
+            const saved = storage.getState().artifacts[artifact.id]!;
+            const header = readAccountNoticeArtifactHeader(saved, 'account-a');
+            expect(header).toMatchObject({ healthPhase: 'recovered', resolved: true,
+                status: intent === 'dismiss' ? 'dismissed' : 'open' });
+            expect(JSON.parse(artifactStore.readPlainBody(artifact.id)!)).toMatchObject({
+                healthPhase: 'recovered', resolved: true,
+            });
+            expect(model!.items.find(item => item.source.id === artifact.id)).toBeUndefined();
+        } finally { await screen.unmount(); }
+    });
+
+    it.each([['read', 'host'], ['dismiss', 'host'], ['read', 'plugin'], ['dismiss', 'plugin'],
+        ['read', 'legacy'], ['dismiss', 'legacy']] as const)('keeps an active %s notice unresolved for %s', async (intent, source) => {
+        listRuns.mockResolvedValue(page([]));
+        const phase = source === 'legacy' ? {} : { healthPhase: 'open' as const };
+        const artifact = source === 'host' ? createServiceHealthNoticeArtifactFixture(appliedSnapshot().serverId)
+            : createAccountNoticeArtifactFixture({ header: phase });
+        seedArtifacts({ [artifact.id]: artifact });
+        const screen = await renderModel();
+        try {
+            const row = model!.items.find(item => item.source.id === artifact.id)!;
+            await act(async () => {
+                if (intent === 'read') await model!.markItemOpened(row);
+                else await model!.dismissAccountNotice(model!.accountNotices[0]!);
+            });
+            const saved = storage.getState().artifacts[artifact.id]!;
+            expect(readAccountNoticeArtifactHeader(saved, 'account-a')).toMatchObject({ ...phase, resolved: false });
+            expect(JSON.parse(artifactStore.readPlainBody(artifact.id)!)).toMatchObject({ ...phase, resolved: false });
+            if (intent === 'read') expect(model!.items.find(item => item.source.id === artifact.id)).toMatchObject({ read: true });
+        } finally { await screen.unmount(); }
+    });
+
+    it('does not settle a reopened failure from a stale recovered row', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const artifact = createServiceHealthNoticeArtifactFixture(appliedSnapshot().serverId,
+            { header: { healthPhase: 'recovered' } });
+        seedArtifacts({ [artifact.id]: artifact });
+        const screen = await renderModel();
+        try {
+            const stale = model!.accountNotices[0]!;
+            const reopened = createServiceHealthNoticeArtifactFixture(appliedSnapshot().serverId,
+                { headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion! + 1 });
+            artifactStore.replaceStoredRow(createPlainArtifactHttpFixture(reopened, 'account-a'));
+            await expect(model!.dismissAccountNotice(stale)).rejects.toThrow('usage_notice_changed');
+            expect(JSON.parse(artifactStore.readPlainBody(artifact.id)!)).toMatchObject({ healthPhase: 'open', resolved: false });
+            expect(artifactStore.read(artifact.id)).toMatchObject({ headerVersion: reopened.headerVersion, bodyVersion: reopened.bodyVersion });
+        } finally { await screen.unmount(); }
     });
 
     it('uses the selected retained workflow row after it leaves attention, never a missing row', async () => {
@@ -1160,41 +1716,64 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(await hook.rerender({ ...input, sessionScopes: new Map() })).toBe(false);
     });
 
-    it('hydrates a header-only managed Delete Ask and lists it exactly once', async () => {
+    it('lists and groups header-only Asks from header facts without reading any approval body', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
-        const request = ApprovalRequestV2Schema.parse({
+        const origin = { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+            serverId, accountId: 'account-a', machineId: 'controller-a', target: { kind: 'machine', machineId: 'controller-a' },
+            actionId: 'machines.managed.delete', requestId: 'delete-request' } as const;
+        const deleteRequest = ApprovalRequestV2Schema.parse({
             v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, requestedSurface: 'ui',
             actionId: 'machines.managed.delete',
             actionArgs: { homeId: serverId, managedId: 'managed-a', when: 'now', expectedRevision: 3,
                 intent: 'delete', reviewedDependencies: true },
-            summary: 'Delete managed machine',
-            executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
-                serverId, accountId: 'account-a', machineId: 'controller-a', target: { kind: 'machine', machineId: 'controller-a' },
-                actionId: 'machines.managed.delete', requestId: 'delete-request' },
+            summary: 'Delete managed machine', executionOriginV1: origin,
         });
-        const header = buildApprovalRequestArtifactHeaderV1(request);
-        const artifact: DecryptedArtifact = { id: 'delete-ask', isDecrypted: true, title: request.summary, header,
-            body: undefined, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-        seedArtifacts({ [artifact.id]: artifact });
+        // An Automation Run's Ask groups under its Automation; the origin travels in the header.
+        const automationRequest = ApprovalRequestV2Schema.parse({ ...deleteRequest, summary: 'Delete for automation',
+            actionArgs: { ...deleteRequest.actionArgs, managedId: 'managed-b' },
+            executionOriginV1: { ...origin, authority: 'account_automation', requestId: 'automation-request', runId: 'automation-run-1',
+                caller: { kind: 'automationRun', runId: 'automation-run-1', automationId: 'automation-1', cause: { kind: 'manual', invokedAt: 1 } } } });
+        const row = (id: string, request: typeof deleteRequest, at: number): DecryptedArtifact => {
+            const header = buildApprovalRequestArtifactHeaderV1(request);
+            return { id, isDecrypted: true, title: request.summary, header, body: undefined, headerVersion: 1, seq: at, createdAt: at, updatedAt: at };
+        };
+        const plain = row('delete-ask', deleteRequest, 1);
+        const automation = row('automation-ask', automationRequest, 2);
+        seedArtifacts({ [plain.id]: plain, [automation.id]: automation });
+        const screen = await renderModel();
+        await expect.poll(() => model?.openApprovals.map(artifact => artifact.id).sort()).toEqual(['automation-ask', 'delete-ask']);
+        await expect.poll(() => model?.workGroups.map(group => [group.key, group.items.map(item => item.key)])).toEqual([
+            [`automation:${serverId}:automation-1`, ['approval:automation-ask']],
+            ['other', ['approval:delete-ask']],
+        ]);
+        expect(model?.items.filter(item => item.source.kind === 'approval')).toHaveLength(2);
+        const bodyReads = artifactReadBoundary.request.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+            .filter((input: { projection?: string }) => input.projection !== 'headers');
+        expect(bodyReads).toEqual([]);
+        await screen.unmount();
+
+        // A mounted approval row reads its own body, through the same exact read owner.
+        const requests = new Map([[plain.id, deleteRequest], [automation.id, automationRequest]]);
         artifactReadBoundary.request.mockImplementation(async (_path: string, init?: RequestInit) => {
             const input: unknown = JSON.parse(String(init?.body));
-            return createArtifactReadBatchHttpResponse(input, () => ({ artifactId: artifact.id, ok: true, recipientCensus: null, artifact: {
-                id: artifact.id, kind: deriveArtifactCoarseKindV1(header), ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain',
-                publicAudience: 'none', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                header: encodePlainArtifactStoredContent(header),
-                body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
-                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
-            } }));
+            return createArtifactReadBatchHttpResponse(input, (artifactId: string) => {
+                const request = requests.get(artifactId)!;
+                const header = buildApprovalRequestArtifactHeaderV1(request);
+                return { artifactId, ok: true, recipientCensus: null, artifact: {
+                    id: artifactId, kind: deriveArtifactCoarseKindV1(header), ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain',
+                    publicAudience: 'none', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                    header: encodePlainArtifactStoredContent(header),
+                    body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+                } };
+            });
         });
-        const screen = await renderModel();
-        await expect.poll(() => model?.openApprovals.map(row => row.id)).toEqual([artifact.id]);
-        expect(model?.items.filter(item => item.source.kind === 'approval')).toHaveLength(1);
-        expect(artifactReadBoundary.request.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-            { artifactIds: [artifact.id] },
-            { artifactIds: [artifact.id], projection: 'headers' },
-        ]);
-        await screen.unmount();
+        const inboxPage = await renderModel(<MountedInboxContent />);
+        await expect.poll(() => artifactReadBoundary.request.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+            .filter((input: { projection?: string }) => input.projection !== 'headers')
+            .flatMap((input: { artifactIds: string[] }) => input.artifactIds).sort()).toEqual(['automation-ask', 'delete-ask']);
+        await inboxPage.unmount();
     });
 
     it('names plugin notices from the existing Account-scoped package projection and withdraws unavailable names', async () => {
@@ -1253,10 +1832,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', refreshFailed: true,
             usageNoticeIds: ['notice-owned'] } });
 
-        await act(async () => { storage.setState({ artifacts: {
-            ...storage.getState().artifacts,
-            'header-only': createUsageNoticeArtifactFixture({ id: 'header-only' }),
-        } }); });
+        await act(async () => storage.getState().updateArtifact(createUsageNoticeArtifactFixture({ id: 'header-only' })));
         expect(model?.openUsageNotices.map(entry => entry.artifact.id)).toEqual(['notice-owned', 'header-only']);
 
         await act(async () => { storage.setState({ profileScope: {
@@ -1352,9 +1928,10 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         const header = { ...content, kind: 'account_notice.v1', title: 'Run updated', status: 'open' };
         const retiredNotice = createUsageNoticeArtifactFixture({ header, rawHeader: header, body: JSON.stringify(content) });
         seedArtifacts({ [retiredNotice.id]: retiredNotice });
-        listRuns
-            .mockResolvedValueOnce(page([createWorkflowRunSummaryFixture({ id: 'run-held', state: 'interrupted' })]))
-            .mockResolvedValueOnce(page([]));
+        // HTTP reports the same attention window until the Run settles: the settlement change reads the
+        // window and the changed Run, so one-shot fixtures would hand the second read an empty mock.
+        let held = true;
+        listRuns.mockImplementation(async () => page(held ? [createWorkflowRunSummaryFixture({ id: 'run-held', state: 'interrupted' })] : []));
 
         const screen = await renderModel();
 
@@ -1371,6 +1948,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             })] } });
         expect(await readInbox('different-account')).toMatchObject({ ok: true, result: { status: 'unavailable' } });
 
+        held = false;
         await act(async () => {
             publishHomeAccountChange(appliedSnapshot().serverId, ['workflow-run:run-held']);
         });
@@ -1383,15 +1961,83 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
     });
 
+    it('opens Board work membership without building Inbox rows and follows a real work change', async () => {
+        const { createWorkBoardV1 } = await import('@happier-dev/protocol/boards/workBoardV1');
+        const { BoardsInboxBoundary } = await import('@/components/boards/BoardsInboxBoundary');
+        const { useBoardMembership } = await import('@/components/boards/model/useBoardContent');
+        const { useInboxWorkMembershipWhen } = await import('./useInboxWorkProjection');
+        // Instrument the real row producer; no internal behavior is replaced.
+        const rows = vi.spyOn(await import('@/components/inbox/inboxItems'), 'buildInboxItems');
+        const serverId = appliedSnapshot().serverId;
+        const board = { ...createWorkBoardV1({ id: 'membership-only', name: 'Needs you' }),
+            source: { picked: [], sections: ['needs_you'] as const } };
+        const homes = { activeServerId: serverId, mountedServerIds: [serverId], isHomeMounted: (id: string) => id === serverId };
+        let membership: ReturnType<typeof useBoardMembership> | undefined;
+        function BoardProbe() { membership = useBoardMembership(board, homes); return null; }
+        let membershipRenders = 0;
+        function MembershipProbe() { useInboxWorkMembershipWhen(true); membershipRenders += 1; return null; }
+        // FIN's reported selected workflow read contained 66 ids. Keep that real scale here.
+        let runs = Array.from({ length: 66 }, (_, index) => createWorkflowRunSummaryFixture({ id: `ready-work-${index}`, state: 'interrupted' }));
+        listRuns.mockImplementation(async () => page(runs));
+        const screen = await renderScreen(<BoardsInboxBoundary boards={[board]}><BoardProbe /><MembershipProbe /></BoardsInboxBoundary>);
+        try {
+            await vi.waitFor(() => {
+                expect(membership?.settled).toBe(true);
+                expect(membership!.members.map(member => member.ref.qualifiedId.id)).toEqual(runs.map(run => run.id));
+            });
+            expect(rows.mock.results.reduce((count, result) => count + (result.type === 'return' ? result.value.length : 0), 0)).toBe(0);
+            const admitted = membership!.members;
+            membershipRenders = 0;
+            for (let index = 0; index < 10; index++) {
+                await act(async () => { storage.setState(state => ({ friends: { ...state.friends } })); });
+            }
+            expect(membership!.members).toBe(admitted);
+            expect(membershipRenders).toBe(0);
+            // A genuine row change without a membership change also keeps the selected identity.
+            runs = runs.map(run => ({ ...run, revision: run.revision + 1,
+                updatedAt: new Date(Date.parse(run.updatedAt) + 1_000).toISOString() }));
+            await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:ready-work-0']); });
+            await vi.waitFor(() => expect(Object.values(storage.getState().workflowRunsById)
+                .find(row => row.id === 'ready-work-0')?.revision).toBe(runs[0]!.revision));
+            expect(membershipRenders).toBe(0);
+            runs = [createWorkflowRunSummaryFixture({ id: 'different-work', state: 'interrupted' })];
+            await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:ready-work-0']); });
+            await vi.waitFor(() => expect(membership!.members.map(member => member.ref.qualifiedId.id)).toEqual(['different-work']));
+            expect(membershipRenders).toBeGreaterThan(0);
+            expect(rows).not.toHaveBeenCalled();
+            // Opening the Inbox still builds and presents the current work through the same owner.
+            await screen.update(<InboxModelProvider><Probe /></InboxModelProvider>);
+            await vi.waitFor(() => expect(model?.items.some(item => item.source?.id === 'different-work')).toBe(true));
+            expect(rows.mock.results.some(result => result.type === 'return' && result.value.length > 0)).toBe(true);
+        } finally { await screen.unmount(); rows.mockRestore(); }
+    });
+
     it('keeps ready rows readable while notice bodies load, fail and recover without automatic re-polls', async () => {
+        const { createWorkBoardV1} = await import('@happier-dev/protocol/boards/workBoardV1');
+        const { useBoardMembership } = await import('@/components/boards/model/useBoardContent');
+        const serverId = appliedSnapshot().serverId;
+        const board = { ...createWorkBoardV1({ id: 'inbox-continuity', name: 'Needs you' }),
+            source: { picked: [], sections: ['needs_you'] as const } };
+        const homes = { activeServerId: serverId, mountedServerIds: [serverId], isHomeMounted: (id: string) => id === serverId };
+        let membership: ReturnType<typeof useBoardMembership> | undefined;
+        function BoardProbe() { membership = useBoardMembership(board, homes); return null; }
         listRuns.mockResolvedValue(page([createWorkflowRunSummaryFixture({ id: 'ready-work', state: 'interrupted' })]));
         const notice = createUsageNoticeArtifactFixture();
         seedArtifacts({ [notice.id]: notice });
-        const screen = await renderModel();
+        const screen = await renderModel(<BoardProbe />);
+        await vi.waitFor(() => {
+            expect(membership?.settled).toBe(true);
+            expect(membership!.members.some(member => member.ref.qualifiedId.id === 'ready-work')).toBe(true);
+        });
+        const admitted = membership!.members;
+        expect(admitted.some(member => member.ref.qualifiedId.id === 'ready-work')).toBe(true);
         const hydration = createDeferred<Response>();
         artifactReadBoundary.request.mockImplementation(() => hydration.promise);
-        await act(async () => storage.setState({ artifacts: { [notice.id]: { ...notice, body: undefined } } }));
+        await act(async () => seedAdmittedArtifactRows([{ ...notice, body: undefined }], storage));
         await vi.waitFor(() => expect(model!.artifactSource.phase).toBe('loading'));
+        expect(membership?.settled).toBe(true);
+        expect(membership?.members).toBe(admitted);
+        expect(membership?.complete).toBe(false);
         expect(model!.showCaughtUp).toBe(false);
         expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', isLoading: true,
             coverage: { sources: [{ source: 'notices', status: 'partial' }] },
@@ -1399,6 +2045,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
 
         await act(async () => hydration.resolve(Response.json({ error: 'content_unavailable' }, { status: 403 })));
         await vi.waitFor(() => expect(model!.artifactSource.phase).toBe('failed'));
+        expect(membership?.settled).toBe(true);
         expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', isLoading: false, refreshFailed: true,
             coverage: { sources: [{ source: 'notices', status: 'partial', reason: 'content_unavailable' }] },
             items: [expect.objectContaining({ source: expect.objectContaining({ kind: 'workflow_run', id: 'ready-work' }) })] } });
@@ -1416,7 +2063,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await screen.unmount();
     });
 
-    it('reads a valid single-Home missing lead and refuses the real mixed-Home model rather than filtering it empty', async () => {
+    it('reads the mounted mixed-Home Inbox without filtering qualified rows or a missing lead', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
         const first = createSessionFixture({ id: 'child', serverId, manager: { sessionId: 'unknown-lead' } });
@@ -1426,9 +2073,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             [buildSessionOrganizationSessionKey(serverId, first.id)]: { sessionId: first.id, standing: true, remindAt, updatedAt: 1 },
         } });
         await renderModel();
-        expect(model?.workGroups[0]?.root).toEqual({ kind: 'lead', sessionId: 'unknown-lead', session: null });
+        expect(model?.workGroups[0]?.root).toEqual({ kind: 'lead', serverId, sessionId: 'unknown-lead', session: null });
         expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', groups: [
-            { key: 'lead:unknown-lead', root: { kind: 'lead', sessionId: 'unknown-lead' },
+            { key: `lead:${sessionAddressKey({ serverId, sessionId: 'unknown-lead' })}`, root: { kind: 'lead', serverId, sessionId: 'unknown-lead' },
                 items: [{ kind: 'snoozed', serverId, sessionId: first.id, remindAt }] },
         ] } });
         await act(async () => { storage.setState({ sessions: { child: first, foreign },
@@ -1437,7 +2084,47 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 [buildSessionOrganizationSessionKey('other-home', foreign.id)]: { sessionId: foreign.id, standing: true, remindAt, updatedAt: 1 },
             } }); });
         expect(model?.workGroups.flatMap(group => group.items)).toHaveLength(2);
-        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', groups: [
+            { root: { kind: 'lead', sessionId: 'unknown-lead' },
+                items: [{ kind: 'snoozed', serverId, sessionId: first.id, remindAt }] },
+            { items: [{ kind: 'snoozed', serverId: 'other-home', sessionId: foreign.id, remindAt }] },
+        ], items: expect.arrayContaining([
+            expect.objectContaining({ source: expect.objectContaining({ serverId, id: first.id }),
+                focus: expect.objectContaining({ serverId, id: first.id }) }),
+            expect.objectContaining({ source: expect.objectContaining({ serverId: 'other-home', id: foreign.id }),
+                focus: expect.objectContaining({ serverId: 'other-home', id: foreign.id }) }),
+        ]) } });
+        expect(await readInbox('different-account')).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+    });
+
+    it('reads an admitted approval from another Home beside this Accounts notice without rebinding either row', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'cli' }, actionId: 'account.name.set', actionArgs: { name: 'Captain' }, summary: 'Change name',
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+                serverId: 'other-home', actionId: 'account.name.set', requestId: 'other-home-approval' } });
+        const approval: DecryptedArtifact = { id: 'other-home-approval', isDecrypted: true, title: request.summary,
+            header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const notice = createAccountNoticeArtifactFixture();
+        seedArtifacts({ [approval.id]: approval, [notice.id]: notice });
+        const screen = await renderModel();
+        try {
+            expect(model!.items).toHaveLength(2);
+            const response = await readInbox();
+            expect(response).toMatchObject({ ok: true, result: { status: 'ready', items: expect.arrayContaining([
+                expect.objectContaining({ source: { kind: 'approval', id: approval.id, serverId: 'other-home', displayName: null },
+                    focus: { kind: 'approval', id: approval.id, serverId: 'other-home' } }),
+                expect.objectContaining({ source: expect.objectContaining({ id: notice.id, serverId }),
+                    focus: { kind: 'notice', id: notice.id, serverId } }),
+            ]) } });
+            expect(JSON.stringify(response)).not.toContain('actionArgs');
+            const lifetime = captureActiveServerAccountScopeLifetime()!;
+            await act(async () => storage.setState({ profileScope: null }));
+            expect(lifetime.isCurrent()).toBe(false);
+            expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        } finally { await screen.unmount(); }
     });
 
     it('settles through the one attention Action and the read-state Action, in that order', async () => {

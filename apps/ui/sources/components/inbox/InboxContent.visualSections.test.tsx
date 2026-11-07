@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, createSessionViewerFixture, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createAutomationRunFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
-import { createInboxAttentionFixture } from '@/dev/testkit/fixtures/inboxFixtures';
+import { createInboxAttentionFixture, createInboxApprovalArtifactFixture } from '@/dev/testkit/fixtures/inboxFixtures';
+import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { AccountNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -29,6 +30,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
@@ -162,10 +164,10 @@ function createModel(options: Readonly<{
         serverId,
         readState: 'unread',
     };
-    const approvals = needsYou ? (options.openApprovals ?? [{ id: 'approval-1', header: {} }]).map(artifact => ({
-        id: artifact.id, title: 'Approval', isDecrypted: true as const, header: artifact.header,
-        headerVersion: 1, seq: 1, createdAt: NOW - 60_000, updatedAt: NOW - 60_000,
-    })) : [];
+    const approvals = needsYou ? (options.openApprovals ?? [{ id: 'approval-1', header: {} }]).map(artifact =>
+        createInboxApprovalArtifactFixture({ id: artifact.id, createdAt: NOW - 60_000,
+            serverId: typeof artifact.header.serverId === 'string' ? artifact.header.serverId : serverId,
+            ...(typeof artifact.header.serverIdentityId === 'string' ? { serverIdentityId: artifact.header.serverIdentityId } : {}) })) : [];
     const workGroups = buildInboxWorkGroups({
         sessionEntries: sessionEntries as never,
         workflowRuns: needsYou ? ['library-run', ...(options.moreRunIds ?? [])].map((id) => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
@@ -178,7 +180,7 @@ function createModel(options: Readonly<{
         }), null)) : [],
         automationRuns: options.automationRunRows ?? [],
         automationServerId: options.automationServerId ?? serverId,
-        openApprovals: approvals as never,
+        openApprovals: approvals.map(artifact => readOpenApprovalInboxEntry(artifact)!),
         stalledSessions: needsYou ? [stalledWorker] : [],
         landings: [],
         snoozed: needsYou ? [{ session: snoozed, remindAt: NOW + 3_600_000 }] : [],
@@ -213,6 +215,8 @@ function createModel(options: Readonly<{
             },
         }] : [],
         pendingReadKeys: new Set(),
+        readUnavailableReasonBySessionAddress: new Map(),
+        markAllReadUnavailableReason: null,
         markAllPending: false,
         isLoading: false,
         hasPrimaryAttention: true,
@@ -267,6 +271,29 @@ function NavigableInbox(props: Readonly<{ model: InboxModel; view: InboxItemView
 }
 
 describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-I1, P4)', () => {
+    it('renders Machine reachability in Updates independently of operation custody', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'reboot-reachability', revision: 1,
+            actionId: 'machines.reboot', state: 'failed', scope: { accountId: 'account-a', machineId: 'build-box' },
+            title: 'Reboot', createdAt: NOW, startedAt: NOW, settledAt: NOW, cancellation: 'unsupported',
+            error: { errorCode: 'action_outcome_unknown', error: 'Outcome unknown' } });
+        const entry: InboxModel['machineReachabilityEntries'][number] = { key: 'build-box', serverId: 'server-a', accountId: 'account-a',
+            machineId: 'build-box', installationId: 'installation-a', view: 'updates', name: 'Build box',
+            reachability: 'reachable', lastSeenAt: null, expectedDuring: null,
+            operation: { serverId: 'server-a', snapshot, observation: 'available', isUnavailableProjection: false } };
+        const model = { ...createModel({ needsYou: false }), items: [], friendRequests: [], openUsageNotices: [],
+            machineReachabilityEntries: [entry] };
+        const screen = await renderScreen(<InboxContent model={model} view="updates" />, { wrapper: PagePresentation });
+        expect(screen.findByTestId('inbox.machine.build-box')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Build box');
+        expect(screen.getTextContent()).toContain('settingsOverview.machineOnline');
+        expect(screen.findByTestId('inbox.empty')).toBeNull();
+        await screen.update(<InboxContent model={{ ...model, machineReachabilityEntries: [{ ...entry,
+            reachability: 'unreachable', expectedDuring: 'reboot' }] }} view="updates" />);
+        expect(screen.getTextContent()).toContain('settingsOverview.machineUnreachableFromHome');
+        expect(screen.getTextContent()).not.toContain('settingsOverview.machineOnline');
+    });
+
     it.each(['screen', 'popover'] as const)('renders Automation-only attention as an Update and never as caught up in the %s', async (presentation) => {
         const { InboxContent } = await import('./InboxContent');
         const onOpenInbox = vi.fn();
@@ -580,6 +607,23 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         expect(model.markRead).toHaveBeenCalledWith(model.sessionPresentation.markAllReadTargets);
     });
 
+    it('uses the model availability for row and bulk read controls', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
+        const base = createModel();
+        const target = base.sessionPresentation.markAllReadTargets[0]!;
+        const model = { ...base, readUnavailableReasonBySessionAddress: new Map([[target.key, 'Home offline']]),
+            markAllReadUnavailableReason: 'Home offline' };
+        const screen = await renderScreen(<InboxContent model={model} view="updates" />, { wrapper: PagePresentation });
+        const row = screen.tree.findByType(InboxReadySessionRow);
+        expect(row.props.readUnavailableReason).toBe('Home offline');
+        const bulk = screen.tree.findAllByType(SectionActionButton).find(node => node.props.testID === 'inbox.ready.mark_all_read')!;
+        expect(bulk.props.disabled).toBe(true);
+        expect(bulk.props.accessibilityHint).toBe('Home offline');
+        await act(async () => { bulk.props.onPress(); });
+        expect(model.markRead).not.toHaveBeenCalled();
+    });
+
     it('shows the calm empty Needs you state with no action when nothing waits on the person', async () => {
         const { InboxContent } = await import('./InboxContent');
         const { tree } = await renderScreen(<InboxContent model={createModel({ needsYou: false })} />);
@@ -629,9 +673,11 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         const line = textOf(facts.props.children);
         expect(line).toContain('inbox.work.rows.workflowRun');
         expect(line).not.toContain('workflows.runState');
-        // The age rides at the end of that line, not in a trailing column.
-        // (the bundler may suffix the component's name)
-        expect(facts.findAll((node) => typeof node.type === 'function' && /^InboxRelativeTime\d*$/.test(node.type.name)).length).toBeGreaterThan(0);
+        // The age rides at the end of that line, not in a trailing column, and outside the truncating
+        // facts text, so a long fact is cut before the age is. (the bundler may suffix the component's name)
+        const isAge = (node: { type: unknown }) => typeof node.type === 'function' && /^InboxRelativeTime\d*$/.test((node.type as { name: string }).name);
+        expect(runRow.findAll(isAge).length).toBeGreaterThan(0);
+        expect(facts.findAll(isAge)).toHaveLength(0);
         expect(tree.root.findByProps({ testID: 'inbox.run.library-run.review' })).toBeTruthy();
     });
 
@@ -785,6 +831,46 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
 
         const empty = await renderScreen(<InboxContent model={createModel()} view="mentions" />, { wrapper: PagePresentation });
         expect(empty.tree.findByType(EmptyState).props.title).toBe('inbox.work.mentionsEmpty.title');
+    });
+
+    it('tells a partial source against the view it is in: an empty tab is unavailable, never "nothing here"', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const retry = vi.fn();
+        const model = { ...createModel(), artifactSource: { phase: 'partial' as const, retry } };
+
+        // Mentions holds nothing retained: the state replaces it, with its own retry and no calm empty state.
+        const mentions = await renderScreen(<InboxContent model={model} view="mentions" />, { wrapper: PagePresentation });
+        expect(mentions.findByTestId('inbox.artifacts_unavailable')).not.toBeNull();
+        expect(mentions.findByTestId('inbox.artifacts_stale')).toBeNull();
+        expect(mentions.findByTestId('inbox.empty')).toBeNull();
+        await mentions.unmount();
+
+        // Needs you keeps its rows at full strength under one quiet line.
+        const needsYou = await renderScreen(<InboxContent model={model} view="needs_you" />, { wrapper: PagePresentation });
+        expect(needsYou.findByTestId('inbox.artifacts_stale')).not.toBeNull();
+        expect(needsYou.findByTestId('inbox.artifacts_unavailable')).toBeNull();
+    });
+
+    it('does not call an Updates view caught up while a followed Run could not be read (BI1 round 3)', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const model = { ...createModel({ needsYou: false }), items: [], friendRequests: [], openUsageNotices: [],
+            executionRunAttention: { loading: false, failed: true } };
+        const updates = await renderScreen(<InboxContent model={model} view="updates" />, { wrapper: PagePresentation });
+        expect(updates.findByTestId('inbox.empty')).toBeNull();
+        expect(updates.findByTestId('inbox.artifacts_unavailable')).not.toBeNull();
+        // Nothing to retry from here: the line says so once and offers no dead Retry.
+        expect(updates.findByTestId('inbox.artifacts_retry')).toBeNull();
+    });
+
+    it('shows a first read in Mentions and Updates as loading, not as a blank page', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const model = { ...createModel(), isLoading: true, hasPrimaryAttention: true, artifactSource: { phase: 'loading' as const, retry: () => undefined } };
+        for (const view of ['mentions', 'updates'] as const) {
+            const screen = await renderScreen(<InboxContent model={{ ...model, items: [], friendRequests: [], openUsageNotices: [] }} view={view} />, { wrapper: PagePresentation });
+            expect(screen.tree.findAllByType(ActivitySpinner)).toHaveLength(1);
+            expect(screen.findByTestId('inbox.empty')).toBeNull();
+            await screen.unmount();
+        }
     });
 
     it('walks and auto-advances the mounted Needs-you order across work groups and request types', async () => {

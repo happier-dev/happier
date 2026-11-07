@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactReadBatchHttpResponse, projectArtifactBoundaryReadRow, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createArtifactViaApi, createArtifactWithHeaderViaApi, fetchArtifactWithBodyFromApi, updateArtifactWithHeaderViaApi, type ArtifactDataKeyCache } from './syncArtifacts';
@@ -88,13 +88,15 @@ describe('artifact captured Home transport', () => {
                 dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] });
             if (stored && target.pathname === '/v1/artifacts/read') {
                 expect(JSON.parse(String(init?.body))).toEqual({ artifactIds: [stored.id] });
-                return json({ items: [{ artifactId: stored.id, ok: true, artifact: { ...stored, publicAudience: 'none' },
-                    recipientCensus: mode === 'e2ee' ? { artifactId: stored.id, ownerAccountId: stored.ownerAccountId,
-                        access: stored.access, encryptionMode: 'e2ee', dataEncryptionKey: stored.dataEncryptionKey,
-                        callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] } : null }] });
+                const row = stored;
+                return createArtifactReadBatchHttpResponse(JSON.parse(String(init?.body)), artifactId => ({
+                    artifactId, ok: true, artifact: { ...row, publicAudience: 'none' },
+                    recipientCensus: mode === 'e2ee' ? { artifactId: row.id, ownerAccountId: row.ownerAccountId,
+                        access: row.access, encryptionMode: 'e2ee', dataEncryptionKey: row.dataEncryptionKey,
+                        callerDataEncryptionKey: row.dataEncryptionKey, recipients: [] } : null }));
             }
             if (stored && target.pathname === `/v1/artifacts/${stored.id}`) {
-                if (init?.method !== 'POST') return json(stored);
+                if (init?.method !== 'POST') return json(projectArtifactBoundaryReadRow(stored));
                 const update = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
                 expect(update.expectedHeaderVersion).toBe(1);
                 expect(update.expectedBodyVersion).toBe(1);
@@ -114,7 +116,19 @@ describe('artifact captured Home transport', () => {
         expect(stored?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
         context.artifactDataKeys.clear();
         const fetched = await fetchArtifactWithBodyFromApi({ ...context, artifactId: id });
-        expect(fetched).toMatchObject({ title: 'B title', body: 'B body', storageMode: mode });
+        expect(fetched).toMatchObject({ title: 'B title', body: 'B body', storageMode: mode, sourceServerId: homeB.id });
+        await expect(fetchArtifactWithBodyFromApi({ ...context, artifactId: id, fresh: true, ownerOnly: true,
+            prepareRecipientKeys: false })).resolves.toMatchObject({ body: 'B body', access: 'owner' });
+        const ownedRecord = stored!;
+        stored = { ...ownedRecord, ownerAccountId: 'foreign-account', access: 'view' };
+        await expect(fetchArtifactWithBodyFromApi({ ...context, artifactId: id, fresh: true, prepareRecipientKeys: false }))
+            .resolves.toMatchObject({ body: 'B body', access: 'view', sourceServerId: homeB.id });
+        stored = { ...stored, header: 'unreadable', body: 'unreadable' };
+        context.artifactDataKeys.clear();
+        await expect(fetchArtifactWithBodyFromApi({ ...context, artifactId: id, fresh: true, ownerOnly: true,
+            prepareRecipientKeys: false })).resolves.toBeNull();
+        expect(context.artifactDataKeys.size).toBe(0);
+        stored = ownedRecord;
         // Missing versions force the update's recovery read through the same captured transport.
         // `headerVersion` is required on the projection type, so the version-less cache entry a
         // released writer can leave behind is constructed deliberately here.

@@ -1,18 +1,22 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { createDeferred, createSessionAccessFixture, createSessionFixture, renderScreen as renderTestScreen } from '@/dev/testkit';
-import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createDeferred, createSessionAccessFixture, createSessionFixture, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
+import { createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
-import { getActiveServerSnapshot, removeServerProfile, setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { markSessionSurfaceVisible, resetSessionSurfaceVisibilityForTests } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -24,6 +28,7 @@ const reactNativeRuntime = vi.hoisted(() => ({
     platformOs: 'ios' as 'web' | 'ios' | 'android',
     isDesktopHost: false,
 }));
+const nativeSurfaceListeners = vi.hoisted(() => new Map<string, Set<(event: { payload: unknown }) => void>>());
 
 let visibleSessionIdsValue: string[] = [];
 let visibleSessionAddressesValue: string[] = [];
@@ -41,7 +46,14 @@ type NotificationSessionFixture = Partial<Omit<Session, 'metadata'>> & {
     metadata?: Partial<NonNullable<Session['metadata']>>;
 };
 const initialState = storage.getInitialState();
-let savedProfileIds: string[] = [];
+const homes = createHomeGovernanceHarness();
+let managedMachines: ManagedMachineV1[] = [];
+const notificationHttp: RuntimeFetch = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: managedMachines });
+    if (url.pathname === '/v2/account/session-delivery-mutes') return Response.json({ scopes: mutedScopes });
+    return createEmptyAccountBootstrapHttpResponse(`${url.pathname}${url.search}`, init) ?? homes.request(input, init);
+};
 let sessionsByIdValue: Record<string, NotificationSessionFixture> = {
     'session-1': {
         id: 'session-1',
@@ -67,6 +79,13 @@ type ExpoLocalNotificationParams =
 
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async (_params: ExpoLocalNotificationParams) => 'notif-1'));
 const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
+const cancelScheduledNotification = vi.hoisted(() => vi.fn(async (_identifier: string) => undefined));
+
+// Expo is the native OS boundary; keep the real inventory and reminder selection beneath it.
+vi.mock('expo-notifications', async (importOriginal) => ({
+    ...await importOriginal<typeof import('expo-notifications')>(),
+    cancelScheduledNotificationAsync: cancelScheduledNotification,
+}));
 
 async function setActiveAccountSettings(raw: Record<string, unknown>): Promise<void> {
     accountSettingsValue = settingsParse(raw);
@@ -74,6 +93,14 @@ async function setActiveAccountSettings(raw: Record<string, unknown>): Promise<v
     const serverId = getActiveServerSnapshot().serverId;
     const accountId = serverId === 'srv_home_b' ? 'account-b' : 'account-a';
     saveAccountSettings({ serverId, accountId }, accountSettingsValue, 3);
+}
+
+async function expectNotificationDelivery(assertion: () => void): Promise<void> {
+    // The public arrival bus is fire-and-forget; Account and mute admission finish asynchronously.
+    await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        assertion();
+    });
 }
 
 vi.mock('react-native', async () => {
@@ -142,6 +169,13 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
     isDesktopHost: () => reactNativeRuntime.isDesktopHost,
+    listenDesktopHostEvent: async (event: string, handler: (payload: unknown) => void) => {
+        const listener = (event: { payload: unknown }) => handler(event.payload);
+        const listeners = nativeSurfaceListeners.get(event) ?? new Set();
+        nativeSurfaceListeners.set(event, listeners);
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+    },
 }));
 
 vi.mock('../channels/sendExpoLocalNotification', () => ({
@@ -158,33 +192,39 @@ vi.mock('../channels/sendTauriLocalNotification', () => ({
 
 describe('ActivityLocalNotificationRuntime', () => {
     beforeEach(async () => {
+        managedMachines = [];
         mutedScopes = [];
         storage.setState(initialState, true);
-        for (const [serverId, serverUrl, name] of [
-            ['srv_home_a', 'https://stack.example.test', 'Home A'],
-            ['srv_home_b', 'https://secondary.example.test', 'Home B'],
+        for (const [serverId, serverUrl, name, accountId] of [
+            ['srv_home_a', 'https://stack.example.test', 'Home A', 'account-a'],
+            ['srv_home_b', 'https://secondary.example.test', 'Home B', 'account-b'],
         ]) {
-            const profile = await upsertServerProfile({ serverUrl, name });
-            savedProfileIds.push(profile.id);
-            await setServerProfileIdentityForUrl(serverUrl, serverId);
+            await homes.addHome({ serverUrl, name, serverIdentityId: serverId, accountId, active: false });
         }
         await setActiveServerId('srv_home_a');
         const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
         saveAccountSettings({ serverId: 'srv_home_a', accountId: 'account-a' }, settingsParse({}), 1);
         saveAccountSettings({ serverId: 'srv_home_b', accountId: 'account-b' }, settingsParse({}), 1);
-        restoredHome = await restoreServerAccountForTest({ serverUrl: 'https://stack.example.test', serverIdentityId: 'srv_home_a', accountId: 'account-a' });
+        restoredHome = await restoreServerAccountForTest({ serverUrl: 'https://stack.example.test', serverIdentityId: 'srv_home_a', accountId: 'account-a',
+            request: notificationHttp });
         storage.getState().activateProfileScope({ serverId: 'srv_home_a', accountId: 'account-a' });
-        setRuntimeFetch(async url => new URL(String(url)).pathname === '/v2/account/session-delivery-mutes'
-            ? Response.json({ scopes: mutedScopes }) : new Response('{}', { status: 200 }));
+        // Preserve the Home's real Account/profile/currentness replies while varying mute policy.
+        setRuntimeFetch(notificationHttp);
+        // Complete the real empty-Account bootstrap before each case publishes its Session fixtures.
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshSessions({ awaitSessionListHydration: true });
     });
 
     afterEach(async () => {
+        setScreenSharingPrivacyActive(false);
+        standardCleanup();
+        vi.unstubAllGlobals();
+        nativeSurfaceListeners.clear();
         await restoredHome?.dispose(); restoredHome = null;
         vi.restoreAllMocks();
         resetSessionSurfaceVisibilityForTests();
         storage.setState(initialState, true);
-        for (const id of savedProfileIds) await removeServerProfile(id);
-        savedProfileIds = [];
+        await homes.reset();
         reactNativeRuntime.platformOs = 'ios';
         reactNativeRuntime.isDesktopHost = false;
         visibleSessionIdsValue = [];
@@ -223,6 +263,163 @@ describe('ActivityLocalNotificationRuntime', () => {
         resetActivityLocalNotificationRuntimeForTests();
         const { resetActivityAlertPresentationNotesForTests } = await import('../remoteAlerts/activityAlertPresentationNotes');
         resetActivityAlertPresentationNotesForTests();
+    });
+
+    it('schedules the provider deletion reminder and cancels a withdrawn deadline on a managed inventory push', async () => {
+        const cancel = cancelScheduledNotification;
+        const now = Date.now();
+        managedMachines = [ManagedMachineV1Schema.parse({ id: 'deletion-box', homeId: 'srv_home_a', custodianAccountId: 'account-a',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native-box' } },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: now, availability: 'present', power: 'stopped', storage: 'retained',
+                deletionNotices: [{ kind: 'stopped-storage', at: now + 3 * 86_400_000,
+                    rule: { kind: 'after-stop', afterMs: 14 * 86_400_000 }, consequence: 'disk-deleted' }] },
+        })];
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification.mock.calls.map(([value]) => value)).toContainEqual(
+            expect.objectContaining({ title: 'Build box', identifier: expect.any(String), date: new Date(now + 86_400_000) })));
+        const identifier = sendExpoLocalNotification.mock.calls.find(([value]) => value.title === 'Build box')![0].identifier!;
+        cancel.mockClear();
+        sendExpoLocalNotification.mockClear();
+        managedMachines = managedMachines.map(machine => ({ ...machine, observation: { ...machine.observation!, deletionNotices: [] } }));
+        await act(async () => publishHomeAccountChange('srv_home_a'));
+        await expectNotificationDelivery(() => expect(cancel.mock.calls.map(([value]) => value)).toContain(identifier));
+        expect(sendExpoLocalNotification.mock.calls.filter(([value]) => value.title === 'Build box')).toEqual([]);
+        await screen.unmount();
+    });
+
+    it('suppresses notifications for the focused full-window Session while main is hidden and resumes after blur', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        reactNativeRuntime.isDesktopHost = true;
+        const surface = { windowId: 'full-b', homeId: 'srv_home_a', accountId: 'account-a', sessionId: 'session-1', focused: true };
+        vi.stubGlobal('document', { visibilityState: 'hidden', hasFocus: () => false });
+        vi.stubGlobal('__TAURI_INTERNALS__', { metadata: { currentWindow: { label: 'main' } },
+            invoke: async (command: string) => command === 'desktop_app_window_surfaces' ? [surface]
+                : command === 'desktop_notification_list' ? [] : null });
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { CurrentSessionPresentationRuntime } = await import('@/components/sessions/presentation/CurrentSessionPresentationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<><CurrentSessionPresentationRuntime /><ActivityLocalNotificationRuntime /></>);
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'focused-ready');
+        });
+        await act(async () => {
+            for (const listener of nativeSurfaceListeners.get('desktopAppWindow://surface') ?? []) {
+                listener({ payload: { ...surface, focused: false } });
+            }
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'background-ready');
+        });
+        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1));
+        await screen.unmount();
+        expect([...nativeSurfaceListeners.values()].every(listeners => listeners.size === 0)).toBe(true);
+    });
+
+    it('does not demand mute policy for notification arrivals on a browser without an OS delivery channel', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        let muteReads = 0;
+        setRuntimeFetch(async (url, init) => {
+            if (new URL(String(url)).pathname === '/v2/account/session-delivery-mutes') {
+                muteReads += 1;
+                return Response.json({ scopes: [] });
+            }
+            return notificationHttp(url, init);
+        });
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await act(async () => {
+            for (let index = 0; index < 100; index++) {
+                notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
+            }
+        });
+        expect(muteReads).toBe(0);
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+        await act(async () => { screen.tree.unmount(); });
+    });
+
+    it.each(['badge', 'notification'] as const)('does not scan the large Account for the unsupported browser %s runtime', async (kind) => {
+        reactNativeRuntime.platformOs = 'web';
+        const sessions = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => {
+            const id = `session-${index}`;
+            return [id, createSessionFixture({ id, serverId: 'srv_home_a' })];
+        }));
+        const Runtime = kind === 'badge'
+            ? (await import('@/activity/badges/ActivityBadgeRuntime')).ActivityBadgeRuntime
+            : (await import('./ActivityLocalNotificationRuntime')).ActivityLocalNotificationRuntime;
+        let corpusEnumerations = 0;
+        // Observe real source reads without replacing the selectors or the store.
+        // Other mounted policy consumers remain free to read their own sources.
+        const observer: ProxyHandler<typeof sessions> = {
+            ownKeys(target) {
+                if (/createActivityAttentionStoreSourceSelector|createLocalActivityBadgeSnapshotSelector/.test(new Error().stack ?? '')) {
+                    corpusEnumerations += 1;
+                }
+                return Reflect.ownKeys(target);
+            },
+        };
+        const observed = new Proxy(sessions, observer);
+        storage.setState({ sessions: observed, isDataReady: true });
+        const screen = await renderTestScreen(<Runtime />);
+        expect(corpusEnumerations).toBe(0);
+        for (let seq = 1; seq <= 100; seq += 1) {
+            await act(async () => {
+                storage.setState({ sessions: new Proxy({ ...sessions,
+                    'session-0': { ...sessions['session-0'], seq },
+                }, observer) });
+            });
+        }
+        expect(corpusEnumerations).toBe(0);
+        await screen.unmount();
+    });
+
+    it('omits recording-private notifications and delivers the next event after sharing ends', async () => {
+        accountSettingsValue = settingsParse({ sessionListHiddenTagIdsWhileRecording: { srv_home_a: ['private'] } });
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await act(async () => {
+            storage.getState().setSessionTagAssignmentsOptimistic('srv_home_a', 'session-1', ['private']);
+            setScreenSharingPrivacyActive(true);
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
+        });
+        await act(async () => {});
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        await act(async () => {
+            setScreenSharingPrivacyActive(false);
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
+        });
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1));
+        await screen.unmount();
+    });
+
+    it('preserves first-install changelog initialization on an ordinary browser', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const { MMKV } = await import('react-native-mmkv');
+        const device = new MMKV();
+        const key = 'changelog-last-viewed-release-id';
+        const baselineKey = 'release-notes-legacy-changelog-auto-seen-baseline';
+        const previous = device.getString(key);
+        const previousBaseline = device.getString(baselineKey);
+        device.delete(key);
+        device.delete(baselineKey);
+        try {
+            const { getLatestReleaseId, getLastViewedReleaseId } = await import('@/changelog');
+            const { getLegacyChangelogAutoSeenBaseline } = await import('@/changelog/releaseNotes/storage');
+            const { ActivityBadgeRuntime } = await import('@/activity/badges/ActivityBadgeRuntime');
+            const latest = getLatestReleaseId();
+            expect(latest).not.toBeNull();
+            const screen = await renderTestScreen(<ActivityBadgeRuntime />);
+            expect(getLastViewedReleaseId()).toBe(latest);
+            expect(getLegacyChangelogAutoSeenBaseline()).toBe(latest);
+            await screen.unmount();
+        } finally {
+            if (previous === undefined) device.delete(key); else device.set(key, previous);
+            if (previousBaseline === undefined) device.delete(baselineKey); else device.set(baselineKey, previousBaseline);
+        }
     });
 
     it('does not schedule an OS alert for a muted source and preserves its source row', async () => {
@@ -279,7 +476,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         // list owner published rather than a delivery-time clock (Lane 07.4 §2, L07-R42). This
         // harness renders translation keys, so the assertion names the shared copy owner's key;
         // the words themselves are owned by the context projector's own suite.
-        expect(sendExpoLocalNotification.mock.calls[0]?.[0]?.title).toContain('homeFreshness.offline');
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification.mock.calls[0]?.[0]?.title).toContain('homeFreshness.offline'));
         await act(async () => { screen.tree.unmount(); });
     });
 
@@ -295,6 +492,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalled());
         expect(sendExpoLocalNotification.mock.calls[0]?.[0]?.title ?? '').not.toContain('homeFreshness');
         await act(async () => { screen.tree.unmount(); });
     });
@@ -360,7 +558,7 @@ describe('ActivityLocalNotificationRuntime', () => {
                 sequence: 7,
             });
         });
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1));
         await expect(resolveForegroundNotificationBehavior({
             content: sendExpoLocalNotification.mock.calls[0]![0],
             localSettings: localSettingsParse(localSettingsValue),
@@ -374,7 +572,7 @@ describe('ActivityLocalNotificationRuntime', () => {
                 kind: 'agent-text', id: 'ready-8', createdAt: 2, seq: 8, text: 'Ready again',
             } as any]);
         });
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2));
 
         resetActivityAlertPresentationNotesForTests();
         sendExpoLocalNotification.mockClear();
@@ -388,7 +586,7 @@ describe('ActivityLocalNotificationRuntime', () => {
                 sequence: 7,
             });
         });
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1));
         await resolveForegroundNotificationBehavior({
             content: sendExpoLocalNotification.mock.calls[0]![0],
             localSettings: localSettingsParse(localSettingsValue),
@@ -417,7 +615,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         await act(async () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2));
         resetActivityAlertPresentationNotesForTests();
         await act(async () => { screen.tree.unmount(); });
     });
@@ -438,7 +636,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(1));
         await act(async () => { screen.tree.unmount(); });
     });
 
@@ -495,7 +693,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             } as any], { sequenceDomain: 'session_transcript', sequence: 23 });
         });
 
-        expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1);
+        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1));
         expect(consumeOtherLegActivityAlertPresentation(presentation)).toBe(false);
         await act(async () => { screen.tree.unmount(); });
     });
@@ -521,10 +719,10 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
         // Status-only privacy withholds the private title and the message preview, not the
         // authorized structural context this viewer already sees on the row (L07-R42/L07-I37).
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Session · Home A',
             body: 'Turn finished. Open the session to continue.',
-        }));
+        })));
         const statusOnly = sendExpoLocalNotification.mock.calls[0]?.[0];
         expect(`${statusOnly?.title} ${statusOnly?.body}`).not.toContain('Private title');
         sendExpoLocalNotification.mockClear();
@@ -567,6 +765,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             } as any]);
         });
 
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalled());
         const notification = sendExpoLocalNotification.mock.calls[0]?.[0];
         expect(notification?.title).toBe('Session · Home A · Encrypted access pending');
         expect(notification?.body).not.toContain('Private');
@@ -603,6 +802,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             } as any]);
         });
 
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalled());
         const notification = sendExpoLocalNotification.mock.calls[0]?.[0];
         expect(notification?.title).toBe('Session · Home A');
         expect(notification?.body).not.toContain('Private');
@@ -624,6 +824,7 @@ describe('ActivityLocalNotificationRuntime', () => {
             toolArgs: requestKind === 'permission' ? { command: 'cat private.txt' }
                 : { questions: [{ question: 'Private question?', options: [{ label: 'Secret option' }] }] },
         }); });
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalled());
         const notification = sendExpoLocalNotification.mock.calls[0]?.[0];
         expect(notification).toEqual(expect.objectContaining({
             // The device preview override hides the private request details and Session title while
@@ -657,10 +858,10 @@ describe('ActivityLocalNotificationRuntime', () => {
             } as any]);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Readable private title · Home A',
             body: 'Turn finished. Open the session to continue.',
-        }));
+        })));
         await act(async () => { screen.tree.unmount(); });
     });
 
@@ -698,7 +899,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
         const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
 
-        for (const activeServerId of ['srv_home_a', 'srv_home_b']) {
+        for (const [index, activeServerId] of ['srv_home_a', 'srv_home_b'].entries()) {
             await act(async () => { await setActiveServerId(activeServerId); });
             await act(async () => {
                 notifyActivityReady({ serverId: 'srv_home_b', sessionId: 'session-1' }, [{
@@ -706,9 +907,9 @@ describe('ActivityLocalNotificationRuntime', () => {
                     text: 'Home B private body',
                 } as any]);
             });
+            await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(index + 1));
         }
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2);
         for (const [notification] of sendExpoLocalNotification.mock.calls) {
             expect(notification).toEqual(expect.objectContaining({
                 // The recipient Home's status-only policy withholds its private title and body while
@@ -736,7 +937,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         await act(async () => {
             notifyActivityReady({ serverId: 'srv_home_b', sessionId: 'session-1' }, []);
         });
-        expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2);
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledTimes(2));
         await act(async () => { screen.tree.unmount(); });
     });
 
@@ -758,12 +959,12 @@ describe('ActivityLocalNotificationRuntime', () => {
             ]);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Ready session · Home A',
             body: 'Everything is ready.',
             data: expect.objectContaining({ sessionId: 'session-1' }),
             sound: 'happier_soft.wav',
-        }));
+        })));
         expect(sendTauriLocalNotification).not.toHaveBeenCalled();
 
         await act(async () => {
@@ -783,13 +984,13 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_b', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Session · Home B',
             data: expect.objectContaining({
                 sessionId: 'session-1',
                 serverUrl: 'https://secondary.example.test',
             }),
-        }));
+        })));
         await act(async () => { screen.tree.unmount(); });
     });
 
@@ -816,9 +1017,9 @@ describe('ActivityLocalNotificationRuntime', () => {
             ]);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             body: 'Turn finished. Open the session to continue.',
-        }));
+        })));
         const notification = sendExpoLocalNotification.mock.calls[0]?.[0];
         expect(notification?.title).toContain('Home A');
         expect(notification?.title).not.toContain('Ready session');
@@ -873,9 +1074,9 @@ describe('ActivityLocalNotificationRuntime', () => {
             });
 
             expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-            expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
                 title: 'Ready session · Home A',
-            }));
+            })));
 
             await act(async () => {
                 tree?.unmount();
@@ -974,10 +1175,10 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Ready session · Home A',
             body: 'Command: pwd',
-        }));
+        })));
 
         await act(async () => {
             tree?.unmount();
@@ -1043,9 +1244,9 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ sessionId: 'session-1' }),
-        }));
+        })));
 
         await act(async () => {
             tree?.unmount();
@@ -1079,10 +1280,10 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ sessionId: 'session-1' }),
             sound: null,
-        }));
+        })));
 
         await act(async () => {
             tree?.unmount();
@@ -1141,10 +1342,10 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ sessionId: 'session-1' }),
             sound: null,
-        }));
+        })));
 
         await act(async () => {
             tree?.unmount();
@@ -1172,11 +1373,11 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ sessionId: 'session-1' }),
             sound: 'happier_soft.wav',
             channelId: 'happier.default.soft.v1',
-        }));
+        })));
 
         await act(async () => {
             tree?.unmount();
@@ -1203,10 +1404,10 @@ describe('ActivityLocalNotificationRuntime', () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
 
-        expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        await expectNotificationDelivery(() => expect(sendExpoLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ sessionId: 'session-1' }),
             sound: null,
-        }));
+        })));
 
         await act(async () => {
             tree?.unmount();

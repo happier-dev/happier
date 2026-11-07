@@ -1,25 +1,24 @@
-import { projectExpectedHealthNotice } from '@/sync/domains/artifacts/projectExpectedHealthNotice';
 import * as React from 'react';
-import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
+import { createAccountNoticeInvestigation } from './accountNoticeInvestigation';
+import { AccountNoticeInvestigationBoundary, useAccountNoticeInvestigation } from './AccountNoticeInvestigationProvider';
+export { createAccountNoticeInvestigation } from './accountNoticeInvestigation';
+
 import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import { useActivityOverview } from '@/activity/source/useActivityOverview';
-import { readActivitySourceAttentionMessages } from '@/activity/source/buildActivityOverviewFromSource';
-import {
-    buildInboxSessionPresentation,
-    type InboxSessionPresentation,
-} from '@/activity/presentation/buildInboxSessionPresentation';
-import { isOpenApprovalInboxArtifact } from '@/sync/domains/artifacts/approvalArtifacts';
-import { readOpenUsageNoticeArtifactHeader, readAccountNoticeArtifactHeader, isOpenAccountNotice,
+
+import type { InboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
+import { readAccountNoticeArtifactHeader, isOpenAccountNotice,
     type AccountNoticeArtifact, type OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { buildInboxItems, selectInboxItemsForView, type InboxItem, type InboxItemView } from '@/components/inbox/inboxItems';
 import {
     type SessionBulkActionTarget,
 } from '@/components/sessions/actions/sessionBulkActionTypes';
-import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import { USAGE_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { USAGE_NOTICE_ARTIFACT_KIND_V1, AccountNoticeArtifactBodyV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import {
@@ -29,19 +28,14 @@ import {
 import type { InboxActionOperationEntry } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
-import { useArtifacts, useFriendsLoaded, useSessionDisplayNameProjections, useWorkflowRunRows } from '@/sync/domains/state/storage';
+import { useFriendsLoaded, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 
-import {
-    buildInboxWorkGroups,
-    type InboxWorkGroup,
-} from '@/activity/presentation/buildInboxWorkGroups';
-import type { InboxSessionAttentionEntry } from '@/activity/presentation/buildInboxSessionPresentation';
-import { readSessionWorkStalled } from '@/components/work/status/sessionWorkStatusFacts';
+import type { InboxWorkGroup } from '@/activity/presentation/buildInboxWorkGroups';
+
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
-import type { SessionAttentionStanding } from '@happier-dev/protocol';
+
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -51,23 +45,28 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { registerMountedInboxReadOwner } from '@/sync/ops/actions/mountedWorkReadAction';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveApprovalHomeServerId } from '@/components/approvals/approvalHomeServerId';
+import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { readableSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 
+
+
+
+
 import { useInboxFriendRequests } from './useInboxFriendRequests';
-import { useInboxMachineReachability } from './useInboxMachineReachability';
-import { useInboxPluginSessionRows } from './useInboxPluginSessionRows';
+import { InboxWorkProjectionBoundary, useInboxWorkProjection } from './useInboxWorkProjection';
+import { useInboxSessionReadMarking } from './useInboxSessionReadMarking';
+import { useInboxMachineReachability, type InboxMachineReachabilityEntry } from './useInboxMachineReachability';
+import { useManagedMachineDeletionAttention } from '@/activity/source/useManagedMachineDeletionSource';
+import { projectExpectedHealthNotice } from '@/sync/domains/artifacts/projectExpectedHealthNotice';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+
 import type { InboxPluginSessionControlInvoker } from './useInboxPluginSessionControls';
 import { useInboxDiscussionSource } from './useInboxDiscussionSource';
 import { InboxExecutionRunSourceBoundary, useInboxExecutionRunSource } from './useInboxExecutionRunSource';
-import { InboxArtifactSourceBoundary, useInboxArtifactSource, type InboxArtifactSource } from './useInboxArtifactSource';
-import {
-    useFullWorkflowAttentionSource,
-    useAutomationAttentionSource,
-    WorkflowAttentionSourceBoundary,
-    type WorkflowAttentionSource,
-} from './useWorkflowAttentionSource';
+import { InboxArtifactSourceBoundary, useInboxArtifactItems, type InboxArtifactSource } from './useInboxArtifactSource';
+import { WorkflowAttentionSourceBoundary, type WorkflowAttentionSource } from './useWorkflowAttentionSource';
 
 /** Public summary only. ORC renders the item and opens the exact existing Run route. */
 export type AutomationInboxItem = Readonly<{
@@ -79,10 +78,11 @@ export type AutomationInboxItem = Readonly<{
 }>;
 
 export type InboxModel = Readonly<{
+    noticeInvestigation: ReturnType<typeof createAccountNoticeInvestigation>;
     artifactSource: InboxArtifactSource;
     invokePluginSessionControl: InboxPluginSessionControlInvoker;
     source: ReturnType<typeof useActivityOverview>['source'];
-    openApprovals: ReturnType<typeof useArtifacts>;
+    openApprovals: readonly DecryptedArtifact[];
     openUsageNotices: readonly OpenUsageNoticeArtifact[];
     dismissUsageNotice: (entry: OpenUsageNoticeArtifact) => Promise<void>;
     /** Includes resolved records so an already-open detail can report its owner's current state. */
@@ -99,8 +99,13 @@ export type InboxModel = Readonly<{
     sessionPresentation: InboxSessionPresentation;
     targetBySessionAddress: ReadonlyMap<string, SessionBulkActionTarget>;
     actionOperationEntries: readonly InboxActionOperationEntry[];
-    machineReachabilityEntries: ReturnType<typeof useInboxMachineReachability>;
+    /** Updates data; operation custody and actual reachability are independent facts. */
+    machineReachabilityEntries: readonly InboxMachineReachabilityEntry[];
+    machineDeletionEntries: ReturnType<typeof useManagedMachineDeletionAttention>;
     pendingReadKeys: ReadonlySet<string>;
+    /** Known unavailable Homes retain rows, but cannot accept a read acknowledgement. */
+    readUnavailableReasonBySessionAddress: ReadonlyMap<string, string>;
+    markAllReadUnavailableReason: string | null;
     markAllPending: boolean;
     isLoading: boolean;
     hasPrimaryAttention: boolean;
@@ -122,29 +127,6 @@ export type InboxModel = Readonly<{
     setReminder: (session: Session, remindAt: number | null) => Promise<void>;
 }>;
 
-
-/**
- * The server origin link of a step session (ORC §3.1: awareness `origin?: {kind, runId?}`). U4 has
- * not landed it on the awareness schema yet; until then this reads nothing and nothing folds.
- */
-function readAwarenessOriginRunId(entry: InboxSessionAttentionEntry): string | null {
-    const origin: unknown = (entry.candidate.awareness as Readonly<Record<string, unknown>>).origin;
-    if (typeof origin !== 'object' || origin === null) return null;
-    const runId: unknown = (origin as Readonly<Record<string, unknown>>).runId;
-    return typeof runId === 'string' && runId.trim() ? runId.trim() : null;
-}
-
-/**
- * A worker whose machine went offline with its turn in flight (ORC O7). The Session facts owner's
- * stalled fact, which the Work tab counts too; outstanding reports never make a worker stalled.
- */
-function isStalledWorker(session: Session, nowMs: number): boolean {
-    if (!readSessionManagerSessionIdV1(session) || typeof session.archivedAt === 'number') return false;
-    return readSessionWorkStalled(session, nowMs);
-}
-
-const EMPTY_SESSIONS: readonly Session[] = Object.freeze([]);
-const EMPTY_STANDINGS: Readonly<Record<string, SessionAttentionStanding>> = Object.freeze({});
 const executeInboxAction = createFrontDoorActionExecute();
 
 async function runInboxAction(actionId: 'session.attention.set' | 'session.read_state.set', input: Readonly<Record<string, unknown>>, serverId: string | null): Promise<void> {
@@ -165,14 +147,22 @@ const InboxModelContext = React.createContext<InboxModel | null>(null);
  * exact-address pending ledger. Surfaces only compose layout and navigation;
  * they cannot independently reinterpret attention or mark-read progress.
  */
-function useCreateInboxModel(): InboxModel {
-    const { source, overview } = useActivityOverview();
+function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxWorkProjection>>): InboxModel {
+    const isRecordingVisible = useSessionRecordingVisibility();
+    const { source, overview, openApprovalEntries, artifactSource, profileScope, pluginSessionInbox,
+        executionRuns, workflowAttention, workflowRunOnceDeliveries, automationAttention, automationRuns,
+        attentionStandings, sessionsById, sessionPresentation, workGroups } = projection;
     const friends = useInboxFriendRequests();
-    const artifacts = useArtifacts();
-    const artifactSource = useInboxArtifactSource();
-    const profileScope = storage((state) => state.profileScope);
-    const machineReachabilityEntries = useInboxMachineReachability(captureActiveServerAccountScopeLifetime());
+    const { openApprovals, openUsageNotices, accountNotices: storedAccountNotices } = useInboxArtifactItems();
     const readableOperations = useActiveActionOperations();
+    const previousNotices = React.useRef<readonly AccountNoticeArtifact[]>([]);
+    const accountNotices = React.useMemo(() => {
+        const next = storedAccountNotices.map(entry => projectExpectedHealthNotice(entry, readableOperations, profileScope));
+        previousNotices.current = retainKeyedRows(previousNotices.current, next, entry => entry.artifact.id);
+        return previousNotices.current;
+    }, [storedAccountNotices, readableOperations, profileScope]);
+    const openAccountNotices = React.useMemo(() => accountNotices.filter(entry => isOpenAccountNotice(entry.header)), [accountNotices]);
+    const profilesGeneration = useServerProfilesGeneration();
     const appPlugins = useAppShellPluginUiProjection();
     const pluginPackages = appPlugins.accountLifetime?.isCurrent()
         && areServerAccountScopesEqual(appPlugins.accountLifetime.scope, profileScope)
@@ -181,113 +171,42 @@ function useCreateInboxModel(): InboxModel {
     const pluginDisplayNames = React.useMemo(() => new Map(Object.values(pluginPackages ?? {})
         .map(plugin => [plugin.id, plugin.displayName] as const)), [pluginPackages]);
     const discussionAttention = useInboxDiscussionSource(profileScope?.serverId ?? null);
-    const executionRuns = useInboxExecutionRunSource();
-    const pluginSessionInbox = useInboxPluginSessionRows();
     const friendsLoaded = useFriendsLoaded();
     const actionOperationEntries = useInboxActionOperations();
-    const [pendingReadKeys, setPendingReadKeys] = React.useState<ReadonlySet<string>>(() => new Set());
-    const pendingReadKeysRef = React.useRef<ReadonlySet<string>>(pendingReadKeys);
+    const machineReachabilityEntries = useInboxMachineReachability(captureActiveServerAccountScopeLifetime());
+    const machineDeletionEntries = useManagedMachineDeletionAttention(profileScope?.serverId ?? null);
 
-    const openApprovals = React.useMemo(
-        // A draft is not a request yet: the badge's count leaves it out, and so does the list.
-        () => artifacts.filter(isOpenApprovalInboxArtifact),
-        [artifacts],
-    );
-    const approvalSourceAddresses = React.useMemo(() => openApprovals.flatMap(artifact => {
-        const serverId = resolveApprovalHomeServerId(artifact.header);
-        const sessionId = typeof artifact.header?.sessionId === 'string' ? artifact.header.sessionId.trim() : '';
-        return serverId && sessionId ? [{ serverId, sessionId, artifactId: artifact.id }] : [];
-    }), [openApprovals]);
+    const approvalSourceAddresses = React.useMemo(() => Object.values(openApprovalEntries).flatMap(entry => {
+        const serverId = resolveApprovalHomeServerId(entry.source);
+        const sessionId = entry.source.sessionId;
+        return serverId && sessionId ? [{ serverId, sessionId, artifactId: entry.artifact.id }] : [];
+    }), [openApprovalEntries, profilesGeneration]);
     // An approval names its source Session from encrypted content: the Inbox demands it like a visible list row.
     useSessionContentDemand(approvalSourceAddresses, { tag: 'inbox.hydrateApprovalSources', hydrate: 'unsettled' });
     const approvalSourceTitles = useSessionDisplayNameProjections(approvalSourceAddresses, readableSessionDisplayTitle);
     const approvalSourceDisplayNames = React.useMemo(() => new Map(approvalSourceAddresses.map((address, index) =>
-        [address.artifactId, approvalSourceTitles[index] ?? null] as const)), [approvalSourceAddresses, approvalSourceTitles]);
-    const openUsageNotices = React.useMemo(() => artifacts.flatMap((artifact): OpenUsageNoticeArtifact[] => {
-        if (artifact.draft === true) return [];
-        const header = readOpenUsageNoticeArtifactHeader(artifact, profileScope?.accountId);
-        return header ? [{ artifact, header }] : [];
-    }), [artifacts, profileScope?.accountId]);
-    const accountNotices = React.useMemo(() => artifacts.flatMap((artifact): AccountNoticeArtifact[] => {
-        const header = readAccountNoticeArtifactHeader(artifact, profileScope?.accountId);
-        return header ? [projectExpectedHealthNotice({ artifact, header }, readableOperations, profileScope)] : [];
-    }), [artifacts, readableOperations, profileScope]);
-    const openAccountNotices = React.useMemo(() => accountNotices.filter(entry => isOpenAccountNotice(entry.header)), [accountNotices]);
-    const workflowAttention = useFullWorkflowAttentionSource();
-    const workflowRunOnceDeliveries = React.useMemo(() => new Map(executionRuns.workflowFollows.map(follow =>
-        [follow.source.runId, follow.onceDeliveries ?? []] as const)), [executionRuns.workflowFollows]);
-    const workflowRunIds = React.useMemo(() => [...new Set([...workflowAttention.runIds, ...workflowRunOnceDeliveries.keys()])],
-        [workflowAttention.runIds, workflowRunOnceDeliveries]);
-    const loadedWorkflowRuns = useWorkflowRunRows(workflowRunIds);
-    const workflowRuns = React.useMemo(() => loadedWorkflowRuns.filter(row => workflowAttention.runIds.includes(row.id)
-        || workflowRunOnceDeliveries.get(row.id)?.some(delivery => delivery.event.kind !== 'needs_you')
-        || row.summary?.attentionRequired === true && workflowRunOnceDeliveries.has(row.id)),
-    [loadedWorkflowRuns, workflowAttention.runIds, workflowRunOnceDeliveries]);
-    const automationAttention = useAutomationAttentionSource();
-    const automationRuns = useWorkflowRunRows(automationAttention.runIds);
+        [address.artifactId, isRecordingVisible(address) ? approvalSourceTitles[index] ?? null : null] as const)),
+        [approvalSourceAddresses, approvalSourceTitles, isRecordingVisible]);
     const automations = storage((state) => state.automations);
     const automationDefinitionsAreCurrent = selectActiveServerAccountScopeForServer(profileScope, automationAttention.serverId) !== null;
     const automationAttentionItems = React.useMemo(() => automationRuns.flatMap((row): AutomationInboxItem[] => row.automation ? [{
         key: `automation-run:${row.id}`, title: automationDefinitionsAreCurrent ? automations[row.automation.automationId]?.name : undefined, run: row.automation,
         route: createWorkflowRunRoute({ kind: 'occurrence', automationId: row.automation.automationId, runId: row.id }, automationAttention.serverId),
     }] : []), [automationRuns, automations, automationAttention.serverId, automationDefinitionsAreCurrent]);
-    const attentionStandings = storage((state) => state.sessionOrganizationAttentionStandingsBySessionKey) ?? EMPTY_STANDINGS;
-    const sessionPresentation = React.useMemo(
-        () => buildInboxSessionPresentation({
-            overview,
-            resolveMessages: (candidate) => readActivitySourceAttentionMessages(source, candidate.address),
-        }),
-        [overview, source.sessionMessagesById, source.sessionsById],
-    );
-
-    const sessionsById = source.sessionsById;
-    const resolveInboxSession = React.useCallback((sessionId: string) =>
-        readSessionListRowForServerId(source.sessionListRowsByServerId, profileScope?.serverId, sessionId)
-        ?? sessionsById[sessionId], [source.sessionListRowsByServerId, profileScope?.serverId, sessionsById]);
-    const stalledSessions = React.useMemo(() => {
-        const nowMs = Date.now();
-        const stalled = Object.values(sessionsById).filter((session) => isStalledWorker(session, nowMs));
-        return stalled.length === 0 ? EMPTY_SESSIONS : stalled;
-    }, [sessionsById]);
-    const snoozed = React.useMemo(() => {
-        const nowMs = Date.now();
-        return Object.values(sessionsById).flatMap((session) => {
-            const standing = attentionStandings[buildSessionOrganizationSessionKey(session.serverId ?? '', session.id)];
-            return typeof standing?.remindAt === 'number' && standing.remindAt > nowMs
-                ? [{ session, remindAt: standing.remindAt }]
-                : [];
-        });
-    }, [attentionStandings, sessionsById]);
-    const previousWorkGroups = React.useRef<readonly InboxWorkGroup[]>([]);
-    const workGroups = React.useMemo(() => {
-        const next = buildInboxWorkGroups({
-        sessionEntries: sessionPresentation.sessionsNeedingAttention,
-        workflowRuns,
-        automationRuns,
-        automationServerId: automationAttention.serverId,
-        openApprovals,
-        stalledSessions,
-        landings: [],
-        snoozed,
-        resolveSession: resolveInboxSession,
-        resolveOriginRunId: readAwarenessOriginRunId,
-        }, previousWorkGroups.current);
-        previousWorkGroups.current = next;
-        return next;
-    }, [automationAttention.serverId, automationRuns, openApprovals, sessionPresentation.sessionsNeedingAttention, resolveInboxSession, snoozed, stalledSessions, workflowRuns]);
     const previousItems = React.useRef<readonly InboxItem[]>([]);
     const items = React.useMemo(() => {
-        const next = buildInboxItems({ workGroups, sessionPresentation, workflowServerId: workflowAttention.serverId,
+        const next = buildInboxItems({ workGroups, sessionPresentation, isRecordingVisible, workflowServerId: workflowAttention.serverId,
             workflowRunOnceDeliveries,
             accountServerId: profileScope?.serverId ?? null, notices: openAccountNotices,
             executionRuns: executionRuns.entries,
+            machineDeletionEntries,
             pluginSessionRows: pluginSessionInbox.rows,
             sessionsById, sessionListRowsByServerId: source.sessionListRowsByServerId,
             sessionMessagesById: source.sessionMessagesById, attentionStandings,
             discussions: discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames }, previousItems.current);
         previousItems.current = next;
         return next;
-    }, [workGroups, sessionPresentation, workflowAttention.serverId, workflowRunOnceDeliveries, profileScope?.serverId, openAccountNotices, executionRuns.entries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
+    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, profileScope?.serverId, openAccountNotices, executionRuns.entries, machineDeletionEntries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
 
     const spansHomes = React.useMemo(
         () => new Set(overview.candidates.map((candidate) => candidate.address?.serverId ?? candidate.serverId ?? '')).size > 1,
@@ -319,7 +238,8 @@ function useCreateInboxModel(): InboxModel {
         || sessionPresentation.readySessions.length > 0
         || friends.requests.length > 0
         || actionOperationEntries.length > 0
-        || machineReachabilityEntries.length > 0;
+        || machineReachabilityEntries.length > 0
+        || machineDeletionEntries.length > 0;
     const showCaughtUp = !isLoading && !hasPrimaryAttention
         && artifactSource.phase === 'current'
         && !executionRuns.failed
@@ -327,50 +247,14 @@ function useCreateInboxModel(): InboxModel {
         && !pluginSessionInbox.failed
         && ![workflowAttention, automationAttention].some((attention) => attention.available
             && (attention.phase === 'failed' || attention.refreshFailed));
-    const markAllPending = markAllReadTargets.length > 0
-        && markAllReadTargets.every((target) => pendingReadKeys.has(target.key));
-
-    const applyPendingReadKeys = React.useCallback((next: ReadonlySet<string>) => {
-        pendingReadKeysRef.current = next;
-        setPendingReadKeys(next);
-    }, []);
-
-    const markRead = React.useCallback(async (requested: readonly SessionBulkActionTarget[]) => {
-        // A row acknowledgement may still be settling when mark-all is pressed.
-        // Filter against the shared ledger so an exact Home address is submitted once.
-        const targets = requested.filter((target) => !pendingReadKeysRef.current.has(target.key));
-        if (targets.length === 0) return;
-        const requestedKeys = new Set(targets.map((target) => target.key));
-        applyPendingReadKeys(new Set([...pendingReadKeysRef.current, ...requestedKeys]));
-        try {
-            const outcome = await executeInboxAction('inbox.mark_all_read', {
-                targets: targets.map(({ serverId, sessionId }) => ({ serverId, sessionId })),
-            }, {
-                surface: 'ui', authority: 'present_user',
-            });
-            if (!outcome.ok) throw new Error(outcome.errorCode ?? 'unavailable');
-            const result = AppShellActionOutputSchemas['inbox.mark_all_read'].parse(outcome.result);
-            if (result.results.some(({ status }) => status === 'failed')) {
-                Modal.alert(t('common.error'), t('sessionInfo.failedToMarkSessionRead'));
-            }
-        } catch {
-            Modal.alert(t('common.error'), t('sessionInfo.failedToMarkSessionRead'));
-        } finally {
-            const next = new Set(pendingReadKeysRef.current);
-            for (const key of requestedKeys) next.delete(key);
-            applyPendingReadKeys(next);
-        }
-    }, [applyPendingReadKeys]);
+    const { pendingReadKeys, readUnavailableReasonBySessionAddress, markAllReadUnavailableReason, markAllPending, markRead } =
+        useInboxSessionReadMarking(markAllReadTargets, source);
     const resolveActionOperation = React.useCallback((entry: InboxActionOperationEntry) => {
         const address = actionOperationAddress(
             entry.operation.serverId,
             entry.operation.snapshot.operationId,
         );
-        if (entry.reason === 'status_unavailable') {
-            actionOperationStore.dismissUnavailable(address);
-            return;
-        }
-        actionOperationStore.markTerminalSeen(address);
+        actionOperationStore.dismissOperation(address);
     }, []);
 
     const noticeWrites = React.useRef(new Map<string, Promise<void>>());
@@ -385,6 +269,14 @@ function useCreateInboxModel(): InboxModel {
         }
         const context = { surface: 'ui' as const, authority: 'present_user' as const,
             serverId: profileScope.serverId, expectedAccountId: profileScope.accountId };
+        if (intent === 'dismiss') {
+            const result = await executeInboxAction('inbox.notice.dismiss', {
+                artifactId: entry.artifact.id,
+                expectedRevision: { headerVersion: entry.artifact.headerVersion, bodyVersion: entry.artifact.bodyVersion },
+            }, context);
+            if (!result.ok) throw new Error(result.errorCode ?? 'usage_notice_unavailable');
+            return;
+        }
         const read = await executeInboxAction('artifact.get', { artifactId: entry.artifact.id }, context);
         if (!read.ok) throw new Error(read.errorCode ?? 'usage_notice_unavailable');
         const current = ArtifactActionOutputSchemasV1['artifact.get'].parse(read.result).artifact;
@@ -395,12 +287,14 @@ function useCreateInboxModel(): InboxModel {
             || current.revision.bodyVersion !== entry.artifact.bodyVersion) throw new Error('usage_notice_changed');
         // The retained usage schema has no read acknowledgement. Its stored-read
         // presentation adapter must never become a kind/content migration writer.
-        if (intent === 'read' && (current.header.kind === USAGE_NOTICE_ARTIFACT_KIND_V1 || !isOpenAccountNotice(notice)
-            || notice.readAt !== undefined || ['decision', 'approval', 'blocked'].includes(notice.type))) return;
+        if (current.header.kind === USAGE_NOTICE_ARTIFACT_KIND_V1 || !isOpenAccountNotice(notice)
+            || notice.readAt !== undefined || ['decision', 'approval', 'blocked'].includes(notice.type)) return;
+        const settleRecovery = notice.healthPhase === 'recovered';
         const result = await executeInboxAction('artifact.update', {
             artifactId: current.artifactId, expectedRevision: current.revision,
-            header: intent === 'dismiss' ? { ...current.header, status: 'dismissed' } : { ...current.header, readAt: Date.now() },
-            body: current.body,
+            header: { ...current.header, readAt: Date.now(),
+                ...(settleRecovery ? { resolved: true } : {}) },
+            body: settleRecovery ? JSON.stringify({ ...AccountNoticeArtifactBodyV1Schema.parse(JSON.parse(current.body)), resolved: true }) : current.body,
         }, context);
         if (!result.ok) throw new Error(result.errorCode ?? 'usage_notice_unavailable');
         })();
@@ -411,6 +305,7 @@ function useCreateInboxModel(): InboxModel {
     }, [profileScope]);
     const dismissUsageNotice = React.useCallback((entry: OpenUsageNoticeArtifact) => updateNotice(entry, 'dismiss'), [updateNotice]);
     const dismissAccountNotice = React.useCallback((entry: AccountNoticeArtifact) => updateNotice(entry, 'dismiss'), [updateNotice]);
+    const noticeInvestigation = useAccountNoticeInvestigation();
     const markItemOpened = React.useCallback(async (item: InboxItem) => {
         if (item.view === 'needs_you' || item.read) return;
         try {
@@ -450,6 +345,7 @@ function useCreateInboxModel(): InboxModel {
     }, []);
 
     const model = React.useMemo(() => ({
+        noticeInvestigation,
         artifactSource,
         invokePluginSessionControl: pluginSessionInbox.invokeControl,
         source,
@@ -468,7 +364,10 @@ function useCreateInboxModel(): InboxModel {
         targetBySessionAddress,
         actionOperationEntries,
         machineReachabilityEntries,
+        machineDeletionEntries,
         pendingReadKeys,
+        readUnavailableReasonBySessionAddress,
+        markAllReadUnavailableReason,
         markAllPending,
         isLoading,
         hasPrimaryAttention,
@@ -485,16 +384,20 @@ function useCreateInboxModel(): InboxModel {
         settle,
         setReminder,
     }), [
+        noticeInvestigation,
         artifactSource,
         pluginSessionInbox.invokeControl,
         spansHomes,
         actionOperationEntries,
         machineReachabilityEntries,
+        machineDeletionEntries,
         friends.requests,
         hasPrimaryAttention,
         isLoading,
         markAllPending,
         markRead,
+        readUnavailableReasonBySessionAddress,
+        markAllReadUnavailableReason,
         resolveActionOperation,
         openApprovals,
         openUsageNotices,
@@ -530,14 +433,21 @@ function useCreateInboxModel(): InboxModel {
 /** Mount at an open Inbox screen or popover boundary. */
 export function InboxModelProvider(props: Readonly<{ children: React.ReactNode }>) {
     return (
+        <AccountNoticeInvestigationBoundary>
         <InboxArtifactSourceBoundary><WorkflowAttentionSourceBoundary>
-            <InboxExecutionRunSourceBoundary><InboxModelContextProvider>{props.children}</InboxModelContextProvider></InboxExecutionRunSourceBoundary>
+            <InboxExecutionRunSourceBoundary><InboxWorkProjectionBoundary><InboxModelReady>{props.children}</InboxModelReady></InboxWorkProjectionBoundary></InboxExecutionRunSourceBoundary>
         </WorkflowAttentionSourceBoundary></InboxArtifactSourceBoundary>
+        </AccountNoticeInvestigationBoundary>
     );
 }
 
-function InboxModelContextProvider(props: Readonly<{ children: React.ReactNode }>) {
-    const model = useCreateInboxModel();
+function InboxModelReady(props: Readonly<{ children: React.ReactNode }>) {
+    const projection = useInboxWorkProjection();
+    return projection ? <InboxModelContextProvider projection={projection}>{props.children}</InboxModelContextProvider> : null;
+}
+
+function InboxModelContextProvider(props: Readonly<{ children: React.ReactNode; projection: NonNullable<ReturnType<typeof useInboxWorkProjection>> }>) {
+    const model = useCreateInboxModel(props.projection);
     return (
         <InboxModelContext.Provider value={model}>
             {model.sessionPresentation.pendingRequestHydrationTargets.map(address => (
@@ -561,28 +471,10 @@ function InboxPendingRequestHydration({ address }: Readonly<{ address: SessionAd
  * The creator hook only mounts in the provider branch, so consumers beneath an
  * existing owner never subscribe twice.
  */
-export function InboxModelBoundary(props: Readonly<{ children: React.ReactNode; enabled?: boolean }>) {
+export function InboxModelBoundary(props: Readonly<{ children: React.ReactNode }>) {
     const existing = React.useContext(InboxModelContext);
-    // Optional readers keep their descendants under one provider as demand changes. Only the
-    // model producer mounts/unmounts; it shares the same attention/classification owners.
-    if (props.enabled !== undefined) return <DemandedInboxModelBoundary enabled={props.enabled} existing={existing}>{props.children}</DemandedInboxModelBoundary>;
     if (existing) return <>{props.children}</>;
     return <InboxModelProvider>{props.children}</InboxModelProvider>;
-}
-
-function DemandedInboxModelBoundary(props: Readonly<{ children: React.ReactNode; enabled: boolean; existing: InboxModel | null }>) {
-    const [model, setModel] = React.useState<InboxModel | null>(null);
-    React.useLayoutEffect(() => { if (!props.enabled) setModel(null); }, [props.enabled]);
-    return <InboxModelContext.Provider value={props.existing ?? (props.enabled ? model : null)}>
-        {props.enabled && !props.existing ? <InboxModelProvider><InboxModelPublisher publish={setModel} /></InboxModelProvider> : null}
-        {props.children}
-    </InboxModelContext.Provider>;
-}
-
-function InboxModelPublisher(props: Readonly<{ publish: (model: InboxModel) => void }>) {
-    const model = useInboxModel();
-    React.useLayoutEffect(() => { props.publish(model); }, [model, props.publish]);
-    return null;
 }
 
 export function useInboxModel(): InboxModel {
@@ -597,15 +489,6 @@ export function useInboxModel(): InboxModel {
 export function useInboxItems(view: InboxItemView): readonly InboxItem[] {
     const model = useInboxModel();
     return React.useMemo(() => selectInboxItemsForView(model.items, view), [model.items, view]);
-}
-
-/**
- * The Inbox model for a reader that needs it only sometimes (a board whose sources include Needs you).
- * `React.use` reads the context conditionally, so while `enabled` is false the reader neither needs a
- * boundary above it nor re-renders when the Inbox changes.
- */
-export function useInboxModelWhen(enabled: boolean): InboxModel | null {
-    return enabled ? React.use(InboxModelContext) : null;
 }
 
 /** Narrow migration seam for badge hooks that can retain an isolated fallback. */

@@ -1,3 +1,4 @@
+import { usePresentedAgentRequestSettlement } from './usePresentedAgentRequestSettlement';
 import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
 import * as React from 'react';
 
@@ -10,6 +11,8 @@ import { resolveSessionPersonalEventEligibilityV1 } from '@happier-dev/protocol/
 import { resolveEffectiveAccountFollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { readAccountSessionDeliveryMutedScopes } from '@/sync/api/session/sessionFollowApi';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
@@ -28,7 +31,7 @@ import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sess
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { buildSessionFromListRenderable } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
-import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { isDesktopHost, desktopHostKind } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
@@ -45,8 +48,10 @@ import { buildActivityLocalNotificationContent } from '../buildActivityLocalNoti
 import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification';
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
 import { GuardStopWarningDesktopBanners } from './GuardStopWarningDesktopBanners';
+import { ManagedMachineDeletionNotificationRuntime } from './ManagedMachineDeletionNotificationRuntime';
 import { observeGuardStopWarningNotifications } from '../guardStopWarningLifecycle';
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
+import { desktopGuardNotificationTransport } from '../channels/tauriNotificationPlugin';
 import { AppState } from 'react-native';
 import { isActivityLocalNotificationMutedForWake, subscribeActivityLocalNotifications, type ActivityLocalNotificationEvent } from './activityLocalNotificationBus';
 import { isSessionFollowStalledOccurrenceCurrentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
@@ -131,14 +136,24 @@ function useActivityLocalNotificationLocalSettings(): Partial<LocalSettings> {
 }
 
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
+    if (Platform.OS === 'web' && !isDesktopHost()) return null;
+    return <SupportedActivityLocalNotificationRuntime />;
+}
+
+function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null {
+    // Own native capture observation while this presentation consumer is mounted.
+    useSessionRecordingVisibility();
+    const reconcilePresentedRequests = usePresentedAgentRequestSettlement();
     const localSettings = useActivityLocalNotificationLocalSettings();
     const audienceSource = useActivityAttentionSource();
+    const reminderServerIds = React.useMemo(() => [...audienceSource.audienceScopes.keys()], [audienceSource.audienceScopes]);
     const resolveAccountSettings = useExactHomeAccountSettings(audienceSource.audienceScopes);
     React.useEffect(() => {
-        if (Platform.OS === 'web') return;
+        const nativeDesktop = isDesktopHost() && desktopHostKind() === 'tauri';
+        if (Platform.OS === 'web' && !nativeDesktop) return;
         let disposed = false;
         let cleanup: (() => void) | undefined;
-        fireAndForget(loadExpoNotifications().then(notifications => {
+        fireAndForget((nativeDesktop ? Promise.resolve(desktopGuardNotificationTransport) : loadExpoNotifications()).then(notifications => {
             if (disposed) return;
             const watcher = observeGuardStopWarningNotifications(notifications, error => {
                 fireAndForget(Promise.reject(error), { tag: 'ActivityLocalNotificationRuntime.guardReconcile' });
@@ -172,6 +187,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
             if (controller.signal.aborted || scopes === null || isFollowDeliveryMutedV1(scopes, {
                 senderSessionId: event.address.sessionId, source: { kind: 'session', sessionId: event.address.sessionId },
             })) return;
+            if (!readSessionRecordingVisibility()(event.address)) return;
             const state = storage.getState();
             const directSession = state.sessions[event.address.sessionId];
             const directServerId = typeof directSession?.serverId === 'string' ? directSession.serverId.trim() : '';
@@ -282,6 +298,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 event: contentEvent,
                 session: mayShowPrivateContent ? session : null,
                 serverUrl,
+                accountId,
                 contextLine: projectSessionContextPresentation(buildSessionContextFacts({
                     address: event.address,
                     serverProfile,
@@ -321,8 +338,6 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 return;
             }
 
-            if (Platform.OS === 'web') return;
-
             const resolvedSound = resolveExpoLocalNotificationSound(event, deliveryPlan);
             const expoNotificationParams: Parameters<typeof sendExpoLocalNotification>[0] = {
                 title: notification.title,
@@ -330,11 +345,11 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 data: notification.data,
                 categoryIdentifier: notification.expo.categoryIdentifier,
                 sound: resolvedSound.sound,
-                channelId: resolvedSound.channelId,
+                channelId: resolvedSound.channelId ?? notification.expo.channelId,
             };
             // Scheduling acceptance does not mean a banner presented. Only the
             // Expo foreground handler may consume or write native presentation notes.
-            const submission = sendExpoLocalNotification(expoNotificationParams);
+            const submission = sendExpoLocalNotification(expoNotificationParams).then(reconcilePresentedRequests);
             fireAndForget(submission, {
                 tag: 'ActivityLocalNotificationRuntime.sendExpoLocalNotification',
             });
@@ -345,11 +360,13 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
         return () => { controller.abort(); unsubscribe(); };
     }, [
         localSettings,
+        reconcilePresentedRequests,
         resolveAccountSettings,
         audienceSource.audienceScopes,
         audienceSource.sessionListHomeObservationByServerId,
     ]);
 
     // Phones get the guard's stop warning as a push; a desktop host announces it locally.
-    return isDesktopHost() ? <GuardStopWarningDesktopBanners /> : null;
+    return isDesktopHost() ? <GuardStopWarningDesktopBanners />
+        : <ManagedMachineDeletionNotificationRuntime serverIds={reminderServerIds} />;
 }

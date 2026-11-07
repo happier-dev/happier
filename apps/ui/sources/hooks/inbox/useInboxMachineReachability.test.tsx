@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
@@ -63,7 +64,7 @@ describe('Inbox Machine reachability data', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('preserves selected identity and performs no selected reads, renders or timer scheduling for unrelated arrivals', async () => {
+    it('preserves selected identity without selected reads, renders or presence timer scheduling for unrelated arrivals', async () => {
         const selected = createMachineFixture({ id: 'selected-reboot', installationId: 'installation-a', active: false, activeAt: 1 });
         let nameReads = 0;
         selected.metadata = new Proxy(selected.metadata!, { get(target, key, receiver) {
@@ -78,14 +79,21 @@ describe('Inbox Machine reachability data', () => {
         expect(lifetime).not.toBeNull();
         let renders = 0;
         const hook = await renderHook(() => { renders += 1; return useInboxMachineReachability(lifetime); });
+        let presenceTimerSchedules = 0;
+        const census = installTimerCensus(stack => {
+            // Neighbor metadata still schedules its existing display warm-cache persistence.
+            if (/(?:sessionListRuntimeClock|useMachinePresenceSummary|useInboxMachineReachability)\.tsx?:/.test(stack)) {
+                presenceTimerSchedules += 1;
+                return 'machine-presence';
+            }
+            return null;
+        });
         try {
             expect(hook.getCurrent()[0]).toMatchObject({ reachability: 'unreachable', expectedDuring: 'reboot' });
             const before = hook.getCurrent();
             const beforeRenders = renders;
             const beforeRequests = home.requests.length;
             nameReads = 0;
-            const timeout = vi.spyOn(globalThis, 'setTimeout');
-            const interval = vi.spyOn(globalThis, 'setInterval');
             for (let index = 0; index < 8; index += 1) await act(async () => {
                 const neighbor = neighbors[index]!;
                 storage.getState().applyMachines([{ ...neighbor, metadataVersion: 2,
@@ -100,13 +108,12 @@ describe('Inbox Machine reachability data', () => {
             expect(renders).toBe(beforeRenders);
             expect(nameReads, 'selected display-name reads on unrelated arrivals').toBe(0);
             expect(home.requests.length, 'HTTP requests on unrelated arrivals').toBe(beforeRequests);
-            expect(timeout).not.toHaveBeenCalled();
-            expect(interval).not.toHaveBeenCalled();
+            expect(presenceTimerSchedules, 'presence timer schedules on unrelated arrivals').toBe(0);
             await act(async () => storage.getState().applyMachines([{ ...selected, metadataVersion: 2,
                 metadata: { ...selected.metadata!, displayName: 'Renamed target' } }], false, { sourceServerId: serverId }));
             expect(hook.getCurrent()[0]?.name).toBe('Renamed target');
             expect(hook.getCurrent()[0]?.expectedDuring).toBe('reboot');
-        } finally { await hook.unmount(); }
+        } finally { census.stop(); await hook.unmount(); }
     });
 
     it('keeps known dispatch distinct from transport loss, and withdraws expectation with unreadable Machine facts or retired Account', async () => {

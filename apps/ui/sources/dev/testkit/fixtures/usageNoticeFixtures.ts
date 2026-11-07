@@ -38,7 +38,10 @@ export function createAccountNoticeArtifactFixture(
     return createUsageNoticeArtifactFixture({ ...overrides, header, rawHeader: header,
         body: overrides.body ?? JSON.stringify(AccountNoticeArtifactBodyV1Schema.parse({
             v: header.v, source: header.source, type: header.type, resolved: header.resolved,
-            page: header.page, body: header.body, notice: header.notice,
+            page: header.page, body: header.body, notice: header.notice, healthPhase: header.healthPhase,
+            environmentHealth: header.environmentHealth,
+            investigation: header.investigation,
+            recoveryChoices: header.recoveryChoices,
         })),
     });
 }

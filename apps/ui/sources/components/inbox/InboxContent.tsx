@@ -18,9 +18,8 @@ import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import type { FloatingOverlayScrollProps } from '@/components/ui/overlays/FloatingOverlay';
 import { PopoverScrollSourceProvider } from '@/components/ui/popover/PopoverScrollSource';
-
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { UserCard } from '@/components/ui/cards/UserCard';
@@ -53,6 +52,9 @@ import { getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { type SessionPresentationRecord,
     type SessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 
 export type InboxView = InboxItemView;
 
@@ -66,7 +68,8 @@ const NEEDS_YOU_TYPES = getInboxNeedsYouItemTypes().map(type => ({ type, icon: I
 const BoundReadyRow = React.memo(function BoundReadyRow(props: Readonly<{
     session: SessionPresentationRecord; presentationSource?: SessionListPresentationSource;
     serverId: string | null; identityDisplay: SessionListIdentityDisplay; title: string; subtitle?: string;
-    route?: string; pending: boolean; navigate: (route: string) => void; markRead: InboxModel['markRead'];
+    route?: string; pending: boolean; readUnavailableReason?: string;
+    navigate: (route: string) => void; markRead: InboxModel['markRead'];
     pluginSessionRows?: readonly InboxPluginSessionRow[]; invokePluginSessionControl?: InboxModel['invokePluginSessionControl'];
 }>) {
     const { route, navigate, markRead, serverId } = props;
@@ -77,7 +80,8 @@ const BoundReadyRow = React.memo(function BoundReadyRow(props: Readonly<{
     const status = presentInboxSessionStatus(props.session, nowMs, props.presentationSource);
     return <InboxReadySessionRow session={props.session} presentationSource={props.presentationSource} identityDisplay={props.identityDisplay}
         connected={getSessionStatus(props.session, nowMs, { presentationSource: props.presentationSource }).isConnected} sessionId={sessionId} serverId={serverId}
-        title={props.title} subtitle={props.subtitle} statusWord={status.word} statusTone={status.tone} pending={props.pending} onOpen={open} onMarkRead={mark}
+        title={props.title} subtitle={props.subtitle} statusWord={status.word} statusTone={status.tone} pending={props.pending}
+        readUnavailableReason={props.readUnavailableReason} onOpen={open} onMarkRead={mark}
         pluginSessionRows={props.pluginSessionRows} invokePluginSessionControl={props.invokePluginSessionControl} />;
 });
 
@@ -117,7 +121,8 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     }, [dismissNotice, item]);
     // Where it comes from leads the line, unless the title already says it.
     const source = item.source.displayName && item.source.displayName !== item.title ? item.source.displayName : null;
-    return <InboxWorkRow testID={item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title} facts={[source, fact]}
+    return <InboxWorkRow testID={item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}`
+        : item.focus.kind === 'managed_machine' ? `inbox.machine-deletion.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title} facts={[source, fact]}
         byline={byline}
         selected={props.selected} showDivider={props.showDivider} narrow={props.narrow}
         phase={item.phase ?? (item.view === 'needs_you' ? 'attention' : 'finished')} status={item.workStatus}
@@ -145,15 +150,20 @@ function readInboxItemWorker(item: InboxItem) {
 type WorkRowSource = Readonly<{ item: InboxWorkItem; automationServerId: string | null }>;
 
 /**
- * The one non-scrolling Inbox body used by both screen and anchored popover.
- * Each host owns exactly one scroll container and supplies a callback that
- * closes transient chrome before any navigation begins.
- *
- * It draws the canonical item model (`model.items`, F4) in three views (lab P4): Needs you grouped by
- * type, Updates newest first by day, and Mentions. Rows keep their owners: a session's request keeps
- * its answer card, a run its Review, an approval its card; items no work owner draws (stored notices,
- * Discussion messages) take the same Work row. The popover shows Needs you and one line to Updates.
+ * A freshness line or state above the rows. On the page it sits in the same content column as the header,
+ * tabs and sections (a sheetless section); in a popover or pane it keeps the flat inset.
  */
+function FreshnessSlot(props: Readonly<{ page: boolean; children: React.ReactNode }>) {
+    return props.page ? (
+        // A quiet line under the page header, not a band: the rows it qualifies stay the page's weight.
+        <ItemGroup surface="none" header="none" style={styles.freshnessPage}>
+            <SurfaceFreshnessOnSheetProvider>{props.children}</SurfaceFreshnessOnSheetProvider>
+        </ItemGroup>
+    ) : (
+        <View style={styles.freshnessFlat}>{props.children}</View>
+    );
+}
+
 type InboxContentProps = Readonly<{
     model: InboxModel;
     onBeforeNavigate?: () => void;
@@ -170,6 +180,7 @@ type InboxContentProps = Readonly<{
     onSelectItem?: (focus: InboxItemFocus) => void;
 }>;
 
+/** Everything one Inbox view draws, as the chrome above its rows, the row sheets, and the chrome below. */
 function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     const router = useRouter();
     const { theme } = useUnistyles();
@@ -277,6 +288,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                     title={ready.title}
                     subtitle={buildInboxSessionContextLine(ready, { showHome: model.spansHomes, showNeed: false, worker: readInboxItemWorker(item) })}
                     pending={model.pendingReadKeys.has(target.key)}
+                    readUnavailableReason={model.readUnavailableReasonBySessionAddress.get(target.key)}
                     route={ready.route}
                     navigate={navigate}
                     markRead={model.markRead}
@@ -308,6 +320,12 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
         ].filter((entry) => entry.items.length > 0);
     }, [view, viewItems]);
 
+    // What this view itself shows. A partial or failed source is told against this, never against another
+    // view's rows: an empty Mentions tab beside a full Needs you is still a tab with nothing retained.
+    const viewHasRows = view === 'needs_you'
+        ? needsYouSections.length > 0 || model.actionOperationEntries.length > 0
+        : daySections.length > 0
+            || (view === 'updates' && (model.friendRequests.length > 0 || model.openUsageNotices.length > 0));
     const needsYouEmpty = !hasInboxNeedsYouRows(model);
     const updatesCount = countInboxUpdates(model);
     const workflowUnavailable = model.workflowAttention.available
@@ -319,32 +337,48 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     const automationStale = automationUnavailable && model.automationAttention.phase === 'loaded'
         && model.automationAttention.runIds.length > 0;
 
-    const markAllRead = () => { void model.markRead(model.sessionPresentation.markAllReadTargets); };
-    const markAllReadAction = page ? (
+    // Incomplete is not empty: a source that could not be read (Artifacts, a followed Run) leaves this view
+    // unable to say "nothing here". The stale line or state below says so once; Retry exists where a retry does.
+    const artifactsIncomplete = model.artifactSource.phase === 'failed' || model.artifactSource.phase === 'partial';
+    const sourcesIncomplete = artifactsIncomplete || model.executionRunAttention.failed;
+    const sourcesRetry = artifactsIncomplete ? { label: t('common.retry'), onPress: model.artifactSource.retry } : undefined;
+    const sourcesComplete = model.artifactSource.phase === 'current' && !model.executionRunAttention.failed;
+
+    const markAllReadDisabled = model.markAllPending || Boolean(model.markAllReadUnavailableReason);
+    const markAllRead = () => {
+        if (!markAllReadDisabled) void model.markRead(model.sessionPresentation.markAllReadTargets);
+    };
+    const markAllReadControl = page ? (
         <SectionActionButton
             testID="inbox.ready.mark_all_read"
             title={t('inbox.markAllRead')}
             icon="checks"
-            disabled={model.markAllPending}
+            disabled={markAllReadDisabled}
+            accessibilityHint={model.markAllReadUnavailableReason ?? undefined}
             onPress={markAllRead}
         />
     ) : (
-        <Pressable
+        <HappierPressable
             testID="inbox.ready.mark_all_read"
             accessibilityRole="button"
             accessibilityLabel={t('inbox.markAllRead')}
-            accessibilityState={{ disabled: model.markAllPending }}
-            disabled={model.markAllPending}
-            hitSlop={Platform.select({ ios: 15, default: 17 })}
+            
+            disabled={markAllReadDisabled}
+            accessibilityHint={model.markAllReadUnavailableReason ?? undefined}
             onPress={markAllRead}
             style={({ pressed }) => [
                 styles.sectionAction,
                 pressed ? styles.sectionActionPressed : null,
-                model.markAllPending ? styles.sectionActionDisabled : null,
+                markAllReadDisabled ? styles.sectionActionDisabled : null,
             ]}
         >
             <Text style={styles.sectionActionLabel}>{t('inbox.markAllRead')}</Text>
-        </Pressable>
+        </HappierPressable>
+    );
+    const markAllReadAction = (
+        <Tooltip label={model.markAllReadUnavailableReason ?? t('inbox.markAllRead')}>
+            {markAllReadControl}
+        </Tooltip>
     );
 
     const renderEmpty = (title: string, subtitle: string, scene: HappierSceneId) => (page ? (
@@ -358,7 +392,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
         </View>
     ));
 
-    const loading = model.isLoading && !model.hasPrimaryAttention;
+    const loading = model.isLoading && !viewHasRows;
     const typeCount = (count: number) => <Text style={styles.count}>{count}</Text>;
 
     const segments = React.useMemo(() => buildInboxRowSegments(view === 'needs_you'
@@ -408,31 +442,40 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
 
     const before = (
         <>
-            {model.artifactSource.phase === 'failed' || model.artifactSource.phase === 'partial' ? (
-                <View style={page ? styles.freshnessPage : styles.freshnessFlat}>
-                    {model.hasPrimaryAttention ? (
-                        <SurfaceFreshnessLine testID="inbox.artifacts_stale" reason={t('inbox.work.stale.reason')}
-                            action={{ label: t('common.retry'), onPress: model.artifactSource.retry }} />
-                    ) : (
+            {sourcesIncomplete ? (
+                viewHasRows ? (
+                    <FreshnessSlot page={page}>
+                        <SurfaceFreshnessLine testID="inbox.artifacts_stale" reason={t('inbox.work.stale.sources')}
+                            action={sourcesRetry} />
+                    </FreshnessSlot>
+                ) : page ? (
+                    // Nothing retained here: the page's own state block in its column, never a lone strip over blank space.
+                    <ItemGroup surface="none" header="none">
+                        <EmptyState testID="inbox.artifacts_unavailable" layout="page" scene="homeOffline"
+                            title={t('inbox.work.stale.sourcesTitle')} subtitle={t('inbox.work.stale.sources')}
+                            primaryAction={sourcesRetry && { ...sourcesRetry, testID: 'inbox.artifacts_retry' }} />
+                    </ItemGroup>
+                ) : (
+                    <FreshnessSlot page={page}>
                         <SurfaceStateCard testID="inbox.artifacts_unavailable" kind="unavailable" size="line"
-                            title={t('common.error')} reason={t('inbox.work.stale.reason')}
-                            action={{ label: t('common.retry'), onPress: model.artifactSource.retry, testID: 'inbox.artifacts_retry' }} />
-                    )}
-                </View>
+                            title={t('inbox.work.stale.sourcesTitle')} reason={t('inbox.work.stale.sources')}
+                            action={sourcesRetry && { ...sourcesRetry, testID: 'inbox.artifacts_retry' }} />
+                    </FreshnessSlot>
+                )
             ) : null}
             {view === 'needs_you' ? (
                 <>
                     {workflowStale ? (
-                        <View style={page ? styles.freshnessPage : styles.freshnessFlat}>
+                        <FreshnessSlot page={page}>
                             <SurfaceFreshnessLine
                                 testID="inbox.workflow_stale"
                                 asOf={model.workflowAttention.knownAt}
                                 reason={t('inbox.work.stale.reason')}
                                 action={{ label: t('inbox.work.stale.retry'), onPress: model.workflowAttention.retry }}
                             />
-                        </View>
+                        </FreshnessSlot>
                     ) : workflowUnavailable ? (
-                        <View style={page ? styles.freshnessPage : styles.freshnessFlat}>
+                        <FreshnessSlot page={page}>
                             <SurfaceStateCard
                                 testID="inbox.workflow_unavailable"
                                 kind="unavailable"
@@ -441,21 +484,21 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                                 reason={t('inbox.work.stale.reason')}
                                 action={{ label: t('inbox.work.stale.retry'), onPress: model.workflowAttention.retry, testID: 'inbox.workflow_retry' }}
                             />
-                        </View>
+                        </FreshnessSlot>
                     ) : null}
 
                     {automationStale ? (
-                        <View style={page ? styles.freshnessPage : styles.freshnessFlat}>
+                        <FreshnessSlot page={page}>
                             <SurfaceFreshnessLine testID="inbox.automation_stale"
                                 asOf={model.automationAttention.knownAt} reason={t('inbox.work.stale.reason')}
                                 action={{ label: t('common.retry'), onPress: model.automationAttention.retry }} />
-                        </View>
+                        </FreshnessSlot>
                     ) : automationUnavailable ? (
-                        <View style={page ? styles.freshnessPage : styles.freshnessFlat}>
+                        <FreshnessSlot page={page}>
                             <SurfaceStateCard testID="inbox.automation_unavailable" kind="unavailable" size="line"
                                 title={t('automations.session.failedToLoad')} reason={t('inbox.work.stale.reason')}
                                 action={{ label: t('common.retry'), onPress: model.automationAttention.retry, testID: 'inbox.automation_retry' }} />
-                        </View>
+                        </FreshnessSlot>
                     ) : null}
 
                 </>
@@ -500,22 +543,17 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                         </View>
                     ) : null}
 
-                    {loading ? (
-                        <View style={styles.loadingContainer}>
-                            <ActivitySpinner size="large" color={theme.colors.text.secondary} />
-                        </View>
-                    ) : null}
-
                     {model.showCaughtUp && !automationUnavailable && needsYouEmpty && page
                         // Nothing anywhere: the page's calm caught-up state.
                         ? renderEmpty(t('inbox.emptyTitle'), t('inbox.emptyDescription'), 'inboxZero')
-                        : model.artifactSource.phase === 'current' && !model.isLoading && !workflowUnavailable && !automationUnavailable && needsYouEmpty && (page || updatesCount === 0)
+                        : sourcesComplete && !model.isLoading && !workflowUnavailable && !automationUnavailable && needsYouEmpty && (page || updatesCount === 0)
                             ? renderEmpty(t('inbox.work.empty.title'), t('inbox.work.empty.description'), 'inboxZero')
                             : null}
                 </>
             ) : (
                 <>
-                    {view === 'updates' && notices.machines.length > 0 ? (
+
+                    {view === 'updates' && (notices.machines.length > 0 || model.machineReachabilityEntries.length > 0) ? (
                         <InboxSection testID="inbox.section.machines" title={t('settings.machines')}
                             surface={sectionSurface} spacingBefore={daySections.length > 0 ? 'separated' : undefined}>
                             {notices.machines.map(({ entry, notice }) => (
@@ -523,12 +561,23 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                                     navigate={navigate}
                                     onDismiss={model.dismissUsageNotice} />
                             ))}
+                            {model.machineReachabilityEntries.map((entry, index) => (
+                                <InboxWorkRow key={entry.key} testID={`inbox.machine.${entry.machineId}`}
+                                    title={entry.name ?? t('common.machine')} phase="finished" narrow={!wide}
+                                    facts={[entry.reachability === 'reachable' ? t('settingsOverview.machineOnline')
+                                        : entry.reachability === 'unreachable' ? t('settingsOverview.machineUnreachableFromHome') : t('common.unknown'),
+                                        ...(entry.expectedDuring === 'reboot' ? [t('machineDetailPage.security.restartingReason')] : [])]}
+                                    mark={<Icon name="desktop" size={18} color={theme.colors.text.secondary} />}
+                                    showDivider={index < model.machineReachabilityEntries.length - 1}
+                                    onPress={() => navigate(machinePageHref({ door: 'rail',
+                                        target: { machineId: entry.machineId, serverId: entry.serverId } }))} />
+                            ))}
                         </InboxSection>
                     ) : null}
 
                     {view === 'updates' && notices.usage.length > 0 ? (
                         <InboxSection testID="inbox.section.usage" title={t('settings.usage')}
-                            surface={sectionSurface} spacingBefore={daySections.length > 0 || notices.machines.length > 0 ? 'separated' : undefined}>
+                            surface={sectionSurface} spacingBefore={daySections.length > 0 || notices.machines.length > 0 || model.machineReachabilityEntries.length > 0 ? 'separated' : undefined}>
                             {notices.usage.map((entry) => (
                                 <UsageNoticeInboxRow key={entry.artifact.id} entry={entry}
                                     onOpen={openUsage}
@@ -541,7 +590,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                         <InboxSection
                             testID="inbox.section.friends"
                             title={t('inbox.friendRequests')}
-                            spacingBefore={daySections.length > 0 || model.openUsageNotices.length > 0 ? 'separated' : undefined}
+                            spacingBefore={daySections.length > 0 || model.openUsageNotices.length > 0 || model.machineReachabilityEntries.length > 0 ? 'separated' : undefined}
                             surface={sectionSurface}
                         >
                             {model.friendRequests.map((friend) => (
@@ -558,14 +607,19 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                         </InboxSection>
                     ) : null}
 
-                    {model.artifactSource.phase === 'current' && !loading && view === 'updates' && daySections.length === 0 && model.friendRequests.length === 0 && model.openUsageNotices.length === 0
+                    {sourcesComplete && !loading && view === 'updates' && daySections.length === 0 && model.friendRequests.length === 0 && model.openUsageNotices.length === 0 && model.machineReachabilityEntries.length === 0
                         ? renderEmpty(t('inbox.work.updatesEmpty.title'), t('inbox.work.updatesEmpty.description'), 'agentFinished')
                         : null}
-                    {model.artifactSource.phase === 'current' && !loading && view === 'mentions' && daySections.length === 0
+                    {sourcesComplete && !loading && view === 'mentions' && daySections.length === 0
                         ? renderEmpty(t('inbox.work.mentionsEmpty.title'), t('inbox.work.mentionsEmpty.description'), 'inboxZero')
                         : null}
                 </>
             )}
+            {loading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivitySpinner size="large" color={theme.colors.text.secondary} />
+                </View>
+            ) : null}
         </>
     );
     return { before, after, segments, renderSegment, focusedRouteKey };

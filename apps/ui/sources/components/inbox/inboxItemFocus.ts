@@ -1,8 +1,8 @@
 import type { InboxWorkItem } from '@/activity/presentation/buildInboxWorkGroups';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
-import { createWorkflowInvocationRoute, createWorkflowRunRoute, readWorkflowInvocationId } from '@/sync/domains/workflows/workflowRunRoute';
-import { buildPluginAppPageRoutePath } from '@/components/appShell/plugins/pluginAppPageRoute';
+import { createMachineExecutionRunRoute, createWorkflowInvocationRoute, createWorkflowRunRoute, readWorkflowInvocationId } from '@/sync/domains/workflows/workflowRunRoute';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import type { AccountNoticeArtifactHeaderV1, UsageNoticeArtifactHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { inboxNoticeFocusKeyV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { machineVitalsNoticeHref } from '@/components/machines/page/machinePageHref';
@@ -27,20 +27,26 @@ export function readInboxView(raw: string | string[] | undefined): InboxItemView
 export type InboxItemFocus = Readonly<{ serverId: string; id: string } & (
     | { kind: 'session'; jumpSeq?: number }
     | { kind: 'approval' | 'notice' }
+    | { kind: 'managed_machine' }
     | { kind: 'workflow_run'; invocationId?: string }
-    | { kind: 'execution_run'; sessionId: string }
+    | { kind: 'execution_run'; sessionId: string; machineId?: never }
+    | { kind: 'execution_run'; machineId: string; sessionId?: never }
     | { kind: 'automation_run'; automationId: string }
     | { kind: 'discussion'; messageId: string }
 )>;
 
 export type InboxItemDetailContext = Readonly<{ notice?: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null }>;
+type InboxNoticePageSource = Pick<AccountNoticeArtifactHeaderV1, 'kind' | 'source' | 'page' | 'notice'>
+    | Pick<UsageNoticeArtifactHeaderV1, 'kind' | 'notice'>;
 
 /** Source kinds choose one detail adapter and their real page here; plugins use the existing page host. */
 export const INBOX_ITEM_DETAIL_REGISTRY = {
+    managed_machine: { prefix: 'managed-machine:', detail: 'page', openLabel: 'common.open',
+        route: (focus: InboxItemFocus) => `/settings/machines/managed/${encodeURIComponent(focus.id)}?serverId=${encodeURIComponent(focus.serverId)}` },
     execution_run: { prefix: 'execution:', detail: 'page', openLabel: 'inbox.work.groups.openRun',
-        route: (focus: InboxItemFocus) => focus.kind === 'execution_run' ? buildSessionExecutionRunRouteHref({
-            serverId: focus.serverId, sessionId: focus.sessionId, runId: focus.id,
-        }) ?? '/inbox' : '/inbox' },
+        route: (focus: InboxItemFocus) => focus.kind === 'execution_run' ? (focus.machineId !== undefined
+            ? createMachineExecutionRunRoute(focus.serverId, focus.machineId, focus.id)
+            : buildSessionExecutionRunRouteHref({ serverId: focus.serverId, sessionId: focus.sessionId, runId: focus.id })) ?? '/inbox' : '/inbox' },
     discussion: { prefix: 'discussion:', detail: 'page', openLabel: 'common.open',
         route: (focus: InboxItemFocus) => focus.kind === 'discussion' ? buildDiscussionRouteHref({ target: {
             kind: 'discussion', address: { serverId: focus.serverId }, discussionId: focus.id, messageId: focus.messageId,
@@ -64,13 +70,13 @@ export const INBOX_ITEM_DETAIL_REGISTRY = {
  * A notice that points nowhere is its own content, so its page is its Inbox item: a phone pushes the
  * same selected notice the wide pane shows, never the stored document page with its JSON.
  */
-export function resolveInboxNoticePageRoute(id: string, notice?: InboxItemDetailContext['notice'], serverId?: string): string {
+export function resolveInboxNoticePageRoute(id: string, notice?: InboxNoticePageSource | null, serverId?: string): string {
     return resolveInboxNoticeOwnPageRoute(notice, serverId)
         ?? `/inbox?item=${encodeURIComponent(inboxNoticeFocusKeyV1(serverId ?? '', id))}`;
 }
 
 /** The page a notice points at (a plugin page, usage or a machine), or null when the notice is its own content. */
-export function resolveInboxNoticeOwnPageRoute(notice?: InboxItemDetailContext['notice'], serverId?: string): string | null {
+export function resolveInboxNoticeOwnPageRoute(notice?: InboxNoticePageSource | null, serverId?: string): string | null {
     if (notice?.kind === 'account_notice.v1' && notice.source.kind === 'plugin' && notice.page && !('kind' in notice.page)) {
         return buildPluginAppPageRoutePath({ pluginId: notice.source.pluginId, localId: notice.page.pageId,
             ...(notice.page.subPath === undefined ? {} : { subPath: notice.page.subPath }) });
@@ -83,7 +89,7 @@ export function resolveInboxNoticeOwnPageRoute(notice?: InboxItemDetailContext['
 export function createInboxItemRoute(focus: InboxItemFocus, view?: InboxItemView) {
     return { pathname: '/inbox', params: {
         item: focus.kind === 'notice' ? inboxNoticeFocusKeyV1(focus.serverId, focus.id)
-            : `${INBOX_ITEM_DETAIL_REGISTRY[focus.kind].prefix}${encodeURIComponent(focus.serverId)}:${encodeURIComponent(focus.id)}${focus.kind === 'automation_run' ? `:${encodeURIComponent(focus.automationId)}` : focus.kind === 'discussion' ? `:${encodeURIComponent(focus.messageId)}` : focus.kind === 'execution_run' ? `:${encodeURIComponent(focus.sessionId)}` : ''}`,
+            : `${INBOX_ITEM_DETAIL_REGISTRY[focus.kind].prefix}${encodeURIComponent(focus.serverId)}:${encodeURIComponent(focus.id)}${focus.kind === 'automation_run' ? `:${encodeURIComponent(focus.automationId)}` : focus.kind === 'discussion' ? `:${encodeURIComponent(focus.messageId)}` : focus.kind === 'execution_run' ? focus.machineId !== undefined ? `:machine:${encodeURIComponent(focus.machineId)}` : `:${encodeURIComponent(focus.sessionId)}` : ''}`,
         ...(focus.kind === 'workflow_run' && focus.invocationId ? { invocationId: focus.invocationId } : {}),
         ...(focus.kind === 'session' && readInboxJumpSeq(focus.jumpSeq) !== null ? { jumpSeq: String(focus.jumpSeq) } : {}),
         ...(view ? { view } : {}),
@@ -108,7 +114,8 @@ export function readInboxItemFocus(raw: string | string[] | undefined, rawInvoca
         const prefix = INBOX_ITEM_DETAIL_REGISTRY[kind].prefix;
         if (!value.startsWith(prefix)) continue;
         const parts = value.slice(prefix.length).split(':');
-        if (parts.length !== (kind === 'automation_run' || kind === 'discussion' || kind === 'execution_run' ? 3 : 2)) return null;
+        if (parts.length !== (kind === 'automation_run' || kind === 'discussion' || kind === 'execution_run' ? 3 : 2)
+            && !(kind === 'execution_run' && parts.length === 4 && parts[2] === 'machine')) return null;
         try {
             const serverId = decodeURIComponent(parts[0]!).trim();
             const id = decodeURIComponent(parts[1]!).trim();
@@ -122,6 +129,10 @@ export function readInboxItemFocus(raw: string | string[] | undefined, rawInvoca
                 return messageId ? { kind, serverId, id, messageId } : null;
             }
             if (kind === 'execution_run') {
+                if (parts.length === 4) {
+                    const machineId = decodeURIComponent(parts[3]!).trim();
+                    return machineId ? { kind, serverId, id, machineId } : null;
+                }
                 const sessionId = decodeURIComponent(parts[2]!).trim();
                 return sessionId ? { kind, serverId, id, sessionId } : null;
             }

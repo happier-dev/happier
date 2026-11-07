@@ -7,6 +7,12 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createInboxItemRoute, isFocusedInboxWorkItem, readInboxItemFocus, resolveInboxItemPageRoute } from './inboxItemFocus';
 
 describe('Home-qualified Inbox focus', () => {
+    it('opens a managed Machine on its exact Home through the existing page presenter', () => {
+        const focus = { kind: 'managed_machine', serverId: 'home:b', id: 'box/one' } as const;
+        const route = createInboxItemRoute(focus);
+        expect(readInboxItemFocus(route.params.item)).toEqual(focus);
+        expect(resolveInboxItemPageRoute(focus)).toBe('/settings/machines/managed/box%2Fone?serverId=home%3Ab');
+    });
     it('opens an Automation occurrence through the canonical Run route on the row Home', () => {
         const focus = { kind: 'automation_run', serverId: 'home-b', id: 'same-run', automationId: 'same-automation' } as const;
         expect(resolveInboxItemPageRoute(focus))
@@ -67,7 +73,7 @@ describe('Home-qualified Inbox focus', () => {
         const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'same-run' }), null);
         const item = { kind: 'workflow_run', key: 'run:same-run', runId: 'same-run', row,
-            heldStepLabel: null, heldStepLaneLabel: null } as const;
+            heldStepLabel: null, heldStepLaneLabel: null, heldStepNeed: null } as const;
         const focus = readInboxItemFocus(createInboxItemRoute({ kind: 'workflow_run', serverId: 'home-b', id: 'same-run' }).params.item);
         expect(isFocusedInboxWorkItem(item, focus, 'home-a')).toBe(false);
         expect(isFocusedInboxWorkItem(item, focus, 'home-b')).toBe(true);

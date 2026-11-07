@@ -1,15 +1,15 @@
 import { z } from 'zod/mini';
+import { ThemeProfileIdSchema, ThemeProfileStoredSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
+export { ThemeProfileLibrarySchema, ThemeProfileLibraryStoredSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
 
-import { THEME_PROFILE_MAX_PROFILES, THEME_PROFILE_SCHEMA_VERSION } from './themeProfileConstants';
+import { projectThemeProfileMigration } from './themeProfileMigrationEdits';
+export { mergeThemeProfileLibraries } from './themeProfileLibraryComposition';
 import {
     migrateThemeProfileOverrideTokenIds,
-    sanitizeThemeProfileOverrides,
-    sanitizeThemeProfileName,
-    sanitizeThemeProfileOverridesForV1TrustBoundary,
     isRouteSafeThemeProfileId,
     isReservedThemeProfileId,
 } from './themeProfileImportExport';
-import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfileV1, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import type { ThemeProfileMigrationIntent, ThemeProfileDeviceSelectionByMode, ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfileV1, ThemeProfilesLocalStateV1, ThemeProfilesStateSnapshot } from './themeProfileTypes';
 import { getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from './builtInThemeProfiles';
 import { inferThemeProfileAssetAppearance, isThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
 
@@ -48,45 +48,18 @@ const sanitizeActiveProfileId = (
     seenIds: ReadonlySet<string>,
 ): string | null => (isKnownThemeProfileId(value, seenIds) ? value : null);
 
-const parseThemeProfile = (value: unknown): Readonly<{ profile: ThemeProfileV1; changed: boolean }> | null => {
+export const parseThemeProfile = (value: unknown): Readonly<{ profile: ThemeProfileV1; changed: boolean }> | null => {
     if (!isRecord(value)) return null;
-    if (value.schemaVersion !== THEME_PROFILE_SCHEMA_VERSION) return null;
-    if (typeof value.id !== 'string' || value.id.trim().length === 0) return null;
-    if (!isRouteSafeThemeProfileId(value.id.trim())) return null;
-    if (isReservedThemeProfileId(value.id.trim())) return null;
-    const name = sanitizeThemeProfileName(value.name);
-    if (!name) return null;
-    if (typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string') return null;
-    if (!isRecord(value.base) || value.base.light !== 'light' || value.base.dark !== 'dark') return null;
-    if (!isRecord(value.overrides)) return null;
-
-    const sanitizedOverrides = sanitizeThemeProfileOverridesForV1TrustBoundary({
-        light: value.overrides.light,
-        dark: value.overrides.dark,
+    const parsed = ThemeProfileStoredSchema.safeParse({
+        ...value,
+        assetAppearance: isThemeProfileAssetAppearance(value.assetAppearance) ? value.assetAppearance : undefined,
     });
-    if (!sanitizedOverrides) return null;
-
-    const profileWithoutAssetAppearance = {
-        schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
-        id: value.id.trim(),
-        name,
-        createdAt: value.createdAt,
-        updatedAt: value.updatedAt,
-        base: { light: 'light', dark: 'dark' },
-        overrides: sanitizedOverrides,
-    } satisfies Omit<ThemeProfileV1, 'assetAppearance'>;
-
+    if (!parsed.success) return null;
     const profile: ThemeProfileV1 = {
-        ...profileWithoutAssetAppearance,
-        assetAppearance: isThemeProfileAssetAppearance(value.assetAppearance)
-            ? value.assetAppearance
-            : inferThemeProfileAssetAppearance(profileWithoutAssetAppearance),
+        ...parsed.data,
+        assetAppearance: parsed.data.assetAppearance ?? inferThemeProfileAssetAppearance(parsed.data),
     };
-
-    return {
-        profile,
-        changed: stableStringify(profile) !== stableStringify(value),
-    };
+    return { profile, changed: stableStringify(profile) !== stableStringify(value) };
 };
 
 export const parseThemeProfilesLocalState = (value: unknown): ParseThemeProfilesLocalStateResult => {
@@ -98,7 +71,7 @@ export const parseThemeProfilesLocalState = (value: unknown): ParseThemeProfiles
     let changed = false;
     const seenIds = new Set<string>();
 
-    for (const sourceProfile of value.profiles.slice(0, THEME_PROFILE_MAX_PROFILES)) {
+    for (const sourceProfile of value.profiles) {
         const parsedProfile = parseThemeProfile(sourceProfile);
         if (!parsedProfile || seenIds.has(parsedProfile.profile.id) || isBuiltInThemeProfilePresetId(parsedProfile.profile.id)) {
             changed = true;
@@ -108,10 +81,6 @@ export const parseThemeProfilesLocalState = (value: unknown): ParseThemeProfiles
         profiles.push(parsedProfile.profile);
         seenIds.add(parsedProfile.profile.id);
         changed = changed || parsedProfile.changed;
-    }
-
-    if (value.profiles.length > THEME_PROFILE_MAX_PROFILES) {
-        changed = true;
     }
 
     let activeProfileIds: ThemeProfileSelectionByMode;
@@ -157,10 +126,7 @@ export const migrateThemeProfileLocalStateTokenIds = (state: ThemeProfilesLocalS
         changed = true;
         return {
             ...profile,
-            overrides: sanitizeThemeProfileOverrides({
-                light: light.overrides,
-                dark: dark.overrides,
-            }),
+            overrides: { light: light.overrides, dark: dark.overrides },
         };
     });
 
@@ -172,6 +138,92 @@ export const migrateThemeProfileLocalStateTokenIds = (state: ThemeProfilesLocalS
 
 export const ThemeProfilesLocalStateSchema: z.ZodMiniType<ThemeProfilesLocalStateV1> = z.pipe(z
     .unknown(), z.transform((value) => parseThemeProfilesLocalState(value).state));
+
+export const ThemeProfileSelectionSchema: z.ZodMiniType<ThemeProfileSelectionByMode> = z.pipe(z.unknown(), z.transform((value) => {
+    const record = isRecord(value) ? value : {};
+    const read = (id: unknown): string | null => (
+        typeof id === 'string' && isRouteSafeThemeProfileId(id)
+        && (!isReservedThemeProfileId(id) || isBuiltInThemeProfilePresetId(id)) ? id : null
+    );
+    return { light: read(record.light), dark: read(record.dark) };
+}));
+
+const ThemeProfileLegacySelectionSchema = z.strictObject({
+    legacyProfileId: ThemeProfileIdSchema.check(z.refine((id) => !isReservedThemeProfileId(id))),
+});
+
+export const ThemeProfileDeviceSelectionSchema: z.ZodMiniType<ThemeProfileDeviceSelectionByMode> = z.pipe(z.unknown(), z.transform((value) => {
+    const record = isRecord(value) ? value : {};
+    const canonical = ThemeProfileSelectionSchema.parse(record);
+    const read = (mode: ThemeProfileMode): ThemeProfileDeviceSelectionByMode[ThemeProfileMode] => {
+        if (!isRecord(record[mode])) return canonical[mode];
+        const parsed = ThemeProfileLegacySelectionSchema.safeParse(record[mode]);
+        return parsed.success ? parsed.data : null;
+    };
+    return { light: read('light'), dark: read('dark') };
+}));
+
+/** Encode selections against the exact Account and local libraries the user saw. */
+export function encodeThemeProfileSelection(
+    profiles: readonly ThemeProfileV1[],
+    legacy: ThemeProfilesLocalStateV1,
+    selection: ThemeProfileSelectionByMode,
+    pendingIntent?: ThemeProfileMigrationIntent | null,
+    pendingProfiles?: readonly ThemeProfileV1[],
+): ThemeProfileDeviceSelectionByMode {
+    const snapshot = resolveThemeProfilesStateSnapshot(profiles, legacy, selection, pendingIntent, pendingProfiles);
+    const encode = (id: string | null): ThemeProfileDeviceSelectionByMode[ThemeProfileMode] => {
+        if (id === null || !Object.prototype.hasOwnProperty.call(snapshot.legacyProfileIds, id)) return id;
+        return { legacyProfileId: snapshot.legacyProfileIds[id] };
+    };
+    return { light: encode(selection.light), dark: encode(selection.dark) };
+}
+
+/** One composition for migration, live consumers, and approval-time provenance capture. */
+export function resolveThemeProfilesStateSnapshot(
+    profiles: readonly ThemeProfileV1[],
+    legacy: ThemeProfilesLocalStateV1,
+    activeProfileIds: ThemeProfileDeviceSelectionByMode | null,
+    pendingIntent?: ThemeProfileMigrationIntent | null,
+    pendingProfiles?: readonly ThemeProfileV1[],
+): ThemeProfilesStateSnapshot {
+    const selection = activeProfileIds ?? legacy.activeProfileIds;
+    const merged = projectThemeProfileMigration(profiles, legacy, pendingIntent, pendingProfiles);
+    const composedProfiles = merged.profiles;
+    const composedIds = new Set(composedProfiles.map((profile) => profile.id));
+    const resolve = (id: ThemeProfileDeviceSelectionByMode[ThemeProfileMode]): string | null => {
+        const resolved = typeof id === 'string'
+            ? activeProfileIds === null ? isBuiltInThemeProfilePresetId(id) ? id : merged.legacyProfileIds.get(id) ?? null : id
+            : id ? merged.legacyProfileIds.get(id.legacyProfileId) ?? null : null;
+        return sanitizeActiveProfileId(resolved, composedIds);
+    };
+    const origins: Array<[string, string]> = [];
+    if (merged.legacy.profiles.length) {
+        const legacyIds = new Set(merged.legacy.profiles.map(profile => profile.id));
+        const accountIds = new Set(profiles.map((profile) => profile.id));
+        for (const [legacyId, displayedId] of merged.legacyProfileIds) {
+            if (legacyIds.has(legacyId) && !accountIds.has(displayedId)) origins.push([displayedId, legacyId]);
+        }
+    }
+    return {
+        themeProfiles: {
+            profiles: composedProfiles,
+            activeProfileIds: { light: resolve(selection.light), dark: resolve(selection.dark) },
+        },
+        legacyProfileIds: Object.fromEntries(origins),
+    };
+}
+
+export function resolveThemeProfilesState(
+    profiles: readonly ThemeProfileV1[],
+    legacy: ThemeProfilesLocalStateV1,
+    activeProfileIds: ThemeProfileDeviceSelectionByMode | null,
+    pendingIntent?: ThemeProfileMigrationIntent | null,
+    pendingProfiles?: readonly ThemeProfileV1[],
+): ThemeProfilesLocalStateV1 {
+    return resolveThemeProfilesStateSnapshot(profiles, legacy, activeProfileIds, pendingIntent, pendingProfiles).themeProfiles;
+}
+
 
 export const findThemeProfileById = (
     state: ThemeProfilesLocalStateV1,

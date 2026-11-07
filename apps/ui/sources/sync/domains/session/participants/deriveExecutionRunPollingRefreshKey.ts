@@ -2,6 +2,12 @@ import type { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { isSubAgentTranscriptToolName, readSubAgentToolRunId } from '@happier-dev/protocol/tools/v2';
 
 const EXECUTION_RUN_ID_REGEX = /run_[0-9a-f-]{8,}/gi;
+const EMPTY_EXECUTION_RUN_REFRESH_KEY = 'subagent:|started:|stopped:';
+
+/** The same signal policy backs support presentation and execution-run refreshes. */
+export function hasExecutionRunSignals(messages: readonly Message[]): boolean {
+    return deriveExecutionRunPollingRefreshKey(messages) !== EMPTY_EXECUTION_RUN_REFRESH_KEY;
+}
 
 export function readExecutionRunIdFromToolPayload(tool: ToolCall): string | null {
     return readSubAgentToolRunId(tool);

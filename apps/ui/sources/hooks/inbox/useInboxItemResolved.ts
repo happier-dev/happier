@@ -4,7 +4,8 @@ import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessi
 import { classifyInboxSessionCandidate } from '@/activity/presentation/buildInboxSessionPresentation';
 import { type InboxItemFocus, readInboxApprovalServerId } from '@/components/inbox/inboxItemFocus';
 import { inboxItemView } from '@/components/inbox/inboxItems';
-import { presentInboxWorkflowRun } from '@/components/inbox/inboxWorkflowRunPresentation';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { isOpenAccountNotice } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -55,7 +56,9 @@ export function useInboxItemResolved(
         if (!lifetime || !sameHome || !id) return () => {};
         const unsubscribe = kind === 'discussion'
             ? subscribeRegisteredDiscussionRepository(lifetime.scope, { serverId: lifetime.scope.serverId }, notify)
-            : kind === 'approval' || kind === 'workflow_run' ? storage.subscribe(notify) : null;
+            : kind === 'approval' ? storage.subscribe(notify, { artifacts: [id] })
+                : kind === 'workflow_run' ? storage.subscribe(notify,
+                    { workflowRunsById: [workflowRunStoreKey(id, lifetime.scope)] }) : null;
         return () => { unsubscribe?.(); };
     }, [id, kind, lifetime, sameHome]);
     const record = React.useSyncExternalStore(subscribe, readRecord, readRecord);
@@ -83,13 +86,18 @@ export function useInboxItemResolved(
         }
         case 'workflow_run': {
             const run = record !== true && 'summary' in record ? record : null;
-            return run?.summary != null && presentInboxWorkflowRun(run.summary).view !== 'needs_you';
+            if (!run?.summary) return false;
+            const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(run.summary) });
+            return status.bucket !== 'needs_you' || status.attentionType === null || inboxItemView(status.attentionType) !== 'needs_you';
         }
         case 'execution_run':
             // An absent running-roster row is not positive evidence of a resolved permission.
             return false;
         case 'automation_run':
             // Automation rows are Updates at their canonical Inbox projection.
+            return false;
+        case 'managed_machine':
+            // Withdrawing a deadline is not a recorded answer to the selected Machine.
             return false;
         case 'discussion':
             return record !== true && 'messageRef' in record && record.docEditProposalDispositionV1 != null

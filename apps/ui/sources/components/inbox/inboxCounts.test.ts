@@ -16,6 +16,12 @@ function source(overrides: Partial<InboxCountSource> = {}): InboxCountSource {
 }
 
 describe('Inbox counts', () => {
+    it('keeps Machine reminders in Needs you and reachability in Updates', () => {
+        const model = source({ machineDeletionEntries: [{}], machineReachabilityEntries: [{}] });
+        expect(countInboxNeedsYou(model)).toBe(1);
+        expect(countInboxUpdates(model)).toBe(1);
+        expect(countInbox(model)).toBe(2);
+    });
     it('counts ordinary Automation attention even with no Workflow or Session rows', () => {
         const model = source({ automationAttention: { runIds: ['pre-session-failure'] } });
         expect(countInboxNeedsYou(model)).toBe(1);

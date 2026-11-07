@@ -21,10 +21,11 @@ export type InboxCountParts = Readonly<{
     operations: number;
     friendRequests: number;
     discussions?: number;
+    machines?: number;
 }>;
 
 export function countInboxItems(parts: InboxCountParts): number {
-    return parts.sessions + parts.workflowRuns + (parts.executionRuns ?? 0) + parts.automationRuns + parts.approvalsAndNotices + parts.operations + parts.friendRequests + (parts.discussions ?? 0);
+    return parts.sessions + parts.workflowRuns + (parts.executionRuns ?? 0) + parts.automationRuns + parts.approvalsAndNotices + parts.operations + parts.friendRequests + (parts.discussions ?? 0) + (parts.machines ?? 0);
 }
 
 /** Read is not disposition: a live request remains attention until its owning source removes it. */
@@ -47,6 +48,8 @@ export type InboxCountSource = Readonly<{
     openApprovals: ArrayLike<unknown>;
     openUsageNotices: ArrayLike<unknown>;
     actionOperationEntries: ArrayLike<unknown>;
+    machineDeletionEntries?: ArrayLike<unknown>;
+    machineReachabilityEntries?: ArrayLike<unknown>;
     friendRequests: ArrayLike<unknown>;
     sessionPresentation: Readonly<{ sessionsNeedingAttention: ArrayLike<unknown>; readySessions: ArrayLike<unknown> }>;
     workflowAttention: Readonly<{ runIds: ArrayLike<unknown> }>;
@@ -55,15 +58,19 @@ export type InboxCountSource = Readonly<{
 
 /** The "Needs you" view's share of the count. */
 export function countInboxNeedsYou(model: InboxCountSource): number {
-    if (model.items) return countInboxItems({
+    if (model.items) {
+        const workflowUpdates = new Set<unknown>(model.items.filter(item => item.source.kind === 'workflow_run' && item.view !== 'needs_you')
+            .map(item => item.source.id));
+        return countInboxItems({
         sessions: model.items.filter(item => item.producer === 'live' && item.source.kind !== 'approval'
             && item.source.kind !== 'workflow_run' && item.source.kind !== 'automation_run'
             && item.view === 'needs_you' && countsInboxItem(item)).length,
-        workflowRuns: model.workflowAttention.runIds.length - model.items.filter(item => item.source.kind === 'workflow_run' && item.view !== 'needs_you').length,
+        workflowRuns: Array.from(model.workflowAttention.runIds).filter(runId => !workflowUpdates.has(runId)).length,
         automationRuns: model.automationAttention.runIds.length - model.items.filter(item => item.source.kind === 'automation_run' && item.view !== 'needs_you').length,
         approvalsAndNotices: model.openApprovals.length + model.items.filter(item => item.producer === 'notice' && item.view === 'needs_you').length,
         operations: model.actionOperationEntries.length, friendRequests: 0,
-    });
+        });
+    }
     return countInboxItems({
         sessions: model.sessionPresentation.sessionsNeedingAttention.length,
         workflowRuns: model.workflowAttention.runIds.length,
@@ -71,12 +78,15 @@ export function countInboxNeedsYou(model: InboxCountSource): number {
         approvalsAndNotices: model.openApprovals.length + model.openUsageNotices.length,
         operations: model.actionOperationEntries.length,
         friendRequests: 0,
+        machines: model.machineDeletionEntries?.length ?? 0,
     });
 }
 
 /** The "Updates" view's share of the count: finished sessions to read and friend requests. */
 export function countInboxUpdates(model: InboxCountSource): number {
-    if (model.items) return model.items.filter(item => item.view === 'updates' && !item.read).length + model.friendRequests.length;
+    // An open usage notice is one Updates line drawn by its own card, never a generic item (see buildInboxItems).
+    if (model.items) return model.items.filter(item => item.view === 'updates' && !item.read).length
+        + model.openUsageNotices.length + model.friendRequests.length + (model.machineReachabilityEntries?.length ?? 0);
     return countInboxItems({
         sessions: model.sessionPresentation.readySessions.length,
         workflowRuns: 0,
@@ -84,6 +94,7 @@ export function countInboxUpdates(model: InboxCountSource): number {
         approvalsAndNotices: 0,
         operations: 0,
         friendRequests: model.friendRequests.length,
+        machines: model.machineReachabilityEntries?.length ?? 0,
     });
 }
 

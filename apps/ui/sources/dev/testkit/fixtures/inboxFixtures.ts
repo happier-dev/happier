@@ -1,6 +1,5 @@
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
 import { EMPTY_WORKFLOW_ATTENTION_SOURCE } from '@/hooks/inbox/useWorkflowAttentionSource';
-
 import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -25,12 +24,15 @@ export function createInboxApprovalArtifactFixture(input: Readonly<{
 
 /** Complete attention inputs shared by Inbox presentation fixtures. */
 export function createInboxAttentionFixture(serverId: string | null = null): Pick<InboxModel, 'workflowAttention' | 'automationAttention' | 'automationAttentionItems'
-    | 'items' | 'sessionCandidates' | 'accountNotices' | 'openAccountNotices' | 'dismissAccountNotice' | 'markItemOpened' | 'discussionAttention' | 'machineReachabilityEntries'> {
+    | 'items' | 'sessionCandidates' | 'accountNotices' | 'openAccountNotices' | 'dismissAccountNotice' | 'markItemOpened' | 'discussionAttention' | 'executionRunAttention' | 'artifactSource' | 'machineReachabilityEntries' | 'machineDeletionEntries'> {
     return {
+        artifactSource: { scope: null, phase: 'current', retry: () => undefined },
         workflowAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, serverId, runIds: [] },
         automationAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, serverId, runIds: [] },
         automationAttentionItems: [],
         machineReachabilityEntries: [],
+        machineDeletionEntries: [],
+        executionRunAttention: { loading: false, failed: false },
         items: [], sessionCandidates: [], accountNotices: [], openAccountNotices: [], dismissAccountNotice: async () => {}, markItemOpened: async () => {},
         discussionAttention: { source: null, coverage: 'unavailable', available: false, loading: false,
             status: 'idle', errorCode: null, markOpened: async () => {}, refresh: () => undefined, loadMore: () => undefined },

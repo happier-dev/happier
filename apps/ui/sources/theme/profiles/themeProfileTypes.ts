@@ -1,4 +1,6 @@
 import type { TranslationKeyNoParams } from '@/text';
+import type { BuiltInThemeProfilePresetId, ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
+export type { BuiltInThemeProfilePresetId, ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 export type ThemeProfileMode = 'light' | 'dark';
 
@@ -10,47 +12,23 @@ export type ThemeProfileColorOverrides = Readonly<Record<ThemeProfilePublicToken
 
 export type ThemeProfileSelectionByMode = Readonly<Record<ThemeProfileMode, string | null>>;
 
-export type ThemeProfileV1 = Readonly<{
-    schemaVersion: 1;
-    id: string;
-    name: string;
-    createdAt: string;
-    updatedAt: string;
-    base: Readonly<{
-        light: 'light';
-        dark: 'dark';
-    }>;
-    assetAppearance?: ThemeProfileMode;
-    overrides: Readonly<{
-        light: ThemeProfileColorOverrides;
-        dark: ThemeProfileColorOverrides;
-    }>;
-}>;
+/** Canonical Account ids stay strings; an unpromoted local selection retains its origin. */
+export type ThemeProfileDeviceSelectionByMode = Readonly<Record<
+    ThemeProfileMode,
+    string | Readonly<{ legacyProfileId: string }> | null
+>>;
+
 
 export type ThemeProfilesLocalStateV1 = Readonly<{
     activeProfileIds: ThemeProfileSelectionByMode;
     profiles: readonly ThemeProfileV1[];
 }>;
 
-export type BuiltInThemeProfilePresetId =
-    | 'premiumDark'
-    | 'pitchDark'
-    | 'sunsetDark'
-    | 'tokyoNight'
-    | 'nightDark'
-    | 'classicDark'
-    | 'graphiteDark'
-    | 'catppuccinMocha'
-    | 'catppuccinMacchiato'
-    | 'catppuccinFrappe'
-    | 'oneDarkPro'
-    | 'monokaiPro'
-    | 'githubDark'
-    | 'darkModern'
-    | 'premiumLight'
-    | 'paperLight'
-    | 'catppuccinLatte'
-    | 'githubLight';
+export type ThemeProfilesStateSnapshot = Readonly<{
+    themeProfiles: ThemeProfilesLocalStateV1;
+    legacyProfileIds: Readonly<Record<string, string>>;
+}>;
+
 
 export type BuiltInThemeProfileDefinition = Readonly<{
     profile: ThemeProfileV1;
@@ -60,4 +38,21 @@ export type BuiltInThemeProfileDefinition = Readonly<{
     cloneable: true;
     editable: false;
     deletable: false;
+}>;
+
+/** Private device pending-record intent; never part of Account settings. */
+export type ThemeProfileMigrationEdit = Readonly<{
+    target: Readonly<{ kind: 'account' | 'legacy'; id: string }>;
+    profile: ThemeProfileV1 | null;
+}>;
+
+export type ThemeProfileMigrationIntent = Readonly<{
+    edits: readonly ThemeProfileMigrationEdit[];
+    legacyProfileIds: Readonly<Record<string, string>>;
+    acknowledged?: true;
+    replaceLibrary?: true;
+    /** Predecessor pending records may already represent these backup rows in Account. */
+    representedLegacyProfileIds?: Readonly<Record<string, string>>;
+    /** Actual identities from an attempted POST, distinct from captured UI provenance. */
+    attemptedLegacyProfileIds?: Readonly<Record<string, string>>;
 }>;

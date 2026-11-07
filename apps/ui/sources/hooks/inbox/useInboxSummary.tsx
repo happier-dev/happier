@@ -1,71 +1,34 @@
 import * as React from 'react';
+import { AccountNoticeInvestigationBoundary } from './AccountNoticeInvestigationProvider';
 
 import { useActivityOverviewSummary } from '@/activity/source/useActivityOverview';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
-import { isOpenApprovalInboxArtifact } from '@/sync/domains/artifacts/approvalArtifacts';
-import { readAccountNoticeArtifactHeader, isUnreadAccountNotice } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { useInboxActionOperationSummary } from '@/sync/domains/actionOperations/useActionOperations';
 import { useFriendRequestCount } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
-import type { StorageState } from '@/sync/store/types';
 import { countInboxDiscussionItems, countInboxItems } from '@/components/inbox/inboxCounts';
 import { useInboxDiscussionAttention } from './useInboxDiscussionSource';
 import { InboxExecutionRunSourceBoundary, useInboxExecutionRunCount } from './useInboxExecutionRunSource';
-import { InboxArtifactSourceBoundary, useInboxArtifactSource } from './useInboxArtifactSource';
+import { InboxArtifactSourceBoundary, useInboxArtifactSource, useInboxArtifactOpenCount } from './useInboxArtifactSource';
 
 import { useAutomationAttentionSource, useWorkflowAttentionSource, WorkflowAttentionSourceBoundary } from './useWorkflowAttentionSource';
+import { useManagedMachineDeletionAttention } from '@/activity/source/useManagedMachineDeletionSource';
+import { useInboxMachineReachability } from './useInboxMachineReachability';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export type InboxSummary = Readonly<{
     count: number | null;
     hasContent: boolean | null;
 }>;
 
-export function createOpenApprovalInboxCountSelector(): (state: StorageState) => number {
-    let previousArtifacts: StorageState['artifacts'] | null = null;
-    let previousIsDataReady = false;
-    let previousAccountId: string | null | undefined;
-    let previousCount = 0;
-    let previousCountedIds = new Set<string>();
-
-    return (state) => {
-        if (state.artifacts === previousArtifacts && state.isDataReady === previousIsDataReady
-            && state.profileScope?.accountId === previousAccountId) {
-            return previousCount;
-        }
-        const accountId = state.profileScope?.accountId;
-        const retainClassification = previousIsDataReady && previousAccountId === accountId;
-        const countedIds = new Set<string>();
-        if (state.isDataReady) {
-            for (const artifact of Object.values(state.artifacts)) {
-                // The Artifact store retains unchanged immutable rows. Carry this
-                // snapshot's classification forward; changed bodies still enter
-                // the strict reader, and removed rows leave the projection.
-                if (retainClassification && artifact === previousArtifacts?.[artifact.id]) {
-                    if (previousCountedIds.has(artifact.id)) countedIds.add(artifact.id);
-                    continue;
-                }
-                const notice = readAccountNoticeArtifactHeader(artifact, accountId);
-                if (isOpenApprovalInboxArtifact(artifact)
-                    || (notice && isUnreadAccountNotice(notice))) countedIds.add(artifact.id);
-            }
-        }
-        previousArtifacts = state.artifacts;
-        previousIsDataReady = state.isDataReady;
-        previousAccountId = accountId;
-        previousCountedIds = countedIds;
-        previousCount = countedIds.size;
-        return previousCount;
-    };
-}
-
-const selectOpenApprovalInboxCount = createOpenApprovalInboxCountSelector();
-
 export function useInboxSummary(): InboxSummary {
     const activity = useActivityOverviewSummary();
     const artifactSource = useInboxArtifactSource();
     const serverId = storage(state => state.profileScope?.serverId ?? null);
-    const openApprovalCount = storage(selectOpenApprovalInboxCount);
+    const machineDeletionEntries = useManagedMachineDeletionAttention(serverId);
+    const machineReachabilityEntries = useInboxMachineReachability(captureActiveServerAccountScopeLifetime());
+    const openApprovalCount = useInboxArtifactOpenCount();
     const friendsEnabled = useFriendsEnabled();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendRequestCount = useFriendRequestCount();
@@ -91,6 +54,7 @@ export function useInboxSummary(): InboxSummary {
         operations: actionOperations.count,
         friendRequests: visibleFriendRequestCount,
         discussions: discussionCount,
+        machines: machineDeletionEntries.length + machineReachabilityEntries.length,
     });
 
     return React.useMemo(() => artifactSource.phase === 'current' ? { count, hasContent: count > 0 }
@@ -111,9 +75,9 @@ function InboxSummaryContextProvider(props: Readonly<{ children: React.ReactNode
 /** The app shell's one Inbox summary owner; it also mounts the one workflow attention loader. */
 export function InboxSummaryProvider(props: Readonly<{ children: React.ReactNode }>) {
     return (
-        <InboxArtifactSourceBoundary><WorkflowAttentionSourceBoundary>
+        <AccountNoticeInvestigationBoundary><InboxArtifactSourceBoundary><WorkflowAttentionSourceBoundary>
             <InboxExecutionRunSourceBoundary><InboxSummaryContextProvider>{props.children}</InboxSummaryContextProvider></InboxExecutionRunSourceBoundary>
-        </WorkflowAttentionSourceBoundary></InboxArtifactSourceBoundary>
+        </WorkflowAttentionSourceBoundary></InboxArtifactSourceBoundary></AccountNoticeInvestigationBoundary>
     );
 }
 

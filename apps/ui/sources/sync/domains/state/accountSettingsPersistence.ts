@@ -6,7 +6,6 @@ import { stripMigratedSessionOrganizationSettings } from '@/sync/domains/setting
 import {
     pickLocalOnlyAccountSettings,
     stripLocalOnlyAccountSettings,
-    stripReadOnlyAccountSettingsDelta,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import {
     isServerIssuedIdentityId,
@@ -14,27 +13,26 @@ import {
 } from '@/sync/domains/settings/serverIdentityKeyMigration';
 import {
     accountSettingsScopeKeySuffix,
+    createAccountSettingsScope,
     areAccountSettingsScopesEqual,
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { hydrateAccountSettingsFromLocalPersistence } from '@/sync/domains/settings/accountSettingsNormalization';
 import { assertNoUnsealedSettingsSecretValues } from '@/sync/encryption/secretSettings';
 
-import { loadPendingSettings, parseStoredPendingSettings } from './persistence';
+import { loadPendingSettings } from './persistence';
 import { getPersistenceStorage } from './persistenceStorage';
 import { loadSettings } from './settingsPersistence';
 import { loadHomeViewState, migrateHomeViewStateFromSettings } from '@/sync/domains/server/serverProfiles';
 import { stripServerSelectionSettingsProjection } from '@/sync/domains/server/selection/serverSelectionSettingsAdapter';
+import { migrateMachineAdministrationTargetObservations } from './machineAdministrationUiState';
+import { migrateNewSessionUiState, migrateNewSessionUiStateScope } from './newSessionTargetUiState';
 
-type AccountSettingsPersistenceMutationListener = (scope: AccountSettingsScope) => void;
-const accountSettingsPersistenceMutationListeners = new Set<AccountSettingsPersistenceMutationListener>();
-
-export function subscribeAccountSettingsPersistenceMutations(
-    listener: AccountSettingsPersistenceMutationListener,
-): () => void {
-    accountSettingsPersistenceMutationListeners.add(listener);
-    return () => accountSettingsPersistenceMutationListeners.delete(listener);
-}
+import { publishAccountSettingsPersistenceMutation } from './accountSettingsPersistenceSubscriptions';
+import { loadPendingAccountSettings, loadPendingAccountSettingsState, savePendingAccountSettings, pendingAccountSettingsKey } from './pendingAccountSettingsPersistence';
+export { loadPendingAccountSettings, loadPendingAccountSettingsState, savePendingAccountSettings, readPendingAccountSettingsPersistenceMutationToken, THEME_PROFILE_MIGRATION_PENDING_KEY } from './pendingAccountSettingsPersistence';
+export { subscribePendingAccountSettingsPersistenceMutations } from './accountSettingsPersistenceSubscriptions';
+export { subscribeAccountSettingsPersistenceMutations } from './accountSettingsPersistenceSubscriptions';
 
 /**
  * Snapshot the canonical persisted bytes for one exact Account settings scope.
@@ -45,13 +43,28 @@ export function readAccountSettingsPersistenceMutationToken(scope: AccountSettin
     return getPersistenceStorage().getString(accountSettingsKey(scope)) ?? null;
 }
 
+// Startup themes use the same exact-scope cache written by the active store.
+export function saveActiveAccountSettingsScope(scope: AccountSettingsScope | null): void {
+    if (scope) getPersistenceStorage().set('active-account-settings-scope', JSON.stringify(scope));
+    else getPersistenceStorage().delete('active-account-settings-scope');
+}
+
+export function loadActiveAccountSettingsScope(): AccountSettingsScope | null {
+    const raw = getPersistenceStorage().getString('active-account-settings-scope');
+    if (!raw) return null;
+    try {
+        const value: unknown = JSON.parse(raw);
+        return isPlainRecord(value) ? createAccountSettingsScope(value.serverId, value.accountId) : null;
+    } catch {
+        console.error('Failed to parse active account settings scope');
+        return null;
+    }
+}
+
 function accountSettingsKey(scope: AccountSettingsScope): string {
     return `account-settings:v2:${accountSettingsScopeKeySuffix(scope)}`;
 }
 
-function pendingAccountSettingsKey(scope: AccountSettingsScope): string {
-    return `pending-account-settings:v2:${accountSettingsScopeKeySuffix(scope)}`;
-}
 
 function legacyCachedAccountSettingsMigrationKey(
     scope: AccountSettingsScope,
@@ -202,8 +215,21 @@ function saveAccountSettingsEnvelope(
     version: number | null,
 ): void {
     assertNoUnsealedSettingsSecretValues(settings);
+    const storage = getPersistenceStorage();
+    const key = accountSettingsKey(scope);
+    const previous = storage.getString(key);
+    let previousEnvelope: unknown;
+    try { previousEnvelope = previous ? JSON.parse(previous) : undefined; } catch {
+        // A malformed cache has no admitted history to import.
+    }
+    if (isPlainRecord(previousEnvelope)) {
+        // A refused import must leave its source intact, including when an
+        // unrelated preference save arrives before the next startup/read.
+        migrateMachineAdministrationTargetObservations(scope, previousEnvelope.settings);
+        migrateNewSessionUiState(scope, previousEnvelope.settings);
+    }
     const sanitizedSettings = stripMigratedSessionOrganizationSettings(
-        settings as Record<string, unknown>,
+        migrateNewSessionUiState(scope, migrateMachineAdministrationTargetObservations(scope, settings)) as Record<string, unknown>,
     ) as Settings;
     const persistedSettings = loadHomeViewState()
         ? stripServerSelectionSettingsProjection(sanitizedSettings)
@@ -221,23 +247,20 @@ function saveAccountSettingsEnvelope(
             ]),
         ),
     };
-    const storage = getPersistenceStorage();
-    const key = accountSettingsKey(scope);
     const envelope = { settings: persistedSettings, version, nativeNotificationPreviews };
     const serialized = JSON.stringify(envelope);
-    const previous = storage.getString(key);
     if (previous === serialized) return;
     if (previous) {
         try {
-            if (areAccountSettingsJsonValuesEqual(JSON.parse(previous) as unknown, JSON.parse(serialized) as unknown)) return;
+            if (areAccountSettingsJsonValuesEqual(previousEnvelope, JSON.parse(serialized) as unknown)) return;
         } catch {
             // A malformed prior cache must be replaced by the current complete envelope.
         }
     }
     storage.set(key, serialized);
-    for (const listener of [...accountSettingsPersistenceMutationListeners]) {
-        try { listener(scope); } catch { /* persistence success remains authoritative */ }
-    }
+    publishAccountSettingsPersistenceMutation(scope,
+        isPlainRecord(previousEnvelope) && isPlainRecord(previousEnvelope.settings) ? previousEnvelope.settings : undefined,
+        persistedSettings);
 }
 
 export function loadAccountSettings(scope: AccountSettingsScope): { settings: unknown; version: number | null } {
@@ -248,6 +271,15 @@ export function loadAccountSettings(scope: AccountSettingsScope): { settings: un
         parsed = JSON.parse(raw) as { settings?: unknown; version?: unknown };
     } catch {
         return { settings: {}, version: null };
+    }
+    try {
+        const migrated = migrateNewSessionUiState(scope, migrateMachineAdministrationTargetObservations(scope, parsed.settings));
+        if (migrated !== parsed.settings) {
+            getPersistenceStorage().set(accountSettingsKey(scope), JSON.stringify({ ...parsed, settings: migrated }));
+            parsed.settings = migrated;
+        }
+    } catch {
+        console.warn('[machines] Retained target history could not be migrated; keeping its source.');
     }
     const hydratedSettings = hydrateAccountSettingsFromLocalPersistence(parsed.settings);
     const parsedSettings = isPlainRecord(hydratedSettings)
@@ -292,7 +324,8 @@ export async function prepareAccountSettingsScopeForActivation(
     const scopedPendingSettingsExists = typeof storage.getString(pendingAccountSettingsKey(scope)) === 'string';
     const legacyPendingSettingsExists = typeof storage.getString('pending-settings') === 'string';
     if (!scopedSettingsExists && legacySettingsExists) {
-        const legacySettings = settingsParse(loadSettings().settings);
+        const legacySettings = settingsParse(migrateNewSessionUiState(scope, loadSettings().settings));
+        migrateNewSessionUiStateScope(null, scope);
         const migratedSettings = applySettings(
             settingsDefaults,
             {
@@ -337,15 +370,17 @@ export async function prepareAccountSettingsScopeForActivation(
     for (const legacyScope of legacyScopesForActivation) {
         if (legacyScope.serverId === scope.serverId && legacyScope.accountId === scope.accountId) continue;
 
-        const legacyPendingMigration = migrateNestedServerIds(loadPendingAccountSettings(legacyScope) as Record<string, unknown>);
+        const legacyPendingState = loadPendingAccountSettingsState(legacyScope);
+        const legacyPendingMigration = migrateNestedServerIds(legacyPendingState.settings as Record<string, unknown>);
         const {
             localOnlySettings: legacyPendingLocalOnlySettings,
             serverBackedSettings: legacyPending,
         } = splitLocalOnlySettings(legacyPendingMigration.settings as Partial<Settings>);
         if (Object.keys(legacyPending).length > 0) {
             const currentPending = loadPendingAccountSettings(scope);
-            savePendingAccountSettings(scope, mergeSettingsForScopeMigration(legacyPending, currentPending));
-            savePendingAccountSettings(legacyScope, {});
+            savePendingAccountSettings(scope, mergeSettingsForScopeMigration(legacyPending, currentPending),
+                loadPendingAccountSettingsState(scope).themeProfileMigration ?? legacyPendingState.themeProfileMigration);
+            savePendingAccountSettings(legacyScope, {}, null);
         }
         if (Object.keys(legacyPendingLocalOnlySettings).length > 0) {
             const current = loadAccountSettings(scope);
@@ -359,7 +394,7 @@ export async function prepareAccountSettingsScopeForActivation(
                 currentLocalOnlySettings,
             );
             saveAccountSettingsEnvelope(scope, applySettings(currentSettings, mergedLocalOnlySettings), current.version);
-            savePendingAccountSettings(legacyScope, {});
+            savePendingAccountSettings(legacyScope, {}, null);
         }
 
         const legacyEnvelopeRaw = storage.getString(accountSettingsKey(legacyScope));
@@ -369,6 +404,7 @@ export async function prepareAccountSettingsScopeForActivation(
         if (legacyCachedSettingsAlreadyConsumed) continue;
 
         const legacySettings = settingsParse(loadAccountSettings(legacyScope).settings);
+        migrateNewSessionUiStateScope(legacyScope, scope);
         const localOnlyMigration = migrateNestedServerIds(
             pickLocalOnlyAccountSettings(legacySettings) as Record<string, unknown>,
         );
@@ -440,31 +476,4 @@ export async function prepareAccountSettingsScopeForActivation(
         const source = settingsParse(loadAccountSettings(scope).settings);
         await migrateHomeViewStateFromSettings(source as Record<string, unknown>);
     }
-}
-
-export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial<Settings> {
-    const raw = getPersistenceStorage().getString(pendingAccountSettingsKey(scope));
-    if (!raw) return {};
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return {};
-    }
-    const hydrated = hydrateAccountSettingsFromLocalPersistence(parsed);
-    return stripMigratedSessionOrganizationSettings(
-        parseStoredPendingSettings(hydrated) as Record<string, unknown>,
-    ) as Partial<Settings>;
-}
-
-export function savePendingAccountSettings(scope: AccountSettingsScope, settings: Partial<Settings>): void {
-    const key = pendingAccountSettingsKey(scope);
-    assertNoUnsealedSettingsSecretValues(settings);
-    const sanitizedSettings =
-        stripReadOnlyAccountSettingsDelta(stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>)) as Partial<Settings>;
-    if (Object.keys(sanitizedSettings).length === 0) {
-        getPersistenceStorage().delete(key);
-        return;
-    }
-    getPersistenceStorage().set(key, JSON.stringify(sanitizedSettings));
 }
