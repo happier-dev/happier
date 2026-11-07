@@ -36,17 +36,20 @@ export const VoiceComposerPlanetMount = React.memo(function VoiceComposerPlanetM
     target: VoiceAttemptIdleTarget;
     /** The retaining Session surface's existing presented fact, when it has one. */
     isPresented?: boolean;
+    /** The composer's card: setup unfolds above it rather than over its text (lab T1). Defaults to the mark. */
+    setupAnchorRef?: React.RefObject<View | null>;
 }>): React.ReactElement | null {
     // AgentInput and the draft stay retained; the Voice presentation runtime
     // does not. The wrapper stays hook-free so a retained Session can change
     // presentation without changing this component's hook order.
     if (props.isPresented === false) return null;
 
-    return <VoiceComposerPlanetPresentedMount target={props.target} />;
+    return <VoiceComposerPlanetPresentedMount target={props.target} setupAnchorRef={props.setupAnchorRef} />;
 });
 
 function VoiceComposerPlanetPresentedMount(props: Readonly<{
     target: VoiceAttemptIdleTarget;
+    setupAnchorRef?: React.RefObject<View | null>;
 }>): React.ReactElement | null {
     /*
      * The planet is drawn from the app's one energy clock; there is nothing to draw
@@ -58,11 +61,12 @@ function VoiceComposerPlanetPresentedMount(props: Readonly<{
      */
     const energy = useVoiceEnergyIfMounted();
     if (!energy) return null;
-    return <VoiceComposerPlanetRuntime target={props.target} />;
+    return <VoiceComposerPlanetRuntime target={props.target} setupAnchorRef={props.setupAnchorRef} />;
 }
 
 function VoiceComposerPlanetRuntime(props: Readonly<{
     target: VoiceAttemptIdleTarget;
+    setupAnchorRef?: React.RefObject<View | null>;
 }>): React.ReactElement | null {
     const idleTarget = props.target;
     const control = useVoiceAttemptControl(idleTarget);
@@ -73,8 +77,8 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
         Modal.alert(t('voicePresence.holdToTalkTitle'), t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') }));
     }, [control.serviceTitle]);
     const { availability, live, muted, primaryAction, primaryActionHint, primaryActionLabel, onPrimaryAction } = control;
-    // The attempt owner decides the press means setup; the composer shows that setup in place over
-    // the work (lab T1) instead of leaving for Settings → Voice.
+    // The attempt owner decides the press means setup; the composer shows that setup in place above
+    // the work (lab T1) instead of leaving for Settings → Voice, and its Try starts this composer's target.
     const anchorRef = React.useRef<View>(null);
     const [setupOpen, setSetupOpen] = React.useState(false);
     const closeSetup = React.useCallback(() => setSetupOpen(false), []);
@@ -119,7 +123,13 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
                 beginHoldToTalk={holdEnabled ? control.beginHoldToTalk : undefined}
                 onHoldUnavailable={onHoldUnavailable}
             />
-            <VoiceSetupPopover open={setupOpen} anchorRef={anchorRef} onRequestClose={closeSetup} />
+            <VoiceSetupPopover
+                open={setupOpen}
+                target={idleTarget}
+                anchorRef={props.setupAnchorRef ?? anchorRef}
+                focusReturnRef={anchorRef}
+                onRequestClose={closeSetup}
+            />
         </View>
     );
 }

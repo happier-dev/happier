@@ -2733,6 +2733,41 @@ describe('useVoiceAttemptControl idle targeting', () => {
     await hook.unmount();
   });
 
+  it("setup's Try opened from a Session composer starts that Session's Voice (lab T1)", async () => {
+    const target = { serverId: recoveryRuntime.serverId, sessionId: 'composer-session' };
+    const routing = await installRoutingLifecycle(target);
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { useVoiceSetupBlock } = await import('@/voice/settings/setup/VoiceSetupItem');
+    const credentials = connection?.credentials ?? null;
+    const hook = await renderHook(
+      () => useVoiceSetupBlock({
+        layout: 'wide',
+        inPlace: true,
+        attemptTarget: { kind: 'session', sessionAddress: target },
+      }),
+      {
+        wrapper: ({ children }) => (
+          <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>
+        ),
+      },
+    );
+    try {
+      const panel = hook.getCurrent()?.renderPanel?.({ close: () => {} });
+      if (!React.isValidElement<{ actions: { onTry: () => void } }>(panel)) {
+        throw new Error('Expected the in-place setup panel');
+      }
+      await act(async () => { panel.props.actions.onTry(); });
+      await waitForTestEvent(
+        routing.controller.subscribe,
+        routing.controller.getSnapshot,
+        (snapshot) => snapshot.status === 'connected',
+      );
+      expect(routing.controller.getAttemptTargetSessionAddress()).toEqual(target);
+    } finally {
+      await hook.unmount();
+    }
+  });
+
   it('offers New conversation only beside an admitted executable Start that would not already start fresh', async () => {
     const offered = await renderControl({ kind: 'global' });
     expect(offered.getCurrent().canStart).toBe(true);

@@ -11,6 +11,7 @@ import {
     useVoiceAttemptControl,
     VOICE_ATTEMPT_IDLE_TARGET_GLOBAL,
     type VoiceAttemptControlProjection,
+    type VoiceAttemptIdleTarget,
 } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { VoiceCompactTranscript } from '@/components/voice/presence/VoiceCompactTranscript';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
@@ -55,6 +56,8 @@ export function useVoiceSetupBlock(input: Readonly<{
     span?: SetupBlockItem['span'];
     /** Unfolded over the work from the composer mark (lab T1): it answers setup open/close first. */
     inPlace?: boolean;
+    /** What Try starts: the composer's own target when unfolded there (lab T1), otherwise Global Voice. */
+    attemptTarget?: VoiceAttemptIdleTarget;
 }>): SetupBlockItem | null {
     const router = useRouter();
     const voiceEnabled = useFeatureEnabled('voice');
@@ -75,7 +78,7 @@ export function useVoiceSetupBlock(input: Readonly<{
     const readiness = readinessModel.selectedProviderReadiness ?? null;
     const microphone = useObservedMicrophonePermission(executeValue);
     const conversationSessionAddress = useVoiceHomeConversationAddress();
-    const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
+    const voice = useVoiceAttemptControl(input.attemptTarget ?? VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle') ?? null;
     const phone = !useIsTablet();
     // m-core's owner: the facts and the dismissal. The block is built here from its facts.

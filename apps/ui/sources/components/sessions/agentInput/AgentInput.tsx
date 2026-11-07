@@ -2063,6 +2063,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const dictationActive = dictationStatus !== 'idle';
     // Only the button that *owns* dictation may have its enablement driven by it.
     const submitDictationActive = dictationActive && Boolean(dictationPressHandler);
+    // The composer card: the menus' compact anchor and where Voice setup unfolds above (lab T1).
+    const composerCardRef = React.useRef<View>(null);
     const voiceComposerTarget = React.useMemo<VoiceAttemptIdleTarget>(() => (
         props.sessionId === undefined
             ? VOICE_ATTEMPT_IDLE_TARGET_GLOBAL
@@ -2072,6 +2074,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         () => <VoiceComposerPlanetMount
             target={voiceComposerTarget}
             isPresented={props.surfacePresented}
+            setupAnchorRef={composerCardRef}
         />,
         [props.surfacePresented, voiceComposerTarget],
     );
@@ -2533,7 +2536,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     // Action menu popover state
     const composerAnchorRef = React.useRef<View>(null);
-    const composerCardRef = React.useRef<View>(null);
     const stageSpotlightRef = React.useRef<View>(null);
     const stageSpotlightProps = useSpotlightTarget(
         stageSpotlightRef,
