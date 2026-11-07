@@ -12,8 +12,12 @@ import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
  */
 export type TriageActivityAgentV1 = Readonly<{
   events: readonly TriageActivityEventV1[];
-  /** After the last event and before the source's composer: the live agent card, then what happens next. */
+  /** After the last event, on the rail: the live agent card. */
   tail: React.ReactNode;
+  /** The card's sentence on the rail, what the agent is doing ("Codex · Needs you"). */
+  tailHeading?: string;
+  /** The rail's last word, under the card: what happens next. */
+  next?: React.ReactNode;
   /**
    * Bumped once each time the person refreshes the page (its one refresh control). The Activity re-reads its
    * source once per bump through the source's own re-read; it never polls and draws no refresh of its own.
@@ -52,6 +56,22 @@ export function TriageActivityAgentProvider(
 
 export function useTriageActivityAgent(): TriageActivityAgentV1 {
   return React.useContext(TriageActivityAgentContext);
+}
+
+/**
+ * The page's one refresh reaches this panel: `onRefresh` runs once per press (each `refreshGeneration` bump),
+ * through the source's own re-read. A panel that uses this draws no refresh control of its own.
+ */
+export function useTriagePageRefresh(onRefresh: (() => unknown) | undefined): void {
+  const refreshGeneration = useTriageActivityAgent().refreshGeneration ?? 0;
+  const latestRefresh = React.useRef(onRefresh);
+  latestRefresh.current = onRefresh;
+  const seenGeneration = React.useRef(refreshGeneration);
+  React.useEffect(() => {
+    if (refreshGeneration === seenGeneration.current) return;
+    seenGeneration.current = refreshGeneration;
+    void latestRefresh.current?.();
+  }, [refreshGeneration]);
 }
 
 /**

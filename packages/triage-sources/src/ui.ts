@@ -20,6 +20,8 @@ export {
 } from './ui/evidenceDisclosure.js';
 export * from './ui/sourcePanelProtocol.js';
 export { useTriageSourcePanelIntentV1 } from './ui/sourcePanelActions.js';
+export { useTriagePullRequestPrimaryWriteV1, type TriagePullRequestPrimaryWriteInputV1,
+  type TriagePullRequestPrimaryWriteControllerV1 } from './ui/pullRequestPrimaryWrite.js';
 export {
   completeTriagePostMutationIfNeeded,
   shouldCompleteTriagePostMutation,
@@ -28,8 +30,8 @@ export {
   type TriagePostMutationCompletionV1,
   type TriagePostMutationProviderStateClassifierV1,
 } from './ui/postMutation.js';
-export { TriageActivityAgentProvider, TriageActivityAgentTail, type TriageActivityAgentV1 } from './ui/activityAgent.js';
-export { TriageDetailInstance, TriageDetailPanel, useTriageDetailRequest } from './ui/detailPanel.js';
+export { TriageActivityAgentProvider, TriageActivityAgentTail, useTriagePageRefresh, type TriageActivityAgentV1 } from './ui/activityAgent.js';
+export { TriageDetailInstance, TriageDetailPanel, triageDetailPanelOwnsScrollerV1, useTriageDetailRequest } from './ui/detailPanel.js';
 export { TriageStatusRow, type TriageStatusRowProps } from './ui/statusRow.js';
 export {
   TriageDetailStory,
@@ -37,6 +39,7 @@ export {
   TriageChecksRollupLine,
   TriageDetailChecks,
   TriageDetailSpread,
+  TriageStoryLoadingLines,
   type TriageDetailChecksRollupV1,
   type TriageDetailFailingCheckV1,
   type TriageDetailSpreadTileV1,
@@ -52,13 +55,25 @@ export {
 export {
   TriageDetailPanelNavigationProvider,
   useTriageDetailPanelOpener,
+  useTriageDetailFixPullRequestNavigation,
+  useTriageDetailFixPullRequestsEmpty,
+  type TriageDetailFixPullRequestNavigationV1,
   type TriageDetailPanelNavigationV1,
 } from './ui/detailPanelNavigation.js';
 export {
   TriageActivityTimeline,
   orderTriageActivityEventsV1,
   type TriageActivityContinuationV1,
+  type TriageActivityRefreshV1,
   type TriageActivityEventV1,
   type TriageActivityKindV1,
   type TriageActivityTimelineProps,
 } from './ui/activityTimeline.js';
+export {
+  TriageSourceCommentComposer,
+  TriageSourceWrites,
+  projectTriageSourceWriteSettlementV1,
+  type TriageSourceWriteSettlementV1,
+  type TriageSourceWriteResultReaderV1,
+  type TriageSourceWriteV1,
+} from './ui/sourceWrites.js';

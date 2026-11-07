@@ -12,6 +12,7 @@ import {
     MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageEntryLocatorV1Schema,
@@ -29,20 +30,26 @@ import {
     TriageSourceScopeUnitIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+import {
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
+    TRIAGE_LIST_ORDERS_V1,
+    TRIAGE_STATE_FILTER_VALUES_V1,
+    TRIAGE_ATTENTION_FILTER_VALUES_V1,
+} from '../projection/listWindow.js';
+import { CORPUS_SMART_PRECEDENCE_TUPLES_V1 } from '../corpus/query/smartPolicy.js';
 import { InternalTaskListProjectionSchema } from '../internalTasks/listProjection.js';
 
 /**
  * The most configured sources one `entries/list-v1` invocation carries.
  *
  * This is a transport batch, not a configured-source membership limit. The
- * schema-derived worst-case response for this shape is measured by
+ * bounded presentation/control allocation for this shape is measured with
+ * explicit finite provider-collection witnesses by
  * `maximumEncodedActionValue.test.ts` against the canonical public Action
- * response envelope. A
- * mounted store pages the Collection through this same Action and schedules
+ * response envelope. A mounted store pages the Collection through this Action and schedules
  * successive selected batches through its one refresh coordinator.
  */
-export const MAX_TRIAGE_LIST_SOURCE_BATCH_V1 = 32;
+export { MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
 
 /**
  * The strict input and result contract of the one aggregate PRs & Issues list
@@ -94,6 +101,12 @@ export const TriageListSettledQueryV1Schema = defineProtocolUnion([
     triageText,
 ]);
 
+export const TriageListOrderV1Schema = defineProtocolUnion([
+    defineProtocolLiteral(TRIAGE_LIST_ORDERS_V1[0]),
+    defineProtocolLiteral(TRIAGE_LIST_ORDERS_V1[1]),
+    ...TRIAGE_LIST_ORDERS_V1.slice(2).map(value => defineProtocolLiteral(value)),
+]);
+
 /**
  * One filter facet on the wire.
  *
@@ -118,13 +131,13 @@ export const TriageListScopeFilterValueV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         source: PluginContributionIdentityV1Schema,
-        sourceInstanceId: TriageSourceInstanceIdV1Schema,
+        sourceInstanceId: TriageSourceInstanceIdV1Schema.optional(),
         unitId: TriageSourceScopeUnitIdV1Schema,
         collisionScope: triageCollisionScope.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         source: PluginContributionIdentityV1Schema,
-        sourceInstanceId: TriageSourceInstanceIdV1Schema,
+        sourceInstanceId: TriageSourceInstanceIdV1Schema.optional(),
     }, { policy: 'closed' }),
 ]);
 
@@ -143,15 +156,14 @@ const listFilterFields = {
     }, { policy: 'closed' })),
     scopes: facetArray(TriageListScopeFilterValueV1Schema),
     states: facetArray(defineProtocolUnion([
-        defineProtocolLiteral('open'),
-        defineProtocolLiteral('done'),
-        defineProtocolLiteral('absent'),
-        defineProtocolLiteral('unresolved'),
+        defineProtocolLiteral(TRIAGE_STATE_FILTER_VALUES_V1[0]),
+        defineProtocolLiteral(TRIAGE_STATE_FILTER_VALUES_V1[1]),
+        ...TRIAGE_STATE_FILTER_VALUES_V1.slice(2).map(value => defineProtocolLiteral(value)),
     ])),
     attention: facetArray(defineProtocolUnion([
-        defineProtocolLiteral('required'),
-        defineProtocolLiteral('suggested'),
-        defineProtocolLiteral('none'),
+        defineProtocolLiteral(TRIAGE_ATTENTION_FILTER_VALUES_V1[0]),
+        defineProtocolLiteral(TRIAGE_ATTENTION_FILTER_VALUES_V1[1]),
+        ...TRIAGE_ATTENTION_FILTER_VALUES_V1.slice(2).map(value => defineProtocolLiteral(value)),
     ])),
 } as const;
 export const TriageListFilterSelectionV1Schema = defineProtocolObject(listFilterFields, { policy: 'closed' });
@@ -175,8 +187,8 @@ export const TriageSurfaceFilterSelectionV1Schema = defineProtocolObject({
 export const TriageSmartPolicyV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     precedence: defineProtocolArray(defineProtocolUnion([
-        defineProtocolLiteral('attention'),
-        defineProtocolLiteral('activity'),
+        defineProtocolLiteral(CORPUS_SMART_PRECEDENCE_TUPLES_V1[0][0]),
+        defineProtocolLiteral(CORPUS_SMART_PRECEDENCE_TUPLES_V1[0][1]),
     ]), { minItems: 2, maxItems: 2 }),
 }, { policy: 'closed' });
 
@@ -227,10 +239,10 @@ const TriageLaneContinuationV1Schema = defineProtocolObject({
 
 /**
  * The explicit page-size contract, independent of how many lane continuations
- * accompany the result. The host Action response has one aggregate transport
- * boundary, proven by the schema-derived maximum for this fixed batch shape;
- * shrinking rows further to reserve a separate continuation budget would add a
- * second unsupported product limit beneath `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`.
+ * accompany the result. `bounds.ts` derives the bounded presentation/control
+ * allocation against the host envelope including every lane continuation;
+ * provider-sized collections still use that envelope as their only governor.
+ * No second lane-dependent row quota is imposed beneath the explicit page size.
  */
 export function triageListRowBudgetV1(_laneCount: number): number {
     return MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
@@ -248,11 +260,7 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
         minimum: 0,
         maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     }),
-    order: defineProtocolUnion([
-        defineProtocolLiteral('newest'),
-        defineProtocolLiteral('oldest'),
-        defineProtocolLiteral('smart'),
-    ]),
+    order: TriageListOrderV1Schema,
     /**
      * The bounded Smart precedence ladder, as the caller's saved view or
      * unsaved default retains it. Omitted means the retained default; the two
@@ -468,6 +476,7 @@ const TriageConfiguredSourceSummaryV1Schema = defineProtocolObject({
      */
     configurationRevision: defineProtocolNumber({ integer: true, minimum: 1 }).optional(),
     displayLabel: triageText.optional(),
+    projectionTruncated: defineProtocolLiteral(true).optional(),
     scope: defineProtocolObject({
         unit: TriageSourceScopeUnitDescriptorV1Schema,
         projection: TriageListScopeUnitsResultV1Schema,
@@ -517,13 +526,12 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
          * none: resuming a walk that broke is not paging, and the next cycle
          * asks it again from the first page.
          *
-         * The array is bounded by the lane count, which is the most frontiers
-         * that can exist, and NOTHING cuts it: `triageListRowBudgetV1` reserved
-         * the bytes for every one of them before the walk, so the whole set
-         * always fits beside the window it belongs to. A set that lost its tail
-         * would starve exactly the lanes that lost it, on every page, forever
-         * (`PLAN.md` §0a A9a). The result is never rejected whole over a paging
-         * token either: whole-result rejection is the other harm.
+         * The array is bounded by the admitted lane count and nothing cuts its
+         * tail. The shared static allocation includes every frontier alongside
+         * the bounded presentation/control fields. Unbounded provider
+         * collections remain governed by the host envelope, not this finite
+         * witness. Dropping a tail token would restart and starve that lane
+         * (`PLAN.md` §0a A9a), so it is never used as an overflow workaround.
          */
         continuations: defineProtocolArray(TriageLaneContinuationV1Schema, {
             maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,

@@ -27,6 +27,23 @@ const unresolvedOnly = (sourceInstanceId: string): ProjectedObservationV1 => tes
 });
 
 describe('selectObservationInstance', () => {
+    it('admits an explicit unobserved open through the same active-instance ordering', () => {
+        expect(selectObservationInstance([], [INSTANCE_B, INSTANCE_A], null, { allowUnobserved: true })).toEqual({
+            kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'deterministicTieBreak',
+        });
+        expect(selectObservationInstance([], [INSTANCE_B, INSTANCE_A], null, {
+            allowUnobserved: true, overrideSourceInstanceId: INSTANCE_B,
+        })).toEqual({ kind: 'selected', sourceInstanceId: INSTANCE_B, reason: 'override' });
+        expect(selectObservationInstance([], [INSTANCE_A], null, {
+            allowUnobserved: true, overrideSourceInstanceId: INSTANCE_B,
+        })).toEqual({ kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'deterministicTieBreak' });
+        expect(selectObservationInstance([], [], null, { allowUnobserved: true })).toEqual({
+            kind: 'none', reason: 'noActiveInstance',
+        });
+        expect(selectObservationInstance([], [INSTANCE_A], null)).toEqual({
+            kind: 'none', reason: 'noPresentObservation',
+        });
+    });
     it('selects the attention-carrying connection rather than the pass-order first one', () => {
         const forward = [present(INSTANCE_A), present(INSTANCE_B, ['reviewRequested'])];
         const reversed = [present(INSTANCE_B, ['reviewRequested']), present(INSTANCE_A)];

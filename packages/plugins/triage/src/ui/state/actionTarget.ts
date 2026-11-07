@@ -26,7 +26,7 @@ const NO_SELECTED_ENTRY: TriageActionTargetV1 = Object.freeze({
  * redirect a mutation. No selection is a typed refusal the caller renders with
  * an accessible reason; it never silently falls back to the focused or first row.
  */
-export function resolveTriageActionTargetV1(state: TriageSurfaceStateV1): TriageActionTargetV1 {
+export function resolveTriageActionTargetV1(state: Pick<TriageSurfaceStateV1, 'selection'>): TriageActionTargetV1 {
   const selection = state.selection;
   if (selection === null) return NO_SELECTED_ENTRY;
   return Object.freeze({

@@ -9,11 +9,15 @@ import {
 } from '../../corpus/query/smartPolicy.js';
 import {
   TRIAGE_LIST_NO_FILTERS_V1,
+    TRIAGE_LIST_ORDERS_V1 as ORDERS,
+    TRIAGE_STATE_FILTER_VALUES_V1 as STATES,
+    TRIAGE_ATTENTION_FILTER_VALUES_V1 as ATTENTION,
   type CorpusAttentionFilterValueV1,
   type CorpusStateFilterValueV1,
   type SurfaceFilterSelectionV1,
 } from '../../projection/listWindow.js';
 import { sameTriageFilterValueV1, type TriageSurfaceStateV1 } from '../state/surface.js';
+import { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '../../composer/openEntryDetails.js';
 import {
   TriageListCollisionScopeV1Schema,
   TriageListKindIdV1Schema,
@@ -55,15 +59,14 @@ import {
  * entry than the one the user copied.
  *
  * A facet whose value has several components takes **one segment per value**
- * (`fs`/`ft`/`fp`), for the same componentwise reason and with a fixed arity per
+ * (`fs`/`ft`/`fi`/`fu`/`fp`), for the same componentwise reason and with a fixed arity per
  * key, so a truncated value is refused rather than read as a shorter one. The
  * two closed single-token facets (`fst`/`fa`) take one segment carrying their
  * values, because each value is already one component.
+ * Source and scope facets carry contribution identity and source-owned unit or
+ * collision identity only. Optional configured-instance narrowing stays local;
+ * sharing the lens applies the same facet across that source's connections.
  */
-
-const ORDERS = ['newest', 'oldest', 'smart'] as const;
-const STATES = ['open', 'done', 'absent', 'unresolved'] as const;
-const ATTENTION = ['required', 'suggested', 'none'] as const;
 
 /** The route-carried lens. Pagination and cursor depth are never in it. */
 export type TriageRouteLensV1 = Readonly<{
@@ -211,20 +214,18 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
       if (tuple !== undefined) smartPolicy = Object.freeze({ v: 1, precedence: tuple });
       continue;
     }
-    if (key === 'fs' && (components.length === 2 || components.length === 3)) {
+    if (key === 'fs' && components.length === 2) {
       const source = readSourceIdentity(components);
-      const parsed = TriageListSourceFilterValueV1Schema.safeParse({ source,
-        ...(components.length === 3 ? { sourceInstanceId: decode(components[2] ?? '') } : {}),
-      });
+      const parsed = TriageListSourceFilterValueV1Schema.safeParse({ source });
       if (parsed.success) admitFacetValue(facets, 'sources', parsed.data);
       continue;
     }
-    if ((key === 'fu' && (components.length === 4 || components.length === 5))
-      || (key === 'fi' && components.length === 3)) {
+    if ((key === 'fu' && (components.length === 3 || components.length === 4))
+      || (key === 'fi' && components.length === 2)) {
       const parsed = TriageListScopeFilterValueV1Schema.safeParse({
-        source: readSourceIdentity(components), sourceInstanceId: decode(components[2] ?? ''),
-        ...(key === 'fu' ? { unitId: decode(components[3] ?? '') } : {}),
-        ...(components.length === 5 ? { collisionScope: decode(components[4] ?? '') } : {}),
+        source: readSourceIdentity(components),
+        ...(key === 'fu' ? { unitId: decode(components[2] ?? '') } : {}),
+        ...(components.length === 4 ? { collisionScope: decode(components[3] ?? '') } : {}),
       });
       if (parsed.success) admitFacetValue(facets, 'scopes', parsed.data);
       continue;
@@ -238,14 +239,12 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
       }
       continue;
     }
-    if (key === 'fp' && (components.length === 3 || components.length === 4)) {
+    if (key === 'fp' && components.length === 3) {
       const source = readSourceIdentity(components);
       const collisionScope = decode(components[2] ?? '');
       const parsedScope = TriageListCollisionScopeV1Schema.safeParse(collisionScope);
       if (source !== null && parsedScope.success) {
-        const parsed = TriageListScopeFilterValueV1Schema.safeParse({ source, collisionScope: parsedScope.data,
-          ...(components.length === 4 ? { sourceInstanceId: decode(components[3] ?? '') } : {}),
-        });
+        const parsed = TriageListScopeFilterValueV1Schema.safeParse({ source, collisionScope: parsedScope.data });
         if (parsed.success) admitFacetValue(facets, 'scopes', parsed.data);
       }
       continue;
@@ -296,23 +295,33 @@ export function buildTriageRouteSubPathV1(lens: TriageRouteLensV1): string {
   if (lens.smartPolicy.precedence[0] !== CORPUS_DEFAULT_SMART_POLICY_V1.precedence[0]) {
     segments.push(`sp,${encode(lens.smartPolicy.precedence[0])}`);
   }
+  // Configured instance identifiers qualify client-local view state, never
+  // shareable identity. Reuse facet identity/deduplication after omitting only that part.
+  const facets: FacetDraft = { sources: [], types: [], scopes: [], states: [], attention: [] };
   for (const value of lens.filters.sources) {
-    segments.push(['fs', value.source.pluginId, value.source.localId,
-      ...(value.sourceInstanceId === undefined ? [] : [value.sourceInstanceId])].map(encode).join(','));
+    admitFacetValue(facets, 'sources', { source: value.source });
+  }
+  for (const value of lens.filters.scopes) {
+    admitFacetValue(facets, 'scopes', { source: value.source,
+      ...(value.unitId === undefined ? {} : { unitId: value.unitId }),
+      ...(value.collisionScope === undefined ? {} : { collisionScope: value.collisionScope }),
+    });
+  }
+  for (const value of facets.sources) {
+    segments.push(['fs', value.source.pluginId, value.source.localId].map(encode).join(','));
   }
   for (const value of lens.filters.types) {
     segments.push(`ft,${encode(value.source.pluginId)},${encode(value.source.localId)},${encode(value.kindId)}`);
   }
-  for (const value of lens.filters.scopes) {
+  for (const value of facets.scopes) {
     const source = [value.source.pluginId, value.source.localId];
     if (value.unitId !== undefined) {
-      segments.push(['fu', ...source, value.sourceInstanceId, value.unitId,
+      segments.push(['fu', ...source, value.unitId,
         ...(value.collisionScope === undefined ? [] : [value.collisionScope])].map(encode).join(','));
     } else if (value.collisionScope !== undefined) {
-      segments.push(['fp', ...source, value.collisionScope,
-        ...(value.sourceInstanceId === undefined ? [] : [value.sourceInstanceId])].map(encode).join(','));
+      segments.push(['fp', ...source, value.collisionScope].map(encode).join(','));
     } else {
-      segments.push(['fi', ...source, value.sourceInstanceId].map(encode).join(','));
+      segments.push(['fi', ...source].map(encode).join(','));
     }
   }
   if (lens.filters.states.length > 0) {
@@ -329,7 +338,9 @@ export function buildTriageRouteSubPathV1(lens: TriageRouteLensV1): string {
 }
 
 /** The route-carried view of the reducer's current state. */
-export function readTriageRouteLensV1(state: TriageSurfaceStateV1): TriageRouteLensV1 {
+export function readTriageRouteLensV1(state: Pick<TriageSurfaceStateV1,
+  'order' | 'smartPolicy' | 'filters' | 'selectedViewId' | 'selection'
+> & Readonly<{ search: Pick<TriageSurfaceStateV1['search'], 'query'> }>): TriageRouteLensV1 {
   return Object.freeze({
     order: state.order,
     smartPolicy: state.smartPolicy,
@@ -340,23 +351,6 @@ export function readTriageRouteLensV1(state: TriageSurfaceStateV1): TriageRouteL
     selectedViewId: state.selectedViewId,
     selection: state.selection?.entryRef ?? null,
   });
-}
-
-/**
- * Whether a location names a LENS of its own, as opposed to only a selection.
- *
- * `core/SURFACE.md` §6.5: on restart an explicit valid route lens wins without
- * mutating Account KV, and otherwise the canonical selected saved view restores
- * its exact facets, order and policy. That decision needs exactly this fact, and
- * it is answered by the canonical builder rather than by a second field-by-field
- * comparison — a location is at its default lens precisely when this owner would
- * write no lens segment for it.
- *
- * A bare `e,` selection is deliberately not a lens: it names one entry to open
- * and says nothing about what the page should be listing.
- */
-export function hasTriageRouteLensV1(lens: TriageRouteLensV1): boolean {
-  return buildTriageRouteSubPathV1({ ...lens, selection: null }).length > 0;
 }
 
 export type TriageRoutePreflightV1 =
@@ -424,6 +418,8 @@ export async function writeTriageRouteLensV1(
   try {
     const settled = await hostApi.replacePageLocation(subPath, {
       ...(backLocation === undefined ? {} : { backLocation }),
+      // Tasks and PRs & Issues are two declared views one lens apart (owner ruling Q1): the host titles the one shown.
+      view: lens.filters.tasks === undefined ? TRIAGE_APP_PAGE_LOCAL_ID_V1 : TRIAGE_TASKS_PAGE_LOCAL_ID_V1,
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
     });
     return { kind: 'settled', subPath: settled.subPath };
@@ -438,6 +434,8 @@ export type TriageRouteWriteQueueV1 = Readonly<{
     lens: TriageRouteLensV1,
     onSettled?: (settlement: TriageRouteQueueSettlementV1) => void,
   ) => void;
+  /** Retire pending intent on external navigation; true for an older self-publication. */
+  adoptHostLocation: (subPath: string) => boolean;
   /** Test/coordination seam: resolves once the in-flight write and latest queued intent settle. */
   whenSettled: () => Promise<void>;
   dispose: () => void;
@@ -471,7 +469,7 @@ export function createTriageRouteWriteQueueV1(
   let pending: PendingTriageRouteWriteV1 | null = null;
   let running = false;
   let disposed = false;
-  let activeController: AbortController | null = null;
+  let activeWrite: Readonly<{ controller: AbortController; lens: TriageRouteLensV1 }> | null = null;
   let settlers: Array<() => void> = [];
 
   const settleWaiters = () => {
@@ -479,6 +477,13 @@ export function createTriageRouteWriteQueueV1(
     const current = settlers;
     settlers = [];
     for (const settle of current) settle();
+  };
+
+  const supersedePending = (replacement: PendingTriageRouteWriteV1 | null) => {
+    const replaced = pending;
+    pending = replacement;
+    // Saved-view operations await this callback before touching Account KV.
+    replaced?.onSettled?.({ requested: replaced.lens, result: null, superseded: true });
   };
 
   const drain = async (): Promise<void> => {
@@ -489,9 +494,9 @@ export function createTriageRouteWriteQueueV1(
         const intent = pending;
         pending = null;
         const controller = new AbortController();
-        activeController = controller;
+        activeWrite = { controller, lens: intent.lens };
         const result = await writeTriageRouteLensV1(hostApi, intent.lens, { signal: controller.signal });
-        if (activeController === controller) activeController = null;
+        if (activeWrite?.controller === controller) activeWrite = null;
         if (!disposed) {
           intent.onSettled?.({
             requested: intent.lens,
@@ -501,7 +506,7 @@ export function createTriageRouteWriteQueueV1(
         }
       }
     } finally {
-      activeController = null;
+      activeWrite = null;
       running = false;
       settleWaiters();
     }
@@ -510,17 +515,17 @@ export function createTriageRouteWriteQueueV1(
   return Object.freeze({
     write(lens, onSettled) {
       if (disposed) return;
-      const replaced = pending;
-      pending = { lens, ...(onSettled === undefined ? {} : { onSettled }) };
-      // Latest-intent coalescing must still settle the operation it replaces.
-      // Saved-view mutations await this callback before they touch Account KV;
-      // dropping it here would leave that explicit operation pending forever.
-      replaced?.onSettled?.({
-        requested: replaced.lens,
-        result: null,
-        superseded: true,
-      });
+      supersedePending({ lens, ...(onSettled === undefined ? {} : { onSettled }) });
       void drain();
+    },
+    adoptHostLocation(subPath) {
+      if (activeWrite !== null && buildTriageRouteSubPathV1(activeWrite.lens) === subPath) {
+        return pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath;
+      }
+      // Back/navigation has superseded the local successor, not queued a new
+      // host write. Let the issued operation finish without draining old intent.
+      supersedePending(null);
+      return false;
     },
     whenSettled() {
       if (!running && pending === null) return Promise.resolve();
@@ -530,7 +535,7 @@ export function createTriageRouteWriteQueueV1(
       if (disposed) return;
       disposed = true;
       pending = null;
-      activeController?.abort();
+      activeWrite?.controller.abort();
       settleWaiters();
     },
   });

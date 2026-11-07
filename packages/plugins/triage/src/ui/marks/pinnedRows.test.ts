@@ -48,6 +48,24 @@ function pin(overrides: Partial<TriagePinnedEntryV1> = {}): TriagePinnedEntryV1 
 }
 
 describe('the pinned-row overlay', () => {
+  it('uses window completion for present stale rows without replacing absence or unknown clocks', () => {
+    const row = windowRow();
+    const options = { stale: true, completedAtMs: 9_000 };
+    expect(projectTriageWindowRow(row, new Map(), options).observedAtMs).toBe(9_000);
+    expect(projectTriagePinnedRow(pin(), row, options).observedAtMs).toBe(9_000);
+    expect(projectTriageWindowRow(row, new Map(), { ...options, stale: false }).observedAtMs).toBe(1_000);
+    const unresolved = windowRow({ presence: { kind: 'unresolved', observedAtMs: 7_000 }, observations: [{
+      ...testkitObservation({ observedAtMs: 7_000 }), outcome: { kind: 'unresolved', failure: { class: 'transient', code: 'offline' } },
+    }] });
+    expect(projectTriageWindowRow(unresolved, new Map(), options).observedAtMs).toBe(7_000);
+    const absent = windowRow({ presence: { kind: 'absent', observedAtMs: 8_000 }, observations: [{
+      ...testkitObservation({ observedAtMs: 8_000 }), outcome: { kind: 'absent' },
+    }] });
+    expect(projectTriagePinnedRow(pin(), absent, options).observedAtMs).toBe(8_000);
+    expect(projectTriagePinnedRow(pin(), null, options).observedAtMs).toBeNull();
+    expect(row.presence.observedAtMs).toBe(1_000);
+  });
+
   it('renders a pinned entry from the fresher projection the caller already holds', () => {
     const row = windowRow({
       observations: [testkitObservation({
@@ -76,7 +94,7 @@ describe('the pinned-row overlay', () => {
       title: 'A change this device has not read',
       scopeLabel: 'example/other',
       identifierLabel: 'example/other · 17',
-      detail: 'Not yet synchronized',
+      detail: 'Open to read details',
       pinned: true,
       materialized: false,
     });

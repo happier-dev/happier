@@ -22,6 +22,8 @@ import {
 } from './resourceStore.js';
 
 export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+export { useScmFileViewed, useScmFileViewedFile, useScmFileViewedStatus } from './scmFileViewed.public.js';
+export { useHostTaskShareSheet, type HostTaskShareRef, type HostTaskShareSheet } from './taskShareSheet.public.js';
 export { useFindSurfaceRegistration, type FindSurfaceRegistration } from './find.public.js';
 export { useWidgetAreaPort, type PluginUiWidgetAreaPortV1 } from './widgetArea.public.js';
 
@@ -142,7 +144,13 @@ function usePluginResourceReadinessPresentation<T>({ pending, ready }: PluginUiH
           ...state,
           pending: 'idle',
           freshness: state.value === undefined ? 'unknown' : 'stale',
-          error: Object.freeze({ code: 'unavailable', message: 'Resource execution is unavailable' }),
+          // Preserve the host's method-unavailability classification even when
+          // readiness prevents dispatch, so consumers can use their Account read.
+          error: Object.freeze({
+            code: 'unavailable',
+            message: 'Resource execution is unavailable',
+            diagnostics: Object.freeze(['host_api_method_unavailable:readResource']),
+          }),
         });
       } else {
         presented = state;
@@ -199,7 +207,7 @@ export function useLivePluginResourceProjection<T, Selected>(
     [selected, enabled, active, readiness.pending, readiness.ready, readiness.revision],
   );
   const value = useSyncExternalStore(subscribe, selected.getSnapshot, selected.getSnapshot);
-  return useMemo(() => ({ value, getSnapshot: () => value, refresh }), [value, selected, refresh]);
+  return useMemo(() => ({ value, getSnapshot: selected.getSnapshot, refresh }), [value, selected, refresh]);
 }
 
 /** Read/refresh the current Resource snapshot without opening a watch. */

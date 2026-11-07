@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Chart, Column, Columns, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Card, Chart, Column, Columns, HappierSkeletonRows, Icon, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import { summarizeTriageChangesV1, type TriageChangedFileV1, type TriageChangeTotalsV1 } from './changeSummary.js';
@@ -18,9 +18,14 @@ const STORY_TITLES = Object.freeze({
  * `kind` is the entry's subject: a pull request asks, an issue reports, an error group
  * says what happened.
  */
-export function TriageDetailStory({ kind, children, notice, changes, checks, trailing }: Readonly<{
+export function TriageDetailStory({ kind, children, loading, notice, changes, checks, trailing }: Readonly<{
   kind?: keyof typeof STORY_TITLES | undefined;
   children: React.ReactNode;
+  /**
+   * The source's first read of ① is still settling and it has nothing it could show yet (no last read, no
+   * summary): the step keeps its place with lines of reading text where the words will land.
+   */
+  loading?: boolean;
   /**
    * The ask's own read state (a failed or retained read, with its Re-read), one line above the preview so it is
    * never clipped into it and the description it previews stays readable.
@@ -31,20 +36,41 @@ export function TriageDetailStory({ kind, children, notice, changes, checks, tra
   checks?: React.ReactNode;
   trailing?: React.ReactNode;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   if (kind === undefined) return <ScrollArea><Stack gap="large">{children}</Stack></ScrollArea>;
+  const body = loading === true
+    ? <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />
+    : <TriageTextPreview testID="triage-story-ask-body">{children}</TriageTextPreview>;
   return <Stack gap="large">
     <Step marker={{ kind: 'number', value: 1 }}
       title={STORY_TITLES[kind].fallback}
       titleKey={STORY_TITLES[kind].key} trailing={trailing}>
-      {notice === undefined ? <TriageTextPreview testID="triage-story-ask-body">{children}</TriageTextPreview>
+      {notice === undefined ? body
         : <Stack gap="small">
           {notice}
-          <TriageTextPreview testID="triage-story-ask-body">{children}</TriageTextPreview>
+          {body}
         </Stack>}
     </Step>
     {changes}
     {checks}
   </Stack>;
+}
+
+/** A few lines of reading text: enough to hold the story's first step without promising its length. */
+const STORY_LOADING_LINES = 3;
+const STORY_LOADING_GEOMETRY = Object.freeze({ insetStart: 0, insetEnd: 0, glyphColumn: 0, gap: 0 });
+
+/**
+ * Where a story's text will land while its first read settles: lines of reading text in the shared
+ * skeleton ink, announced once as busy. The detail frame shows the same lines before the source mounts,
+ * so nothing jumps when the source takes over and its words arrive.
+ */
+export function TriageStoryLoadingLines({ label }: Readonly<{ label: string }>): React.ReactElement {
+  const theme = usePluginTheme();
+  const lineHeight = theme.typography.reading.lineHeight;
+  return <HappierSkeletonRows testID="triage-story-loading" rows={STORY_LOADING_LINES} theme={theme}
+    lineHeights={[lineHeight]} rowBox={{ minHeight: lineHeight, paddingVertical: 0 }}
+    geometry={STORY_LOADING_GEOMETRY} accessibilityLabel={label} />;
 }
 
 function TriageDetailChanges({ children, trailing, titleKey = 'plugins.triage.detailStory.changed' }: Readonly<{
@@ -55,6 +81,11 @@ function TriageDetailChanges({ children, trailing, titleKey = 'plugins.triage.de
   return <Step marker={{ kind: 'number', value: 2 }} title="What changed"
     titleKey={titleKey} trailing={trailing}><Stack gap="small">{children}</Stack></Step>;
 }
+
+const FAILING_CHECK_TEXT_STYLE = Object.freeze({ minWidth: 0 });
+
+/** One column for the file rows' counts, wide enough for "+999 −999" at the micro step. */
+const CHANGE_COUNTS_MIN_WIDTH_PX = 64;
 
 type StoryCountV1 = (key: string, count: number, english: Readonly<{ one: string; other: string }>) => string;
 
@@ -116,10 +147,9 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
         <Stack grow><Text variant="code" numberOfLines={1} value={file.path} /></Stack>
         {file.note === undefined ? null : <Text variant="micro" tone="secondary" value={file.note} />}
       </Row>
-      // The counts sit before the bar so every bar ends on the same edge and starts in one column (lab `heat`).
+      // The bar, then its counts in one right-aligned column, so every bar starts and ends on the same edges (lab `heat`).
       : <Row key={file.path} gap="medium" align="center">
         <Stack grow><Text variant="code" numberOfLines={1} value={file.path} /></Stack>
-        <Text variant="micro" tone="secondary" value={`+${String(file.lines.additions)} −${String(file.lines.deletions)}`} />
         <Stack style={{ width: '25%', maxWidth: 120 }}>
           <Progress label={text('plugins.triage.detailStory.fileLines', '{path}: {additions} added, {deletions} removed', {
             path: file.path, additions: String(file.lines.additions), deletions: String(file.lines.deletions),
@@ -127,6 +157,9 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
             { value: file.lines.additions / summary.scale, tone: 'success' },
             { value: file.lines.deletions / summary.scale, tone: 'danger' },
           ]} />
+        </Stack>
+        <Stack align="flex-end" style={{ minWidth: CHANGE_COUNTS_MIN_WIDTH_PX }}>
+          <Text variant="micro" tone="secondary" value={`+${String(file.lines.additions)} −${String(file.lines.deletions)}`} />
         </Stack>
       </Row>)}
     {summary.restCount === 0 ? null : <Text variant="micro" tone="secondary" value={summary.sortedBySize
@@ -246,8 +279,17 @@ export function TriageDetailChecks({ title, titleKey, rollup, failing, latestCom
   return <Step title={title} titleKey={titleKey} marker={{ kind: 'state', state: sentence.state, label: sentence.label }}
     trailing={<ChecksRollupSentence lead={sentence.lead} line={sentence.line} />}>
     {listed || children !== undefined ? <Stack gap="small">
-      {listed ? failing.map((check) => <TriageStatusRow key={check.id} presentation="summary"
-        name={check.name} status={check.detail} />) : null}
+      {/* What failed is the chapter's point: one card, each row led by its failure mark (lab `checksRight`). */}
+      {listed ? <Card padding="small">
+        <Stack gap="small">
+          {failing.map((check) => <Row key={check.id} gap="small" align="flex-start">
+            <Icon name="failure" size="small" tone="danger" />
+            <Stack grow style={FAILING_CHECK_TEXT_STYLE}>
+              <TriageStatusRow presentation="summary" name={check.name} status={check.detail} />
+            </Stack>
+          </Row>)}
+        </Stack>
+      </Card> : null}
       {children}
     </Stack> : null}
   </Step>;

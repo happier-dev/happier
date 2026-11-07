@@ -12,6 +12,9 @@ import { ScmCapabilitiesSchema as canonicalScmCapabilitiesSchema, ScmWorkingSnap
 import { ScmSelectedMutationPathSchema as canonicalScmSelectedMutationPathSchema } from '@happier-dev/protocol/scm/selectedMutationPath';
 import { SourceControlCloneProtocolSchema as canonicalScmCloneProtocolSchema } from '@happier-dev/protocol/scm/cloneProtocol';
 import { ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema, ScmComparisonSchema as canonicalScmComparisonSchema, ScmRevisionRangeV1ProtocolSchema as canonicalRevisionRange } from '@happier-dev/protocol/scm/comparison';
+import { ScmFileViewedReadResultV1Schema as canonicalFileViewedRead, ScmFileViewedSetResultV1Schema as canonicalFileViewedSet, ScmFileViewedStateV1Schema as canonicalFileViewedState } from '@happier-dev/protocol/scm/comparison';
+export type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from '@happier-dev/protocol/scm/comparison';
+import type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from '@happier-dev/protocol/scm/comparison';
 import { ScmHostingProviderKindProtocolSchema as canonicalScmHostingProviderKindProtocolSchema } from '@happier-dev/protocol/scm/pullRequests';
 import type { ScmComparison, ScmComparisonSource as CanonicalScmComparisonSource } from '@happier-dev/protocol/scm';
 import type { JsonValue, PluginContributionRef } from '../identity.js';
@@ -30,6 +33,9 @@ import type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource
 export type { ScmComparisonSource, ScmRevisionRangeV1 } from './comparisonSource.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
 import type { ActionFailureCauseV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
+export const ScmFileViewedStateV1Schema: ProtocolComposableSchema<ScmFileViewedStateV1> = canonicalFileViewedState;
+export const ScmFileViewedReadResultV1Schema: ProtocolComposableSchema<ScmFileViewedReadResultV1> = canonicalFileViewedRead;
+export const ScmFileViewedSetResultV1Schema: ProtocolComposableSchema<ScmFileViewedSetResultV1> = canonicalFileViewedSet;
 import { ScmHistoryEntriesInputV1Schema as canonicalHistoryInput, ScmHistoryEntriesResponseSchema as canonicalHistoryResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 export type { ScmEntryHistoryV1, ScmHistoryEntriesInputV1, ScmHistoryEntriesOutputV1, ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
@@ -452,6 +458,9 @@ export type ScmWorkingSnapshot = {
     pullRequestStatus?: ScmPullRequestStatusProjection | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
+    /** Set on a `detail` reply: `entries` was not sent ('facts' also measured no totals or conflicts). */
+    detail?: 'summary' | 'facts';
+    summary?: { changedFiles: number; includedAdded: number; includedRemoved: number; pendingAdded: number; pendingRemoved: number };
     totals: {
         includedFiles: number;
         pendingFiles: number;
@@ -536,6 +545,8 @@ export type ScmStatusSnapshotRequest = {
     includeWorktreeStatus?: boolean;
     operationStateVersion?: 1;
     outcomeVersion?: 1;
+    /** Absent: the full changed-file list. 'summary': counts only. 'facts': no working-copy scan. */
+    detail?: 'summary' | 'facts';
 };
 export type ScmWorktreesEnrichmentRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { worktreePaths: string[] };
 export type ScmWorktreeEnrichmentEntry = { path: string; changeCount?: number; lastActivityAt?: number;

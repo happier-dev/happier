@@ -4,6 +4,9 @@ import { defineUiSurface } from '@happier-dev/plugin-ui';
 
 import { parseTriageEntryDetailLaunchInput } from '../composer/entryDetailLaunchInput.js';
 import { TriageListShell } from './shell/root.js';
+import { PluginUiResourceIntentV1Schema } from '@happier-dev/plugin-sdk/protocol';
+import { TriageResourceSurface } from './resourceSurface.js';
+import { readTriageResourceIntent } from './contributions.js';
 
 /**
  * The PRs & Issues app-page artifact entry.
@@ -34,6 +37,27 @@ import { TriageListShell } from './shell/root.js';
  * different page.
  */
 function TriageListSurface(context: RenderContext): React.ReactElement {
+  const resource = React.useMemo(() => {
+    const input = context.launchInput;
+    const parsed = PluginUiResourceIntentV1Schema.safeParse(typeof input === 'object' && input !== null && 'resource' in input ? input.resource : undefined);
+    if (parsed.success) return parsed.data;
+    if (context.subPath?.startsWith('resource/')) {
+      try {
+        const restored = PluginUiResourceIntentV1Schema.safeParse(JSON.parse(decodeURIComponent(context.subPath.slice('resource/'.length))));
+        if (restored.success) return restored.data;
+      } catch { /* A different or malformed page route retains the ordinary list. */ }
+    }
+    const mount = context.surface.mount;
+    return mount.kind === 'destination' && mount.instanceKey !== undefined ? readTriageResourceIntent(mount.instanceKey) ?? null : null;
+  }, [context.launchInput, context.subPath, context.surface.mount]);
+  React.useEffect(() => {
+    if (resource === null || context.surface.mount.kind !== 'destination' || context.surface.mount.container !== 'appPage') return;
+    const subPath = `resource/${encodeURIComponent(JSON.stringify(resource))}`;
+    if (context.subPath === subPath) return;
+    void context.hostApi.replacePageLocation(subPath, { signal: context.signal }).catch(() => {
+      if (!context.signal.aborted) return context.hostApi.openExternalLink(resource.url, { signal: context.signal });
+    });
+  }, [context.hostApi, context.signal, context.subPath, context.surface.mount, resource]);
   /**
    * Held across renders by the launch value's own identity: the host retains
    * one delivered open for as long as the page stays at the location it was
@@ -45,14 +69,17 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
     return parsed.status === 'valid' ? parsed.input : undefined;
   }, [context.launchInput]);
 
-  // The two host facts this entry forwards: the plugin-local location the page
-  // was opened at, and the entry an opener asked it to open. Triage names no
+  if (resource !== null) return <TriageResourceSurface resource={resource} />;
+
+  // Forward the host location and one-shot staged-open provenance alongside
+  // any validated qualified entry input. Triage names no
   // route; the shell reads the location once as its lens seed, adopts the
   // launch through the same selection it already owns, and writes both back
   // through the single route owner.
   return (
     <TriageListShell
       {...(context.subPath === undefined ? {} : { subPath: context.subPath })}
+      {...(context.launch === undefined ? {} : { pageLaunch: context.launch })}
       {...(launch === undefined ? {} : { launch })}
     />
   );

@@ -18,6 +18,8 @@ import {
 import { TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
+import { TRIAGE_APP_PAGE_LOCAL_ID_V1 } from '../../composer/openEntryDetails.js';
+import { applyTriageSettledSubPathV1 } from '../shell/settledLocation.js';
 
 const SOURCE = { pluginId: 'acme.scm', localId: 'github' } as const;
 
@@ -70,15 +72,38 @@ function hostApiWith(input: Readonly<{
 }
 
 describe('PRs & Issues route owner', () => {
-  it('round trips instance-qualified source filters without collapsing two accounts', () => {
+  it('shares source and unit facets without configured-instance identities', async () => {
     const value = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [
       { source: SOURCE, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
       { source: SOURCE, sourceInstanceId: '22222222-2222-4222-8222-222222222222' },
     ], scopes: [
       { source: SOURCE, sourceInstanceId: '11111111-1111-4111-8111-111111111111', unitId: 'team,one/a' },
+      { source: SOURCE, sourceInstanceId: '11111111-1111-4111-8111-111111111111', unitId: 'team-two', collisionScope: 'acme/web' },
       { source: SOURCE, sourceInstanceId: '22222222-2222-4222-8222-222222222222' },
+      { source: SOURCE, sourceInstanceId: '11111111-1111-4111-8111-111111111111', collisionScope: 'acme/web' },
     ] } });
-    expect(parseTriageRouteSubPathV1(buildTriageRouteSubPathV1(value))).toEqual(value);
+    const shared = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1,
+      sources: [{ source: SOURCE }],
+      scopes: [{ source: SOURCE, unitId: 'team,one/a' }, { source: SOURCE, unitId: 'team-two', collisionScope: 'acme/web' }, { source: SOURCE },
+        { source: SOURCE, collisionScope: 'acme/web' }],
+    } });
+    const subPath = buildTriageRouteSubPathV1(value);
+    expect(subPath).not.toContain('11111111-1111-4111-8111-111111111111');
+    expect(subPath).not.toContain('22222222-2222-4222-8222-222222222222');
+    expect(parseTriageRouteSubPathV1(subPath)).toEqual(shared);
+    expect(buildTriageRouteSubPathV1(parseTriageRouteSubPathV1(subPath))).toBe(subPath);
+    const replace = vi.fn<PluginUiHostApi['replacePageLocation']>(async (next) => ({ subPath: next }));
+    await writeTriageRouteLensV1(hostApiWith({ methods: ['replacePageLocation'], replace }),
+      { ...value, selection: entryRef() });
+    expect(replace).toHaveBeenCalledWith(buildTriageRouteSubPathV1({ ...shared, selection: entryRef() }), {
+      backLocation: subPath, view: TRIAGE_APP_PAGE_LOCAL_ID_V1,
+    });
+    const candidate = { ...TRIAGE_SURFACE_INITIAL_STATE_V1, filters: value.filters };
+    const ownSettlement = applyTriageSettledSubPathV1({ candidate, previous: candidate, subPath, rowsByKey: new Map() });
+    expect(ownSettlement.filters).toBe(candidate.filters);
+    const external = applyTriageSettledSubPathV1({ candidate: TRIAGE_SURFACE_INITIAL_STATE_V1,
+      previous: TRIAGE_SURFACE_INITIAL_STATE_V1, subPath, rowsByKey: new Map() });
+    expect(external.filters).toEqual(shared.filters);
   });
   it('round trips the Tasks audience with selection and the ordinary saved-view lens', () => {
     const tasks = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'agents' }, query: 'auth', selectedViewId: 'work', selection: entryRef() });
@@ -214,6 +239,14 @@ describe('PRs & Issues route owner', () => {
     // Back clears the selection and keeps the query — it is not an undo stack
     // over the user's filters.
     expect(options?.backLocation).toBe(buildTriageRouteSubPathV1(lens({ query: 'bug' })));
+  });
+
+  it('names the declared view each lens presents, so the host titles Tasks and PRs & Issues truthfully', async () => {
+    const replace = vi.fn<PluginUiHostApi['replacePageLocation']>(async (subPath) => ({ subPath }));
+    const host = hostApiWith({ methods: ['replacePageLocation'], replace });
+    await writeTriageRouteLensV1(host, lens({ filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, tasks: 'mine' } }));
+    await writeTriageRouteLensV1(host, lens({ query: 'bug' }));
+    expect(replace.mock.calls.map(([, options]) => options?.view)).toEqual(['tasks', 'triage']);
   });
 
   it('declares no Back step for a lens with no selection', async () => {

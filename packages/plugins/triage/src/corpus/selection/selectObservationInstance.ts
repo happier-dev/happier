@@ -13,16 +13,39 @@ export type CorpusSelectedInstanceV1 =
     | Readonly<{
         kind: 'selected';
         sourceInstanceId: string;
-        /** `override` is applied by the mounted shell, not this lower fallback selector. */
         reason: 'override' | 'attention' | 'onlyPresent' | 'deterministicTieBreak';
     }>
     | Readonly<{ kind: 'none'; reason: 'noPresentObservation' | 'allInstancesRetired' }>;
+
+/** Explicit-open admission is mount-local, not an additional list-wire selection state. */
+export type CorpusExplicitOpenSelectionV1 = CorpusSelectedInstanceV1
+    | Readonly<{ kind: 'none'; reason: 'noActiveInstance' }>;
+
+type CorpusSelectionOptionsV1 = Readonly<{
+    overrideSourceInstanceId?: string;
+    /** Explicit pin-open admission only; scans still require a present observation. */
+    allowUnobserved?: boolean;
+}>;
 
 export function selectObservationInstance(
     observations: CorpusEntryObservationsV1,
     activeSourceInstanceIds: Iterable<string>,
     attention: CorpusDisplayedAttentionV1 | null,
-): CorpusSelectedInstanceV1 {
+    options: CorpusSelectionOptionsV1 & Readonly<{ allowUnobserved: true }>,
+): CorpusExplicitOpenSelectionV1;
+export function selectObservationInstance(
+    observations: CorpusEntryObservationsV1,
+    activeSourceInstanceIds: Iterable<string>,
+    attention: CorpusDisplayedAttentionV1 | null,
+    options?: CorpusSelectionOptionsV1 & Readonly<{ allowUnobserved?: false }>,
+): CorpusSelectedInstanceV1;
+
+export function selectObservationInstance(
+    observations: CorpusEntryObservationsV1,
+    activeSourceInstanceIds: Iterable<string>,
+    attention: CorpusDisplayedAttentionV1 | null,
+    options: CorpusSelectionOptionsV1 = {},
+): CorpusExplicitOpenSelectionV1 {
     const active = new Set(activeSourceInstanceIds);
     const anyPresent: string[] = [];
     const eligible: string[] = [];
@@ -33,11 +56,17 @@ export function selectObservationInstance(
         anyPresent.push(observation.sourceInstanceId);
         if (active.has(observation.sourceInstanceId)) eligible.push(observation.sourceInstanceId);
     }
+    const unobserved = eligible.length === 0 && options.allowUnobserved === true;
+    if (unobserved) eligible.push(...active);
     if (eligible.length === 0) {
         return {
             kind: 'none',
-            reason: anyPresent.length > 0 ? 'allInstancesRetired' : 'noPresentObservation',
+            reason: unobserved ? 'noActiveInstance' : anyPresent.length > 0 ? 'allInstancesRetired' : 'noPresentObservation',
         };
+    }
+
+    if (options.overrideSourceInstanceId !== undefined && eligible.includes(options.overrideSourceInstanceId)) {
+        return { kind: 'selected', sourceInstanceId: options.overrideSourceInstanceId, reason: 'override' };
     }
 
     // The connection the row's own reason names, so the detail opens under the
@@ -54,6 +83,6 @@ export function selectObservationInstance(
     return {
         kind: 'selected',
         sourceInstanceId: smallest,
-        reason: eligible.length === 1 ? 'onlyPresent' : 'deterministicTieBreak',
+        reason: eligible.length === 1 && !unobserved ? 'onlyPresent' : 'deterministicTieBreak',
     };
 }

@@ -19,6 +19,22 @@ const INSTANCE = '11111111-1111-4111-8111-111111111111';
 const entryRef = testkitEntryRef();
 
 describe('reobserveTriagePostMutationRow', () => {
+  it('opens a first observation without depending on a successful list scan', async () => {
+    const executeAction = vi.fn(async () => ({
+      kind: 'observed' as const,
+      entryRef,
+      observation: { sourceInstanceId: INSTANCE, observedAtMs: 2_000, outcome: testkitPresentOutcome() },
+    }));
+    const row = await reobserveTriagePostMutationRow({ executeAction }, { entryRef }, [], INSTANCE, {});
+    expect(readTriageSelectedObservationV1(row!)?.sourceInstanceId).toBe(INSTANCE);
+    expect(executeAction).toHaveBeenCalledExactlyOnceWith('entries/reobserve-v1', {
+      v: 1, entryRef, sourceInstanceId: INSTANCE,
+    }, {});
+    const reread = await reobserveTriagePostMutationRow({ executeAction }, row!, [], INSTANCE, {});
+    expect(readTriageSelectedObservationV1(reread!)?.sourceInstanceId).toBe(INSTANCE);
+    expect(executeAction).toHaveBeenCalledTimes(2);
+  });
+
   it('runs one target Action and gives detail and header the same folded observation', async () => {
     const before = foldTriageListWindow({
       observations: [{
