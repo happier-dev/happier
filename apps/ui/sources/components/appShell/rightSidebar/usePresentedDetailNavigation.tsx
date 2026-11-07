@@ -13,11 +13,12 @@ import { resolveNavigationPlacements, type DetailNavigationAddress } from '@/syn
 import { notifyShellColumnActionOwnersChanged, registerShellColumnActionOwner, type ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { t } from '@/text';
 import { resolveDetailPhoneNavigationItem, type DetailPageNavigationItem } from './detailNavigationItems';
+import type { PluginCompanionOpenedFrom } from '@/components/plugins/pages/pluginPageNavigationContext';
 
 type Execute = ReturnType<typeof useMountedScopeActionCommand>;
 export type DetailPhoneChrome = Readonly<{ node: React.ReactElement; systemModel: SystemMobileBottomChromeModel }>;
 export type DetailNavigationMainColumnControls = Pick<ShellColumnActionOwner,
-    'present' | 'visible' | 'available' | 'label' | 'arrangementAvailable' | 'setVisible'>;
+    'present' | 'visible' | 'available' | 'label' | 'arrangementAvailable' | 'searchScope' | 'setVisible'>;
 export type PresentedDetailNavigationModel = Readonly<{
     pageKind: string;
     identity: string;
@@ -36,6 +37,8 @@ export type PresentedDetailNavigationModel = Readonly<{
     sessionId?: string;
     rootHosted?: boolean;
     registerSide?: boolean;
+    /** A plugin page's own launch input and current location, which its page companions read as `openedFrom`. */
+    openedFrom?: PluginCompanionOpenedFrom;
 }>;
 
 const chrome = createPresentedDetailContext<PresentedDetailNavigationModel>();
@@ -87,6 +90,7 @@ export function usePresentedDetailNavigation(input: Readonly<{
     chromeRevision?: unknown;
     sessionId?: string;
     rootHosted?: boolean;
+    openedFrom?: PluginCompanionOpenedFrom;
 }>) {
     const { pageKind, identity, items, phone } = input;
     const desktopAddress = React.useMemo<DetailNavigationAddress>(() => ({ pageKind, device: 'desktop', section: 'pages' }), [pageKind]);
@@ -144,8 +148,9 @@ export function usePresentedDetailNavigation(input: Readonly<{
                 ...(item.disabledReason ? { reason: item.disabledReason } : {}),
                 pageKind, placement: placed.effectivePlacements[phone ? item.id : itemId(item)] ?? 'overflow' })),
             selectTab: id => {
-                if (main) latest.current.selectPage(id);
-                else latest.current.companion?.select(id);
+                if (main) {
+                    if (id !== latest.current.activeId) latest.current.selectPage(id);
+                } else latest.current.companion?.select(id);
             },
             setVisible: visible => {
                 if (main) controls?.setHidden(!visible);
@@ -162,9 +167,9 @@ export function usePresentedDetailNavigation(input: Readonly<{
     const phoneChrome = React.useCallback((execute: Execute) => latest.current.phoneChrome?.(execute) ?? null, []);
     const model = React.useMemo<PresentedDetailNavigationModel>(() => ({ ...customization, identity, scope: input.scope,
         activeId: input.activeId, readColumn, bindMainColumn, phoneChrome, chromeRevision: input.chromeRevision, sessionId: input.sessionId,
-        rootHosted: input.rootHosted, registerSide: input.registerSide }),
+        rootHosted: input.rootHosted, registerSide: input.registerSide, ...(input.openedFrom ? { openedFrom: input.openedFrom } : {}) }),
     [customization, identity, input.scope, input.activeId, readColumn, bindMainColumn, phoneChrome, input.chromeRevision, input.sessionId,
-        input.rootHosted, input.registerSide, desktop, desktopCompanions, phonePlacement.placements, input.companion?.activeId]);
+        input.rootHosted, input.registerSide, input.openedFrom, desktop, desktopCompanions, phonePlacement.placements, input.companion?.activeId]);
     const focused = useDestinationFocus();
     const visible = useDestinationVisibility();
     const presented = input.presented && focused && visible;

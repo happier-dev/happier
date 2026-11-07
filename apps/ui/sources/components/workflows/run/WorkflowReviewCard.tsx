@@ -29,12 +29,13 @@ import { projectWorkflowRunInputFields } from '@/sync/domains/workflows/workflow
 import { formatWorkflowInputValue, parseWorkflowInputTextDraft } from '@/sync/domains/workflows/workflowInputText';
 import { readWorkflowPlanResult } from '@/sync/domains/workflows/workflowPlanReview';
 import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { useWorkflowCardModal } from './useWorkflowCardModal';
 import { readWorkflowResultRows } from '../presentation/workflowResultReading';
 import { describeWorkflowInvocationLifecycle } from '../presentation/workflowLifecyclePresentation';
 
-export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string }>;
+export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string; editedAt?: number }>;
 export type WorkflowReviewReading = Readonly<{ value: JsonValue | undefined; revision: string }>;
 export type WorkflowReviewChoice = Readonly<{ expectedContentRevision: string }> & (
     | Readonly<{ mode: 'use_result'; value?: JsonValue }>
@@ -50,7 +51,15 @@ export type WorkflowReviewCardProps = Readonly<{
         title?: string;
         subtitle?: string | null;
         prompt: string;
+        waitingLabel?: string;
+        primaryLabel?: string;
+        consequence?: string;
+        onStop?: () => Promise<void>;
+        stopConsequence?: string;
+        previousResult?: Readonly<{ value: JsonValue; contract: WorkflowResultContract | undefined }>;
     }>;
+    /** The selected attempt's producer supplies this only while generation is running. */
+    generation?: Readonly<{ attempt: string; onStop?: () => Promise<void> }>;
     contentRevision: string;
     draft: WorkflowReviewDraft | undefined;
     onChangeDraft: (draft: WorkflowReviewDraft | undefined) => void;
@@ -227,7 +236,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const validation = shown === undefined ? null : decodeExecutionRunResultObservation({ encoding: 'typed', value: shown }, props.contract);
     const valid = validation?.ok === true;
     const noValueNeeded = props.waitForYou && props.contract === undefined;
-    const blocked = props.pending === true || props.readOnly === true || props.disabled === true;
+    const blocked = props.pending === true || props.readOnly === true || props.disabled === true || props.generation !== undefined;
+    const stopDisabled = props.pending === true || props.readOnly === true || props.disabled === true;
     const generatePrimary = !props.waitForYou && !valid && props.draft === undefined && props.canGenerate !== false;
     const readiness = classifyWorkflowHoldV1({ lifecycle: props.lifecycle ?? 'waiting_for_review',
         isCurrent: props.isCurrent ?? true, progress: props.progress });
@@ -243,7 +253,10 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     // A held result needs no title: the state line says what this is, and the value is what it shows.
     const title = props.waitForYou ? props.waitIdentity ? props.waitIdentity.title : t('workflows.review.waitTitle') : editing ? t('workflows.review.editsTitle')
         : plan ? t('workflows.review.planTitle') : !valid ? t('workflows.review.noValue') : held ? undefined : t('workflows.review.title');
-    const updateText = (text: string) => props.onChangeDraft({ text, contentRevision: revision });
+    const updateText = (text: string) => {
+        if (props.draft?.text === text) return;
+        props.onChangeDraft({ text, contentRevision: revision, editedAt: Date.now() });
+    };
     const showNewer = () => {
         if (props.pending === true) return;
         setReading({ value: props.progress.result, revision: props.contentRevision });
@@ -300,7 +313,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             items={decisionChoices.map((value) => ({ id: value, title: value }))}
             selectedId={typeof shown === 'string' ? shown : null} onSelect={selectDecision} />;
     // The label says what happens, so the choice needs no paragraph; its accessible hint keeps the detail.
-    const quietActions = !props.readOnly && held && !props.waitForYou ? <View testID={`${prefix}-quiet-actions`} style={styles.quietActions}>
+    const quietActions = !props.readOnly && held && !props.waitForYou && !props.generation ? <View testID={`${prefix}-quiet-actions`} style={styles.quietActions}>
         {editing || shown === undefined ? null : <RoundButton testID={`${prefix}-edit`} size="small" display="inverted"
             title={t('common.edit')} accessibilityLabel={t('workflows.review.editResult')} disabled={blocked} onPress={seedEdit} />}
         {editing ? <RoundButton testID={`${prefix}-cancel`} size="small" display="inverted"
@@ -313,18 +326,29 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             accessibilityHint={props.parentPaused ? t('workflows.review.startsResume') : t('workflows.review.generateBody')}
             disabled={blocked} onPress={generate} /> : null}
     </View> : null;
-    const primaryAction = held && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
+    const primaryAction = props.generation && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
+        {props.generation.onStop ? <RoundButton testID={`${prefix}-stop-generation`} size="normal" display="secondary"
+            title={t('common.stop')} disabled={stopDisabled} loading={props.pending}
+            onPress={async () => { if (!stopDisabled) await props.generation?.onStop?.(); }} /> : null}
+    </View> : held && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
             <RoundButton testID={`${prefix}-${generatePrimary ? 'generate' : 'use'}`} size="normal"
                 // Pending is busy, not unavailable: the primary keeps its look with the spinner in it.
                 disabled={props.pending !== true && (blocked || (!generatePrimary && !valid && !noValueNeeded))} loading={props.pending} titleNumberOfLines="complete"
-                title={generatePrimary ? t('workflows.review.generate') : props.waitForYou ? noValueNeeded ? t('workflows.review.continue') : t(singleField ? 'workflows.review.useValue' : 'workflows.review.useValues')
+                title={generatePrimary ? t('workflows.review.generate') : props.waitForYou ? props.waitIdentity?.primaryLabel
+                    ?? (noValueNeeded ? t('workflows.review.continue') : t(singleField ? 'workflows.review.useValue' : 'workflows.review.useValues'))
                     : plan ? t('workflows.review.usePlan') : t('workflows.review.useResult')}
                 onPress={generatePrimary ? generate : use} />
             {validationReadout ? <Text testID={`${prefix}-validation`} style={[hasFieldError ? styles.error : styles.secondary, styles.footnote]}
                 accessibilityRole={hasFieldError ? 'alert' : undefined}>{validationReadout}</Text> : null}
-            {!noValueNeeded ? <Text style={[styles.secondary, styles.footnote]}>{generatePrimary ? props.parentPaused ? t('workflows.review.startsResume')
+            {props.waitForYou && props.waitIdentity?.consequence ? <Text style={[styles.secondary, styles.footnote]}>{props.waitIdentity.consequence}</Text>
+                : !noValueNeeded ? <Text style={[styles.secondary, styles.footnote]}>{generatePrimary ? props.parentPaused ? t('workflows.review.startsResume')
                 : t('workflows.review.generateBody') : plan ? t('workflows.review.usePlanBody') : t('workflows.review.useBody')}</Text> : null}
             {quietActions}
+            {props.waitForYou && props.waitIdentity?.onStop ? <>
+                <RoundButton testID={`${prefix}-stop-wait`} size="small" display="inverted" title={t('common.stop')}
+                    disabled={stopDisabled} onPress={async () => { if (!stopDisabled) await props.waitIdentity?.onStop?.(); }} />
+                {props.waitIdentity.stopConsequence ? <Text style={[styles.secondary, styles.footnote]}>{props.waitIdentity.stopConsequence}</Text> : null}
+            </> : null}
     </View> : null;
     // The state line says it needs the person; the sheet stays neutral so the result reads as content
     // (lab round 1105 R1). Copy and the full reading sit on the value's own line.
@@ -350,15 +374,18 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const body = <ListPresentationProvider value="page" pageInsets="contained">{stateLine}{valueHead}<ItemGroup constrainToContentWidth={false} {...(title === undefined ? { header: 'none' as const } : { title })}
             {...(heldReading ? {} : { action: headerActions })} description={props.waitForYou
             ? props.waitIdentity ? props.waitIdentity.title === undefined ? undefined
-                : [props.waitIdentity.subtitle, t('workflows.review.waitTitle')].filter(Boolean).join(' · ') : t('workflows.review.waitBody')
+                : props.waitIdentity.waitingLabel ?? [props.waitIdentity.subtitle, t('workflows.review.waitTitle')].filter(Boolean).join(' · ') : t('workflows.review.waitBody')
             : editing ? t('workflows.review.editsBody') : undefined}>
             {props.waitForYou && props.waitIdentity ? <SectionContentRow>
                 {/* The card's head, as the lab's hold header reads: what is asked first, then what waiting means. */}
                 <View style={styles.head}>
                     {props.waitIdentity.prompt ? <MarkdownView testID={`${prefix}-wait-prompt`} markdown={props.waitIdentity.prompt} /> : null}
-                    <Text style={styles.secondary}>{t('workflows.review.waitBody')}</Text>
+                    {!props.waitIdentity.waitingLabel || props.waitIdentity.title === undefined
+                        ? <Text style={styles.secondary}>{props.waitIdentity.waitingLabel ?? t('workflows.review.waitBody')}</Text> : null}
                 </View>
             </SectionContentRow> : null}
+            {props.waitForYou && props.waitIdentity?.previousResult
+                ? <WorkflowReviewValue {...props.waitIdentity.previousResult} testIDPrefix={`${prefix}-previous-result`} /> : null}
             {changed ? <SectionContentRow testID={`${prefix}-newer`}>
                 <Text accessibilityLiveRegion="polite">{t('workflows.review.newer')}</Text>
                 <View style={styles.actions}>{supplied ? <>
@@ -372,7 +399,9 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 </> : <RoundButton testID={`${prefix}-show-newer`} title={t('workflows.review.showNewer')} size="small"
                     display="secondary" disabled={props.pending === true} onPress={showNewer} />}</View>
             </SectionContentRow> : null}
-            {readiness === 'generate' ? <SectionContentRow testID={`${prefix}-generation-requested`}>
+            {props.generation ? <SectionContentRow testID={`${prefix}-generation-running`}>
+                <Text accessibilityLiveRegion="polite">{t('workflows.review.generatingAttempt', { attempt: props.generation.attempt })}</Text>
+            </SectionContentRow> : readiness === 'generate' ? <SectionContentRow testID={`${prefix}-generation-requested`}>
                 <Text accessibilityLiveRegion="polite">{t('workflows.review.generationRequested')}</Text>
                 <Text style={styles.secondary}>{props.parentPaused ? t('workflows.review.startsResume')
                     : props.machineReachable === false ? t('workflows.review.waitingMachine', { machine: props.machineName ?? t('workflows.run.technical.machine') })
@@ -431,6 +460,13 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                             edges={previewFades.visibility} />
                     </View>
                 </> : null}
+            {props.draft ? <SectionContentRow testID={`${prefix}-draft-provenance`}>
+                <Text variant="meta" style={styles.secondary}>{[t('workflows.review.editedNotUsed'),
+                    props.draft.editedAt === undefined ? null : formatAsOfTime(props.draft.editedAt)].filter(Boolean).join(' · ')}</Text>
+                {props.progress.result !== undefined ? <RoundButton testID={`${prefix}-show-agent-version`} size="small" display="inverted"
+                    title={t('workflows.review.showAgentVersion')}
+                    onPress={() => { if (props.progress.result !== undefined) setFullValue({ value: props.progress.result, contract: props.contract, testIDPrefix: `${prefix}-full` }); }} /> : null}
+            </SectionContentRow> : null}
             {shown !== undefined && !editing && !heldReading && props.resultSourceLabel ? <SectionContentRow testID={`${prefix}-source`}>
                 <Text style={styles.secondary}>{props.resultSourceLabel}</Text>
             </SectionContentRow> : null}

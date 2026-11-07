@@ -218,6 +218,8 @@ export type PaneHeaderContent = Readonly<{
     line?: PaneHeaderLine | null;
     /** Trailing actions (icon buttons), before the close button. */
     actions?: React.ReactNode;
+    /** View controls aligned with the facts rather than with the title actions. */
+    lineTrailing?: React.ReactNode;
 }>;
 
 export type PaneHeaderProps = PaneHeaderContent & Readonly<{
@@ -233,8 +235,6 @@ export type PaneHeaderProps = PaneHeaderContent & Readonly<{
     /** null allows a long title to wrap; the default pane band stays on one line. */
     titleNumberOfLines?: number | null;
     titleTextStyle?: StyleProp<TextStyle>;
-    /** View controls aligned with the facts rather than with the title actions. */
-    lineTrailing?: React.ReactNode;
     /** An inline affordance belonging to the final fact (copying its identifier). */
     lineEnd?: React.ReactNode;
     /** Shows the close button. */

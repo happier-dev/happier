@@ -34,6 +34,7 @@ import { parseWorkflowDefinitionRefV1, resolveBuiltinWorkflowDefinitionV1, prepa
 import { readWorkflowPlanResult } from '@/sync/domains/workflows/workflowPlanReview';
 import { canStartWorkflowAnotherRound, canStartWorkflowRunAgain } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { resolveTriggerEditorHref } from '../triggers/triggerEditorDestination';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
@@ -48,11 +49,13 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import { getStorage, useActiveServerAccountScopeLifetime, useArtifact, useServerScopedMachine, useWorkflowRun } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { sessionAbort } from '@/sync/ops/sessions';
 import {
     isWorkflowInvocationFactOlder,
     refreshLoadedAttentionSpan,
     resolveVisibleWorkflowInvocations,
     selectWorkflowRunFirstFailedInvocation,
+    selectWorkflowRunMemberInvocation,
     selectWorkflowRunWindowInvocations,
     workflowRunRowFromSummary,
 } from '@/sync/store/domains/workflowRuns';
@@ -84,7 +87,7 @@ import {
     type WorkflowRecoveryContinuation,
 } from '../run/workflowRunDetailPresentation';
 import { isTerminalWorkflowRunState, isWorkflowRunStopPending } from '../presentation/workflowLifecyclePresentation';
-import { projectUnconfirmedWorkflowWaitReview, projectWorkflowInvocationStructure } from '../run/workflowInvocationStructure';
+import { projectUnconfirmedWorkflowWaitReview, projectWorkflowInvocationStructure, resolveWorkflowInvocationBlockContext } from '../run/workflowInvocationStructure';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { hasWorkflowInvocationRequest } from '../run/workflowPermissionRequests';
 import { useWorkflowRunPublicationRequests } from '../run/useWorkflowRunPublicationRequests';
@@ -950,16 +953,23 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         void sync.refreshArtifactsByIds([sourceArtifactId], { signal: controller.signal }).then(settle, settle);
         return () => { controller.abort(); retirement.dispose(); };
     }, [accountLifetime, activelyViewed, loadAttempt, sourceAccountAvailable, sourceArtifactId, sourceIdentity]);
-    const sourceAction = React.useMemo((): Readonly<{ kind: 'edit' | 'open'; onPress(): void }> | null => {
+    const sourceAction = React.useMemo((): Readonly<{ kind: 'edit' | 'open'; onPress(): void; onAddTrigger?: () => void }> | null => {
         const lifetime = accountLifetime;
         if (!activelyViewed || !sourceAvailable || sourceRef === null || !lifetime?.isCurrent()) return null;
-        return { kind: sourceArtifactId !== null && sourceAccess !== 'view' ? 'edit' : 'open', onPress: () => {
+        const editableSavedSource = sourceArtifactId !== null && sourceAccess !== 'view';
+        const navigate = (href: Parameters<typeof router.push>[0]) => {
             const latest = currentSourceRef.current;
             if (mountedRef.current && lifetime.isCurrent() && latest.lifetime === lifetime && latest.active
                 && latest.available && latest.identity === sourceIdentity && latest.access === sourceAccess) {
-                router.push(createWorkflowDefinitionRoute(sourceRef) as never);
+                router.push(href);
             }
-        } };
+        };
+        return { kind: editableSavedSource ? 'edit' : 'open',
+            onPress: () => navigate(createWorkflowDefinitionRoute(sourceRef) as never),
+            ...(editableSavedSource ? { onAddTrigger: () => navigate(resolveTriggerEditorHref({
+                workflowDefinitionId: sourceArtifactId, serverId: lifetime.scope.serverId,
+            }) as never) } : {}),
+        };
     }, [accountLifetime, activelyViewed, mountedRef, router, sourceAccess, sourceArtifactId, sourceAvailable, sourceIdentity, sourceRef]);
     const sourceActionPending = sourceAction === null && activelyViewed && sourceAccountAvailable && sourceArtifactId !== null
         && sourceReadIdentity !== sourceIdentity;
@@ -1094,25 +1104,28 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     /**
      * Settle one exact invocation read through the existing Run index and
      * opened-progress owners. Only the latest issued read for this Account,
-     * Run and selection publishes and confirms: a superseded or mismatched
+     * Run and selection publishes: a superseded or mismatched
      * response is ignored, so it can neither regress fresher content nor arm
      * a callback from evidence nobody confirmed. Callers fence Account/content
      * lifetime before using this; the response itself never becomes local
-     * settlement. Returns whether the response confirmed the selection.
+     * settlement. Related reads publish their own facts and never confirm the
+     * selected evidence. Returns whether the response was published.
      */
     const settleExactInvocation = React.useCallback((
         token: PendingExactInvocationRead,
         response: ExactInvocationResponse,
+        relatedInvocationId?: string,
     ): boolean => {
         if (exactInvocationRequestRef.current !== token) return false;
         if (!isContentIdentityCurrent(token.contentIdentity)) return false;
+        const invocationId = relatedInvocationId ?? token.invocationId;
         const index = response.invocation?.index;
-        if (index?.runId !== token.runId || index?.id !== token.invocationId) return false;
+        if (index?.runId !== token.runId || index?.id !== invocationId) return false;
         if (response.invocation.parentRevision < token.revision) return false;
-        if (token.contentRevision !== null && isWorkflowInvocationFactOlder(index, {
+        if (relatedInvocationId === undefined && token.contentRevision !== null && isWorkflowInvocationFactOlder(index, {
             id: token.invocationId, contentRevision: token.contentRevision,
         })) return false;
-        const known = getStorage().getState().workflowRunInvocationsByRunId[workflowRunStoreKey(token.runId, activeAccountScope)]?.factsById[token.invocationId];
+        const known = getStorage().getState().workflowRunInvocationsByRunId[workflowRunStoreKey(token.runId, activeAccountScope)]?.factsById[invocationId];
         if (known && isWorkflowInvocationFactOlder(index, known)) return false;
         // The selected row stays visible through history, while the store's
         // attention membership follows the fresh lifecycle: a settled row
@@ -1122,8 +1135,10 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             invocation: { ...response.invocation.index, opened: response.invocation },
             parentRevision: response.invocation.parentRevision,
         });
-        setSelectedContentUnavailable(false);
-        setSelectedReadProblem(null);
+        if (relatedInvocationId === undefined) {
+            setSelectedContentUnavailable(false);
+            setSelectedReadProblem(null);
+        }
         return true;
     }, [activeAccountScope, isContentIdentityCurrent]);
 
@@ -1362,10 +1377,80 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const selectedProgress = selectedInvocationId === null
         ? null
         : visibleProgressByInvocationId.get(selectedInvocationId) ?? null;
-    const selectedReviewProgress = React.useMemo(() => selectedProgress ?? projectUnconfirmedWorkflowWaitReview({
+    const selectedGenerationPreviousId = selectedInvocation?.lifecycle === 'running' && selectedProgress?.blockKind === 'step'
+        ? selectedProgress.previousAttemptRecordId ?? null : null;
+    const selectedOpenPrContext = React.useMemo(() => {
+        if (!visibleDefinition || selectedProgress?.blockKind !== 'wait') return null;
+        const context = resolveWorkflowInvocationBlockContext({ definition: visibleDefinition,
+            frozenChildren: visibleAcceptedContext?.frozenChildren, sourceRef: catalogSourceRef,
+            invocationPath: selectedProgress.invocationPath });
+        if (context?.sourceRef !== 'builtin:open-a-pull-request' || context.block.kind !== 'wait'
+            || context.block.id !== 'confirm-open-pr') return null;
+        const condition = context.definition.blocks.find(block => block.kind === 'if' && block.id === 'second-opinion-disagreed');
+        if (condition?.kind !== 'if' || !condition.then.includes(context.block)) return null;
+        const memberOrdinal = context.definition.blocks.findIndex(block => block.id === 'second-opinion');
+        return memberOrdinal < 0 ? null : { memberOrdinal: String(memberOrdinal) };
+    }, [catalogSourceRef, selectedProgress, visibleAcceptedContext?.frozenChildren, visibleDefinition]);
+    const selectedCondition = selectedOpenPrContext && selectedInvocation?.parentRecordId
+        ? invocationFacts?.[selectedInvocation.parentRecordId] : undefined;
+    const selectedOpinionParentId = selectedCondition?.parentRecordId ?? null;
+    const selectedOpinionMemberOrdinal = selectedOpenPrContext?.memberOrdinal ?? null;
+    const selectedOpinionInvocation = React.useMemo(() => selectedOpinionParentId !== null && selectedOpinionMemberOrdinal !== null
+        ? selectWorkflowRunMemberInvocation(invocationFacts, selectedOpinionParentId, selectedOpinionMemberOrdinal) : null,
+    [invocationFacts, selectedOpinionParentId, selectedOpinionMemberOrdinal]);
+    const selectedRelatedInvocationId = selectedGenerationPreviousId ?? selectedOpinionInvocation?.id ?? null;
+    const selectedRelatedProgress = selectedRelatedInvocationId === null ? null
+        : visibleProgressByInvocationId.get(selectedRelatedInvocationId) ?? null;
+    const activeGeneration = selectedGenerationPreviousId !== null && selectedRelatedProgress?.review?.decision?.kind === 'generate';
+    const selectedRelatedReadInvocationId = selectedGenerationPreviousId ?? (
+        selectedOpenPrContext && selectedCondition === undefined ? selectedInvocation?.parentRecordId ?? null : null
+    );
+
+    React.useEffect(() => {
+        if (!activelyViewed || runId === null || (selectedRelatedReadInvocationId === null
+            && (selectedOpinionParentId === null || selectedOpinionMemberOrdinal === null))) return;
+        const lifetime = accountLifetime;
+        const token = exactInvocationRequestRef.current;
+        if (!lifetime || !token || token.contentIdentity !== contentIdentity || token.invocationId !== selectedInvocationId) return;
+        const known = selectedRelatedReadInvocationId === null ? undefined
+            : getStorage().getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId, lifetime.scope)]?.factsById[selectedRelatedReadInvocationId];
+        if (known?.opened && !isWorkflowInvocationFactOlder(known.opened.index, known)) return;
+        let cancelled = false;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        void (async () => {
+            if (selectedRelatedReadInvocationId !== null) {
+                const response = await workflowRunDetailActions.getInvocation({ runId, invocationId: selectedRelatedReadInvocationId }, controller.signal);
+                if (!cancelled && lifetime.isCurrent()) settleExactInvocation(token, response, selectedRelatedReadInvocationId);
+            } else if (selectedOpinionParentId !== null && selectedOpinionMemberOrdinal !== null) {
+                // The server owns the newest attempt of this exact sibling slot,
+                // including when history has never loaded its record id.
+                const response = await workflowRunDetailActions.listInvocations({ runId, parentRecordId: selectedOpinionParentId,
+                    memberOrdinal: selectedOpinionMemberOrdinal, includeContent: true }, controller.signal);
+                if (cancelled || !lifetime.isCurrent()) return;
+                for (const invocation of response.invocationDetails ?? []) {
+                    if (invocation.index.parentRecordId === selectedOpinionParentId && invocation.index.memberOrdinal === selectedOpinionMemberOrdinal) {
+                        settleExactInvocation(token, { invocation }, invocation.index.id);
+                    }
+                }
+            }
+        })().catch(error => {
+            if (!cancelled && lifetime.isCurrent() && isContentIdentityCurrent(contentIdentity)
+                && exactInvocationRequestRef.current === token) setControlError(resolveWorkflowProblemPresentation(error));
+        });
+        return () => { cancelled = true; controller.abort(); retirement.dispose(); };
+    }, [accountLifetime, activelyViewed, contentIdentity, invocationInvalidationToken, isContentIdentityCurrent, loadAttempt,
+        runId, selectedInvocationId, selectedInvocationContentRevision, selectedOpinionParentId, selectedOpinionMemberOrdinal,
+        selectedRelatedReadInvocationId, settleExactInvocation,
+        summary?.revision, workflowRunDetailActions]);
+
+    const selectedReviewProgress = React.useMemo(() => activeGeneration && selectedProgress && selectedRelatedProgress
+        ? { ...selectedProgress, result: selectedRelatedProgress.result, resultContract: selectedRelatedProgress.resultContract }
+        : selectedProgress ?? projectUnconfirmedWorkflowWaitReview({
         definition: visibleDefinition, frozenChildren: visibleAcceptedContext?.frozenChildren,
         invocation: selectedInvocation, structure: selectedInvocationId === null ? undefined : invocationStructure.get(selectedInvocationId),
-    }), [invocationStructure, selectedInvocation, selectedInvocationId, selectedProgress, visibleAcceptedContext?.frozenChildren, visibleDefinition]);
+    }), [activeGeneration, invocationStructure, selectedInvocation, selectedInvocationId, selectedProgress, selectedRelatedProgress,
+        visibleAcceptedContext?.frozenChildren, visibleDefinition]);
     const settleReview = React.useCallback((run: WorkflowRunSummaryV1, acceptedInvocationId?: string) => {
         if (acceptedInvocationId) setAcceptedReview({ contentIdentity, invocationId: acceptedInvocationId });
         getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(run)], activeAccountScope);
@@ -1571,6 +1656,14 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             invocationHistoryComplete: (invocationWindow?.loaded ?? false) && invocationWindow?.nextCursor == null,
         })
     ), [allInvocations, invocationWindow, recoveryAvailabilityByInvocationId, runMachineName, runMachineHomeDir, runMachineReachable, runMachineLastSeenAt, selectedInvocation, selectedInvocationId, selectedProgress, summary]);
+    const selectedRelatedExecution = React.useMemo(() => {
+        if (!selectedOpenPrContext || !summary || !selectedOpinionInvocation || !selectedRelatedProgress?.execution) return null;
+        const recovery = projectWorkflowInvocationRecovery({ run: summary, invocation: selectedOpinionInvocation,
+            progress: selectedRelatedProgress, machineHomeDirectory: runMachineHomeDir ?? null,
+            recoveryAvailability: recoveryAvailabilityByInvocationId.get(selectedOpinionInvocation.id) ?? null });
+        return { execution: selectedRelatedProgress.execution, canInspectExecution: recovery.canInspectExecution };
+    }, [recoveryAvailabilityByInvocationId, runMachineHomeDir, selectedOpenPrContext, selectedOpinionInvocation,
+        selectedRelatedProgress, summary]);
     // Acknowledgement is recorded against the exact attempt it was given for.
     // Changing selection therefore withdraws it rather than carrying blanket
     // consent to a different invocation.
@@ -1811,6 +1904,30 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         <T,>(callback: T | undefined): T | undefined => (canEdit && selectedEvidenceConfirmed ? callback : undefined),
         [canEdit, selectedEvidenceConfirmed],
     );
+    const stopSelectedGeneration = React.useCallback(async (): Promise<void> => {
+        const execution = selectedProgress?.execution;
+        const lifetime = accountLifetime;
+        if (!lifetime || !summary || !execution) return;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        try {
+            if (execution.kind === 'session' || execution.kind === 'session_ready') {
+                await sessionAbort(execution.sessionId, { serverId: lifetime.scope.serverId, signal: controller.signal });
+            } else if (execution.kind === 'detached_run') {
+                const response = await executeUiAction('execution.run.stop', { sessionId: null, runId: execution.runId }, {
+                    surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+                    executionRunTargetMachineId: summary.machineId, signal: controller.signal,
+                });
+                if (!response.ok) throw new Error(response.error ?? t('errors.operationFailed'));
+            }
+        } finally { retirement.dispose(); }
+    }, [accountLifetime, executeUiAction, selectedProgress?.execution, summary]);
+    const selectedGeneration = activeGeneration && selectedInvocation ? {
+        attempt: selectedInvocation.attempt,
+        onStop: whenEvidenceConfirmed(selectedProgress?.execution?.kind === 'session'
+            || selectedProgress?.execution?.kind === 'session_ready' || selectedProgress?.execution?.kind === 'detached_run'
+            ? stopSelectedGeneration : undefined),
+    } : undefined;
 
     /**
      * The durable stop receipt, from the canonical owner rather than from the
@@ -1916,6 +2033,10 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             retainedRequest: runAgainRetained,
             preview: visibleAcceptedContext?.metadata?.description || visibleDefinition.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n'),
             machineId: visibleAcceptedContext?.machineId ?? null,
+            directory: runAgainTarget?.directory ?? null,
+            machineName: runMachineName,
+            machineHomeDir: runAgainTarget?.machineId === runMachineId ? runMachineHomeDir ?? null : null,
+            executionTarget: runAgainRetained?.input.executionTarget ?? visibleAcceptedContext?.executionTarget,
             ...(visibleAcceptedContext === null ? {} : { extraActionChips: [
                 // No setter: this is the accepted (or already sent) target, not another authored choice.
                 createWorkflowStartWhereChip({ target: runAgainTarget, machineName: runMachineName,
@@ -2014,10 +2135,12 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 definition={visibleDefinition}
                 frozenChildren={visibleAcceptedContext?.frozenChildren}
                 materializedLeaves={visibleAcceptedContext?.materializedLeaves}
+                rolesChangedForRun={(visibleAcceptedContext?.roleOverrides?.length ?? 0) > 0}
                 inputs={visibleAcceptedContext?.inputs}
                 sessionDisplayLabelsById={sessionDisplayLabelsById}
                 hasSource={hasSource}
                 sourceAction={sourceAction}
+                onAddTrigger={sourceAction?.onAddTrigger}
                 sourceActionPending={sourceActionPending}
                 invocations={allInvocations}
                 invocationsLoaded={invocationWindow?.loaded ?? false}
@@ -2035,7 +2158,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 serverId={activeAccountScope?.serverId ?? null}
                 invocationPage={requestedInvocationId !== null}
                 renderReviewCard={selectedInvocation && selectedReviewProgress && visibleAcceptedContext && visibleDefinition && selectedInvocationContentRevision !== null
-                    && (selectedInvocation.lifecycle === 'waiting_for_review'
+                    && (activeGeneration || selectedInvocation.lifecycle === 'waiting_for_review'
                         || (selectedInvocation.lifecycle === 'completed' && selectedReviewProgress.blockKind !== 'wait'
                             && WorkflowResultContractSchema.safeParse(selectedReviewProgress.resultContract).data?.kind === 'json'
                             && selectedReviewProgress.result !== undefined && readWorkflowPlanResult(selectedReviewProgress.result) !== null))
@@ -2043,6 +2166,16 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                         run={summary} callerAccess={{ canEdit }} acceptedContext={visibleAcceptedContext} invocation={selectedInvocation}
                         definition={visibleDefinition}
                         progress={selectedReviewProgress} contentRevision={selectedInvocationContentRevision} buffers={reviewBuffers}
+                        generation={selectedGeneration}
+                        waitPresentation={selectedOpenPrContext ? {
+                            title: t('workflows.review.openPrTitle'), waitingLabel: t('workflows.review.openPrWaiting'),
+                            primaryLabel: t('workflows.review.openPrContinue'), consequence: t('workflows.review.openPrContinueBody'),
+                            onStop: whenEvidenceConfirmed(() => submitControl('cancel')), stopConsequence: t('workflows.review.openPrStopBody'),
+                            previousResult: selectedRelatedProgress?.result === undefined ? undefined : {
+                                value: selectedRelatedProgress.result,
+                                contract: WorkflowResultContractSchema.safeParse(selectedRelatedProgress.resultContract).data,
+                            },
+                        } : undefined}
                         readState={selectedReadState}
                         belowResult={placement?.belowResult}
                         active={activelyViewed} confirmed={selectedEvidenceConfirmed} compact={placement?.compact === true}
@@ -2076,6 +2209,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 firstFailedInvocationResolution={firstFailedInvocationResolution}
                 failurePresentation={failurePresentation}
                 selectedInvocationProgress={selectedProgress}
+                selectedRelatedExecution={selectedRelatedExecution}
                 selectedInvocationRecoveryAvailability={selectedInvocationId === null
                     ? null
                     : recoveryAvailabilityByInvocationId.get(selectedInvocationId) ?? null}

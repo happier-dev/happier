@@ -33,6 +33,7 @@ import {
   type WorkflowReviewDraft,
 } from './WorkflowReviewCard';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { PresentedDetailNavigationProvider } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Item } from '@/components/ui/lists/Item';
@@ -179,18 +180,18 @@ afterEach(async () => {
 type ContentProps = React.ComponentProps<typeof WorkflowRunContent>;
 
 it('detail-navigation.T1/T2/T6 exposes run pages through the mounted owner without invocation or operation effects', async () => {
-  const { readShellColumnActionOwner } = await import('@/sync/ops/actions/scopeActionFamily');
+  const { readShellColumnActionOwner, invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
   const changed = vi.fn();
   const selected = vi.fn();
   const started = vi.fn();
   const screen = await renderContent({ active: true, onChangeView: changed, onSelectInvocation: selected, onRunAgain: started });
   expect(readShellColumnActionOwner('main')?.tabs).toEqual(['flow', 'steps', 'activity']);
-  await act(async () => readShellColumnActionOwner('main')?.selectTab?.('steps'));
+  await act(async () => { await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: 'steps' }); });
   expect(changed).toHaveBeenCalledExactlyOnceWith('steps');
   await screen.update(<WorkflowRunContent {...screen.contentProps} view="steps" />);
   expect(readShellColumnActionOwner('main')?.activeTab).toBe('steps');
   expect(screen.findHostByTestId('workflow-run-view:steps')?.props.accessibilityState?.selected).toBe(true);
-  await act(async () => readShellColumnActionOwner('main')?.selectTab?.('steps'));
+  await act(async () => { await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: 'steps' }); });
   expect(changed).toHaveBeenCalledTimes(1);
   expect(selected).not.toHaveBeenCalled();
   expect(started).not.toHaveBeenCalled();
@@ -220,7 +221,9 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
     return (
       <ModalProvider>
         <ObserveModals />
-        <AppPaneProvider>{children}</AppPaneProvider>
+        <PresentedDetailNavigationProvider>
+          <AppPaneProvider>{children}</AppPaneProvider>
+        </PresentedDetailNavigationProvider>
       </ModalProvider>
     );
   }

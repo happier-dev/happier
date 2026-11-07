@@ -1028,7 +1028,8 @@ describe('workflow block list editor', () => {
         expect(changes.at(-1)?.blocks.at(-1)).toMatchObject({ kind: 'action', actionId: 'notifications.notify_me', input: {} });
 
         await chooseAdd(screen, 'workflow-editor-add-root', ['workflow-editor-add-root-wait']);
-        expect(changes.at(-1)?.blocks.at(-1)).toMatchObject({ kind: 'wait', result: { kind: 'text' } });
+        expect(changes.at(-1)?.blocks.at(-1)).toMatchObject({ kind: 'wait' });
+        expect(changes.at(-1)?.blocks.at(-1)).not.toHaveProperty('result');
     });
 
     it('renders every step kind the definition admits, with its fields, never as nothing', async () => {
@@ -1996,6 +1997,25 @@ describe('document anatomy (DESIGN-4)', () => {
         await selected.unmount();
     });
 
+    it('removing a prompt input cannot silently bind its token to the next value', async () => {
+        const harness = await loadHarness();
+        const { WorkflowValueReferenceEditor } = await import('./WorkflowStepDataEditor');
+        const draft = buildDraft(harness, [{ kind: 'step', id: 'write',
+            document: { text: 'Write about @topic', references: [{ kind: 'happier.workflowInput', ref: 'workflowInput:0', token: '@topic', label: '@topic' }], attachments: [] },
+            input: [{ kind: 'literal', value: 'topic' }, { kind: 'literal', value: 'version' }], result: { kind: 'text' },
+        }]);
+        let changed = draft;
+        const screen = await renderList(harness, { draft, selectedBlockId: 'write', onChange: next => { changed = next as typeof draft; } });
+        const row = screen.findAllByType(WorkflowValueReferenceEditor)[0]!;
+        await act(async () => { row.props.onRemove!(); });
+        const validation = harness.validateWorkflowEditorDraft(changed);
+        expect(validation.valid).toBe(false);
+        expect(validation.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/document/references/0/ref' }),
+        ]));
+        expect(changed.blocks[0]).toMatchObject({ input: [{ kind: 'literal', value: 'version' }] });
+        await screen.unmount();
+    });
     it('reads a typed card\'s set values as values until its step is selected, then edits them (DESIGN-6 N5)', async () => {
         const harness = await loadHarness();
         const draft = buildDraft(harness, [

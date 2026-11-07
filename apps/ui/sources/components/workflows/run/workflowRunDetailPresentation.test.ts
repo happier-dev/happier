@@ -72,7 +72,7 @@ describe('managed workflow Run presentation', () => {
             machine: { name: 'Review box', reachable: false, lastSeenAt } });
         expect(recovery.failureCause).toEqual({ kind: 'cause_not_recorded' });
         expect(recovery.unavailableMachine).toEqual({ name: 'Review box', lastSeenAt });
-        expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, step: null, recovery }))
+        expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle, step: null, recovery }))
             .toBe(t('workflows.recovery.causeNotRecorded'));
         const online = projectWorkflowInvocationRecovery({ run, invocation, progress: null, machineHomeDirectory: null,
             machine: { name: 'Review box', reachable: true, lastSeenAt } });
@@ -102,7 +102,7 @@ describe('managed workflow Run presentation', () => {
             progressByInvocationId: new Map(scene.rows.flatMap(row => row.progress ? [[row.index.id, row.progress] as const] : [])) });
         const presentation = projectWorkflowRunFailure({ run, invocation: failed.index, progress: failed.progress,
             structure, projection: projectWorkflowFlow(scene.definition), machineHomeDirectory: null });
-        expect(presentation).toMatchObject({ invocationId: failed.index.id, step: { name: 'Publish summary', ordinal: '7' },
+        expect(presentation).toMatchObject({ invocationId: failed.index.id, invocationLifecycle: 'failed', step: { name: 'Publish summary', ordinal: '7' },
             recovery: { canReattach: false, canRetrySameConversation: false, canRetryFreshAgent: false,
                 failureCause: { kind: 'reported_failure', message: 'Usage limit reached', runtimeIssue: { usageLimit: { resetAtMs } } } } });
         if (resetAtMs === null) expect(presentation?.recovery.failureCause).toMatchObject({ reset: null });
@@ -145,6 +145,33 @@ describe('managed workflow Run presentation', () => {
         expect(presentation.failureCause).toMatchObject({ kind: 'reported_failure', message: 'Usage limit reached',
             runtimeIssue: progress.reason?.runtimeIssueV1,
             ...(resetAtMs === null ? { reset: null } : { reset: expect.stringContaining('2030') }) });
+    });
+    it.each([1_900_000_000_001, null, 1_900_000_000_000])('withholds quota-bound continuations until the reported reset (%s)', resetAtMs => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const unavailable = { kind: 'unavailable' as const, reason: 'invocation_not_recoverable' as const };
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            recovery: { conversation: 'fresh_agent', input: { kind: 'original' } },
+            reason: { code: 'session_input_target_update_required', message: 'Agent step was interrupted', runtimeIssueV1: {
+                v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', occurredAt: 100,
+                sanitizedPreview: 'Usage limit reached',
+                usageLimit: { v: 1, resetAtMs, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' },
+            } } });
+        const params = { run: createWorkflowRunSummaryFixture({ state: 'interrupted' }), invocation, progress,
+            machineHomeDirectory: null, nowMs: 1_900_000_000_000,
+            recoveryAvailability: { reattach: unavailable, restoreWorkspace: unavailable,
+                retry: { kind: 'available' as const, causalInvocationIds: [invocation.id] },
+                continueSameConversation: { kind: 'available' as const }, continueFreshAgent: { kind: 'available' as const } } };
+        const presentation = projectWorkflowInvocationRecovery(params);
+        const resetElapsed = resetAtMs === params.nowMs;
+        expect(presentation).toMatchObject({ canRetrySameConversation: resetElapsed,
+            canRetryFreshAgent: resetElapsed, canContinuePrepared: resetElapsed,
+            usageLimitWait: resetElapsed ? null : t('workflows.recovery.usageLimitWait'),
+            failureCause: { kind: 'reported_failure', headline: 'Usage limit reached' } });
+        // Elapsed reset only removes UI suppression; the Action owner still decides admission.
+        expect(projectWorkflowInvocationRecovery({ ...params, recoveryAvailability: {
+            ...params.recoveryAvailability, retry: unavailable, continueFreshAgent: unavailable,
+        } }).canRetryFreshAgent).toBe(false);
     });
     it('keeps every persisted outcome stable across competing Machine observations', () => {
         const coverage = { observedLeafCounts: { completed: 0, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
@@ -192,7 +219,7 @@ describe('managed workflow Run presentation', () => {
             reason: { code, message } });
         const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message, headline: t(key) });
-        expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, step: { name: 'Draft', ordinal: '1' }, recovery }))
+        expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle, step: { name: 'Draft', ordinal: '1' }, recovery }))
             .toBe(`${t('workflows.run.stepNumber', { ordinal: '1' })} · ${t(key)}`);
         // An unrecognized code keeps the message its producer recorded.
         const other = projectWorkflowInvocationRecovery({ run, invocation, machineHomeDirectory: null,
@@ -217,6 +244,30 @@ describe('managed workflow Run presentation', () => {
         const step = projectWorkflowInvocationRecovery({ run, invocation, machineHomeDirectory: null,
             progress: { ...progress, blockKind: 'step', invocationPath: { blockId: 'a', scope: [] } } });
         expect(step.failureCause).toMatchObject({ headline: producer });
+    });
+    it('presents a retained native startup failure through the Session cause owner', () => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const message = 'Agent runner exited before native Session startup completed';
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'a', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code: 'agent_startup_failed', message } });
+        const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+            invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code: 'agent_startup_failed', message,
+            headline: t('session.startFailure.cause.agent_startup_failed') });
+    });
+    it.each([
+        ['session_input_target_update_required', 'session.pendingMessages.admissionRejected.targetUpdateRequired'],
+        ['unmapped_recorded_failure', null],
+    ] as const)('keeps the recorded %s cause visible when its producer supplied no message', (code, key) => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code } });
+        const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+            invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: null,
+            headline: key === null ? code : t(key) });
     });
     it.each([
         ['native_check_unsupported', 'errors.machineNativeCheckUnsupported'],
@@ -355,6 +406,18 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, failure: { step: 'For each issue' } }))
             .toBe('For each issue was interrupted. Completed work is retained.');
         expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('Completed work is retained.');
+    });
+    it('retains an interrupted aggregate while naming the known failed child as failed', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        const word = formatWorkflowRunOutcomeLabel({ state: run.state, workflowCustodyState: run.workflowCustodyState, coverage });
+        expect(word).toBe(t('workflows.runState.interrupted'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage,
+            failure: { step: 'Check the release summary', lifecycle: 'failed' },
+        })).toBe('Check the release summary failed. Completed work is kept.');
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage,
+            failure: { step: 'Check the release summary', lifecycle: 'outcome_uncertain' },
+        })).toBe('Check the release summary was interrupted. Completed work is retained.');
     });
     it('offers an explicit engine replacement only for a stopped unavailable step with settled custody', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });

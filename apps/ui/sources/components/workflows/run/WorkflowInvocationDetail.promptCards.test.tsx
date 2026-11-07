@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol';
+import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -218,10 +218,20 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         const screen = await renderDetail({ progress, lifecycle: 'failed', recovery: projectWorkflowInvocationRecovery({
             run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
             invocation: createWorkflowInvocationIndexFixture({ lifecycle: 'failed' }),
-            progress, machineHomeDirectory: null,
-        }) });
+            progress, machineHomeDirectory: null, nowMs: 1_899_999_999_999,
+            recoveryAvailability: {
+                reattach: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
+                restoreWorkspace: { kind: 'unavailable', reason: 'workspace_unavailable' },
+                retry: { kind: 'available', causalInvocationIds: ['leaf'] },
+                continueSameConversation: { kind: 'available' }, continueFreshAgent: { kind: 'available' },
+            },
+        }), onRetryFreshAgent: vi.fn(), onRetrySameConversation: vi.fn(), onRunAgain: vi.fn(), noChoicesNext: 'run_again' });
         expect(screen.getTextContent()).toContain('Usage limit reached');
         expect(screen.getTextContent()).not.toContain('Current turn failed');
+        expect(screen.findByTestId('workflow-run-retry-fresh')).toBeNull();
+        expect(screen.findByTestId('workflow-run-retry-same')).toBeNull();
+        expect(screen.findByTestId('workflow-run-recovery-run-again')).toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.recovery.usageLimitWait');
         expect(screen.findByTestId('workflow-run-runtime-issue-reset') !== null).toBe(resetAtMs !== null);
         if (resetAtMs !== null) expect(screen.getTextContent()).toContain('2030');
     });
@@ -286,46 +296,6 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
             storage.setState(originalState, true);
             publishAppliedActiveServerSnapshot(originalAppliedSnapshot, originalRuntimeAvailable);
         }
-    });
-
-    it('opens an inputless Session through its recorded readiness without inventing a turn', async () => {
-        const onOpenSession = vi.fn();
-        const screen = await renderDetail({
-            progress: { ...permissionProgress, execution: { kind: 'session_ready', sessionId: 'session-without-input' }, interaction: undefined },
-            recovery: { ...recovery, canInspectExecution: true },
-            onOpenSession,
-        });
-        await screen.pressByTestIdAsync('workflow-run-open-session');
-        expect(onOpenSession).toHaveBeenCalledWith('session-without-input');
-        expectNoSessionTransport();
-    });
-
-    it('opens only a detached execution run, never an Action correspondence without a run identity', async () => {
-        const onOpenExecutionRun = vi.fn();
-        const actionScreen = await renderDetail({
-            progress: {
-                ...permissionProgress,
-                blockKind: 'action',
-                execution: {
-                    kind: 'action',
-                    actionId: 'mcp_servers.list',
-                    actionRequestId: 'request-1',
-                    input: {},
-                    localInputId: 'input-1',
-                },
-                interaction: { requests: {} },
-            },
-            recovery: { ...recovery, canInspectExecution: true },
-            onOpenExecutionRun,
-        });
-        expect(actionScreen.findByTestId('workflow-run-open-execution-run')).toBeNull();
-
-        const runScreen = await renderDetail({
-            recovery: { ...recovery, canInspectExecution: true },
-            onOpenExecutionRun,
-        });
-        await runScreen.pressByTestIdAsync('workflow-run-open-execution-run');
-        expect(onOpenExecutionRun).toHaveBeenCalledWith('exec-1');
     });
 
     it('answers a tool permission through the canonical card, addressed to the exact Execution Run', async () => {

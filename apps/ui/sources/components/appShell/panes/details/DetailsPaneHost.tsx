@@ -20,6 +20,7 @@ export type DetailsPaneContent = Readonly<{
 export type DetailsPaneHostProps = Readonly<{
     main: React.ReactNode;
     mainColumn?: React.ComponentProps<typeof AppScopePaneHost>['mainColumn'];
+    onMainColumnControlsChange?: React.ComponentProps<typeof AppScopePaneHost>['onMainColumnControlsChange'];
     /** What the details pane shows; null closes it. The destination owns this selection. */
     details: DetailsPaneContent | null;
     /** The pane asks to close (its close button, Escape, or a tap on the overlay scrim). */
@@ -33,48 +34,54 @@ export type DetailsPaneHostProps = Readonly<{
     testID?: string;
 }>;
 
-/**
- * A destination's details pane: `main` beside a resizable, full-height details column whose width
- * persists across the app (the same width every details pane uses) and which becomes an overlay
- * instead of squeezing `main` below its minimum. Selection stays with the destination: pass the
- * content to open it and null to close it. It stands in the App's pane host, so the App's right
- * sidebar opens beside the same page.
- *
- * Fresh phone opens push a page (`useDetailsPaneAvailable()` is false). An already-selected
- * detail stays in this same instance and takes the full viewport when side panes cannot be shown.
- */
-export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: DetailsPaneHostProps) {
+/** The same detail boundary and header inside either an App or Project physical pane host. */
+export const DetailsPaneContentView = React.memo(function DetailsPaneContentView(props: Readonly<{
+    details: DetailsPaneContent;
+    onClose: () => void;
+    testID?: string;
+}>) {
+    const { details, onClose } = props;
     const testID = props.testID ?? 'details-pane';
-    const details = props.details;
-    const onClose = props.onCloseDetails;
     // The details pane (header and body) is the boundary its menus and Add surfaces float inside.
     const paneBoundaryRef = React.useRef<View>(null);
+    return (
+        <View
+            ref={paneBoundaryRef}
+            testID={testID}
+            style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+            accessibilityLabel={details.accessibilityLabel ?? details.header?.title}
+        >
+            <PopoverScope boundaryRef={paneBoundaryRef}>
+            <PaneHeaderScrollScope>
+            {details.header ? (
+                <PaneHeader
+                    testID={`${testID}.header`}
+                    mainRestoreChip
+                    title={details.header.title}
+                    subtitle={details.header.subtitle}
+                    line={details.header.line}
+                    actions={details.header.actions}
+                    lineTrailing={details.header.lineTrailing}
+                    onClose={onClose}
+                />
+            ) : null}
+            <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>{details.content}</View>
+            </PaneHeaderScrollScope>
+            </PopoverScope>
+        </View>
+    );
+});
+
+/**
+ * A destination's details pane: `main` beside a resizable, full-height details column whose width
+ * persists across the app and which becomes an overlay instead of squeezing `main` below its minimum.
+ * Selection stays with the destination; the App's right sidebar opens beside the same page.
+ * Fresh phone opens push in-page, while an already-selected detail retains this instance.
+ */
+export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: DetailsPaneHostProps) {
+    const { details, onCloseDetails: onClose, testID } = props;
     const destinationDetails = React.useMemo(() => (details ? {
-        pane: (
-            <View
-                ref={paneBoundaryRef}
-                testID={testID}
-                style={{ flex: 1, minHeight: 0, minWidth: 0 }}
-                accessibilityLabel={details.accessibilityLabel ?? details.header?.title}
-            >
-                <PopoverScope boundaryRef={paneBoundaryRef}>
-                <PaneHeaderScrollScope>
-                {details.header ? (
-                    <PaneHeader
-                        testID={`${testID}.header`}
-                        mainRestoreChip
-                        title={details.header.title}
-                        subtitle={details.header.subtitle}
-                        line={details.header.line}
-                        actions={details.header.actions}
-                        onClose={onClose}
-                    />
-                ) : null}
-                <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>{details.content}</View>
-                </PaneHeaderScrollScope>
-                </PopoverScope>
-            </View>
-        ),
+        pane: <DetailsPaneContentView details={details} onClose={onClose} testID={testID} />,
         onClose,
         ...(details.companion ? { companion: true as const } : {}),
     } : null), [details, onClose, testID]);
@@ -82,6 +89,7 @@ export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: Detail
         <AppScopePaneHost
             main={props.main}
             mainColumn={props.mainColumn}
+            onMainColumnControlsChange={props.onMainColumnControlsChange}
             destinationDetails={destinationDetails}
             mainMinWidthPx={props.mainMinWidthPx}
             detailsPreferredWidthPx={props.detailsPreferredWidthPx}

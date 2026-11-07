@@ -7,7 +7,7 @@ import type { WorkflowProgressEnvelopeV1} from '@happier-dev/protocol/workflows/
 import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
 import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ModalProvider } from '@/modal';
-import { WorkflowReviewCard, WorkflowReviewValue, type WorkflowReviewCardProps } from './WorkflowReviewCard';
+import { WorkflowReviewCard, WorkflowReviewValue, type WorkflowReviewCardProps, type WorkflowReviewDraft } from './WorkflowReviewCard';
 
 const retireCards: Array<() => Promise<void>> = [];
 beforeEach(() => {
@@ -52,8 +52,10 @@ function progress(overrides: Partial<WorkflowProgressEnvelopeV1> = {}): Workflow
 async function mount(extra: Partial<WorkflowReviewCardProps> = {}) {
     const onComplete = vi.fn(async () => {});
     let publish!: (value: WorkflowProgressEnvelopeV1, revision: string) => void;
+    let currentDraft: WorkflowReviewDraft | undefined;
     function Host() {
-        const [draft, onChangeDraft] = React.useState<{ text: string; contentRevision: string }>();
+        const [draft, onChangeDraft] = React.useState<WorkflowReviewDraft>();
+        currentDraft = draft;
         const [publication, setPublication] = React.useState({ progress: extra.progress ?? progress(), revision: extra.contentRevision ?? '7' });
         const [reading, onChangeReading] = React.useState(() => extra.reading
             ?? { value: publication.progress.result, revision: publication.revision });
@@ -64,7 +66,7 @@ async function mount(extra: Partial<WorkflowReviewCardProps> = {}) {
     }
     const screen = await renderScreen(<Host />, { wrapper: ReviewCardProvider });
     retireCards.push(() => screen.update(<></>));
-    return { screen, onComplete,
+    return { screen, onComplete, readDraft: () => currentDraft,
         publish: async (value: WorkflowProgressEnvelopeV1, revision: string) => { await act(async () => publish(value, revision)); } };
 }
 async function changeText(screen: Awaited<ReturnType<typeof renderScreen>>, id: string, value: string) {
@@ -316,7 +318,8 @@ describe('WorkflowReviewCard', () => {
         expect(screen.findByTestId('review-newer')).not.toBeNull();
         expect(screen.findByTestId('review-field-summary')?.props.value).toBe('Local edit');
         await changeText(screen, 'review-field-summary', 'Still local');
-        expect(onChangeDraft).toHaveBeenLastCalledWith({ text: JSON.stringify({ summary: 'Still local', approved: true }, null, 2), contentRevision: '7' });
+        expect(onChangeDraft).toHaveBeenLastCalledWith({ text: JSON.stringify({ summary: 'Still local', approved: true }, null, 2), contentRevision: '7',
+            editedAt: expect.any(Number) });
         await screen.pressByTestIdAsync('review-use');
         expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7', value: { summary: 'Local edit', approved: true } });
     });
@@ -405,6 +408,53 @@ describe('WorkflowReviewCard', () => {
         expect(screen.findByTestId('review-use')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('review-generate');
         expect(onComplete).toHaveBeenCalledWith({ mode: 'generate', expectedContentRevision: '7' });
+    });
+    it('offers Stop for an in-flight generation through its owning session interrupt', async () => {
+        const onStopGeneration = vi.fn(async () => {});
+        const { screen } = await mount({ lifecycle: 'running', generation: { attempt: '1', onStop: onStopGeneration },
+            progress: progress() });
+        await screen.pressByTestIdAsync('review-stop-generation');
+        expect(onStopGeneration).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('review-use')).toBeNull();
+    });
+    it('keeps the Open PR disagreement on the existing Wait decision and Stop paths', async () => {
+        const stop = vi.fn();
+        const { screen, onComplete } = await mount({ waitForYou: true, contract: undefined,
+            waitIdentity: { title: 'Second opinion disagreed', prompt: 'Review these risks',
+                primaryLabel: 'Open the pull request anyway', consequence: 'Open pull request runs next.',
+                previousResult: { value: { risks: 'Missing rollback evidence' }, contract: undefined },
+                onStop: stop, stopConsequence: 'No pull request is opened.' },
+            progress: progress({ blockKind: 'wait', result: undefined }) });
+        expect(screen.getTextContent()).toContain('Missing rollback evidence');
+        await screen.pressByTestIdAsync('review-use');
+        expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7' });
+        await screen.pressByTestIdAsync('review-stop-wait');
+        expect(stop).toHaveBeenCalledOnce();
+    });
+    it('lets a person read the agent version without replacing their unpublished edits', async () => {
+        const { screen, readDraft } = await mount();
+        await screen.pressByTestIdAsync('review-edit');
+        await changeText(screen, 'review-field-summary', 'My unpublished answer');
+        expect(readDraft()?.editedAt).toEqual(expect.any(Number));
+        expect(screen.findByTestId('review-draft-provenance')).not.toBeNull();
+        const editedAt = readDraft()?.editedAt;
+        await screen.pressByTestIdAsync('review-show-agent-version');
+        expect(screen.findByTestId('review-field-summary')?.props.value).toBe('My unpublished answer');
+        expect(readDraft()?.editedAt).toBe(editedAt);
+        expect(screen.findByTestId('review-full-value')).not.toBeNull();
+    });
+    it('reads an agent publication after keeping edits to an initially empty human Wait', async () => {
+        const { screen, readDraft, publish } = await mount({ waitForYou: true,
+            progress: progress({ blockKind: 'wait', result: undefined }) });
+        await changeText(screen, 'review-field-summary', 'My unpublished answer');
+        const editedAt = readDraft()?.editedAt;
+        await publish(progress({ blockKind: 'wait', result: { summary: 'Agent publication', approved: true } }), '8');
+        await screen.pressByTestIdAsync('review-keep-edits');
+        await screen.pressByTestIdAsync('review-show-agent-version');
+        expect(screen.getTextContent()).toContain('Agent publication');
+        expect(screen.findByTestId('review-field-summary')?.props.value).toBe('My unpublished answer');
+        expect(readDraft()?.editedAt).toBe(editedAt);
+        expect(screen.findByTestId('review-full-value')).not.toBeNull();
     });
     it('uses raw JSON for advanced schemas without dropping undeclared fields', async () => {
         const { screen, onComplete } = await mount({ contract: { kind: 'json', schema: {

@@ -67,6 +67,7 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
             cursor?: string;
             limit?: number;
             parentRecordId?: string;
+            memberOrdinal?: string;
             lifecycles?: readonly WorkflowInvocationLifecycleV1[];
             includeContent?: boolean;
         }>, signal?: AbortSignal) =>
@@ -77,6 +78,7 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
                     ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
                     ...(input.limit === undefined ? {} : { limit: input.limit }),
                     ...(input.parentRecordId === undefined ? {} : { parentRecordId: input.parentRecordId }),
+                    ...(input.memberOrdinal === undefined ? {} : { memberOrdinal: input.memberOrdinal }),
                     ...(input.lifecycles === undefined ? {} : { lifecycles: [...input.lifecycles] }),
                     ...(input.includeContent === undefined ? {} : { includeContent: input.includeContent }),
                 }),

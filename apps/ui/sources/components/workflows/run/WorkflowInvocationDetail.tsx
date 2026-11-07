@@ -92,8 +92,6 @@ export type WorkflowInvocationDetailProps = Readonly<{
     resultShownAbove?: boolean;
     /** Undefined retains older callers' notice; null means Review already presents this state. */
     contentReadState?: React.ReactNode;
-    onOpenSession?: (sessionId: string) => void;
-    onOpenExecutionRun?: (runId: string) => void;
     /** Read the exact historical attempt; never selects its value for this attempt. */
     onSelectInvocation?: (invocationId: string) => void;
     /**
@@ -149,6 +147,8 @@ export type WorkflowInvocationDetailProps = Readonly<{
      * workflow it came from), so the card names what the person can do rather than only what they can't.
      */
     noChoicesNext?: 'stop' | 'run_again' | 'open_workflow' | null;
+    /** The Run page owns its primary action; its recovery choices can share the secondary treatment. */
+    recoveryPrimaryDisplay?: 'default' | 'secondary';
     /** The Run's own Run again, shown as this card's primary when the step has no recovery choice of its own. */
     onRunAgain?: () => void;
     /** What a finished Machine setup step installed, read from the Run's frozen Setup input. */
@@ -328,10 +328,12 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         ['fresh', retryFreshOffered], ['retry', retryOffered], ['restore', restoreOffered], ['reviewed', reviewedNewRunOffered],
         ['another', anotherAgentOffered],
     ] as const).filter(([, offered]) => offered).map(([choice]) => choice);
-    const choiceDisplay = (choice: (typeof offeredChoices)[number]) => offeredChoices[0] === choice ? 'default' as const : 'secondary' as const;
+    const choiceDisplay = (choice: (typeof offeredChoices)[number]) => offeredChoices[0] === choice
+        ? props.recoveryPrimaryDisplay ?? 'default' : 'secondary';
     const choiceOffered = offeredChoices.length > 0 || replacementOffered;
     // Only this attempt's recorded failure explains what happened. Connectivity only affects recovery.
     const failureCause = recovery.failureCause ?? null;
+    const usageLimitWait = recovery.usageLimitWait ?? null;
     const unavailableMachine = recovery.unavailableMachine ?? null;
     // A step whose content could not be read shows that one problem; a second card saying only "This step
     // did not finish" beside it would be two problems for one cause (FIN-DESIGN-REVIEW H3).
@@ -350,15 +352,15 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         || (recovery.remainingNotStartedSiblingCount ?? 0) > 0);
     // With no choice of its own, a step the Run can replay puts Run again right under its failure: the line then
     // says only why, and the button is the way forward (the shared "Investigate with an agent" joins it later).
-    const runAgainShown = noChoices && unavailableMachine === null && props.noChoicesNext === 'run_again'
+    const runAgainShown = noChoices && usageLimitWait === null && unavailableMachine === null && props.noChoicesNext === 'run_again'
         && props.onRunAgain !== undefined;
     // A failure only a Machine setting can fix leads to that setting; Run again stays beside it, quieter.
     const adminAccessShown = noChoices && recovery.remedy === 'configure_admin_access'
         && props.onOpenMachineAdminAccess !== undefined;
     const noChoicesLine = !noChoices ? null
-        : unavailableMachine !== null
+        : usageLimitWait ?? (unavailableMachine !== null
             ? t('workflows.recovery.choicesOnReconnect', { machine: unavailableMachine.name })
-            : resolveNoChoicesLine(failureCause, runAgainShown ? null : props.noChoicesNext ?? null);
+            : resolveNoChoicesLine(failureCause, runAgainShown ? null : props.noChoicesNext ?? null));
     // A failed step's own result is the detail of what went wrong; it waits one quiet tap away in its card.
     const failureDetails = props.lifecycle === 'failed' && props.finalResult == null && props.waitPrompt == null
         ? props.progress?.result : undefined;
@@ -391,11 +393,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         }
         return lines;
     }, [causeHeadline, reportedFailure, setupDirectory, setupOperationId]);
-    const sessionLink = (execution?.kind === 'session' || execution?.kind === 'session_ready')
-        && recovery.canInspectExecution && props.onOpenSession !== undefined ? execution.sessionId : null;
-    const executionLink = execution?.kind === 'detached_run'
-        && recovery.canInspectExecution && props.onOpenExecutionRun !== undefined ? execution.runId : null;
-
     return (
         <View testID={`${testIDPrefix}-selected-detail`} style={styles.section}>
             {/* The state and the time are the pane's subtitle (DESIGN-16 D5); the body says what happened. */}
@@ -821,7 +818,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                         <RoundButton
                                             testID={`${testIDPrefix}-recovery-configure-admin-access`}
                                             size="small"
-                                            display="default"
+                                            display={props.recoveryPrimaryDisplay ?? 'default'}
                                             title={t('workflows.recovery.configureAdminAccess')}
                                             onPress={props.onOpenMachineAdminAccess}
                                         />
@@ -830,7 +827,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                         <RoundButton
                                             testID={`${testIDPrefix}-recovery-run-again`}
                                             size="small"
-                                            display={adminAccessShown ? 'secondary' : 'default'}
+                                            display={adminAccessShown ? 'secondary' : props.recoveryPrimaryDisplay ?? 'default'}
                                             title={t('workflows.run.runAgain')}
                                             onPress={props.onRunAgain}
                                         />
@@ -945,11 +942,10 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                 </ListPresentationProvider></View>
             )}
             {/*
-              * The quiet facts in one meta block (DESIGN-17 R1): usage, where the step worked, and where
-              * to inspect it. A settled step's missing usage reads "Not reported" in quiet meta, never a bare dash.
+              * The quiet facts in one meta block (DESIGN-17 R1): usage and where the step worked.
+              * A settled step's missing usage reads "Not reported" in quiet meta, never a bare dash.
               */}
-            {usageLabel === null && !workspaceInformative && sessionLink === null && executionLink === null
-                && technicalLines.length === 0 ? null : (
+            {usageLabel === null && !workspaceInformative && technicalLines.length === 0 ? null : (
                 <View testID={`${testIDPrefix}-invocation-meta`}><ListPresentationProvider value="page" pageInsets={props.resultShownAbove === true ? 'contained' : 'standard'}>
                     <ItemGroup header="none">
                         {usageLabel === null ? null : (
@@ -1020,22 +1016,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                             )}
                                     </View>
                                 )}
-                            />
-                        )}
-                        {sessionLink === null ? null : (
-                            <Item
-                                testID={`${testIDPrefix}-open-session`}
-                                title={t('workflows.run.openSourceSession')}
-                                accessibilityRole="link"
-                                onPress={() => props.onOpenSession?.(sessionLink)}
-                            />
-                        )}
-                        {executionLink === null ? null : (
-                            <Item
-                                testID={`${testIDPrefix}-open-execution-run`}
-                                title={t('workflows.run.openExecution')}
-                                accessibilityRole="link"
-                                onPress={() => props.onOpenExecutionRun?.(executionLink)}
                             />
                         )}
                         {technicalLines.length === 0 ? null : (

@@ -1,10 +1,12 @@
 import type { SessionUsageLimitRecoveryOperationResultV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 import type {
-    ConnectedServiceQuotaRecoveryCreditsV1,
+    ConnectedServiceQuotaRecoveryCreditsV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
     PrimaryTurnStatusV1,
-    SessionRuntimeIssueV1,
+    SessionRuntimeIssueV1} from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type {
     SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import {
     buildUsageLimitIssueFingerprint,
     isSessionUsageLimitRecoveryForIssue,
@@ -212,7 +214,7 @@ function readUsageLimitResetAtMs(
     return readNumberField((issue as { usageLimit?: unknown }).usageLimit, 'resetAtMs');
 }
 
-function hasResetElapsed(resetAtMs: number | null, nowMs: number | null | undefined): boolean {
+export function hasSessionUsageLimitResetElapsed(resetAtMs: number | null, nowMs: number | null | undefined): boolean {
     return resetAtMs !== null
         && typeof nowMs === 'number'
         && Number.isFinite(nowMs)
@@ -393,7 +395,7 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
     const ready = params.operationStatus === 'ready'
         || (
             params.hasInterruptedWorkToResume === true
-            && hasResetElapsed(resetAtMs, params.nowMs)
+            && hasSessionUsageLimitResetElapsed(resetAtMs, params.nowMs)
         );
     const checking = !ready && params.operationStatus === 'checking';
     const waiting = checking || (!ready && (params.operationStatus === 'waiting' || isActiveRecoveryStatus(params.recoveryState?.status)));

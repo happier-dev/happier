@@ -6,7 +6,7 @@ import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows
 import { createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { summarizeWorkflowInvocationCoverage } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
-import { formatWorkflowOccurrenceLabel, projectWorkflowInvocationStructure, projectWorkflowFlowRunStates, resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
+import { formatWorkflowOccurrenceLabel, projectWorkflowInvocationStructure, projectWorkflowFlowRunStates, resolveWorkflowInvocationBlock, resolveWorkflowInvocationBlockContext } from './workflowInvocationStructure';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 
 /**
@@ -188,6 +188,9 @@ describe('projectWorkflowInvocationStructure', () => {
         const projection = projectWorkflowFlow(definition, frozenChildren);
         expect(resolveWorkflowInvocationBlock({ definition, frozenChildren, invocationPath: openedWait.invocationPath }))
             .toBe(frozenChildren['builtin:plan'].blocks[0]);
+        expect(resolveWorkflowInvocationBlockContext({ definition, frozenChildren, sourceRef: 'saved:parent',
+            invocationPath: openedWait.invocationPath })).toEqual({ block: frozenChildren['builtin:plan'].blocks[0],
+            definition: frozenChildren['builtin:plan'], sourceRef: 'builtin:plan' });
         // Opened and unopened ancestry must make the same join even with colliding ids.
         for (const progressByInvocationId of [undefined, new Map([['loop', openedLoop]]),
             new Map([['wait-1', openedWait]]), new Map([['inner-1', openedInner]])]) {

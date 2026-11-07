@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { WorkflowRunStartRequestV1Schema, type WorkflowRunStartResultV1} from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowMaterializedLeafV1Schema,
@@ -26,10 +26,12 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { parseToken } from '@/utils/auth/parseToken';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol/actions';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { createWorkflowAccountRunActionOwner, getActionSpec, actionSpecToActionDefinitionV1, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol/actions';
 import { WorkflowRunGetResultV1Schema, type WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { type RoleArtifactV1} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
@@ -72,6 +74,8 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { WorkflowRunContent } from '../run/WorkflowRunContent';
 import { projectWorkflowInvocationStructure } from '../run/workflowInvocationStructure';
 import { WorkflowInvocationDetail } from '../run/WorkflowInvocationDetail';
+import { WorkflowReviewCard } from '../run/WorkflowReviewCard';
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowRunPeekDetailsView } from '@/components/sessions/work/WorkflowRunPeekDetailsView';
 import { useSessionWorkOpeners } from '@/components/sessions/work/useSessionWorkOpeners';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -433,6 +437,7 @@ async function renderRunScreen(overrides: Readonly<{
     run?: ReturnType<typeof createWorkflowRunSummaryFixture>;
     invocations?: readonly unknown[];
     invocationDetails?: readonly WorkflowInvocationGetResultV1['invocation'][];
+    memberInvocationDetails?: readonly WorkflowInvocationGetResultV1['invocation'][];
     failedInvocationDetails?: readonly WorkflowInvocationGetResultV1['invocation'][];
     failedInvocation?: unknown;
     definition?: unknown;
@@ -487,8 +492,12 @@ async function renderRunScreen(overrides: Readonly<{
     });
     if (overrides.getRunFailure !== undefined) detailActions.getRun.mockRejectedValue(overrides.getRunFailure);
     if (overrides.invocationListFailure === undefined) {
-        detailActions.listInvocations.mockImplementation(async (input: Readonly<{ lifecycles?: readonly string[]; includeContent?: boolean; cursor?: string }>) => (
-            input.lifecycles?.length === 1 && input.lifecycles[0] === 'failed'
+        detailActions.listInvocations.mockImplementation(async (input: Readonly<{ parentRecordId?: string; memberOrdinal?: string; lifecycles?: readonly string[]; includeContent?: boolean; cursor?: string }>) => (
+            input.memberOrdinal !== undefined ? {
+                ...invocationPage((overrides.memberInvocationDetails ?? []).filter(detail => detail.index.parentRecordId === input.parentRecordId
+                    && detail.index.memberOrdinal === input.memberOrdinal).map(detail => detail.index)),
+                invocationDetails: overrides.memberInvocationDetails ?? [],
+            } : input.lifecycles?.length === 1 && input.lifecycles[0] === 'failed'
                 ? invocationPage(overrides.failedInvocation === undefined ? [] : [overrides.failedInvocation])
                 : {
                     ...invocationPage(input.cursor === undefined
@@ -675,6 +684,7 @@ async function acceptedStorage(value: unknown) {
     }) : undefined;
     const materialized = await materializeWorkflowAcceptedSnapshotV1({
         definition: detail.authoredDefinition ?? detail.definition, admission: { kind: 'user' },
+        roleOverrides: context.roleOverrides,
         ...(frozen ? { replay: { snapshot: frozen } } : {}),
         ingressContext: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
         effects: { resolveTargetAvailability: async () => true },
@@ -958,6 +968,130 @@ afterEach(async () => {
 });
 
 describe('WorkflowRunScreen', () => {
+    it.each(['session', 'detached_run', 'unconfirmed'] as const)('FIN selected hold preserves the prior result while its requested %s generation runs', async executionKind => {
+        if (executionKind === 'detached_run') machineRpcSpy.mockImplementation(async ({ method }) =>
+            method === RPC_METHODS.CAPABILITIES_DESCRIBE ? EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE : { ok: true });
+        const run = createWorkflowRunSummaryFixture({ state: 'running', origin: { kind: 'direct' } });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', sequence: '0' });
+        const prior = createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444',
+            parentRecordId: root.id, sequence: '1', lifecycle: 'superseded' });
+        const current = createWorkflowInvocationIndexFixture({ id: '55555555-5555-4555-8555-555555555555',
+            parentRecordId: root.id, sequence: '2', attempt: '1', lifecycle: 'running' });
+        routeState.invocationId = current.id;
+        const priorDetail = { index: prior, parentRevision: run.revision, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: prior.attempt,
+            logicalInvocationRecordId: prior.id, invocationPath: { blockId: 'analyze', scope: [] },
+            result: 'Previously reviewed result', resultContract: { kind: 'text' },
+            review: { decision: { kind: 'generate', requestedFromContentRevision: prior.contentRevision } },
+        }) };
+        const currentDetail = { index: current, parentRevision: run.revision, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: current.attempt,
+            logicalInvocationRecordId: prior.id, previousAttemptRecordId: prior.id,
+            invocationPath: { blockId: 'analyze', scope: [] },
+            execution: executionKind !== 'detached_run'
+                ? { kind: 'session', sessionId: 'generation-session', localInputId: 'generate-input' }
+                : { kind: 'detached_run', runId: 'generation-execution', localInputId: 'generate-input', runtimeSelection: {} },
+        }) };
+        detailActions.getInvocation.mockImplementation(async (input: Readonly<{ invocationId: string }>) => {
+            if (executionKind === 'unconfirmed' && input.invocationId === current.id) throw new Error('Selected read unavailable');
+            return { invocation: currentDetail };
+        });
+        keyInvocationReads([root, prior, current], new Map([[prior.id, priorDetail.progress]]));
+        const credentials = await TokenStorage.getCredentials();
+        const screen = await renderRunScreen({ run, invocations: [root, current], invocationDetails: [currentDetail],
+            wrap: () => <InjectedAuthProvider credentials={credentials}>{createRunScreenElement()}</InjectedAuthProvider> });
+        await vi.waitFor(() => expect(screen.findAllByType(WorkflowReviewCard)).toHaveLength(1));
+        const card = screen.findByType(WorkflowReviewCard);
+        await vi.waitFor(() => expect(screen.findByType(WorkflowReviewCard).props.progress.result).toBe('Previously reviewed result'));
+        expect(screen.findByType(WorkflowReviewCard).props.generation).toMatchObject({ attempt: '1',
+            onStop: executionKind === 'unconfirmed' ? undefined : expect.any(Function) });
+        expect(detailActions.getInvocation.mock.calls.filter(([input]) => input.invocationId === prior.id)).toHaveLength(1);
+        expect(screen.findHostByTestId('workflow-review-use')).toBeNull();
+        if (executionKind === 'detached_run') {
+            await act(async () => { await card.props.generation.onStop(); });
+            expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+                machineId: run.machineId, method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+                payload: { runId: 'generation-execution' },
+            }));
+            expect(detailActions.cancelRun).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(['builtin', 'nested', 'inline', 'off-page', 'off-page-frame'] as const)('FIN selected hold shows second opinion risks for %s Open PR identity', async sourceKind => {
+        const { definition } = requireDefined(resolveBuiltinWorkflowDefinitionV1('open-a-pull-request') ?? undefined, 'Expected Open PR builtin');
+        const nested = sourceKind === 'nested';
+        const authoredDefinition = nested ? createWorkflowDefinitionFixture({ blocks: [{ kind: 'workflow', id: 'open-change',
+            workflowRef: 'builtin:open-a-pull-request', input: { base: { kind: 'literal', value: 'main' },
+                title: { kind: 'literal', value: 'Ship the change' } } }] }) : definition;
+        const source = sourceKind === 'builtin' || sourceKind === 'off-page' || sourceKind === 'off-page-frame'
+            ? { kind: 'catalog' as const, ref: 'builtin:open-a-pull-request', version: 1 } : { kind: 'inline' as const };
+        const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition: authoredDefinition, admission: { kind: 'user' },
+            ingressContext: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+            roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.test/test' },
+                availableAgentTargetKeys: ['agent:happier.agent.test/test'] },
+            effects: { resolveTargetAvailability: async () => true,
+                readActionContract: async actionId => {
+                    const contract = actionSpecToActionDefinitionV1(getActionSpec(actionId));
+                    return { inputSchema: contract.inputSchema, outputSchema: contract.outputSchema ?? {} };
+                },
+                readWorkflowDefinition: async () => ({ definition, sourceKey: 'builtin:open-a-pull-request', version: 1 }) },
+            context: { ...ACCEPTED_CONTEXT, source, inputs: nested ? {} : { base: 'main', title: 'Ship the change' },
+                authorization: { principal: { kind: 'host' } } } });
+        if (!admitted.ok) throw new Error(`Open PR fixture admission failed: ${JSON.stringify(admitted.error)}`);
+        const run = createWorkflowRunSummaryFixture({ state: 'waiting_for_review', origin: { kind: 'direct' } });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', sequence: '0' });
+        const childRun = createWorkflowInvocationIndexFixture({ id: '88888888-8888-4888-8888-888888888888', parentRecordId: root.id, sequence: '1' });
+        const opinion = createWorkflowInvocationIndexFixture({ id: '44444444-4444-4444-8444-444444444444',
+            parentRecordId: nested ? childRun.id : root.id, sequence: '2', lifecycle: 'completed' });
+        const condition = createWorkflowInvocationIndexFixture({ id: '66666666-6666-4666-8666-666666666666',
+            parentRecordId: nested ? childRun.id : root.id, memberOrdinal: '1', sequence: '3', lifecycle: 'running' });
+        const held = createWorkflowInvocationIndexFixture({ id: '55555555-5555-4555-8555-555555555555',
+            parentRecordId: condition.id, sequence: '4', lifecycle: 'waiting_for_review' });
+        routeState.invocationId = held.id;
+        const opinionDetail = { index: opinion, parentRevision: run.revision, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: '0', logicalInvocationRecordId: opinion.id,
+            execution: { kind: 'detached_run', runId: 'second-opinion-execution', localInputId: 'opinion-input', runtimeSelection: {} },
+            invocationPath: { blockId: 'second-opinion', scope: nested ? [{ kind: 'workflow', blockId: 'open-change' }] : [] }, result: { verdict: 'disagree', confidence: 0.8,
+                risks: [{ title: 'Missing rollback evidence', severity: 'high', evidence: 'No rollback check was run' }],
+                missingEvidence: ['Rollback rehearsal'], nextStep: 'Rehearse rollback before opening' },
+            resultContract: definition.blocks[0]?.kind === 'step' ? definition.blocks[0].result : undefined,
+        }) };
+        const heldDetail = { index: held, parentRevision: run.revision, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'wait', attempt: '0', logicalInvocationRecordId: held.id,
+            invocationPath: { blockId: 'confirm-open-pr', scope: nested ? [{ kind: 'workflow', blockId: 'open-change' }] : [] },
+        }) };
+        detailActions.getInvocation.mockResolvedValue({ invocation: heldDetail });
+        const invocations = [root, ...(nested ? [childRun] : []),
+            ...(sourceKind === 'off-page' || sourceKind === 'off-page-frame' ? [] : [opinion]),
+            ...(sourceKind === 'off-page-frame' ? [] : [condition]), held];
+        keyInvocationReads([...invocations, condition], new Map([[opinion.id, opinionDetail.progress], [condition.id, WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'if', attempt: condition.attempt, logicalInvocationRecordId: condition.id,
+            invocationPath: { blockId: 'second-opinion-disagreed', scope: nested ? [{ kind: 'workflow', blockId: 'open-change' }] : [] },
+        })]]));
+        const screen = await renderRunScreen({ run, definition: admitted.snapshot.definition, authoredDefinition, invocations, invocationDetails: [heldDetail],
+            memberInvocationDetails: [opinionDetail],
+            acceptedContext: { ...ACCEPTED_CONTEXT, source, inputs: admitted.snapshot.inputs,
+                materializedLeaves: admitted.snapshot.materializedLeaves, frozenChildren: admitted.snapshot.frozenChildren } });
+        await vi.waitFor(() => expect(screen.findAllByType(WorkflowReviewCard)).toHaveLength(1));
+        if (sourceKind !== 'inline') {
+            if (sourceKind === 'off-page-frame') await vi.waitFor(() => expect(detailActions.getInvocation.mock.calls.map(([input]) => input.invocationId)).toContain(condition.id));
+            await vi.waitFor(() => expect(screen.findByType(WorkflowReviewCard).props.waitIdentity?.previousResult?.value).toEqual(opinionDetail.progress.result));
+            expect(screen.findByType(WorkflowReviewCard).props.waitIdentity).toMatchObject({
+                title: 'workflows.review.openPrTitle', primaryLabel: 'workflows.review.openPrContinue', onStop: expect.any(Function),
+            });
+            expect(detailActions.listInvocations.mock.calls.map(([input]) => input)).toContainEqual({
+                runId: run.id, parentRecordId: opinion.parentRecordId, memberOrdinal: opinion.memberOrdinal, includeContent: true,
+            });
+            expect(detailActions.getInvocation.mock.calls.filter(([input]) => input.invocationId === opinion.id)).toHaveLength(0);
+            expect(readContentProps()?.selectedRelatedExecution).toEqual({
+                execution: opinionDetail.progress.execution, canInspectExecution: run.availability.inspectExecution,
+            });
+        } else {
+            expect(screen.findByType(WorkflowReviewCard).props.waitIdentity?.previousResult).toBeUndefined();
+            expect(detailActions.getInvocation.mock.calls.filter(([input]) => input.invocationId === opinion.id)).toHaveLength(0);
+            expect(readContentProps()?.selectedRelatedExecution).toBeNull();
+        }
+    });
     it.each([false, true])('FIX270 native workspace copy respects clipboard Action enabled=%s', async enabled => {
         Object.assign(Platform, { OS: 'ios' });
         Object.assign(platformViewport, { width: 390, height: 844 });
@@ -1562,6 +1696,10 @@ describe('WorkflowRunScreen', () => {
     });
 
     const sourceArtifactId = '1d7ade5a-0ab4-4fca-b38d-e20261c5beaf';
+    it('shows the accepted role changes for this Run without consulting current role defaults', async () => {
+        await renderRunScreen({ acceptedContext: { ...ACCEPTED_CONTEXT, roleOverrides: [{ roleId: 'reviewer' }] } });
+        expect(readContentProps()?.rolesChangedForRun).toBe(true);
+    });
     async function sourceArtifact(access: typeof sourceArtifactAccess = 'owner') {
         sourceArtifactAccess = access;
         const { sync } = await import('@/sync/sync');
@@ -1606,6 +1744,11 @@ describe('WorkflowRunScreen', () => {
         });
         expect(readContentProps()?.hasSource).toBe(true);
         expect(readContentProps()?.sourceAction?.kind).toBe('edit');
+        expect(readContentProps()?.onAddTrigger).toBeDefined();
+        act(() => readContentProps()?.onAddTrigger?.());
+        expect(routerSpy.push).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/workflows/[id]', params: expect.objectContaining({ id: sourceArtifactId, intent: 'schedule' }),
+        }));
         act(() => readContentProps()?.sourceAction?.onPress());
         expect(routerSpy.push).toHaveBeenCalledWith(`/workflows/${sourceArtifactId}`);
         expect(sourceAccessResponse).not.toHaveBeenCalled();
@@ -1616,6 +1759,7 @@ describe('WorkflowRunScreen', () => {
         getStorage().getState().updateArtifact(artifact);
         await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
         expect(readContentProps()?.sourceAction?.kind).toBe('open');
+        expect(readContentProps()?.onAddTrigger).toBeUndefined();
         act(() => readContentProps()?.sourceAction?.onPress());
         expect(routerSpy.push).toHaveBeenCalledWith(`/workflows/${sourceArtifactId}`);
     });
@@ -2375,6 +2519,19 @@ describe('WorkflowRunScreen', () => {
         await act(async () => {});
 
         expect(routerSpy.push).not.toHaveBeenCalled();
+    });
+
+    it('keeps Run history until its destructive confirmation is accepted', async () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', workflowCustodyState: 'settled',
+            availability: { cancel: false, pause: false } });
+        const screen = await renderRunScreen({ run });
+        act(() => { readContentProps()?.onDelete?.(); });
+        await act(async () => {});
+        expect(detailActions.deleteRun).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('web-modal-cancel');
+        expect(detailActions.deleteRun).not.toHaveBeenCalled();
+        expect(storeState.state.workflowRunsById[workflowRunStoreKey(run.id)]).toBeDefined();
+        expect(routerSpy.back).not.toHaveBeenCalled();
     });
 
     /**

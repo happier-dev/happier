@@ -256,10 +256,12 @@ function collectWorkflowBlocksById(
     defaultParticipant?: WorkflowDefinitionV1['defaults']['participant'],
     itemParticipantNodes?: Set<string>,
     acceptedItemParticipants?: ReadonlySet<string>,
+    sourceRefsByNode?: Map<string, string | null>,
 ): void {
     const record = (block: WorkflowBlock): void => {
         const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
         into.set(nodeId, block);
+        sourceRefsByNode?.set(nodeId, refs[refs.length - 1] ?? null);
         const participant = block.kind === 'step' ? block.execution?.participant ?? defaultParticipant : undefined;
         if (block.kind === 'step' && ((participant?.kind === 'item' && (participant.path?.length ?? 0) === 0)
             || acceptedItemParticipants?.has(JSON.stringify([refs[refs.length - 1] ?? '$root', block.id])))) itemParticipantNodes?.add(nodeId);
@@ -274,20 +276,20 @@ function collectWorkflowBlocksById(
                 const child = frozenChildren[block.workflowRef];
                 if (child !== undefined && !refs.includes(block.workflowRef)) {
                     collectWorkflowBlocksById(child.blocks, into, frozenChildren, [...workflowPath, block.id], [...refs, block.workflowRef],
-                        child.defaults.participant, itemParticipantNodes, acceptedItemParticipants);
+                        child.defaults.participant, itemParticipantNodes, acceptedItemParticipants, sourceRefsByNode);
                 }
                 break;
             }
             case 'parallel':
-                for (const branch of block.branches) collectWorkflowBlocksById(branch.blocks, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
+                for (const branch of block.branches) collectWorkflowBlocksById(branch.blocks, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants, sourceRefsByNode);
                 break;
             case 'loop':
-                collectWorkflowBlocksById(block.body, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
+                collectWorkflowBlocksById(block.body, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants, sourceRefsByNode);
                 if (block.repetition.kind === 'evaluate') record(block.repetition.evaluator);
                 break;
             case 'if':
-                collectWorkflowBlocksById(block.then, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
-                collectWorkflowBlocksById(block.otherwise, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
+                collectWorkflowBlocksById(block.then, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants, sourceRefsByNode);
+                collectWorkflowBlocksById(block.otherwise, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants, sourceRefsByNode);
                 break;
         }
     }
@@ -299,9 +301,27 @@ export function resolveWorkflowInvocationBlock(params: Readonly<{
     frozenChildren?: FrozenChildren;
     invocationPath: WorkflowInvocationPathV1;
 }>): WorkflowBlock | undefined {
+    return resolveWorkflowInvocationBlockContext(params)?.block;
+}
+
+/** The frozen definition and its accepted source travel with the resolved block. */
+export function resolveWorkflowInvocationBlockContext(params: Readonly<{
+    definition: WorkflowDefinitionV1;
+    frozenChildren?: FrozenChildren;
+    sourceRef?: string | null;
+    invocationPath: WorkflowInvocationPathV1;
+}>): Readonly<{ block: WorkflowBlock; definition: WorkflowDefinitionV1; sourceRef: string | null }> | undefined {
     const blocks = new Map<string, WorkflowBlock>();
-    collectWorkflowBlocksById(params.definition.blocks, blocks, params.frozenChildren ?? {});
-    return blocks.get(scopedBlockId(params.invocationPath.blockId, params.invocationPath.scope));
+    const sourceRefs = new Map<string, string | null>();
+    const frozenChildren = params.frozenChildren ?? {};
+    collectWorkflowBlocksById(params.definition.blocks, blocks, frozenChildren, [], [], undefined, undefined, undefined, sourceRefs);
+    const nodeId = scopedBlockId(params.invocationPath.blockId, params.invocationPath.scope);
+    const block = blocks.get(nodeId);
+    if (block === undefined) return undefined;
+    const childRef = sourceRefs.get(nodeId) ?? null;
+    const definition = childRef === null ? params.definition : frozenChildren[childRef];
+    if (definition === undefined) return undefined;
+    return { block, definition, sourceRef: childRef ?? params.sourceRef ?? null };
 }
 
 /**

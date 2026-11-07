@@ -107,6 +107,8 @@ function describeWorkflowOpenWorkLabel(input: Readonly<{
 export function WorkflowRunSteps(props: Readonly<{
     invocationStatusContext?: WorkflowInvocationLifecycleContext;
     runId: string;
+    /** The Run owner's settled label for a leaf absent from complete history. */
+    notStartedLabel?: string;
     machineId: string;
     serverId?: string | null;
     definition: WorkflowDefinitionV1;
@@ -169,7 +171,7 @@ export function WorkflowRunSteps(props: Readonly<{
         ? selectedEntry.blockId : null;
     const presentationContext = React.useMemo(() => ({}), [draft, acceptedByBlockId, props.frozenChildren,
         props.inputs, props.sessionDisplayLabelsById, presentEngine, props.invocationStatusContext,
-        props.runId, props.machineId, props.serverId, props.testIDPrefix, sourceKey, preferredLanguage]);
+        props.runId, props.machineId, props.serverId, props.testIDPrefix, props.notStartedLabel, sourceKey, preferredLanguage]);
     const previousPresentations = React.useRef(new Map<string, StepPresentation>());
     const factsByBlock = new Map<string, StepOccurrenceFact[]>();
     for (const invocation of props.invocations) {
@@ -285,7 +287,9 @@ export function WorkflowRunSteps(props: Readonly<{
                 ...(enginePresentation === undefined ? {} : { enginePresentation }),
                 ...(block?.kind === 'workflow' ? { nestedDefinition: child ?? null } : {}),
                 settled: displayedOccurrence !== null && isTerminalWorkflowInvocationLifecycle(displayedOccurrence.lifecycle),
-                state: displayedOccurrence === null ? null : <>
+                state: displayedOccurrence === null
+                    ? props.notStartedLabel === undefined ? null : <Text style={styles.provenance}>{props.notStartedLabel}</Text>
+                    : <>
                     {elapsed === null ? null : <Text style={styles.provenance}>{elapsed}</Text>}
                     <WorkflowLifecycleStatus lifecycle={displayedOccurrence.lifecycle} blockKind={block?.kind ?? null} context={props.invocationStatusContext}
                         markerOnly={workflowLifecycleAwaitsDecision(displayedOccurrence.lifecycle)} />

@@ -23,7 +23,7 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { requiresUncertainPriorEffectsAcknowledgement } from './workflowRunDetailPresentation';
 import { WorkflowReviewCard, decodeWorkflowReviewDraft, serializeWorkflowReviewValue, type WorkflowReviewChoice,
-    type WorkflowReviewDraft, type WorkflowReviewReading } from './WorkflowReviewCard';
+    type WorkflowReviewCardProps, type WorkflowReviewDraft, type WorkflowReviewReading } from './WorkflowReviewCard';
 import { resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
 
 export type WorkflowInvocationReviewBuffers = Readonly<{
@@ -49,7 +49,7 @@ export function WorkflowInvocationReview(props: Readonly<{
     viewerAccountId: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     current: () => boolean;
-    onSettled: (run: WorkflowRunSummaryV1) => void;
+    onSettled: (run: WorkflowRunSummaryV1, acceptedInvocationId?: string) => void;
     onOpenDraft: (seed: WorkflowReviewedRunSeed) => void;
     onOpenRun: (runId: string) => void;
     onDiscuss?: () => void;
@@ -58,6 +58,9 @@ export function WorkflowInvocationReview(props: Readonly<{
     belowResult?: React.ReactNode;
     machineName?: string | null;
     machineReachable?: boolean;
+    generation?: WorkflowReviewCardProps['generation'];
+    waitPresentation?: Pick<NonNullable<WorkflowReviewCardProps['waitIdentity']>,
+        'title' | 'subtitle' | 'waitingLabel' | 'primaryLabel' | 'consequence' | 'onStop' | 'stopConsequence' | 'previousResult'>;
     acknowledgeUncertainPriorEffects?: Readonly<{ recordId: string; contentRevision: string }>;
 }>): React.ReactElement {
     const { invocation, progress, buffers } = props;
@@ -68,9 +71,10 @@ export function WorkflowInvocationReview(props: Readonly<{
         const block = resolveWorkflowInvocationBlock({ definition: props.definition,
             frozenChildren: props.acceptedContext.frozenChildren, invocationPath: progress.invocationPath });
         return block?.kind === 'wait' ? { title: props.stepTitle === undefined ? workflowBlockReferenceLabel(block) : undefined,
-            subtitle: props.stepTitle === undefined ? props.stepSubtitle : undefined, prompt: block.document.text } : undefined;
+            subtitle: props.stepTitle === undefined ? props.stepSubtitle : undefined, prompt: block.document.text,
+            ...props.waitPresentation } : undefined;
     }, [props.definition, props.acceptedContext.frozenChildren, props.stepSubtitle, props.stepTitle,
-        progress.blockKind, progress.invocationPath]);
+        props.waitPresentation, progress.blockKind, progress.invocationPath]);
     const mounted = useMountedRef();
     const [draft, setDraft] = React.useState(() => buffers.drafts.get(invocation.id));
     const [reading, setReading] = React.useState<WorkflowReviewReading>(() => buffers.readings.get(invocation.id)
@@ -149,7 +153,7 @@ export function WorkflowInvocationReview(props: Readonly<{
                 const next = { text: serializeWorkflowReviewValue(decoded.value, latest.contract), contentRevision: parsed.data.expectedContentRevision };
                 const before = latest.props.buffers.drafts.get(latest.props.invocation.id);
                 if (before?.text === next.text && before.contentRevision === next.contentRevision) return { status: 'unchanged' };
-                latest.changeDraft(next);
+                latest.changeDraft({ ...next, editedAt: Date.now() });
                 return { status: 'applied' };
             },
         });
@@ -214,7 +218,7 @@ export function WorkflowInvocationReview(props: Readonly<{
         if (!current()) return;
         // `use_result` on a hold that is already completed (a plan result) leaves its lifecycle as it is.
         awaitingHoldChange.current = invocation.lifecycle !== 'completed';
-        props.onSettled(result.run);
+        props.onSettled(result.run, choice.mode === 'use_result' ? invocation.id : undefined);
     });
     const editPlan = async (value: JsonValue, revision: string) => perform(async (current) => {
         const seed = buildWorkflowPlanReviewSeed({ value, proposal, run: props.run, acceptedContext: props.acceptedContext });
@@ -236,7 +240,10 @@ export function WorkflowInvocationReview(props: Readonly<{
     };
     return <View style={!props.compact ? { flexGrow: 0, flexShrink: 1, minHeight: 0 } : progress.blockKind === 'wait' ? undefined : { flex: 1, minHeight: 0 }}>
         <WorkflowReviewCard progress={progress} contract={contract} waitForYou={progress.blockKind === 'wait'}
-            waitIdentity={waitIdentity}
+            waitIdentity={waitIdentity ? { ...waitIdentity,
+                onStop: waitIdentity.onStop ? () => perform(async () => { await waitIdentity.onStop?.(); }) : undefined } : undefined}
+            generation={props.generation ? { ...props.generation,
+                onStop: props.generation.onStop ? () => perform(async () => { await props.generation?.onStop?.(); }) : undefined } : undefined}
             contentRevision={props.contentRevision} lifecycle={invocation.lifecycle} isCurrent={invocation.lifecycle !== 'superseded'}
             reading={reading} onChangeReading={(next) => { buffers.readings.set(invocation.id, next); setReading(next); }}
             draft={draft} onChangeDraft={changeDraft} onComplete={complete} onDiscuss={props.onDiscuss} onEditPlan={editPlan} onRunPlan={runPlan}

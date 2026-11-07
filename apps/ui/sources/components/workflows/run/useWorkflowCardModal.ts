@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { Modal, type CustomModalComponentType, type CustomModalInjectedProps } from '@/modal';
+import { Modal, type CustomModalComponentType, type CustomModalCallerProps } from '@/modal';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import type { CustomModalChromeCardConfig } from '@/modal/types';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -23,7 +23,7 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
     open: boolean;
     component: C;
     /** Props, or `null` while the content they describe is unread; null closes the sheet. */
-    props: Omit<React.ComponentProps<C>, keyof CustomModalInjectedProps> | null;
+    props: CustomModalCallerProps<React.ComponentProps<C>> | null;
     identity?: string | null;
     title: string;
     /** The card's one-line purpose under its title (07 S22's Create with an agent). */

@@ -20,8 +20,9 @@ import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } fro
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
-import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
-import { describeMachineNativeFailureCode } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentSessionRuntimeIssue, presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { hasSessionUsageLimitResetElapsed } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
 import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationRequests';
@@ -163,7 +164,7 @@ export type WorkflowInvocationRecoveryPresentation = Readonly<{
         code: string;
         /** The message as its producer recorded it; step detail keeps it under Technical details. */
         message: string | null;
-        /** What the cause line and the recovery card say: a known transport code in words, else the message. */
+        /** The shared cause in words, else its retained message or recorded code. */
         headline: string | null;
         /** Source-owned sanitized issue, including the reported usage-limit resetAtMs. */
         runtimeIssue?: SessionRuntimeIssueV1 | null;
@@ -197,6 +198,8 @@ export type WorkflowInvocationRecoveryPresentation = Readonly<{
     }>;
     /** The execution owner prepared a continuation this attempt can accept. */
     canContinuePrepared: boolean;
+    /** The retained provider quota still calls for waiting before another Agent attempt. */
+    usageLimitWait?: string | null;
     canRestoreWorkspace: boolean;
     /**
      * D4's second arm, and only its second arm.
@@ -231,9 +234,9 @@ export function formatWorkflowWorkspaceSourceLabel(
 /**
  * Fail-closed Run-detail recovery projection for one exact selected row.
  *
- * The exact Action response is the only availability decision. This projector
- * formats its answer with workspace/custody evidence but does not override it;
- * mutations still revalidate on submission.
+ * The exact Action response owns admission. This projector formats its answer
+ * with workspace/custody evidence and withholds quota-bound offers while the
+ * retained provider limit calls for waiting; mutations still authorize submission.
  */
 export function projectWorkflowInvocationRecovery(params: Readonly<{
     run: WorkflowRunSummaryV1;
@@ -244,6 +247,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
     invocationHistoryComplete?: boolean;
     recoveryAvailability?: WorkflowInvocationRecoveryAvailabilityV1 | null;
     machine?: Readonly<{ name: string; reachable: boolean; lastSeenAt?: number | null }>;
+    nowMs?: number;
 }>): WorkflowInvocationRecoveryPresentation {
     const workspaceUnavailable = params.progress?.reason?.code !== undefined
         && WORKSPACE_UNAVAILABLE_REASON_CODES.has(params.progress.reason.code);
@@ -287,28 +291,34 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             && (candidate.lifecycle === 'pending' || candidate.lifecycle === 'waiting_for_capacity')
         )).length;
 
+    const failed = invocation?.lifecycle === 'failed' || invocation?.lifecycle === 'needs_attention'
+        || invocation?.lifecycle === 'outcome_uncertain';
+    const runtimeIssue = failed ? params.progress?.reason?.runtimeIssueV1 : undefined;
+    const usageLimit = runtimeIssue?.source === 'usage_limit' ? runtimeIssue.usageLimit : undefined;
+    // A failed attempt retains historical evidence. The Session owner already treats its reported
+    // elapsed reset as ready; no reset remains waiting until newer owner evidence arrives.
+    const usageLimitWaiting = usageLimit?.recoverability === 'wait'
+        && !hasSessionUsageLimitResetElapsed(usageLimit.resetAtMs, params.nowMs ?? Date.now());
     const preparedConversation = params.progress?.recovery?.conversation;
-    const canContinuePrepared = preparedConversation === 'same_conversation'
+    const canContinuePrepared = !usageLimitWaiting && (preparedConversation === 'same_conversation'
         ? params.recoveryAvailability?.continueSameConversation.kind === 'available'
         : preparedConversation === 'fresh_agent'
-            && params.recoveryAvailability?.continueFreshAgent.kind === 'available';
+            && params.recoveryAvailability?.continueFreshAgent.kind === 'available');
 
     const canRestoreWorkspace = params.recoveryAvailability?.restoreWorkspace.kind === 'available';
     const lastSeenAt = params.machine?.lastSeenAt;
     const unavailableMachine = params.machine?.reachable === false
         ? { name: params.machine.name, lastSeenAt: typeof lastSeenAt === 'number' && Number.isFinite(lastSeenAt) && lastSeenAt > 0
             ? lastSeenAt : null } : null;
-    const failed = invocation?.lifecycle === 'failed' || invocation?.lifecycle === 'needs_attention'
-        || invocation?.lifecycle === 'outcome_uncertain';
-    const issue = presentSessionRuntimeIssue(failed ? params.progress?.reason?.runtimeIssueV1 : undefined);
+    const issue = presentSessionRuntimeIssue(runtimeIssue);
     const reportedMessage = issue.message ?? params.progress?.reason?.message ?? null;
     const failureCause: WorkflowInvocationRecoveryPresentation['failureCause'] = failed && params.progress?.reason
         ? { kind: 'reported_failure', blockKind: params.progress.blockKind, code: params.progress.reason.code,
             message: reportedMessage,
-            headline: issue.message ?? describeRecordedTransportFailure(params.progress.reason.code)
-                ?? describeMachineNativeFailureCode(params.progress.reason.code)
+            headline: issue.message ?? presentSessionStartupFailureCause(params.progress.reason.code)
+                ?? describeRecordedTransportFailure(params.progress.reason.code)
                 ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
-                ?? reportedMessage,
+                ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code),
             reset: issue.reset,
             runtimeIssue: params.progress.reason.runtimeIssueV1 ?? null,
             at: params.progress.timing?.finishedAt ?? null }
@@ -318,6 +328,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
 
     return {
         failureCause,
+        usageLimitWait: usageLimitWaiting ? t('workflows.recovery.usageLimitWait') : null,
         remedy: failureCause?.kind === 'reported_failure' && failureCause.code === ADMIN_ACCESS_DISABLED_REASON_CODE
             ? 'configure_admin_access' : null,
         unavailableMachine,
@@ -326,9 +337,9 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         canReattach: canOfferWorkflowInvocationReattach(params),
         // Retry and the selected conversation must both be eligible. The
         // authoring composer consumes these same exact choices for replacement input.
-        canRetrySameConversation: retryable
+        canRetrySameConversation: retryable && !usageLimitWaiting
             && params.recoveryAvailability?.continueSameConversation.kind === 'available',
-        canRetryFreshAgent: retryable
+        canRetryFreshAgent: retryable && !usageLimitWaiting
             && params.recoveryAvailability?.continueFreshAgent.kind === 'available',
         canRetry: retryable && params.progress != null && params.progress.blockKind !== 'step',
         retryCausalInvocationIds,
@@ -405,6 +416,7 @@ function describeRunPublicationFailure(code: string): string | null {
 /** The page and its exact failure inspector consume one cause/recovery projection. */
 export type WorkflowRunFailurePresentation = Readonly<{
     invocationId: string;
+    invocationLifecycle: WorkflowRunInvocationIndexV1['lifecycle'];
     /** A structural Run failure does not turn a completed child into a failed step. */
     step: Readonly<{ name: string; ordinal: string | null }> | null;
     recovery: WorkflowInvocationRecoveryPresentation;
@@ -456,6 +468,7 @@ export function projectWorkflowRunFailure(params: Parameters<typeof projectWorkf
     const node = entry?.nodeId == null ? null : params.projection?.nodesById.get(entry.nodeId);
     return {
         invocationId: invocation.id,
+        invocationLifecycle: invocation.lifecycle,
         step: !entry?.isFrame && node ? { name: node.label, ordinal: node.stepOrdinal ?? null } : null,
         recovery: projectWorkflowInvocationRecovery(params),
     };
@@ -614,7 +627,7 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     attention?: WorkflowRunAttentionLead | null;
     cancelRequested?: boolean;
     /** Exact failed occurrence, named from the frozen definition rather than selection. */
-    failure?: Readonly<{ step: string }> | null;
+    failure?: Readonly<{ step: string; lifecycle?: WorkflowRunInvocationIndexV1['lifecycle'] }> | null;
     /**
      * The exact Machine observation qualifies pending Stop custody only.
      * Contact and recovery details never replace the persisted Run outcome.
@@ -638,6 +651,9 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     }
     // An interrupted Run says what stopped and that finished work is kept (07 §6.1), never the bare word.
     if (run.state === 'interrupted') {
+        if (params.failure?.lifecycle === 'failed') {
+            return t('workflows.run.failedStepSentence', { step: params.failure.step });
+        }
         return params.failure
             ? t('workflows.run.interruptedStepSentence', { step: params.failure.step })
             : t('workflows.run.interruptedSentence');

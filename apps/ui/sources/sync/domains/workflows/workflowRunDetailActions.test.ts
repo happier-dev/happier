@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -15,7 +15,7 @@ import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
-beforeAll(loadSyncSingletonForTests);
+await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -46,9 +46,12 @@ describe('workflow Run detail Actions through Account HTTP and native RPC', () =
         home.answer(serverId, route, { status: 409, body: { error: 'currentness_conflict' } });
         await expect(actions.markFailureSeen(input)).rejects.toMatchObject({ code: 'currentness_conflict' });
     });
-    it('opens one exact Run with its producer-frozen definition and context through Account storage', async () => {
+    it('opens only the selected Run and its 500-block frozen definition with one detail and one invocation-page read', async () => {
         const run = createWorkflowRunSummaryFixture({ id: 'run-1', ownerAccountId: 'detail-owner', origin: { kind: 'direct' } });
-        const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait', document: { text: 'Continue', references: [], attachments: [] } }] });
+        // Match the daemon's existing practical 500-item Run scale; this is evidence, not a product cap.
+        const definition = createWorkflowDefinitionFixture({ blocks: Array.from({ length: 500 }, (_, index) => ({
+            kind: 'wait', id: `wait-${index}`, document: { text: `Continue ${index}`, references: [], attachments: [] },
+        })) });
         const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
             effects: { resolveTargetAvailability: async () => true }, context: { source: { kind: 'inline' }, inputs: {}, machineId: run.machineId,
                 executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: run.machineId, directory: '/repo', checkoutRootPath: '/repo' } },
@@ -66,13 +69,18 @@ describe('workflow Run detail Actions through Account HTTP and native RPC', () =
             if (input.operation === 'run-key.census') return { body: keyCensus };
             throw new Error(`Unexpected storage operation:${input.operation}`);
         } });
+        expect(home.requestsFor(route)).toHaveLength(0);
         const result = await actions.getRun(run.id);
         expect(result.run).toMatchObject(run);
         expect(result.definition).toEqual(accepted.snapshot.definition);
         expect(result.authoredDefinition).toEqual(definition);
         expect(result.acceptedContext).toMatchObject({ source: { kind: 'inline' }, machineId: run.machineId, executionTarget: { kind: 'session' }, startedBy: 'user' });
         expect(result.callerAccess).toEqual({ canEdit: true });
-        expect(home.requestsFor(route)[0]?.input).toEqual({ operation: 'get', runId: run.id });
+        expect(result.definition.blocks).toHaveLength(500);
+        expect(home.requestsFor(route).map(request => request.input)).toEqual([
+            { operation: 'get', runId: run.id },
+            expect.objectContaining({ operation: 'invocations.list', runId: run.id, progressEnvelopes: true }),
+        ]);
     });
 
     it('asks the server index for actionable invocations without paging full detail history', async () => {
@@ -83,6 +91,17 @@ describe('workflow Run detail Actions through Account HTTP and native RPC', () =
             runId: 'run-1', cursor: 'page-1', lifecycles: ['waiting_for_approval', 'needs_attention'] })]);
         expect(result.invocations[0]?.lifecycle).toBe('waiting_for_approval');
         expect(result.parentRevision).toBe(7);
+    });
+
+    it('FIN selected hold reads the exact off-page sibling slot through the Account Action', async () => {
+        home.answer(serverId, route, { body: { invocations: [createWorkflowInvocationIndexFixture({
+            id: 'opinion', parentRecordId: 'root', memberOrdinal: '0', lifecycle: 'completed',
+        })], parentRevision: 7 } });
+        const result = await actions.listInvocations({ runId: 'run-1', parentRecordId: 'root', memberOrdinal: '0' });
+        expect(home.requestsFor(route).map(request => request.input)).toEqual([expect.objectContaining({
+            operation: 'invocations.list', runId: 'run-1', parentRecordId: 'root', memberOrdinal: '0',
+        })]);
+        expect(result.invocations[0]?.id).toBe('opinion');
     });
 
     it('rejects a response the canonical result schema cannot accept', async () => {
@@ -97,12 +116,13 @@ describe('workflow Run detail Actions through Account HTTP and native RPC', () =
         expect((failure as InstanceType<typeof WorkflowActionError>).code).toBe('currentness_conflict');
     });
 
-    it('does not invent a Workflow error code for a front-door policy refusal', async () => {
+    it('preserves the front-door policy refusal without fabricating a Workflow failure', async () => {
         const actionsSettingsV1 = normalizeActionsSettingsV1({ v: 1, actions: { 'workflow.run.get': { enabled: false } } });
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 1 } });
         const failure = await actions.getRun('run-1').catch((value: unknown) => value);
         expect(failure).toBeInstanceOf(WorkflowActionError);
-        expect((failure as InstanceType<typeof WorkflowActionError>).code).toBeNull();
+        expect((failure as InstanceType<typeof WorkflowActionError>).code).toBe('action_disabled');
+        expect((failure as InstanceType<typeof WorkflowActionError>).failure).toBeNull();
         expect((failure as InstanceType<typeof WorkflowActionError>).rawCode).toBe('action_disabled');
     });
 
