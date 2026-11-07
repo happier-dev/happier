@@ -1,9 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 
 import { presentProviderError, presentProviderRecoveryAction } from './errorPresentation';
 
 describe('provider error presentation', () => {
+    it('classifies stale Account grants separately from stale Machine grants', () => {
+        expect(presentProviderError(createProviderErrorV1('provider_account_grant_stale', { connectionId: 'pc_a' })))
+            .toMatchObject({ scope: 'account', action: 'review_account_grant' });
+        expect(presentProviderError(createProviderErrorV1('provider_machine_grant_stale', { connectionId: 'pc_a', machineId: 'machine-a' })))
+            .toMatchObject({ scope: 'machine', action: 'review_machine_grant' });
+    });
+
+    it('retains the request identity in the error presentation context', () => {
+        const failureCause = { phase: 'providers.connections.describe', errorClass: 'Error',
+            errorCode: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE', httpStatus: null } as const;
+        expect(presentProviderError({ ...createProviderErrorV1('provider_endpoint_unreachable', { connectionId: 'pc_a' }),
+            requestId: 'request-provider-read', failureCause }).context).toMatchObject({
+            connectionId: 'pc_a', requestId: 'request-provider-read', failureCause,
+        });
+    });
+
+    it('keeps unavailable keys and Account-only enablement distinct from plugin or connection failures', () => {
+        expect(presentProviderError(createProviderErrorV1('provider_secret_unavailable'))).toMatchObject({
+            titleKey: 'settingsProviders.errors.secretUnavailableTitle',
+            descriptionKey: 'settingsProviders.errors.secretUnavailableDescription', action: 'retry',
+        });
+        expect(presentProviderError(createProviderErrorV1('provider_account_scope_required'))).toMatchObject({
+            titleKey: 'settingsProviders.errors.accountScopeRequiredTitle',
+            descriptionKey: 'settingsProviders.errors.accountScopeRequiredDescription', action: 'enable_connection',
+        });
+    });
+    it('identifies unsupported effort without rejecting a compatible Provider and Agent pairing', () => {
+        expect(presentProviderError(createProviderErrorV1('provider_model_config_option_unsupported'))).toMatchObject({
+            titleKey: 'settingsProviders.errors.effortUnsupportedTitle',
+            descriptionKey: 'settingsProviders.errors.effortUnsupportedDescription',
+            action: 'choose_model',
+        });
+    });
     it('presents direct Run inheritance as a credential selection requirement', () => {
         expect(presentProviderError('provider_run_credential_selection_required')).toMatchObject({
             titleKey: 'settingsProviders.errors.runCredentialRequiredTitle',
@@ -139,6 +172,9 @@ describe('provider error presentation', () => {
 
     it('has an explicit presentation for every stable provider error code', () => {
         for (const code of ProviderErrorCodeV1Schema.options) {
+            const presentation = presentProviderError(code);
+            expect(presentation.titleKey, code).toBeTruthy();
+            expect(presentation.descriptionKey, code).toBeTruthy();
             expect(presentProviderError(code), code).not.toEqual({
                 titleKey: 'settingsProviders.errors.genericTitle',
                 descriptionKey: 'settingsProviders.errors.genericDescription',

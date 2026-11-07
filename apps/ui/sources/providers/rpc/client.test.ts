@@ -18,7 +18,7 @@ import {
     confirmLegacyProfileMigrationConflict,
 } from './client';
 import { createCustomProviderDraft, buildCustomProviderTemplate } from '@/providers/authoring/state';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc';

@@ -1,7 +1,7 @@
 import { safeParse, type z } from 'zod/mini';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 as outputs, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1,
     PROVIDER_MODEL_SETTINGS_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
@@ -84,9 +84,10 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
         merged.dispose();
     }
 }
-function actionFailure(result: Readonly<{ error: string; errorCode: string; details?: unknown }>): unknown {
-        const provider = ProviderErrorV1Schema.safeParse(result.details);
-        return provider.success ? provider.data : Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
+function actionFailure(result: ActionExecuteFailure): unknown {
+    const provider = ProviderErrorV1Schema.safeParse(result.details);
+    return provider.success ? providerErrorFromRpcFailure(result)
+        : Object.assign(new Error(result.error), { ...result, code: result.errorCode });
 }
 
 // UI callers supply schema inputs; the Action executor owns parsing and branded output.

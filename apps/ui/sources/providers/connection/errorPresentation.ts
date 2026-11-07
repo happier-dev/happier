@@ -15,7 +15,11 @@ export type ProviderErrorPresentation = Readonly<{
     descriptionKey: TranslationKeyNoParams;
     action: ProviderRecoveryActionV1 | null;
     severity: 'neutral' | 'warning' | 'danger';
+    /** The grant being repaired; independent of the Machine currently inspected. */
+    scope: 'account' | 'machine' | null;
     context: Readonly<{
+        requestId?: string;
+        failureCause?: ProviderErrorV1['failureCause'];
         connectionId?: string;
         machineId?: string;
         sourceProfileId?: string;
@@ -26,6 +30,10 @@ export type ProviderErrorPresentation = Readonly<{
 type ProviderErrorCopy = Pick<ProviderErrorPresentation, 'titleKey' | 'descriptionKey'>;
 
 const PRESENTATIONS = Object.freeze({
+    connected_service_credential_reconnect_required: {
+        titleKey: 'connectedServices.diagnostics.title.connected_service_credential_reconnect_required',
+        descriptionKey: 'connectedServices.diagnostics.body.connected_service_credential_reconnect_required',
+    },
     model_not_granted: {
         titleKey: 'session.pendingMessages.admissionRejected.modelNotGranted',
         descriptionKey: 'settingsProviders.errors.actions.chooseModel',
@@ -39,8 +47,12 @@ const PRESENTATIONS = Object.freeze({
         descriptionKey: 'settingsProviders.errors.secretMissingDescription',
     },
     provider_secret_unavailable: {
-        titleKey: 'settingsProviders.errors.sourceUnavailableTitle',
-        descriptionKey: 'settingsProviders.errors.sourceUnavailableDescription',
+        titleKey: 'settingsProviders.errors.secretUnavailableTitle',
+        descriptionKey: 'settingsProviders.errors.secretUnavailableDescription',
+    },
+    provider_account_scope_required: {
+        titleKey: 'settingsProviders.errors.accountScopeRequiredTitle',
+        descriptionKey: 'settingsProviders.errors.accountScopeRequiredDescription',
     },
     provider_not_enabled_on_machine: {
         titleKey: 'settingsProviders.errors.notEnabledOnMachineTitle',
@@ -107,8 +119,8 @@ const PRESENTATIONS = Object.freeze({
         descriptionKey: 'settingsProviders.errors.runCredentialRequiredDescription',
     },
     provider_endpoint_unavailable: {
-        titleKey: 'settingsProviders.errors.unreachableTitle',
-        descriptionKey: 'settingsProviders.errors.unreachableDescription',
+        titleKey: 'settingsProviders.errors.genericTitle',
+        descriptionKey: 'settingsProviders.errors.genericDescription',
     },
     provider_machine_unavailable: {
         titleKey: 'settingsProviders.errors.machineUnavailableTitle',
@@ -153,6 +165,10 @@ const PRESENTATIONS = Object.freeze({
     provider_model_not_found: {
         titleKey: 'settingsProviders.errors.modelNotFoundTitle',
         descriptionKey: 'settingsProviders.errors.modelNotFoundDescription',
+    },
+    provider_model_config_option_unsupported: {
+        titleKey: 'settingsProviders.errors.effortUnsupportedTitle',
+        descriptionKey: 'settingsProviders.errors.effortUnsupportedDescription',
     },
     provider_model_unloaded: {
         titleKey: 'settingsProviders.errors.modelUnloadedTitle',
@@ -217,6 +233,7 @@ const GENERIC: ProviderErrorPresentation = Object.freeze({
     descriptionKey: 'settingsProviders.errors.genericDescription',
     action: null,
     severity: 'danger',
+    scope: null,
     context: {},
 });
 
@@ -267,6 +284,8 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
     else if (code.success) error = createProviderErrorV1(code.data);
     else return GENERIC;
     const context = {
+        ...(error.requestId ? { requestId: error.requestId } : {}),
+        ...(error.failureCause ? { failureCause: error.failureCause } : {}),
         ...(error.connectionId ? { connectionId: error.connectionId } : {}),
         ...(error.machineId ? { machineId: error.machineId } : {}),
         ...(error.sourceProfileId ? { sourceProfileId: error.sourceProfileId } : {}),
@@ -276,6 +295,8 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
         ...PRESENTATIONS[error.code],
         action: error.action,
         severity: severityFor(error),
+        scope: error.action === 'review_account_grant' ? 'account'
+            : error.action === 'review_machine_grant' ? 'machine' : null,
         context,
     };
 }
