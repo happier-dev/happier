@@ -2129,6 +2129,16 @@ acquire a separate credential. Backup starters use
 the same public Actions and input builder. The daily digest reads selected Automations
 through `workflow.trigger.list` and `workflow.run.summaries`, preserving native
 next-due and actual started-run facts without a local scheduler.
+Backup maintenance reads the current Environment at execution. A saved Nightly
+target's `expectedRevision` is accepted but ignored; later Environment edits do
+not require rewriting existing triggers. Native runtime preparation uses that
+current snapshot's revision. Environment-changing Actions, including restore,
+keep their revision checks. Capture configuration, active generation and retention
+selection checks remain with their existing backup owners.
+Failed backup runs remain in the existing operation history, projected by
+`projectDeploymentBackupHistory` through `deployments.backups.history` with their
+terminal state, safe error code and step. Backups failure notices consume those
+facts; an enabled schedule alone does not establish that its last backup succeeded.
 The development-source `workflow.trigger.list` Action also accepts a
 `deploymentBackup` target, derived from the public backup-run input without the
 Environment revision. Its existing owner resolves saved and inline Workflows,

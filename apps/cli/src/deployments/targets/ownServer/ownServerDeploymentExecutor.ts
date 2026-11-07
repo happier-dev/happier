@@ -391,7 +391,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
 
     async function backup(request: OwnServerBackupRequestForHost) {
         const { input, context } = request;
-        const snapshot = await readEnvironment(request, input.expectedRevision);
+        // Saved Nightly operands can predate unrelated Environment edits.
+        // Backup maintenance reads the current Environment; it does not mutate it.
+        const snapshot = await readEnvironment(request, undefined);
         if (input.machineId !== host.machineId || !snapshot.link.members.some(member => member.machineId === input.machineId
             && member.installationId === input.installationId)) refuse('target_mismatch');
         if (!snapshot.link.activeDeploymentId || snapshot.link.activeDeploymentId !== input.deploymentId) refuse('deployment_generation_required');
@@ -423,7 +425,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         }
         const runtimeRequest: OwnServerDeploymentRuntimeRequest = { actionId: request.actionId, context,
             input: { serverId: input.serverId, environmentId: input.environmentId, targetLinkId: input.targetLinkId,
-                expectedRevision: input.expectedRevision, expectedTargetLinkRevision: snapshot.link.revision,
+                expectedRevision: snapshot.environment.environment.revision, expectedTargetLinkRevision: snapshot.link.revision,
                 requestKey: operationId, deploymentId: input.deploymentId, contentArtifactId: generation.deployment.contentArtifactId,
                 contentHeaderVersion: generation.deployment.contentHeaderVersion, contentBodyVersion: generation.deployment.contentBodyVersion },
             materialization: { kind: 'restoration', deploymentId: input.deploymentId, sourceDeploymentId: input.deploymentId } };

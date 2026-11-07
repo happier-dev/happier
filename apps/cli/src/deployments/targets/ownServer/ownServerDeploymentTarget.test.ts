@@ -42,6 +42,8 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createNightlyBackupsWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
+import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from '@/daemon/workflows/workflowCoordinator.testkit';
 import { createDeploymentRestoreActionForHost } from '../../actions/restore';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from '../../actions/backups';
 import { DeploymentBackupRecordedHealthV1Schema } from '@happier-dev/protocol/projects/readinessV1';
@@ -965,6 +967,17 @@ describe('own-server target at the Action host boundary', () => {
                         expect(await readRecordedHealth()).toEqual({ status: 'actionNeeded', reason: 'no_verified_backup_yet',
                             backups: { history: { entries: [] } } });
                     }
+                    const savedNightly = scenario === 'public_backup' ? {
+                        definition: createNightlyBackupsWorkflowV1(),
+                        inputs: { backupTarget: structuredClone(targetInput), verificationLevel: 'manifestReadBack',
+                            retention: backupConfiguration.retention },
+                    } : null;
+                    if (savedNightly) {
+                        // Nightly retains these operands at activation. An unrelated
+                        // Environment edit must not invalidate that saved backup target.
+                        environment.environment.revision++;
+                        expect(targetInput.expectedRevision).toBe(environment.environment.revision - 1);
+                    }
                     const run = await executor.execute('deployments.backups.run', buildDeploymentBackupActionInputV1('deployments.backups.run', targetInput),
                         { ...actionContext, actionRequestId: 'public-backup-run' });
                     expect(run, JSON.stringify(run)).toMatchObject({ ok: true, result: { kind: 'verified' } });
@@ -976,6 +989,49 @@ describe('own-server target at the Action host boundary', () => {
                         expect(captured.restoreCaptures).toEqual([expect.objectContaining({ source: manifest,
                             sourceFormat: 'postgresCustom', target: { service: 'app', adapter: 'postgres-v1', database },
                             configuration: backupConfiguration, repository: { repository: 's3:https://fixture.invalid/backup' } })]);
+                    }
+                    if (savedNightly) {
+                        const store = createInMemoryWorkflowCoordinatorStore();
+                        const coordinator = createTestWorkflowCoordinator({ store,
+                            resolveWorkspace: async () => ({ ok: true, workspace: { machineId: 'machine-a',
+                                directory: root, checkoutRootPath: root } }),
+                            executeStep: async () => { throw new Error('Nightly only executes backup Actions'); },
+                            action: { executor, buildContext: async () => actionContext,
+                                observeRun: async () => { throw new Error('No agent Run expected for Nightly'); } },
+                        });
+                        const scheduled = await coordinator.run({ runId: 'nightly-after-environment-edit', ...savedNightly,
+                            executionTarget: { kind: 'detached_run' },
+                            authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+                            automationCause: { kind: 'trigger', triggerId: 'nightly-backup', triggerRevision: 1,
+                                triggerKind: 'schedule', occurrenceKey: 'A'.repeat(43), occurredAt: 2,
+                                evidence: { scheduledFor: 2 } },
+                            signal: caller.signal });
+                        expect(scheduled, JSON.stringify(scheduled)).toMatchObject({ state: 'succeeded' });
+                        for (const blockId of ['backup', 'verify', 'prune']) {
+                            expect(store.list().find(row => row.blockId === blockId)).toMatchObject({ lifecycle: 'completed' });
+                        }
+                        expect(savedNightly.inputs.backupTarget.expectedRevision).toBe(environment.environment.revision - 1);
+                        // A genuine dump-process failure must remain visible through
+                        // the existing history producer used by the Backups notice.
+                        const nativeState = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                        await writeFile(boundary.stateFile, JSON.stringify({ ...nativeState, mode: 'dumpFailure' }));
+                        const failed = await executor.execute('deployments.backups.run',
+                            buildDeploymentBackupActionInputV1('deployments.backups.run', targetInput),
+                            { ...actionContext, actionRequestId: 'nightly-failed-dump' });
+                        expect(failed.ok).toBe(false);
+                        if (failed.ok) throw new Error('Expected the dump process failure');
+                        const history = await executor.execute('deployments.backups.history',
+                            buildDeploymentBackupActionInputV1('deployments.backups.history', targetInput), actionContext);
+                        expect(history).toMatchObject({ ok: true, result: { history: { entries: expect.arrayContaining([
+                            expect.objectContaining({ action: 'backup', state: 'failed', code: failed.errorCode }),
+                        ]) } } });
+                        // Failed streams retain native custody until a subsequent
+                        // operation observes their settlement, before this fixture ends.
+                        const recovered = await executor.execute('deployments.backups.inventory',
+                            buildDeploymentBackupActionInputV1('deployments.backups.inventory', targetInput),
+                            { ...actionContext, actionRequestId: 'nightly-after-failed-dump' });
+                        expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: true });
+                        return;
                     }
                     const inventory = await executor.execute('deployments.backups.inventory',
                         buildDeploymentBackupActionInputV1('deployments.backups.inventory', targetInput),
