@@ -18,6 +18,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
+import { environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1 } from '@happier-dev/deployments';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
@@ -84,6 +85,14 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             return { ok: true, value: { items, nextCursor: page.nextCursor,
                 ...(coverage === undefined ? {} : { coverage }) } };
         }),
+        observeEnvironmentHealth: environmentHealthObserver(lifetime),
+        readActivity: (scope, options) => scoped(scope, options, async () => {
+            const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',
+                { ...home, projectSourceId: scope.projectSourceId, projection: 'activity' }, { signal: options.signal }));
+            if (!parsed.success) return failure('invalid_response');
+            if (!parsed.data.ok) return failure(parsed.data.error);
+            return parsed.data.activity ? { ok: true, value: parsed.data.activity } : failure('deployment_unavailable');
+        }),
         // [] is internal zero demand, never serialized as an omitted selector.
         // Public Actions require a nonempty exact vector; All omits it.
         listEnvironments: (scope, query, options) => query.environmentIds?.length === 0 || query.previewPullRequestIds?.length === 0
@@ -105,30 +114,30 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const receipts = query.environmentIds === undefined
                 ? (page.currentDeployments ?? []).filter(row => environmentsById.has(row.environmentId)) : [];
             const currentByEnvironment = new Map(receipts.map((receipt, index) => [receipt.environmentId, { receipt, index }]));
-            const headers = await account.readArtifactHeaders([...page.items.map(row => row.contentArtifactId),
-                ...receipts.map(row => row.contentArtifactId)], { signal: options.signal });
+            const headers = await readArtifactsByRow([...page.items.map(row => row.contentArtifactId),
+                ...receipts.map(row => row.contentArtifactId)], ids => account.readArtifactHeaders(ids, { signal: options.signal }));
             const items = [];
+            let coverage = page.coverage;
             for (const [index, environment] of page.items.entries()) {
                 const read = headers[index];
-                if (!read || read.status !== 'fulfilled') return failure('deployment_content_unavailable');
+                if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
                 const artifact = read.value;
                 const opened: DeploymentArtifactHeaderV1 | null = artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined
                     ? { artifactId: artifact.id, header: artifact.rawHeader,
                         revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } } : null;
                 const label = readDeploymentEnvironmentArtifactHeaderV1(environment, opened);
-                if (!label.ok) return failure(label.error);
+                if (!label.ok) { coverage = 'partial'; continue; }
                 const current = currentByEnvironment.get(environment.id);
                 let currentDeployment: DeploymentEnvironmentCollectionV1['items'][number]['currentDeployment'] = null;
                 if (current) {
                     const receiptHeader = headers[page.items.length + current.index];
-                    if (!receiptHeader || receiptHeader.status !== 'fulfilled') return failure('deployment_content_unavailable');
-                    const artifact = receiptHeader.value;
+                    const artifact = receiptHeader?.status === 'fulfilled' ? receiptHeader.value : null;
                     const opened: DeploymentArtifactHeaderV1 | null = artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined
                         ? { artifactId: artifact.id, header: artifact.rawHeader,
                             revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } } : null;
                     const projection = readDeploymentReceiptArtifactHeaderV1(current.receipt, opened);
-                    if (!projection.ok) return failure(projection.error);
-                    currentDeployment = { ...current.receipt, title: projection.title, steps: projection.steps };
+                    if (projection.ok) currentDeployment = { ...current.receipt, title: projection.title, steps: projection.steps };
+                    else coverage = 'partial';
                 }
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
                 items.push({ environment, title: label.title, projectSourceName: sourceNames.get(environment.projectSourceId) ?? null,
@@ -138,7 +147,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     currentDeployment });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor,
-                ...(page.coverage === undefined ? {} : { coverage: page.coverage }) } };
+                ...(coverage === undefined ? {} : { coverage }) } };
         }),
         readEnvironment: (scope, environmentId, options) => scoped(scope, options, async account => {
             const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(await execute('deployments.environments.get',
@@ -168,7 +177,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             if (!page.items.every(row => row.environmentId === environmentId)) return failure('invalid_response');
             // Visible attempts need their revision and recorded failure, which legacy headers do not carry.
             // Open this one page in a batch through the mode-aware Account owner, never one request per row.
-            const contents = await account.readArtifactContents(page.items.map(row => row.contentArtifactId), { signal: options.signal });
+            const contents = await readArtifactsByRow(page.items.map(row => row.contentArtifactId),
+                ids => account.readArtifactContents(ids, { signal: options.signal }));
             const items = [];
             let coverage: DeploymentEnvironmentCollectionV1['coverage'];
             for (const [index, receipt] of page.items.entries()) {
@@ -177,7 +187,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const opened = readDeploymentReceiptArtifactV1(receipt, read.value);
                 if (!opened.ok) { coverage = 'partial'; continue; }
                 const facts = projectDeploymentReceiptHistoryEntryV1({ deployment: receipt, content: opened.content });
-                items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source });
+                items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source, failure: facts.failure });
             }
             return { ok: true, value: { ...page, items, ...(coverage === undefined ? {} : { coverage }) } };
         }),

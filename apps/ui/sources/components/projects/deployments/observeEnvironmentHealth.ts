@@ -1,0 +1,100 @@
+import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
+    type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1 } from '@happier-dev/deployments';
+import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
+import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
+
+type CurrentEdge = ReturnType<typeof DeploymentHealthCurrentResultV1Schema.parse>;
+const currentEdgeProjection = Object.freeze({
+    decode(content: Readonly<{ bytes: Uint8Array }>, previous: CurrentEdge | undefined): CurrentEdge {
+        const next = DeploymentHealthCurrentResultV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes)));
+        return previous && sameStrictJsonValue(previous, next) ? previous : next;
+    },
+});
+
+/** Borrow the existing selected Services Resource; this never probes or samples health. */
+export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentHealth']> {
+    return (_scope, detail, publish, options) => {
+        if (options.signal.aborted) return () => {};
+        const link = detail.runtimeTargetLink;
+        if (!link || link.targetKind !== 'ownServer') {
+            publish({ environmentId: detail.environment.id, status: 'unavailable', members: [] });
+            return () => {};
+        }
+        const bindings = link.members.filter(member => member.state === 'active').map(member => ({ member,
+            owner: createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+                hostRead: 'machines.services.list', input: { serverId: lifetime.scope.serverId,
+                    machineId: member.machineId, environmentId: detail.environment.id },
+            }, projection: machineServicesListProjection }),
+        }));
+        const edge = detail.environment.ingress?.kind === 'edgeCaddy' && detail.environment.controllerMachineId
+            ? createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+                hostRead: 'deployments.health.edge', input: { serverId: lifetime.scope.serverId,
+                    machineId: detail.environment.controllerMachineId, environmentId: detail.environment.id, targetLinkId: link.id },
+            }, projection: currentEdgeProjection }) : null;
+        let aggregate: ReturnType<typeof projectDeploymentHealthAggregateV1> | undefined;
+        let closed = false;
+        const update = () => {
+            if (closed) return;
+            const members = bindings.map(({ member, owner }): DeploymentEnvironmentHealthMemberV1 => {
+                const snapshot = owner.selection.getSnapshot();
+                const value = snapshot.value;
+                const rows = value?.kind === 'snapshot' ? value.services : [];
+                // The Resource reaches the current Machine; the Environment may
+                // still name its predecessor installation. Consume the native witness.
+                const services = rows.flatMap(row => row.deployment?.installationId !== member.installationId ? [] : [{ serviceId: row.serviceId,
+                    name: row.name, state: row.health?.status ?? 'unknown', observedAt: row.health?.observedAtMs ?? null,
+                    reason: row.health?.reason ?? (row.health ? null : 'coverage_unavailable'),
+                    ...(row.health?.expectedDown ? { expectedDown: row.health.expectedDown } : {}),
+                }]);
+                const failure = snapshot.error ? { code: snapshot.error.code ?? 'deployment_read_failed', retryable: snapshot.error.retryable ?? false }
+                    : value?.kind === 'unavailable' ? { code: value.reason, retryable: false }
+                    : services.length !== rows.length ? { code: 'target_mismatch', retryable: false } : undefined;
+                return { machineId: member.machineId, installationId: member.installationId, services,
+                    status: failure ? 'unavailable' : value?.kind === 'snapshot' ? 'ready' : 'loading',
+                    ...(failure ? { failure } : {}),
+                };
+            });
+            const status = members.length === 0 ? 'unavailable' : members.every(member => member.status === 'ready') ? 'ready'
+                : members.some(member => member.status === 'loading') ? 'loading'
+                : members.some(member => member.status === 'ready') ? 'partial' : 'unavailable';
+            const native: DeploymentHealthServicesObservationV1[] = bindings.flatMap(({ member, owner }, index) => {
+                const snapshot = owner.selection.getSnapshot();
+                if (snapshot.freshness !== 'fresh' || snapshot.error || members[index].status !== 'ready') return [];
+                return [{ environmentId: detail.environment.id, targetLinkId: link.id, targetLinkRevision: link.revision,
+                    machineId: member.machineId, installationId: member.installationId, role: 'runtime',
+                    source: { kind: 'native' }, observedAtMs: members[index].services.reduce(
+                        (latest, service) => Math.max(latest, service.observedAt ?? 0), 0),
+                    services: members[index].services.map(service => ({ serviceId: service.serviceId,
+                        ...(service.observedAt === null ? {} : { observation: { status: service.state, observedAtMs: service.observedAt,
+                            ...(service.reason === null ? {} : { reason: service.reason }),
+                            ...(service.expectedDown ? { expectedDown: service.expectedDown } : {}),
+                        } }),
+                    })),
+                }];
+            });
+            const currentEdge = edge?.selection.getSnapshot();
+            const observation = currentEdge?.freshness === 'fresh' && !currentEdge.error && currentEdge.value?.ok
+                ? currentEdge.value.observation : null;
+            aggregate = projectDeploymentHealthAggregateV1({ environment: detail.environment, targetLink: link,
+                observations: observation ? [...native, observation] : native }, aggregate);
+            const edgeReady = currentEdge?.freshness === 'fresh' && !currentEdge.error && currentEdge.value?.ok;
+            const feedStatus = !edge ? status : edgeReady ? (status === 'unavailable' && members.length === 0 ? 'ready' : status)
+                : status === 'ready' ? 'partial' : currentEdge?.error ? 'unavailable' : 'loading';
+            publish({ environmentId: detail.environment.id, status: feedStatus, members, aggregate });
+        };
+        const subscriptions = bindings.map(({ owner }) => owner.selection.subscribe(update, true));
+        if (edge) subscriptions.push(edge.selection.subscribe(update, true));
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            options.signal.removeEventListener('abort', close);
+            for (const unsubscribe of subscriptions) unsubscribe();
+        };
+        options.signal.addEventListener('abort', close, { once: true });
+        if (options.signal.aborted) close(); else update();
+        return close;
+    };
+}

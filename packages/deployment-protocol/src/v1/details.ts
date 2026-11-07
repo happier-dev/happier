@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema } from './environment.js';
 import { DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkHeaderV1Schema } from './target.js';
-import { DeploymentContentV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from './deployment.js';
+import { DeploymentContentV1Schema, DeploymentReceiptFailureV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from './deployment.js';
 import { DeploymentIdentifierV1Schema } from './ids.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from './health.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
@@ -28,7 +28,8 @@ export type DeploymentEnvironmentCollectionV1 = z.infer<typeof DeploymentEnviron
 /** Visible history facts projected from the page's opened contents; older transports may omit them. */
 export const DeploymentReceiptHistoryV1Schema = z.strictObject({
     ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()),
-        source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)) })),
+        source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)),
+        failure: z.optional(z.nullable(DeploymentReceiptFailureV1Schema)) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),
     coverage: collectionCoverage,
 });
