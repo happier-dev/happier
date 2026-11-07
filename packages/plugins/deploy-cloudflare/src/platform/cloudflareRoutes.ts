@@ -250,11 +250,8 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
         if ((await dnsRecords(hostname)).length !== 0) throw new CloudflareProviderRefusal('plan_changed');
         const record = readRecord((await request('POST', dnsUrl, { type: 'CNAME', name: hostname, content: cname, proxied: true })).result);
         if (typeof record.id !== 'string' || !sameOwnedRecord(record, hostname, record.id, cname)) throw new CloudflareProviderRefusal('outcome_unknown');
-        // The POST acknowledgement establishes this exact created record even
-        // if the subsequent verification read is unavailable.
+        // The validated POST acknowledgement establishes the created record.
         ownership.set(hostname, record.id);
-        const verified = readRecord((await request('GET', `${dnsUrl}/${encodeURIComponent(record.id)}`)).result);
-        if (!sameOwnedRecord(verified, hostname, record.id, cname)) throw new CloudflareProviderRefusal('outcome_unknown');
       } else if (!retained && recordId) {
         const removed = readRecord((await request('DELETE', `${dnsUrl}/${encodeURIComponent(recordId)}`)).result);
         if (removed.id !== recordId) throw new CloudflareProviderRefusal('outcome_unknown');

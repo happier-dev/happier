@@ -29,7 +29,8 @@ const credentialBindings = {
     origin: 'https://api.cloudflare.com', method: 'DELETE', headerNames: ['authorization'] },
 } as const satisfies CloudflareRouteRequest['credentialBindings'];
 type FixtureOptions = { installed?: boolean; dnsInstalled?: boolean; foreignDns?: boolean; localTunnel?: boolean;
-  putLost?: boolean; dnsLost?: boolean; dnsVerificationLost?: boolean; putAcknowledgementMismatch?: boolean; denied?: boolean; abort?: AbortController;
+  putLost?: boolean; dnsLost?: boolean; dnsVerificationLost?: boolean; dnsAcknowledgement?: 'missing-id' | 'wrong-target';
+  putAcknowledgementMismatch?: boolean; denied?: boolean; abort?: AbortController;
   pagedForeignDns?: boolean; retainedDnsDrift?: boolean; foreignPath?: boolean; readLost?: boolean; malformedJson?: boolean;
   createLost?: boolean; tokenLost?: boolean; tokenResult?: unknown; canonicalRemote?: boolean;
   tunnelName?: string; wrongAccount?: boolean; tunnelPages?: readonly (readonly Record<string, unknown>[])[];
@@ -100,7 +101,8 @@ function fixture(options: FixtureOptions = {}) {
       const record = { ...(body as Record<string, unknown>), id: 'record-new' };
       records.set(record.id, record);
       if (options.dnsLost) throw new Error('synthetic-private-native-error');
-      result = record;
+      result = options.dnsAcknowledgement === 'missing-id' ? body
+        : options.dnsAcknowledgement === 'wrong-target' ? { ...record, content: 'foreign.example.test' } : record;
     } else if (input.url === `${dnsRoot}/record-owned` && method === 'GET') {
       if (options.retainedDnsDrift && dnsPageReads > 0) records.set('record-owned', { ...records.get('record-owned'), content: 'changed.example.test' });
       result = records.get('record-owned');
@@ -228,15 +230,24 @@ describe('Cloudflare controller owned route lifecycle', () => {
     expect(JSON.stringify(result)).not.toContain('synthetic-private-native-error');
   });
 
-  it('preserves acknowledged new DNS ownership when its verification read fails without retrying', async () => {
+  it('settles an acknowledged DNS creation with one write request when the record GET is unavailable', async () => {
     const state = fixture({ dnsVerificationLost: true });
     const result = await reconcileOwnedCloudflareRoutes(state.request);
-    expect(result).toEqual({ kind: 'unknown', code: 'outcome_unknown',
+    expect.soft(result).toEqual({ kind: 'verified', tunnelId,
       dnsOwnership: [{ hostname, recordId: 'record-new' }] });
     expect(state.record()).toMatchObject({ id: 'record-new', name: hostname });
     expect(state.mutations().map(request => request.method)).toEqual(['PUT', 'POST']);
-    expect(state.requests.filter(request => request.url === `${dnsRoot}/record-new`)).toHaveLength(1);
+    const writeIndex = state.requests.findIndex(request => request.method === 'POST' && request.url === dnsRoot);
+    expect(writeIndex).toBeGreaterThanOrEqual(0);
+    expect(state.requests.slice(writeIndex).map(({ method, url }) => ({ method, url })))
+      .toEqual([{ method: 'POST', url: dnsRoot }]);
     expect(JSON.stringify(result)).not.toContain('synthetic-private-native-error');
+  });
+
+  it.each(['missing-id', 'wrong-target'] as const)('does not accept a malformed DNS creation acknowledgement: %s', async dnsAcknowledgement => {
+    const state = fixture({ dnsAcknowledgement });
+    expect(await reconcileOwnedCloudflareRoutes(state.request)).toEqual({ kind: 'unknown', code: 'outcome_unknown' });
+    expect(state.mutations().map(request => request.method)).toEqual(['PUT', 'POST']);
   });
 
   it('disables only owned hostname/DNS through public Account activation and preserves foreign config order', async () => {
@@ -465,14 +476,14 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
     } finally { await state.kit.dispose(); }
   });
 
-  it('carries acknowledged DNS ownership with opaque custody when DNS verification fails', async () => {
+  it('prepares the Account Action from acknowledged DNS ownership when a later record GET is unavailable', async () => {
     const state = await controller({ canonicalRemote: true, dnsVerificationLost: true });
     try {
-      expect(await state.invoke()).toEqual({ kind: 'unknown', code: 'outcome_unknown', tunnelId, grants,
+      expect(await state.invoke()).toEqual({ kind: 'prepared', tunnelId, grants,
         dnsOwnership: [{ hostname, recordId: 'record-new' }] });
       expect(state.buffers.every(bytes => bytes.every(byte => byte === 0))).toBe(true);
       expect(state.mutations().map(request => request.method)).toEqual(['PUT', 'POST']);
-      expect(state.requests.filter(request => request.url === `${dnsRoot}/record-new`)).toHaveLength(1);
+      expect(state.requests.filter(request => request.url === `${dnsRoot}/record-new`)).toHaveLength(0);
     } finally { await state.kit.dispose(); }
   });
 
