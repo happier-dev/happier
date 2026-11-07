@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-protocol';
-import { deploymentDeployAvailability, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState } from './deploymentPresentation';
+import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
     const receipt = createDeploymentReceiptHeaderV1({ state: 'outcome_unknown' });
@@ -50,4 +51,79 @@ describe('data cleanup receipt presentation', () => {
 it('marks a version running without a health check amber in the rail, like an unknown outcome', () => {
     expect(deploymentRailState('running_unverified')?.tone).toBe('warning');
     expect(deploymentRailState('running')?.tone).toBeNull();
+});
+
+describe('receipt titles name the operation the receipt records', () => {
+    // The protocol's own operation vocabulary, so a new operation fails here until it has its words.
+    const operations = DeploymentReceiptMetadataV1Schema.shape.operation.options;
+    const { content } = createDeploymentReceiptDetailV1();
+    const headline = (operation: (typeof operations)[number], state: 'running' | 'succeeded' | 'failed' | 'cancelled') =>
+        deploymentHeadline(createDeploymentReceiptHeaderV1({ operation, state }), content);
+
+    it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)('%s: every operation reads differently', (state) => {
+        const titles = operations.map(operation => headline(operation, state));
+        expect(new Set(titles).size).toBe(operations.length);
+    });
+
+    it.each([undefined, 'admission'] as const)('failed (%s): every operation names its own failure', (phase) => {
+        const titles = operations.map(operation => deploymentFailureTitle(phase ? { code: 'failed', phase } : null, operation));
+        expect(new Set(titles).size).toBe(operations.length);
+    });
+
+    it('a succeeded teardown never reads as deployed', () => {
+        expect(headline('teardown', 'succeeded')).not.toBe(headline('deploy', 'succeeded'));
+        expect(deploymentHistoryLead(createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'failed' }), { code: 'failed' })?.text)
+            .toBe(deploymentFailureTitle({ code: 'failed' }, 'teardown'));
+    });
+});
+
+describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest precedence first', () => {
+    const calm = {
+        machineOffline: false, noTarget: false, controller: null, refused: false, reviewPending: false,
+        latest: null, health: null, servingState: null,
+    } satisfies Parameters<typeof deploymentEnvironmentAttention>[0];
+    const failed = { id: 'd-failed', state: 'failed' as const };
+
+    it('a healthy, settled Environment says nothing', () => {
+        expect(deploymentEnvironmentAttention(calm)).toBeNull();
+        expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-1', state: 'succeeded' }, health: { status: 'up' },
+            servingState: 'succeeded', controller: { state: 'available' } })).toBeNull();
+    });
+
+    it('when everything is wrong at once, only the blocking notice shows, then each lower one as the higher clears', () => {
+        const all = { ...calm, machineOffline: true, noTarget: true, controller: { state: 'paused' as const }, refused: true,
+            latest: failed, reviewPending: true, health: { status: 'down' as const }, servingState: 'running_unverified' as const };
+        const shown: string[] = [];
+        let facts: Parameters<typeof deploymentEnvironmentAttention>[0] = all;
+        const clear = {
+            machineOffline: { machineOffline: false }, noTarget: { noTarget: false }, controllerPaused: { controller: null },
+            actionRefused: { refused: false }, latestFailed: { latest: null }, approvalWaiting: { reviewPending: false },
+            unhealthy: { health: null }, runningUnverified: { servingState: null },
+        } as const;
+        for (;;) {
+            const attention = deploymentEnvironmentAttention(facts);
+            if (!attention) break;
+            shown.push(attention.kind);
+            facts = { ...facts, ...clear[attention.kind as keyof typeof clear] };
+        }
+        expect(shown).toEqual(['machineOffline', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed',
+            'approvalWaiting', 'unhealthy', 'runningUnverified']);
+    });
+
+    it('names the receipt it is about: a failed latest deploy, or the one still deploying', () => {
+        expect(deploymentEnvironmentAttention({ ...calm, latest: failed })).toEqual({ kind: 'latestFailed', deploymentId: 'd-failed' });
+        expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-run', state: 'queued' }, health: { status: 'down' } }))
+            .toEqual({ kind: 'deploying', deploymentId: 'd-run' });
+    });
+
+    it('an unknown controller makes no claim; a degraded service needs the person', () => {
+        expect(deploymentEnvironmentAttention({ ...calm, controller: { state: 'unknown' } })).toBeNull();
+        expect(deploymentEnvironmentAttention({ ...calm, health: { status: 'degraded' } })?.kind).toBe('unhealthy');
+    });
+
+    it('row-level notices below the shown one stay visible in their rows; higher ones hide them', () => {
+        expect(deploymentAttentionLeaves(null, 'secretWithdrawn')).toBe(true);
+        expect(deploymentAttentionLeaves({ kind: 'runningUnverified' }, 'secretWithdrawn')).toBe(true);
+        expect(deploymentAttentionLeaves({ kind: 'unhealthy' }, 'secretWithdrawn')).toBe(false);
+    });
 });

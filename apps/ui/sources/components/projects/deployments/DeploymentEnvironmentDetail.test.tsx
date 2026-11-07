@@ -147,7 +147,7 @@ function controllerFor(
     readEnvironment: async () => ({ ok: true, value: detail }),
     listHistory: async () => ({
       ok: true,
-      value: { ok: true, items: [...retained, ...(retained.some(row => row.deployment.id === servingId) ? [] : [serving])]
+      value: { ok: true, items: [...retained, ...(servingId && !retained.some(row => row.deployment.id === servingId) ? [serving] : [])]
         .map(row => {
           // The real transport's per-row projection: revision title, source and the recorded failure fact.
           const entry = projectDeploymentReceiptHistoryEntryV1(row);
@@ -409,14 +409,17 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it.each([false, true])('consumes the root Environment-removal result from Stop and remove (removed %s)', async removed => {
+  it.each([
+    { removed: false, neverDeployed: false }, { removed: true, neverDeployed: false },
+    { removed: true, neverDeployed: true },
+  ])('consumes the root Environment-removal result from Stop and remove (removed $removed, never deployed $neverDeployed)', async ({ removed, neverDeployed }) => {
     const homeIdentity = `srv_${'d'.repeat(32)}`;
     scope.serverId = await homes.addHome({ name: 'Idle removal', serverUrl: 'https://idle-removal.test',
       serverIdentityId: homeIdentity, accountId: scope.accountId, currentAccount: true });
     const base = environmentDetailForHome();
-    const detail = removed ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
+    const detail = removed && !neverDeployed ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
       targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
-    const { controller } = controllerFor({ detail });
+    const { controller } = controllerFor({ detail, ...(neverDeployed ? { history: [] } : {}) });
     const { ModalProvider } = await import('@/modal');
     const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
     const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -430,6 +433,16 @@ describe('Project deployments page', () => {
     }) });
     homes.answer(scope.serverId, '/v1/actions/deployments.teardown', { select: body => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      if (envelope.input && typeof envelope.input === 'object' && 'mode' in envelope.input && envelope.input.mode === 'preview') {
+        if (neverDeployed) return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
+          execution: { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' } } };
+        return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId, execution: { ok: true,
+          result: { ok: true, kind: 'preview', volumes: [{ name: 'app_data', machineId: machine.id }, { name: 'app_logs', machineId: machine.id }] } } } };
+      }
+      if (removed && !neverDeployed) expect(envelope.input).toMatchObject({ volumes: [
+        { name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
+        { name: 'app_logs', disposition: 'keep' },
+      ] });
       return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
         execution: removed ? { ok: true, result: { ok: true, environmentId: detail.environment.id,
           revision: detail.environment.revision + 2, deploymentId: 'teardown-removed', deploymentRevision: 2, state: 'succeeded', environmentRemoved: true } }
@@ -442,12 +455,22 @@ describe('Project deployments page', () => {
       const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
-        destination={removed ? { tab: 'settings', section: null } : undefined}
+        destination={removed && !neverDeployed ? { tab: 'settings', section: null } : undefined}
         disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done} />
       </ModalProvider>);
-      if (removed) {
+      if (removed && !neverDeployed) {
         await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
         await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.disposition.volume.app_data:delete')).not.toBeNull());
+        await screen.pressByTestIdAsync('project-deployments.disposition.volume.app_data:delete');
+        expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+        await act(async () => {
+          screen.findByTestId('project-deployments.disposition.volume.app_data.confirmation')?.props.onChangeText('app');
+        });
+        expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+        await act(async () => {
+          screen.findByTestId('project-deployments.disposition.volume.app_data.confirmation')?.props.onChangeText('app_data');
+        });
       } else {
         await waitForContent(screen, 'project-deployments.environment.menu');
         await screen.pressByTestIdAsync('project-deployments.environment.menu');
@@ -457,6 +480,7 @@ describe('Project deployments page', () => {
       await waitForHomeGovernance(() => {
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
       });
+      if (neverDeployed) await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
       await waitForHomeGovernance(() => {
@@ -917,8 +941,10 @@ describe('Project deployments page', () => {
       onRetire: () => ({ dispose: () => {} }) };
     const unlink = vi.fn(async (input: Readonly<{ targetLinkId: string }>) =>
       ({ ok: true as const, environmentId: detail.environment.id, revision: 2, targetLinkId: input.targetLinkId, detached: true }));
-    const teardown = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id, revision: 3,
-      deploymentId: 'teardown-1', deploymentRevision: 1, state: 'running' as const }));
+    const teardown = vi.fn(async (input: Readonly<{ mode?: string }>) => input.mode === 'preview'
+      ? { ok: true as const, kind: 'preview' as const, volumes: [] }
+      : { ok: true as const, environmentId: detail.environment.id, revision: 3,
+        deploymentId: 'teardown-1', deploymentRevision: 1, state: 'running' as const });
     const disposition = { deleteEnvironment: vi.fn(), unlink, teardown };
     const render = () => renderScreen(
       <ModalProvider>
@@ -1209,6 +1235,71 @@ describe('Deployment receipt header actions', () => {
     } finally { controller.retire(); }
   });
 
+  it.each(['failed', 'outcome_unknown'] as const)('retries a failed teardown through the teardown Action instead of deploying its source again (%s)', async state => {
+    const homeIdentity = `srv_${'e'.repeat(32)}`;
+    scope.serverId = await homes.addHome({ name: 'Teardown retry', serverUrl: 'https://teardown-retry.test',
+      serverIdentityId: homeIdentity, accountId: scope.accountId, currentAccount: true });
+    const detail = environmentDetailForHome();
+    const link = detail.targetLinks[0]!.targetLink;
+    const { machineId, installationId } = link.members[0]!;
+    const member = { machineId, installationId };
+    const base = createDeploymentReceiptDetailV1();
+    const storedIntent = { kind: 'stored' as const, document: 'services:\n  app:\n    image: app:tested\n',
+      contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'] };
+    const receipt = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: 'failed-teardown', operation: 'teardown', state,
+        requestKey: 'teardown-retry-original' }),
+      content: { ...base.content, sourceIntent: state === 'outcome_unknown' ? storedIntent : base.content.sourceIntent,
+        teardown: { reason: 'decommission', targetLinkRevision: link.revision,
+        machines: [member], resources: [{ id: 'retained-workload', kind: 'workload', machineId: member.machineId,
+          ownership: 'owned', disposition: 'remove' }], proofs: [{ ...member, step: 'removeTarget',
+          state, reason: state === 'outcome_unknown' ? 'removal_unproved' : 'native_route_unavailable', resources: [] }] } },
+    });
+    const { controller } = controllerFor({ detail, receipt });
+    const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const machine = createPlainMachineRowFixture({ id: detail.environment.controllerMachineId, accountId: scope.accountId });
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+      ok: true, environment: { ...detail.environment, serverId: homeIdentity },
+      targetLinks: detail.targetLinks.map(row => row.targetLink),
+    } });
+    homes.answer(scope.serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+      body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
+    }) });
+    const beforeTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
+    const beforeDeploys = homes.requestsFor('/v1/actions/deployments.deploy').length;
+    homes.answer(scope.serverId, '/v1/actions/deployments.teardown', { select: body => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      expect(envelope.input).toMatchObject({ environmentId: detail.environment.id,
+        targetLinkId: receipt.deployment.targetLinkId, requestKey: receipt.deployment.requestKey, reason: receipt.content.teardown!.reason });
+      return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
+        execution: { ok: true, result: { ok: true, environmentId: detail.environment.id, revision: 4,
+          deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'running' } } } };
+    } });
+    homes.answer(scope.serverId, '/v1/actions/deployments.deploy', { select: body => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      return { body: { v: 1, actionId: 'deployments.deploy', requestId: envelope.requestId,
+        execution: { ok: true, result: { ok: true, environmentId: detail.environment.id, revision: 4,
+          deploymentId: 'unwanted-redeploy', deploymentRevision: 1, state: 'running' } } } };
+    } });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id, deployment: receipt.deployment.id });
+    try {
+      const screen = await renderScreen(<ProjectDeploymentsView controller={controller} demand={shown} lifetime={lifetime}
+        serverId={scope.serverId} accountId={scope.accountId} sourceId={scope.projectSourceId}
+        actions={createDeploymentActions(lifetime, scope.projectSourceId)} />);
+      await waitForContent(screen, 'project-deployments.receipt.deployAgain');
+      await screen.pressByTestIdAsync('project-deployments.receipt.deployAgain');
+      await waitForHomeGovernance(() => {
+        const teardowns = homes.requestsFor('/v1/actions/deployments.teardown').length - beforeTeardowns;
+        const deploys = homes.requestsFor('/v1/actions/deployments.deploy').length - beforeDeploys;
+        expect(teardowns + deploys, screen.getTextContent()).toBeGreaterThan(0);
+        expect({ teardowns, deploys }).toEqual({ teardowns: 1, deploys: 0 });
+      });
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
   it('deploys a failed receipt\'s own commit again through the Environment\'s runtime link', async () => {
     const base = createDeploymentReceiptDetailV1();
     const receipt = createDeploymentReceiptDetailV1({
@@ -1422,6 +1513,109 @@ describe('Deployment receipt step logs', () => {
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.getTextContent(),
         text => text.includes('lines of source')); });
       expect(screen.findByTestId('project-deployments.receipt.steps.follow')).toBeNull();
+    } finally { controller.retire(); }
+  });
+});
+
+describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', () => {
+  const render = (controller: ReturnType<typeof createDeploymentReadControllerV1>, detail: { environment: { id: string } }, onOpenReceipt = (_id: string) => {}) =>
+    renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+      accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview} onOpenReceipt={onOpenReceipt} />);
+  const healthOf = (base: ReturnType<typeof environmentDetailForHome>, status: 'down' | 'degraded') => ({
+    v: 1 as const, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
+    protection: base.environment.protection, status, n: 1, down: status === 'down' ? 1 : 0, degraded: status === 'degraded' ? 1 : 0,
+    unknown: 0, members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false,
+  });
+
+  it('shows one notice when several things are wrong: the failed latest deploy, which opens its receipt', async () => {
+    const base = environmentDetailForHome();
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'running_unverified' }) });
+    const failed = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'latest-failed', state: 'failed' }),
+      content: { ...serving.content, failure: { code: 'machine_target_not_current', phase: 'admission' } } });
+    const { controller, detail } = controllerFor({ receipt: serving, history: [failed, serving],
+      detail: { ...base, healthAggregate: healthOf(base, 'degraded') } });
+    const opened: string[] = [];
+    try {
+      const screen = await render(controller, detail, id => { opened.push(id); });
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.attention.latestFailed')).not.toBeNull());
+      expect(screen.findByTestId('project-deployments.environment.attention.unhealthy')).toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.serving.notice.running_unverified')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.environment.attention.latestFailed.action');
+      expect(opened).toEqual(['latest-failed']);
+    } finally { controller.retire(); }
+  });
+
+  it('says jobs and alerts are paused while the controller is offline, and nothing when its presence is unknown', async () => {
+    const base = environmentDetailForHome();
+    for (const [state, shownNotice] of [['paused', true], ['unknown', false]] as const) {
+      const { controller, detail } = controllerFor({ detail: { ...base,
+        controller: { machineId: base.environment.controllerMachineId, state } } });
+      try {
+        const screen = await render(controller, detail);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.serving')).not.toBeNull());
+        expect(screen.findByTestId('project-deployments.environment.attention.controllerPaused') !== null).toBe(shownNotice);
+      } finally { controller.retire(); }
+    }
+  });
+
+  it('offers Roll back… only when an earlier version served (D11)', async () => {
+    const base = environmentDetailForHome();
+    const undeployed = environmentDetailForHome({ targetLinks: base.targetLinks.map(link => ({ ...link,
+      targetLink: { ...link.targetLink, activeDeploymentId: undefined } })) });
+    const { controller: empty } = controllerFor({ detail: undeployed, history: [] });
+    try {
+      const screen = await render(empty, undeployed);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.settings');
+      expect(screen.findByTestId('project-deployments.environment.menu.history')).toBeNull();
+    } finally { empty.retire(); }
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
+    const earlier = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-good', state: 'succeeded' }) });
+    const { controller, detail } = controllerFor({ detail: base, receipt: serving, history: [serving, earlier] });
+    try {
+      const screen = await render(controller, detail);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.receipt.row.earlier-good')).not.toBeNull());
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.history');
+    } finally { controller.retire(); }
+  });
+
+  it('lists several servers with a sentence only for the one down and the one joining (Lab 1 A)', async () => {
+    const base = environmentDetailForHome();
+    const runtimeId = base.environment.runtimeTargetLinkId!;
+    const members = [
+      { machineId: 'srv-a', installationId: 'inst-a', state: 'active' as const },
+      { machineId: 'srv-b', installationId: 'inst-b', state: 'active' as const },
+      { machineId: 'srv-c', installationId: 'inst-c', state: 'joining' as const },
+    ];
+    const detail = { ...base, targetLinks: base.targetLinks.map(link => link.targetLink.id === runtimeId ? { ...link,
+      targetLink: { ...link.targetLink, machines: members.map(m => m.machineId), members } } : link),
+      healthAggregate: { ...healthOf(base, 'down'), n: 3, down: 1, members: [
+        { machineId: 'srv-a', roles: ['runtime' as const], status: 'up' as const, evidence: [{ role: 'runtime' as const, status: 'up' as const, source: 'native' as const }] },
+        { machineId: 'srv-b', roles: ['runtime' as const], status: 'down' as const, evidence: [{ role: 'runtime' as const, status: 'down' as const, source: 'native' as const }] },
+      ] } };
+    const { controller } = controllerFor({ detail });
+    try {
+      const screen = await render(controller, detail);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.servers')).not.toBeNull());
+      const rowText = (id: string) => JSON.stringify(screen.findByTestId(`project-deployments.environment.servers.${id}`)
+        ?.findAll(node => typeof node.props.children === 'string').map(node => node.props.children));
+      expect(rowText('srv-a')).not.toContain('Down');
+      expect(rowText('srv-b')).toContain('Down');
+      expect(rowText('srv-c')).toContain('not counted as down');
+      expect(screen.getTextContent()).toContain('1 of 3 down');
+    } finally { controller.retire(); }
+  });
+
+  it('keeps a single-server Environment free of a Servers section', async () => {
+    const { controller, detail } = controllerFor({});
+    try {
+      const screen = await render(controller, detail);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.serving')).not.toBeNull());
+      expect(screen.findByTestId('project-deployments.environment.servers')).toBeNull();
     } finally { controller.retire(); }
   });
 });

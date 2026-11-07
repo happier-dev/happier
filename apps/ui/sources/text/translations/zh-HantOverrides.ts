@@ -6,7 +6,9 @@ import { botFaceNameTranslations } from './botFaceNameTranslations.shared';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
+import { deploymentOverviewTranslations } from './deploymentOverviewTranslations';
 import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
+import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentPlatformLinkTranslations } from './deploymentPlatformLinkTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
@@ -2028,7 +2030,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 title: '套用前請檢查',
                 descriptionOn: '智慧代理將以獨立使用者執行，沒有管理員權限。在你核准之前不會有任何變更。',
                 descriptionOff: '智慧代理將與 Happier 使用同一使用者執行。在你核准之前不會有任何變更。',
-                policy: '智慧代理隔離',
+                policy: '獨立使用者',
                 turnOn: '開啟',
                 turnOff: '關閉',
                 checkouts: '存取你的檢出目錄',
@@ -2037,6 +2039,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 foldersHint: '允許智慧代理使用者通過這些資料夾。',
                 sessions: '工作階段將重新啟動',
                 sessionsHint: '它們會先完成目前回合，然後依新設定繼續。對話內容保留。',
+                after: '之後',
+                afterOn: '代理以 happier-agent 身分執行，無法使用 sudo、Docker 或 Happier 的管理員憑證。',
+                afterOnMember: '每個人的代理以各自的 Linux 使用者執行，無法使用 sudo、Docker 或 Happier 的管理員憑證。',
+                afterOff: '代理重新以 Happier 自己的使用者執行，並擁有其權限。',
+                docker: 'Docker',
+                dockerHint: '代理在這台機器上失去對 Docker 的直接存取。執行 docker 指令的工作階段在這裡將無法運作。',
                 administrator: '管理員步驟',
                 administratorHint: '部分步驟將以管理員身分執行。',
                 planDigest: '計畫摘要',
@@ -4686,6 +4694,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		        startupTitle: '啟動',
 		        unavailableTitle: '僅限桌面應用程式',
 		        unavailableSubtitle: '在電腦上開啟 Happier 桌面應用程式即可變更這些設定。',
+		        windows: {
+		            title: "視窗",
+		            botRailTitle: "工作階段視窗中的 Bot 列",
+		            botRailSubtitle: "在 Bot 視窗頂部切換 Bot。",
+		            openInHappier: "在 Happier 中開啟",
+		        },
 		        overlay: {
 		            botConversationPresentationTitle: "開啟 Bot 對話",
 		            botConversationPresentationSubtitle: "以右鍵按一下 Bot 可選擇另一種方式。",
@@ -4706,7 +4720,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		            notchReadFile: "讀取檔案",
 		            notchRunCommand: "執行指令",
 		            notchOpenInWindow: "在視窗中開啟",
-		            notchOpenInNewWindow: "在新視窗中開啟",
 		            notchOpenInOverlay: "在浮層中開啟",
 		            notchBack: "返回",
 		            notchPin: "保持開啟",
@@ -5985,8 +5998,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         avatarStyle: '頭像風格',
         homeBotFaces: "主頁上的 Bot 頭像",
         homeBotFacesDescription: "在手機上，主頁頂部顯示一排 Bot 頭像。輕點即可開啟。",
-        homeBotFaces: "主頁上的 Bot 頭像",
-        homeBotFacesDescription: "在手機上，主頁頂部顯示一排 Bot 頭像。輕點即可開啟。",
         avatarStyleDescription: '選擇工作階段頭像外觀',
         botFaceStyle: "機器人",
         botFaceStyleDescription: "選擇機器人的預設臉孔風格",
@@ -6689,7 +6700,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             failed: { title: '無法恢復工作階段', body: '你的訊息仍安全地保留在佇列中。準備好後請重試。' },
             queued: { title: '訊息已加入佇列', body: '此非作用中工作階段有一則排隊訊息。準備好後請恢復工作階段。' },
             queued_offline: { title: '訊息等待手動恢復', body: '在你恢復此工作階段之前，訊息會一直留在佇列中。' },
-            actions: { retry: '重試', resume: '恢復', process_when_online: '上線後處理', keepQueued: '保留在佇列中', autoResumeOptions: '自動恢復選項' },
+            actions: { retry: '重試', resume: '恢復', process_when_online: '上線後處理', chooseAccount: '選擇其他帳戶', keepQueued: '保留在佇列中', autoResumeOptions: '自動恢復選項' },
         },
             composerBanners: {
               showBannerAction: '顯示橫幅',
@@ -7682,6 +7693,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         moveToFolder: '移到分區',
         moveToWorkspaceRoot: '放回專案',
         sectionsMenuTitle: "分區",
+        sectionsManageDescription: "為歸類工作階段的分區命名、排序或移除。移除分區不會刪除其中的工作階段。",
         newSectionEllipsis: "新增分區…",
         moveToProjectNamed: ({ project }: { project: string }) => `放回 ${project}`,
         sectionDropHintTouch: "將工作階段移到這裡",
@@ -9601,7 +9613,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           counterReason: "此通行密鑰會記錄使用次數，因此無法複製。請照常登入該網站。",
           sourceLockedNamed: ({ browser }: { browser: string }) => `請在那台機器上關閉 ${browser} 後重試。如果它要求存取鑰匙圈，請允許。`,
           nextSteps: {
-            app_bound_encryption: "Windows 上的 Chrome 會將部分 Cookie 綁定到 Chrome 本身，因此無法複製。請改為在此瀏覽器中登入這些網站。",
+            app_bound_encryption: "Windows 上的 Chrome 將這些 Cookie 綁定到 Chrome 本身，因此無法複製。請從 Firefox 匯入，或在 Happier 的瀏覽器中登入一次，它會記住你的登入狀態。",
             partition_unsupported: "Firefox 容器與分割的 Cookie 無法複製。請改為在此瀏覽器中登入這些網站。",
           },
           notInstalled: "這台機器上未安裝",
@@ -9640,6 +9652,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             previewElsewhereTitleUnknownMachine: ({ service }: { service: string }) => `${service} 在另一台機器上執行`,
             previewElsewhere: `這個 Home 尚未設定私人預覽。在「服務」中分享連結即可在這裡開啟。`,
             previewElsewhereSharingOff: `這個 Home 尚未設定私人預覽，且公開連結已關閉。`,
+            previewElsewhereHere: ({ machine }: { machine: string | null }) =>
+              machine ? `執行於 ${machine}。此裝置無法直接開啟；分享一個連結即可在這裡開啟。` : `執行於另一台機器。此裝置無法直接開啟；分享一個連結即可在這裡開啟。`,
             previewElsewhereNoRoute: `這個 Home 尚未設定私人預覽。`,
             previewPrivateRouteTitle: `尚未設定私人預覽`,
             previewEndedTitle: `此預覽已結束`,
@@ -13464,7 +13478,9 @@ settingsSession: {
             creationReview: deploymentCreationReviewTranslations['zh-Hant'],
       defaultsEditor: deploymentDefaultsTranslations['zh-Hant'],
             copy: deploymentCopyTranslations['zh-Hant'],
+            overviewStatus: deploymentOverviewTranslations['zh-Hant'],
             editors: deploymentEditorsTranslations['zh-Hant'],
+            settingsSections: deploymentSettingsTranslations['zh-Hant'],
             platformLink: deploymentPlatformLinkTranslations['zh-Hant'],
             review: {
                 awakeNote: '僅在這台機器處於喚醒狀態且 Docker Desktop 已開啟時執行。',

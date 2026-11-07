@@ -69,6 +69,16 @@ export function deploymentStateLabel(state: ReceiptState): string {
   }
 }
 
+/** An operation by its name, for History's narrowing and anywhere a receipt's kind is said. */
+export function deploymentOperationLabel(operation: DeploymentReceiptHeaderV1['operation']): string {
+  switch (operation) {
+    case 'deploy': return t('projects.deployments.receipt.operationDeploy');
+    case 'rollback': return t('projects.deployments.receipt.operationRollback');
+    case 'promote': return t('projects.deployments.receipt.operationPromote');
+    case 'teardown': return t('projects.deployments.receipt.operationTeardown');
+  }
+}
+
 /** What was deployed, as a short name: a commit's short id, or a stored definition's revision digest. */
 export function deploymentSourceLabel(content: DeploymentContentV1): string | null {
   const source = content.sourceIntent;
@@ -78,28 +88,47 @@ export function deploymentSourceLabel(content: DeploymentContentV1): string | nu
     : { kind: 'stored', contentRevision: source.contentRevision, composeDigest: source.composeDigest });
 }
 
-/** What failed, from the receipt's recorded phase; a receipt that recorded no cause says only that it failed. */
-export function deploymentFailureTitle(failure: DeploymentReceiptFailureV1 | null, rollback = false): string {
+type ReceiptOperation = DeploymentReceiptHeaderV1['operation'];
+
+/**
+ * What failed, from the receipt's recorded operation and phase; a receipt that recorded no cause says only that
+ * its operation failed. Every operation in the protocol's vocabulary names itself here, never as "the deploy".
+ */
+export function deploymentFailureTitle(failure: DeploymentReceiptFailureV1 | null, operation: ReceiptOperation = 'deploy'): string {
   if (failure?.code === 'deployment_activation_not_observed') return t('projects.deployments.failureInterrupted');
-  // A rollback brings back a version that served before, so it never reads as "the new version" or "the deploy".
-  if (rollback) {
-    switch (failure?.phase) {
-      case 'activate':
-        return t('projects.deployments.failureRollbackActivate');
-      case 'observe':
-        return t('projects.deployments.failureRollbackObserve');
-      case 'admission':
-        return t('projects.deployments.failureRollbackAdmission');
-      case 'source':
-      case 'build':
-      case 'restore':
-      case 'cleanup':
-        break;
-      default:
-        return t('projects.deployments.failureRollbackGeneric');
-    }
+  switch (operation) {
+    // A rollback brings back a version that served before, so it never reads as "the new version" or "the deploy".
+    case 'rollback':
+      switch (failure?.phase) {
+        case 'activate': return t('projects.deployments.failureRollbackActivate');
+        case 'observe': return t('projects.deployments.failureRollbackObserve');
+        case 'admission': return t('projects.deployments.failureRollbackAdmission');
+        case 'source':
+        case 'build':
+        case 'restore':
+        case 'cleanup': return deployFailureTitle(failure.phase);
+        default: return t('projects.deployments.failureRollbackGeneric');
+      }
+    // A promotion reuses built images, so its activation and health check read like a deploy's; the rest is its own.
+    case 'promote':
+      switch (failure?.phase) {
+        case 'activate':
+        case 'observe':
+        case 'restore': return deployFailureTitle(failure.phase);
+        case 'admission': return t('projects.deployments.receipt.failurePromoteAdmission');
+        default: return t('projects.deployments.receipt.failurePromote');
+      }
+    // Stopping and removing has no new version; it either never started or did not finish.
+    case 'teardown':
+      return failure?.phase === 'admission'
+        ? t('projects.deployments.receipt.failureRemoveAdmission') : t('projects.deployments.receipt.failureRemove');
+    case 'deploy':
+      return deployFailureTitle(failure?.phase);
   }
-  switch (failure?.phase) {
+}
+
+function deployFailureTitle(phase: DeploymentReceiptFailureV1['phase'] | undefined): string {
+  switch (phase) {
     case 'source':
       return t('projects.deployments.failureSource');
     case 'build':
@@ -128,7 +157,7 @@ export function deploymentHistoryLead(
   failure: DeploymentReceiptFailureV1 | null | undefined,
 ): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   if (receipt.state === 'failed' && failure) {
-    return { tone: 'danger', text: deploymentFailureTitle(failure, receipt.operation === 'rollback') };
+    return { tone: 'danger', text: deploymentFailureTitle(failure, receipt.operation) };
   }
   if (receipt.state === 'outcome_unknown' && failure?.code === 'deployment_activation_not_observed') {
     return deploymentStateNotice(receipt.state, failure);
@@ -136,36 +165,63 @@ export function deploymentHistoryLead(
   return deploymentRailState(receipt.state);
 }
 
-/** The receipt page's title: what happened to which version, in the receipt's own state. */
+/** The receipt page's title: what the receipt's operation did to which version, in the receipt's own state. */
 export function deploymentHeadline(
   receipt: DeploymentReceiptHeaderV1,
   content: DeploymentContentV1,
 ): string {
   const sha = deploymentSourceLabel(content);
   if (sha === null) return deploymentStateLabel(receipt.state);
-  const rollback = receipt.operation === 'rollback';
   switch (receipt.state) {
     case 'queued':
       return t('projects.deployments.headlineQueued', { sha });
-    case 'running':
-      return rollback
-        ? t('projects.deployments.headlineRollingBack', { sha })
-        : t('projects.deployments.headlineDeploying', { sha });
-    // The unverified notice carries the state (lab d3 `unverified`); the title says what was done.
-    case 'running_unverified':
-    case 'succeeded':
-      return rollback
-        ? t('projects.deployments.headlineRolledBack', { sha })
-        : t('projects.deployments.headlineDeployed', { sha });
-    case 'failed':
-      return rollback
-        ? t('projects.deployments.headlineRollbackFailed', { sha })
-        : t('projects.deployments.headlineFailed', { sha });
-    case 'cancelled':
-      return t('projects.deployments.headlineCancelled', { sha });
     case 'outcome_unknown':
       return t('projects.deployments.headlineUnknown', { sha });
+    // The unverified notice carries the state (lab d3 `unverified`); the title says what was done.
+    case 'running_unverified':
+      return operationHeadline(receipt.operation, 'succeeded', sha);
+    case 'running':
+    case 'succeeded':
+    case 'failed':
+    case 'cancelled':
+      return operationHeadline(receipt.operation, receipt.state, sha);
   }
+}
+
+/** Each operation's words for each settled or running state; the protocol's operation vocabulary keys it. */
+const OPERATION_HEADLINES = {
+  deploy: {
+    running: 'projects.deployments.headlineDeploying',
+    succeeded: 'projects.deployments.headlineDeployed',
+    failed: 'projects.deployments.headlineFailed',
+    cancelled: 'projects.deployments.headlineCancelled',
+  },
+  rollback: {
+    running: 'projects.deployments.headlineRollingBack',
+    succeeded: 'projects.deployments.headlineRolledBack',
+    failed: 'projects.deployments.headlineRollbackFailed',
+    cancelled: 'projects.deployments.receipt.headlineRollbackCancelled',
+  },
+  promote: {
+    running: 'projects.deployments.receipt.headlinePromoting',
+    succeeded: 'projects.deployments.receipt.headlinePromoted',
+    failed: 'projects.deployments.receipt.headlinePromoteFailed',
+    cancelled: 'projects.deployments.receipt.headlinePromoteCancelled',
+  },
+  teardown: {
+    running: 'projects.deployments.receipt.headlineRemoving',
+    succeeded: 'projects.deployments.receipt.headlineRemoved',
+    failed: 'projects.deployments.receipt.headlineRemoveFailed',
+    cancelled: 'projects.deployments.receipt.headlineRemoveCancelled',
+  },
+} as const satisfies Record<ReceiptOperation, Record<'running' | 'succeeded' | 'failed' | 'cancelled', string>>;
+
+function operationHeadline(
+  operation: ReceiptOperation,
+  state: keyof (typeof OPERATION_HEADLINES)[ReceiptOperation],
+  sha: string,
+): string {
+  return t(OPERATION_HEADLINES[operation][state], { sha });
 }
 
 /** The one sentence a non-settled or uncertain receipt owes the person; healthy settled receipts say nothing. */
@@ -276,4 +332,55 @@ export function deploymentHealthFact(
     ? t('projects.deployments.healthServers', { healthy: Math.max(0, health.n - health.down - health.degraded), count: health.n })
     : health.status === 'down' ? t('projects.deployments.healthDown') : t('projects.deployments.healthDegraded');
   return { value, tone: health.status === 'down' ? 'danger' : 'attention' };
+}
+
+/**
+ * The Environment's one attention slot (DEPLOY-COMPOSE R3), highest precedence first: blocking or offline, then failed,
+ * then what needs the person, then information. Notices still waiting on their producer (secret withdrawn → Stop now,
+ * missed backup, platform background failure, newer commit, catalog update) join this list at their rank once their
+ * fact lands; nothing else orders deployment notices.
+ */
+export const DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER = [
+  'machineOffline', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'approvalWaiting', 'deploying',
+  'unhealthy', 'secretWithdrawn', 'runningUnverified',
+] as const;
+export type DeploymentEnvironmentAttentionKind = (typeof DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER)[number];
+export type DeploymentEnvironmentAttention =
+  | Readonly<{ kind: 'latestFailed' | 'deploying'; deploymentId: string }>
+  | Readonly<{ kind: Exclude<DeploymentEnvironmentAttentionKind, 'latestFailed' | 'deploying' | 'secretWithdrawn'> }>;
+
+/** The facts the Overview already holds; each comes from its own owner (presence, receipts, health, the press). */
+export type DeploymentEnvironmentAttentionFacts = Readonly<{
+  /** The single runtime Machine is known offline (not merely unresolved). */
+  machineOffline: boolean;
+  noTarget: boolean;
+  /** T2 controller availability: `paused` means jobs and alerts wait for the controller; `unknown` claims nothing. */
+  controller: Readonly<{ state: 'available' | 'paused' | 'unknown' }> | null;
+  /** The person's last Deploy press was refused. */
+  refused: boolean;
+  /** The person's last press is held for review. */
+  reviewPending: boolean;
+  /** The newest receipt in the Environment's history. */
+  latest: Pick<DeploymentReceiptHeaderV1, 'id' | 'state'> | null;
+  health: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status'> | null;
+  servingState: ReceiptState | null;
+}>;
+
+export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAttentionFacts): DeploymentEnvironmentAttention | null {
+  if (facts.machineOffline) return { kind: 'machineOffline' };
+  if (facts.noTarget) return { kind: 'noTarget' };
+  if (facts.controller?.state === 'paused') return { kind: 'controllerPaused' };
+  if (facts.refused) return { kind: 'actionRefused' };
+  if (facts.latest?.state === 'failed') return { kind: 'latestFailed', deploymentId: facts.latest.id };
+  if (facts.reviewPending) return { kind: 'approvalWaiting' };
+  if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };
+  if (facts.health?.status === 'down' || facts.health?.status === 'degraded') return { kind: 'unhealthy' };
+  if (facts.servingState === 'running_unverified') return { kind: 'runningUnverified' };
+  return null;
+}
+
+/** Whether a notice drawn by its own row (`kind`) still shows beside the slot: only when nothing above it is shown. */
+export function deploymentAttentionLeaves(shown: Pick<DeploymentEnvironmentAttention, 'kind'> | null, kind: DeploymentEnvironmentAttentionKind): boolean {
+  return shown === null
+    || DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER.indexOf(shown.kind) > DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER.indexOf(kind);
 }

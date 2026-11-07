@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
@@ -18,7 +19,7 @@ import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/Keyboard
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
   PageHeader,
   type PageHeaderMetaFact,
@@ -26,6 +27,13 @@ import {
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useCollectionConditionHeader } from '@/components/ui/lists/collection/useCollectionConditionHeader';
+import {
+  createDeploymentHistoryFilterRegistry,
+  EMPTY_DEPLOYMENT_HISTORY_FILTER,
+  type DeploymentHistoryFilter,
+} from './deploymentHistoryFilter';
 import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
@@ -54,6 +62,7 @@ import {
   deploymentDefinitionLabel,
   deploymentDurationMs,
   deploymentHistoryLead,
+  deploymentOperationLabel,
   deploymentSourceLabel,
   deploymentStateLabel,
   deploymentStateNotice,
@@ -61,6 +70,8 @@ import {
   deploymentDeployAvailability,
   deploymentHealthFact,
   deploymentActionRefusalRemedy,
+  deploymentEnvironmentAttention,
+  deploymentAttentionLeaves,
 } from './deploymentPresentation';
 import {
   useDeploymentPress,
@@ -98,9 +109,14 @@ import {
   useDeploymentHistory,
   useDeploymentReceipt,
   useEnvironmentBackupSummary,
+  useDeploymentEnvironmentDomains,
 } from './useDeploymentReads';
 import { useEnvironmentNavigation, selectEnvironmentNavigationItem } from './environmentNavigation';
 import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
+import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
+import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
+import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
+import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -146,6 +162,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       disposition?: Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'> | null;
       /** The Environment was deleted: the page leaves it. */
       onDeleted?: () => void;
+      /** The Action owner's `deployments.restart` for a service row's ⋯; absent where the page cannot write. */
+      restart?: ReturnType<typeof createDeploymentActions>['restart'] | null;
       /** The Action owner's backup restore; absent where the page cannot write. */
       restore?: ReturnType<typeof createDeploymentActions>['restore'] | null;
       /** The Action owner's Domain add, remove and Check again; absent where the page cannot write. */
@@ -180,7 +198,13 @@ export const DeploymentEnvironmentDetail = React.memo(
       props.environmentId,
       props.demand,
     );
+    // One stable handler for every receipt row; each row binds its own id, so a parent render redraws none of them.
+    const openReceipt = useEventCallback(props.onOpenReceipt);
     const detail = environment.snapshot.value;
+    const projectSource = useProjectSource(props.lifetime ?? null, detail?.environment.projectSourceId ?? null);
+    // The address under the title (lab d1): the first Domain that is not on its way out.
+    const domains = useDeploymentEnvironmentDomains(props.controller, props.environmentId, props.demand);
+    const domainHost = domains.result.items.find((item) => item.domain.state !== 'removing')?.content.hostname ?? null;
     const runtime = detail?.runtimeTargetLink ?? null;
     const activeId = runtime?.activeDeploymentId ?? null;
     const active = useDeploymentReceipt(
@@ -264,6 +288,10 @@ export const DeploymentEnvironmentDetail = React.memo(
     }, [openPlatformLink, canOpenPlatform, onPlatformLinkOpened]);
 
     if (!detail) {
+      // Shaped like the page while the Environment read settles (R5); a failed read is one card with Retry.
+      if (environment.snapshot.status !== 'unavailable') {
+        return <PageLoadingRows testID="project-deployments.environment.loading" header />;
+      }
       return (
         <ItemList testID="project-deployments.environment.state">
           <EnvironmentPageNavigation navigation={navigation} phone={props.phone} onSelect={selectPage} />
@@ -296,6 +324,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const definition = deploymentDefinitionLabel(detail.content);
     const platformName = runtime?.source.kind === 'plugin' ? platformTitle(runtime.source) : null;
     const meta: PageHeaderMetaFact[] = [
+      ...(domainHost ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
       ...(platformName ? [{ key: 'platform', text: platformName }] : []),
       ...machineIds.flatMap((machineId) => {
         const name = knownMachine(machineId);
@@ -387,6 +416,10 @@ export const DeploymentEnvironmentDetail = React.memo(
       const subject = targetLinkId ? links.find((link) => link.id === targetLinkId) ?? null : null;
       const running = subject ? subject.activeDeploymentId !== null : links.some((link) => link.activeDeploymentId !== null);
       const machines = subject ? subject.machines : machineIds;
+      const knownHistory = history.snapshot.status === 'ready' ? history.snapshot.value : null;
+      const neverDeployed = !running && knownHistory !== null && !knownHistory.hasNextPage
+        && knownHistory.coverage !== 'partial' && !knownHistory.items.some(receipt => receipt.operation !== 'teardown'
+          && (!targetLinkId || receipt.targetLinkId === targetLinkId));
       const { onDeleted } = props;
       showDeploymentDispositionSheet({
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
@@ -394,11 +427,19 @@ export const DeploymentEnvironmentDetail = React.memo(
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
         running,
         canRemove: true,
+        ...(detail.targetLinks.find(row => row.targetLink.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId))?.targetLink.source.kind === 'host'
+          ? { reviewVolumes: async (signal: AbortSignal) => {
+              if (neverDeployed) return [];
+              const result = await props.disposition!.teardown({ environmentId: detail.environment.id,
+                ...(targetLinkId ? { targetLinkId } : {}), reason: 'manual', mode: 'preview' }, { signal });
+              if (!result.ok || !('kind' in result) || result.kind !== 'preview') throw new Error('deployment_unavailable');
+              return result.volumes;
+            } } : {}),
         ...(!targetLinkId || running ? { domains: { controller: props.controller, environmentId: detail.environment.id } } : {}),
         // This review is the person's confirmation of the exact Actions, so the front door does not ask again.
         // The teardown owner stops the shown target and removes the Environment in that admitted operation.
-        run: (choice) => choice === 'remove' && (running || (!targetLinkId && detail.environment.runtimeTargetLinkId != null))
-          ? disposition.stopAndRemove(targetLinkId)
+        run: (choice, volumes) => choice === 'remove' && (running || (!targetLinkId && detail.environment.runtimeTargetLinkId != null))
+          ? disposition.stopAndRemove(targetLinkId, undefined, volumes)
           : targetLinkId
             ? disposition.unlink(targetLinkId, choice === 'detach' ? { kind: 'detachKeepRunning' } : { kind: 'afterTeardown' },
               { presentUserConfirmation: { actionId: 'deployments.targets.unlink' } })
@@ -458,7 +499,8 @@ export const DeploymentEnvironmentDetail = React.memo(
     const environmentMenu = (
       <EnvironmentMenu
         onDuplicate={props.onDuplicate ? () => props.onDuplicate?.(detail) : undefined}
-        onOpenHistory={() => selectPage('history')}
+        onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && receipt.state === 'succeeded')
+          ? () => selectPage('history') : undefined}
         onOpenSettings={() => selectPage('settings')}
         deleteTitle={disposition.canDelete ? t('projects.deployments.menuDelete', { name: detail.content.name }) : null}
         onDelete={() => openDisposition(null)}
@@ -474,12 +516,131 @@ export const DeploymentEnvironmentDetail = React.memo(
         live={receipt.id === activeId}
         byYou={receipt.requestedByAccountId === props.accountId}
         phone={props.phone}
-        onPress={() => props.onOpenReceipt(receipt.id)}
+        onOpen={openReceipt}
       />
     );
     const activeReceipt = active.snapshot.value;
     const servingNotice = activeReceipt ? deploymentStateNotice(activeReceipt.deployment.state) : null;
     const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
+    // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
+    const overview = tab === 'overview';
+    const latest = overview ? history.result.items[0] ?? null : null;
+    const attention = deploymentEnvironmentAttention({
+      machineOffline: offline,
+      noTarget: availability.kind === 'noTarget',
+      controller: overview ? detail.controller ?? null : null,
+      refused: outcome?.kind === 'refused',
+      reviewPending,
+      latest,
+      health: overview ? detail.healthAggregate ?? null : null,
+      servingState: overview ? activeReceipt?.deployment.state ?? null : null,
+    });
+    const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
+      void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, whenBusy: 'supersede' }));
+    } : null;
+    const attentionNotice = (() => {
+      switch (attention?.kind) {
+        case undefined:
+          // A just-accepted Deploy says so once, when nothing above it needs saying.
+          return outcome?.kind === 'started' ? (
+            <DeployOutcomeBanner outcome={outcome} pending={reviewPending}
+              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} onOpenReview={review.open} />
+          ) : null;
+        case 'machineOffline':
+          return (
+            <SurfaceFreshnessLine
+              testID="project-deployments.environment.offline"
+              reason={t('projects.deployments.machineOffline', { machine: machineLabel })}
+            />
+          );
+        case 'noTarget':
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.unavailable.noTarget"
+              tone="neutral"
+              title={t('projects.deployments.deployUnavailableTitle')}
+              description={definition
+                ? t('projects.deployments.deployNoTarget')
+                : t('projects.deployments.platformLink.deployNoPlatform')}
+              // The rail's Machine is the controller; deploying needs a runtime link, which the Link a machine sheet makes.
+              // A Machine runs a Compose file, so an Environment without one is offered only a platform.
+              {...(openLink && definition
+                ? { action: { label: t('projects.deployments.linkMachine'), onPress: openLink } }
+                : {})}
+              {...(openPlatform
+                ? definition
+                  ? { secondaryAction: { label: t('projects.deployments.platformLink.usePlatform'), onPress: () => openPlatform() } }
+                  : { action: { label: t('projects.deployments.platformLink.usePlatform'), onPress: () => openPlatform() } }
+                : {})}
+            />
+          );
+        case 'controllerPaused':
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.controllerPaused"
+              tone="neutral"
+              title={t('projects.deployments.overviewStatus.controllerPausedTitle')}
+              description={t('projects.deployments.overviewStatus.controllerPausedBody', {
+                machine: machineName(detail.controller?.machineId ?? detail.environment.controllerMachineId),
+              })}
+            />
+          );
+        case 'actionRefused':
+        case 'approvalWaiting':
+          return outcome ? (
+            <DeployOutcomeBanner outcome={outcome} pending={reviewPending}
+              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} onOpenReview={review.open} />
+          ) : null;
+        case 'latestFailed': {
+          const failedId = attention.deploymentId;
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.latestFailed"
+              tone="danger"
+              title={t('projects.deployments.overviewStatus.latestFailedTitle')}
+              description={latest ? deploymentHistoryLead(latest, latest.failure)?.text : undefined}
+              action={{ label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(failedId) }}
+            />
+          );
+        }
+        case 'deploying': {
+          const runningId = attention.deploymentId;
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.deploying"
+              tone="neutral"
+              title={t('projects.deployments.overviewStatus.deployingTitle')}
+              description={deployWhenFinished ? t('projects.deployments.overviewStatus.deployingBody') : undefined}
+              action={{ label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(runningId) }}
+              {...(deployWhenFinished ? { secondaryAction: {
+                label: t('projects.deployments.overviewStatus.deployWhenFinished'), onPress: deployWhenFinished,
+              } } : {})}
+            />
+          );
+        }
+        case 'unhealthy': {
+          const health = deploymentHealthFact(detail.healthAggregate, activeReceipt?.deployment.state);
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.unhealthy"
+              tone={health.tone === 'danger' ? 'danger' : 'warning'}
+              title={health.value}
+              description={services.length > 0 ? t('projects.deployments.overviewStatus.unhealthyBody') : undefined}
+            />
+          );
+        }
+        case 'runningUnverified':
+          // The receipt's own notice, where the person looks first (lab d1 `unverified`).
+          return servingNotice ? (
+            <AttentionBanner
+              testID="project-deployments.environment.serving.notice.running_unverified"
+              tone={servingNotice.tone}
+              title={deploymentStateLabel('running_unverified')}
+              description={servingNotice.text}
+            />
+          ) : null;
+      }
+    })();
 
     return (
       <View style={styles.page}>
@@ -489,7 +650,8 @@ export const DeploymentEnvironmentDetail = React.memo(
             title={detail.content.name}
             alwaysShowTitle
             leading={
-              <PageHeaderMarkIcon name="hard-drives" />
+              // A Machine runs a Compose file; anything else deploys to a platform (D11: no server glyph there).
+              <PageHeaderMarkIcon name={runtime?.source.kind === 'host' || (!runtime && definition) ? 'hard-drives' : 'cloud'} />
             }
             titleAccessory={
               detail.environment.protection === 'production' ? (
@@ -523,55 +685,13 @@ export const DeploymentEnvironmentDetail = React.memo(
           <ItemGroup surface="none" header="none">
             <EnvironmentPageNavigation navigation={navigation} phone={props.phone} onSelect={selectPage} />
           </ItemGroup>
-          {/* What Deploy can or cannot do now reads under the tabs, as the lab's freshness line does. */}
-          {offline ? (
-            <SurfaceFreshnessLine
-              testID="project-deployments.environment.offline"
-              reason={t('projects.deployments.machineOffline', {
-                machine: machineLabel,
-              })}
-            />
-          ) : null}
-          {availability.kind === 'noTarget' ? (
-            <AttentionBanner
-              testID={`project-deployments.environment.unavailable.${availability.kind}`}
-              tone="neutral"
-              title={t('projects.deployments.deployUnavailableTitle')}
-              description={definition
-                ? t('projects.deployments.deployNoTarget')
-                : t('projects.deployments.platformLink.deployNoPlatform')}
-              // The rail's Machine is the controller; deploying needs a runtime link, which the Link a machine sheet makes.
-              // A Machine runs a Compose file, so an Environment without one is offered only a platform.
-              {...(openLink && definition
-                ? { action: { label: t('projects.deployments.linkMachine'), onPress: openLink } }
-                : {})}
-              {...(openPlatform
-                ? definition
-                  ? { secondaryAction: { label: t('projects.deployments.platformLink.usePlatform'), onPress: () => openPlatform() } }
-                  : { action: { label: t('projects.deployments.platformLink.usePlatform'), onPress: () => openPlatform() } }
-                : {})}
-            />
-          ) : null}
-          {outcome ? (
-            <DeployOutcomeBanner
-              outcome={outcome}
-              pending={reviewPending}
-              machine={runtime?.source.kind === 'plugin' ? null : machineLabel}
-              onOpenReview={review.open}
-            />
-          ) : null}
-          {tab === 'overview' && servingNotice && activeReceipt?.deployment.state === 'running_unverified' ? (
-            // The receipt's own notice, where the person looks first (lab d1 `unverified`).
-            <AttentionBanner
-              testID="project-deployments.environment.serving.notice.running_unverified"
-              tone={servingNotice.tone}
-              title={deploymentStateLabel(activeReceipt.deployment.state)}
-              description={servingNotice.text}
-            />
-          ) : null}
+          {/* One attention slot under the tabs (R3): only the highest-precedence notice; lower ones stay in their rows. */}
+          {attentionNotice}
           {tab === 'overview' ? (
             <>
-              <DeploymentSecretBindingsNotice bindings={detail.content.bindings} scope={props.lifetime?.scope ?? null} />
+              {deploymentAttentionLeaves(attention, 'secretWithdrawn') ? (
+                <DeploymentSecretBindingsNotice bindings={detail.content.bindings} scope={props.lifetime?.scope ?? null} />
+              ) : null}
               {/* The hero (lab d1 `dk-now`): what serves now, how it got there, then the four facts that say how it is.
                   Flat, so its glyph, name and facts start on the section headings' edge rather than a card's inner one. */}
               <ItemGroupDefaultSurfaceProvider value="flat">
@@ -669,7 +789,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     mode="info"
                   />
                 )}
-                {!activeId && props.openPreparation && detail.content.definition.kind === 'repository' && !detail.content.definition.compose && runtime?.source.kind !== 'plugin' ? (
+                {!activeId && props.openPreparation && detail.content.definition.kind === 'repository' && !detail.content.definition.compose && runtime?.source.kind === 'host' ? (
                   <Item testID="project-deployments.environment.prepare"
                     title={t('projects.deployments.copy.prepareTitle')}
                     subtitle={t('projects.deployments.copy.prepareBody')}
@@ -696,6 +816,14 @@ export const DeploymentEnvironmentDetail = React.memo(
                 ) : null}
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
+              {runtime && runtime.members.length > 1 ? (
+                <EnvironmentServersSection
+                  members={runtime.members}
+                  health={detail.healthAggregate ?? null}
+                  machineName={machineName}
+                  onManage={() => openTab('settings', 'servers-build')}
+                />
+              ) : null}
               {services.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.services"
@@ -716,17 +844,19 @@ export const DeploymentEnvironmentDetail = React.memo(
                     />
                   ) : undefined}
                 >
-                  {services.map((service) => (
-                    <Item
-                      key={service.name}
-                      testID={`project-deployments.environment.services.${service.name}`}
-                      title={service.name}
-                      subtitle={service.reference
-                        ? <Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>{service.reference}</Text>
-                        : t('projects.deployments.serviceBuiltHere')}
-                      mode="info"
-                    />
-                  ))}
+                  <EnvironmentServiceRows
+                    services={services}
+                    serverId={props.serverId}
+                    environmentId={props.environmentId}
+                    // Row operations act on one Machine's live rows; several servers keep the rows as facts.
+                    machineId={machineIds.length === 1 && runtime?.source.kind === 'host' ? machineIds[0]! : null}
+                    machineName={machineLabel}
+                    place={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
+                    targetLinkId={runtime?.id ?? null}
+                    restart={machineOnline === false ? null : props.restart ?? null}
+                    review={review}
+                    active={props.demand.mounted && props.demand.visible}
+                  />
                 </ItemGroup>
               ) : null}
               {recentReceipts.length > 0 ? (
@@ -753,43 +883,23 @@ export const DeploymentEnvironmentDetail = React.memo(
                   machine: { serverId: props.serverId, machineId: detail.environment.controllerMachineId } }) as never)} />
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}
-                  subjectName={props.environmentTitle?.(props.environmentId) ?? machineName(triggerSubject.machineId)} />
+                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
+                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: detail.environment.id }}
+                  deploymentSourceName={projectSource.source?.source.name}
+                  controllerMachineId={detail.environment.controllerMachineId} />
               ) : null}
             </>
           ) : tab === 'history' ? (
-            // The History tab names this list already; a section title would repeat it (lab d1 `history`).
-            <ItemGroup
-              testID="project-deployments.environment.history"
-              header="none"
-            >
-              {receipts.map(receiptRow)}
-              {history.hasPreviousPage || history.hasNextPage ? (
-                <View style={styles.paging}>
-                  {history.hasPreviousPage ? (
-                    <SectionActionButton
-                      testID="project-deployments.environment.history.newer"
-                      title={t('projects.deployments.pageNewer')}
-                      icon="caret-left"
-                      onPress={history.previousPage}
-                    />
-                  ) : null}
-                  {history.hasNextPage ? (
-                    <SectionActionButton
-                      testID="project-deployments.environment.history.older"
-                      title={t('projects.deployments.pageOlder')}
-                      icon="caret-right"
-                      onPress={history.nextPage}
-                    />
-                  ) : null}
-                </View>
-              ) : null}
-              <DeploymentTabState
-                result={history.result}
-                testID="project-deployments.environment.history"
-                errorTitle={t('projects.deployments.historyErrorTitle')}
-                emptyTitle={t('projects.deployments.historyEmpty')}
-              />
-            </ItemGroup>
+            <DeploymentHistoryPage
+              controller={props.controller}
+              environmentId={props.environmentId}
+              demand={props.demand}
+              accountId={props.accountId}
+              activeId={activeId}
+              phone={props.phone}
+              onOpen={openReceipt}
+            />
           ) : tab === 'variables' ? (
             <DeploymentVariablesPanel
               draft={bindings}
@@ -813,6 +923,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               editing={props.domainActions ? {
                 actions: props.domainActions,
                 environmentRevision: detail.environment.revision,
+                recordedIngress: detail.content.ingress,
                 targetLink: runtime ? { id: runtime.id, revision: runtime.revision } : null,
                 review,
                 machine: knownMachine(controllerMachineId ?? undefined) ?? t('projects.deployments.aMachine'),
@@ -991,6 +1102,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.s8,
   },
+  historyFilters: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.space.s8,
+    paddingBottom: theme.space.s8,
+  },
+  historyTokens: { flex: 1, minWidth: 0 },
   paging: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -1114,7 +1232,8 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
     live: boolean;
     byYou: boolean;
     phone: boolean;
-    onPress: () => void;
+    /** Stable from the producer; the row binds its own id. */
+    onOpen: (deploymentId: string) => void;
   }>,
 ) {
   const { receipt } = props;
@@ -1155,10 +1274,114 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
         </View>
       )}
       rightElementYields
-      onPress={props.onPress}
+      onPress={() => props.onOpen(receipt.id)}
     />
   );
 });
+
+/**
+ * History (lab d1 `history`, P2): every receipt, newest first, narrowed at the read owner by state, who started it
+ * and operation. The filter button opens the shared condition editor; what is on reads as tokens beneath it. The
+ * tab names the list, so it carries no section title.
+ */
+function DeploymentHistoryPage(
+  props: Readonly<{
+    controller: DeploymentReadControllerV1;
+    environmentId: string;
+    demand: DeploymentReadDemandV1;
+    accountId: string;
+    activeId: string | null;
+    phone: boolean;
+    onOpen: (deploymentId: string) => void;
+  }>,
+) {
+  const [filters, setFilters] = React.useState<DeploymentHistoryFilter>(EMPTY_DEPLOYMENT_HISTORY_FILTER);
+  const history = useDeploymentHistory(props.controller, props.environmentId, props.demand, filters);
+  const registry = React.useMemo(() => createDeploymentHistoryFilterRegistry(props.accountId), [props.accountId]);
+  const bindings = React.useMemo(() => ({ fields: {
+    state: { label: t('projects.deployments.receipt.state'), valueOptions: registry[0]!.conditions!.valueOptions
+      .map(value => ({ value, label: deploymentStateLabel(value as DeploymentReceiptHeaderV1['state']) })) },
+    actorAccountId: { label: t('projects.deployments.receipt.actor'),
+      valueOptions: [{ value: props.accountId, label: t('projects.deployments.receipt.you') }] },
+    operation: { label: t('projects.deployments.receipt.operation'), valueOptions: registry[2]!.conditions!.valueOptions
+      .map(value => ({ value, label: deploymentOperationLabel(value as DeploymentReceiptHeaderV1['operation']) })) },
+  } }), [registry, props.accountId]);
+  const header = useCollectionConditionHeader({
+    testIDPrefix: 'project-deployments.history',
+    registry,
+    bindings,
+    filters,
+    setFilters,
+    baseFilter: EMPTY_DEPLOYMENT_HISTORY_FILTER,
+  });
+  const filtered = header.tokens.length > 0;
+  const receipts = history.result.items;
+  return (
+    <>
+      <View style={styles.historyFilters}>
+        {header.tokenRow ? <View style={styles.historyTokens}>{header.tokenRow}</View> : <View style={styles.historyTokens} />}
+        {header.filterButton}
+      </View>
+      {header.editorOverlay}
+      <ItemGroup
+        testID="project-deployments.environment.history"
+        header="none"
+      >
+        {receipts.map((receipt) => (
+          <DeploymentReceiptRow
+            key={receipt.id}
+            receipt={receipt}
+            live={receipt.id === props.activeId}
+            byYou={receipt.requestedByAccountId === props.accountId}
+            phone={props.phone}
+            onOpen={props.onOpen}
+          />
+        ))}
+        {history.hasPreviousPage || history.hasNextPage ? (
+          <View style={styles.paging}>
+            {history.hasPreviousPage ? (
+              <SectionActionButton
+                testID="project-deployments.environment.history.newer"
+                title={t('projects.deployments.pageNewer')}
+                icon="caret-left"
+                onPress={history.previousPage}
+              />
+            ) : null}
+            {history.hasNextPage ? (
+              <SectionActionButton
+                testID="project-deployments.environment.history.older"
+                title={t('projects.deployments.pageOlder')}
+                icon="caret-right"
+                onPress={history.nextPage}
+              />
+            ) : null}
+          </View>
+        ) : null}
+        {filtered && history.result.status === 'empty' ? (
+          // Nothing matches the narrowing: one line that says so, with Clear, never the empty-history state.
+          <SurfaceStateCard
+            testID="project-deployments.environment.history.filteredEmpty"
+            size="line"
+            kind="empty"
+            title={t('projects.deployments.receipt.noMatches')}
+            action={{
+              label: t('projects.deployments.receipt.clear'),
+              testID: 'project-deployments.environment.history.clear',
+              onPress: () => setFilters(EMPTY_DEPLOYMENT_HISTORY_FILTER),
+            }}
+          />
+        ) : (
+          <DeploymentTabState
+            result={history.result}
+            testID="project-deployments.environment.history"
+            errorTitle={t('projects.deployments.historyErrorTitle')}
+            emptyTitle={t('projects.deployments.historyEmpty')}
+          />
+        )}
+      </ItemGroup>
+    </>
+  );
+}
 
 /** Deploy's chevron (lab d1): Redeploy what is live. "Deploy a commit…" joins it when a commit picker exists. */
 function DeployMoreMenu(
@@ -1224,7 +1447,8 @@ function DeployMoreMenu(
 /** The header's ⋯ (lab d1): the Environment's rare operations, each leading to the page that owns it. */
 function EnvironmentMenu(
   props: Readonly<{
-    onOpenHistory: () => void;
+    /** Roll back… leads to History; absent while nothing earlier served (D11). */
+    onOpenHistory?: () => void;
     onOpenSettings: () => void;
     onDuplicate?: () => void;
     /** "Delete Staging…", last and destructive; null where this viewer cannot delete it. */
@@ -1239,7 +1463,7 @@ function EnvironmentMenu(
       ...(props.onDuplicate ? [{ id: 'duplicate', testID: 'project-deployments.environment.menu.duplicate',
         title: t('projects.deployments.copy.menu'),
         icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} /> }] : []),
-      {
+      ...(props.onOpenHistory ? [{
         id: 'history',
         testID: 'project-deployments.environment.menu.history',
         title: t('projects.deployments.menuRollBack'),
@@ -1251,7 +1475,7 @@ function EnvironmentMenu(
             color={theme.colors.text.secondary}
           />
         ),
-      },
+      }] : []),
       {
         id: 'settings',
         testID: 'project-deployments.environment.menu.settings',
@@ -1274,7 +1498,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [props.deleteTitle, props.onDuplicate, theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [props.deleteTitle, props.onDuplicate, props.onOpenHistory, theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -1286,7 +1510,7 @@ function EnvironmentMenu(
       popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
-        if (id === 'history') props.onOpenHistory();
+        if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();
         else if (id === 'settings') props.onOpenSettings();
         else if (id === 'delete') props.onDelete();
@@ -1301,5 +1525,218 @@ function EnvironmentMenu(
         />
       )}
     />
+  );
+}
+
+/**
+ * Servers (P1 §2, Lab 1 option A): one row per member of a several-server Environment. Healthy rows are quiet; only a
+ * down, degraded or joining member carries a sentence, and how many are down reads in the description.
+ */
+function EnvironmentServersSection(
+  props: Readonly<{
+    members: readonly Readonly<{ machineId: string; state: 'joining' | 'active' }>[];
+    health: DeploymentEnvironmentDetailV1['healthAggregate'] | null;
+    machineName: (machineId: string) => string;
+    onManage: () => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const count = props.members.length;
+  const down = props.health?.down ?? 0;
+  return (
+    <ItemGroup
+      testID="project-deployments.environment.servers"
+      title={t('projects.deployments.overviewStatus.serversTitle')}
+      titleAccessory={<ManagedSectionCount count={count} />}
+      description={down > 0
+        ? t('projects.deployments.overviewStatus.serversDown', { down, count })
+        : t('projects.deployments.overviewStatus.serversDescription', { count })}
+      action={
+        <SectionActionButton
+          testID="project-deployments.environment.servers.manage"
+          title={t('projects.deployments.overviewStatus.manage')}
+          destination
+          onPress={props.onManage}
+        />
+      }
+    >
+      {props.members.map((member) => {
+        const status = props.health?.members.find((row) => row.machineId === member.machineId)?.status;
+        const sentence = member.state === 'joining'
+          ? t('projects.deployments.overviewStatus.joining')
+          : status === 'down' ? t('projects.deployments.healthDown')
+            : status === 'degraded' ? t('projects.deployments.healthDegraded') : undefined;
+        return (
+          <Item
+            key={member.machineId}
+            testID={`project-deployments.environment.servers.${member.machineId}`}
+            icon={<Icon name="hard-drives" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+            title={props.machineName(member.machineId)}
+            subtitle={sentence}
+            mode="info"
+          />
+        );
+      })}
+    </ItemGroup>
+  );
+}
+
+type ServiceRestartState = 'idle' | 'running' | 'approval' | 'failed' | 'unknown' | 'unsupported';
+
+/**
+ * The serving services (P1 §3), each with its ⋯: Restart (`deployments.restart`), Run a command… (the shared sheet,
+ * `machines.services.exec`) and Open on the Machine, whose service page holds its logs. The live rows come from the
+ * Machine's one admitted services list, read only while this section is shown.
+ */
+function EnvironmentServiceRows(
+  props: Readonly<{
+    services: readonly DeploymentService[];
+    serverId: string;
+    environmentId: string;
+    machineId: string | null;
+    machineName: string;
+    place: string;
+    targetLinkId: string | null;
+    restart: ReturnType<typeof createDeploymentActions>['restart'] | null;
+    review: DeploymentReviewHandle;
+    active: boolean;
+  }>,
+) {
+  const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId ?? '',
+    active: props.active && props.machineId !== null });
+  const rows = props.machineId ? list.rows : null;
+  return (
+    <>
+      {props.services.map((service) => (
+        <EnvironmentServiceRow
+          key={service.name}
+          service={service}
+          row={rows?.find((row) => row.environmentId === props.environmentId
+            && row.deployment?.service.composeService === service.name) ?? null}
+          serverId={props.serverId}
+          environmentId={props.environmentId}
+          machineId={props.machineId}
+          machineName={props.machineName}
+          place={props.place}
+          targetLinkId={props.targetLinkId}
+          restart={props.restart}
+          review={props.review}
+          onRestarted={list.refresh}
+        />
+      ))}
+    </>
+  );
+}
+
+function EnvironmentServiceRow(
+  props: Readonly<{
+    service: DeploymentService;
+    row: MachineServiceRowV1 | null;
+    serverId: string;
+    environmentId: string;
+    machineId: string | null;
+    machineName: string;
+    place: string;
+    targetLinkId: string | null;
+    restart: ReturnType<typeof createDeploymentActions>['restart'] | null;
+    review: DeploymentReviewHandle;
+    onRestarted: () => Promise<void>;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
+  const [restartState, setRestartState] = React.useState<ServiceRestartState>('idle');
+  const { row, machineId, service } = props;
+  const generation = row?.generation ?? null;
+  const restartInput = row?.deployment && generation && machineId && props.targetLinkId && row.capabilities.restart ? {
+    environmentId: props.environmentId, deploymentId: row.deployment.deploymentId, targetLinkId: props.targetLinkId,
+    machineId, installationId: row.deployment.installationId, service: row.deployment.service, expectedGeneration: generation,
+  } : null;
+  const { restart, review, onRestarted } = props;
+  const pressRestart = restart && restartInput ? () => {
+    setRestartState('running');
+    void restart(restartInput).then((result) => {
+      setRestartState(result.kind === 'unsupported' ? 'unsupported' : result.kind === 'outcome_unknown' ? 'unknown' : 'idle');
+      if (result.kind === 'observed' || result.kind === 'accepted') void onRestarted();
+    }, (error: unknown) => {
+      const outcome = readDeploymentActionError(error);
+      if (outcome.kind === 'approval') {
+        review.request(outcome.artifactId);
+        setRestartState('approval');
+      } else setRestartState('failed');
+    });
+  } : null;
+  const runCommand = row && generation && machineId ? () => showServiceCommandSheet({
+    serverId: props.serverId, machineId, machineName: props.machineName, serviceName: service.name, place: props.place,
+    target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: generation },
+  }) : null;
+  const openOnMachine = row && machineId ? () => router.push(machinePageHref({
+    door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services', page: 'service', service: row.serviceId },
+  }) as never) : null;
+  const items = React.useMemo((): readonly DropdownMenuItem[] => {
+    const icon = (name: 'arrow-clockwise' | 'terminal' | 'hard-drives') =>
+      <Icon name={name} size={16} color={theme.colors.text.secondary} />;
+    return [
+      ...(pressRestart ? [{ id: 'restart', testID: `project-deployments.environment.services.${service.name}.restart`,
+        title: t('machineServices.control.restart'), icon: icon('arrow-clockwise') }] : []),
+      ...(runCommand ? [{ id: 'command', testID: `project-deployments.environment.services.${service.name}.command`,
+        title: t('machineServices.control.runCommand'), subtitle: t('machineServices.control.runCommandDetail'), icon: icon('terminal') }] : []),
+      ...(openOnMachine ? [{ id: 'machine', testID: `project-deployments.environment.services.${service.name}.machine`,
+        title: t('projects.deployments.overviewStatus.openOnMachine', { machine: props.machineName }),
+        subtitle: t('projects.deployments.overviewStatus.openOnMachineDetail'), icon: icon('hard-drives') }] : []),
+    ];
+    // The menu's rows follow which operations exist, not the callbacks' identities.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(pressRestart), Boolean(runCommand), Boolean(openOnMachine), props.machineName, service.name, theme.colors.text.secondary]);
+  const feedback = restartState === 'idle' || restartState === 'running' ? null : (
+    <SurfaceStateCard
+      testID={`project-deployments.environment.services.${service.name}.restart.${restartState}`}
+      size="line"
+      kind={restartState === 'approval' ? 'loading' : 'warning'}
+      title={restartState === 'approval' ? t('machineServices.control.approval')
+        : restartState === 'unknown' ? t('machineServices.control.unknown', { machine: props.machineName })
+          : restartState === 'unsupported' ? t('machineServices.control.unsupported', { machine: props.machineName, service: service.name })
+            : t('machineServices.control.failed', { service: service.name })}
+    />
+  );
+  return (
+    <>
+      <Item
+        testID={`project-deployments.environment.services.${service.name}`}
+        title={service.name}
+        subtitle={service.reference
+          ? <Text variant="body" style={[styles.factsLine, styles.mono]} numberOfLines={1}>{service.reference}</Text>
+          : t('projects.deployments.serviceBuiltHere')}
+        mode={items.length > 0 ? undefined : 'info'}
+        showChevron={false}
+        rightElement={items.length > 0 ? (
+          <DropdownMenu
+            open={open}
+            onOpenChange={setOpen}
+            items={items}
+            matchTriggerWidth={false}
+            placement="bottom"
+            popoverPhonePresentation="sheet"
+            popoverAccessibilityLabel={t('common.more')}
+            onSelect={(id) => {
+              if (id === 'restart') pressRestart?.();
+              else if (id === 'command') runCommand?.();
+              else if (id === 'machine') openOnMachine?.();
+            }}
+            trigger={({ toggle }) => (
+              <IconButton
+                testID={`project-deployments.environment.services.${service.name}.menu`}
+                iconName="dots-three"
+                variant="plain"
+                accessibilityLabel={t('common.more')}
+                onPress={toggle}
+              />
+            )}
+          />
+        ) : undefined}
+      />
+      {feedback}
+    </>
   );
 }
