@@ -1,4 +1,5 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { asIconName } from '@/components/ui/icons/asIconName';
 import type { TranslationKey } from '@/text';
 import { t } from '@/text';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -143,7 +144,8 @@ function buildGenericInstallableUi(
         enabledWhen: () => true,
         title: projected.display.name,
         subtitle: null,
-        iconName: projected.ui?.iconName ?? 'terminal',
+        // A declared token the app ships no glyph for would draw nothing; the row keeps the generic tool mark.
+        iconName: asIconName(projected.ui?.iconName) ?? 'terminal',
         setupUrl: projected.ui?.setupUrl ?? null,
         groupTitleKey: 'machine.tools.installablesTitle',
         supportsManagedOverrideInstall: false,

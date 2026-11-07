@@ -46,6 +46,7 @@ import {
   type MachineSetupRecipeRow,
   type MachineSetupState,
 } from './useMachineSetup';
+import { describeMachineSetupReason } from './machineSetupReasonText';
 
 type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
 const SETUP_PARAMS = Object.freeze({ id: 'setup' }) as SetupParams;
@@ -488,7 +489,12 @@ function MachineSetupReviewInPlace(
             ? t('machinePresets.setup.tab.reviewStopUsing', { preset: stopping })
             : removing
               ? t('machinePresets.setup.tab.reviewRemove')
-              : t('machinePresets.setup.tab.reviewTitle')
+              // The title names what gets applied, where: the chosen preset, or the Machine's own setup again.
+              : review.intent.kind === 'preset'
+                ? t('machinePresets.setup.tab.reviewApplyPreset', { preset: review.intent.preset.name, machine: props.machineName })
+                : review.intent.kind === 'reapply'
+                  ? t('machinePresets.setup.tab.reviewReapplyTitle', { machine: props.machineName })
+                  : t('machinePresets.setup.tab.reviewTitle')
         }
         description={
           stopping !== null
@@ -580,21 +586,35 @@ function RecipeRow(
         : recipe.status === 'unavailable' || recipe.status === 'unverifiable'
           ? t('machinePresets.setup.tab.recipeUnchecked')
           : null;
+  // A recipe that can't run here says why, in the setup owner's words, and leads to its one next step (Remove…).
+  const blocked = recipe.status === 'unsupported' || recipe.status === 'unavailable' || recipe.status === 'unverifiable';
+  const why = blocked ? describeMachineSetupReason(recipe.reason) : null;
   return (
     <Item
       testID={`machine-setup-recipe:${recipe.key}`}
       icon={
         <Icon
-          name="package"
+          name="wrench"
           size={ICON_SIZE.md}
           color={theme.colors.text.secondary}
         />
       }
       title={props.title ?? t('machinePresets.setup.tab.recipeUnnamed')}
-      subtitle={state ? `${state} · ${source}` : source}
+      subtitle={why ? `${state} · ${source}\n${why}` : state ? `${state} · ${source}` : source}
+      subtitleLines={why ? 0 : undefined}
       showChevron={false}
+      accessoryLayout="adaptive"
       rightElement={
-        !props.editable ? undefined : recipe.status === 'drifted' ? (
+        !props.editable ? undefined : blocked && props.onRemove ? (
+          <RoundButton
+            testID={`machine-setup-recipe-remove:${recipe.key}`}
+            size="small"
+            display="secondary"
+            title={t('machinePresets.setup.tab.removeRecipe')}
+            disabled={props.busy}
+            onPress={props.onRemove}
+          />
+        ) : recipe.status === 'drifted' ? (
           <RoundButton
             testID={`machine-setup-recipe-reapply:${recipe.key}`}
             size="small"
@@ -867,7 +887,7 @@ function ToolsRow(
           color={theme.colors.text.secondary}
         />
       }
-      title={t('machineDetailPage.subPages.tools')}
+      title={t('machinePresets.setup.tab.toolsRow')}
       subtitle={describeMachineToolsSummary(summary)}
       onPress={props.onPress}
     />

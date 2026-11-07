@@ -36,7 +36,7 @@ export const AZ_INSTALLABLE_DESCRIPTOR = InstallableDependencyDescriptorSchema.p
   },
   ui: {
     setupUrl: AZ_CLI_SETUP_URL,
-    iconName: 'cloud-outline',
+    iconName: 'cloud',
   },
   stability: {
     experimental: false,

@@ -380,6 +380,8 @@ export type MachineSetupRecipeRow = Readonly<{
     item: SetupItem;
     title: NonNullable<MachineSetupPlanResultV1['recipeTitles']>[number]['title'] | null;
     status: RecipeStatus | null;
+    /** The owner's typed reason when the state needs one (unsupported, unchecked). */
+    reason: MachineSetupPlanResultV1['support'][number]['reason'] | null;
     /** The Plan source that holds it, so the row can name the preset it came from. */
     sourceIndex: number;
     /** From the Machine's preset (changed through the preset), or added on this Machine (removable here). */
@@ -397,7 +399,7 @@ const sameRef = (a: SetupItem['selection']['ref'], b: SetupItem['selection']['re
  */
 export function readMachineSetupRecipes(
     plan: MachineSetupPlanResultV1 | null,
-    observation: Readonly<{ recipes: readonly Readonly<{ ref: SetupItem['selection']['ref']; status: RecipeStatus }>[] }> | null,
+    observation: Readonly<{ recipes: readonly Readonly<{ ref: SetupItem['selection']['ref']; status: RecipeStatus; reason?: MachineSetupPlanResultV1['support'][number]['reason'] }>[] }> | null,
 ): readonly MachineSetupRecipeRow[] {
     if (!plan) return NO_RECIPES;
     const rows: MachineSetupRecipeRow[] = [];
@@ -406,12 +408,13 @@ export function readMachineSetupRecipes(
             if (item.kind === 'app') return;
             const ref = item.selection.ref;
             if (rows.some(row => sameRef(row.ref, ref))) return;
-            const checked = plan.support.find(entry => entry.sourceIndex === sourceIndex && entry.itemIndex === itemIndex)?.status;
-            const observed = observation?.recipes.find(entry => sameRef(entry.ref, ref))?.status;
+            const checked = plan.support.find(entry => entry.sourceIndex === sourceIndex && entry.itemIndex === itemIndex);
+            const observed = observation?.recipes.find(entry => sameRef(entry.ref, ref));
             rows.push({
                 key: `${sourceIndex}.${itemIndex}`, ref, item,
                 title: plan.recipeTitles?.find(entry => sameRef(entry.ref, ref))?.title ?? null,
-                status: checked ?? observed ?? null,
+                status: checked?.status ?? observed?.status ?? null,
+                reason: (checked ?? observed)?.reason ?? null,
                 sourceIndex,
                 fromPreset: source.kind !== 'direct',
                 removable: source.kind === 'direct',

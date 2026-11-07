@@ -7,6 +7,7 @@ import type { ResolvedInstallableContribution } from './types';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';
 import { readBundledPluginManifest } from './builtIn/locators';
 import {
+    projectPinnedArchiveInstallableDescriptor,
     resolveExecutableManagedDependenciesRegistry,
     selectExecutableManagedDependencies,
 } from './managedDependencyExecutables';
@@ -492,5 +493,23 @@ describe('pinned archive managed dependencies', () => {
             [{ ...contribution, manifestPath: undefined }],
             { platform: 'linux', architecture: 'x64' },
         ).descriptors).toEqual([]);
+    });
+});
+
+describe('managed dependency descriptions (Tools copy)', () => {
+    it('never fills a missing description with plugin and dependency ids', () => {
+        const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(candidate => candidate.pluginId === 'happier.language.markdown');
+        if (!locator) throw new Error('Bundled Markdown language plugin locator is missing');
+        const manifest = readBundledPluginManifest(locator) as Readonly<{ contributes: Readonly<{ managedDependencies: readonly unknown[] }> }>;
+        const definition = manifest.contributes.managedDependencies
+            .map(candidate => PluginManagedDependencyContributionV2Schema.parse(candidate))
+            .find(candidate => candidate.id === 'marksman');
+        const source = definition?.sources.find(candidate => candidate.kind === 'pinnedArchive');
+        if (!definition || !source || source.kind !== 'pinnedArchive') throw new Error('Bundled Marksman archive source is missing');
+        const descriptor = projectPinnedArchiveInstallableDescriptor({ definition, source, pluginId: locator.pluginId,
+            manifestPath: locator.manifestPath, host: { platform: 'linux', architecture: 'x64' } });
+        expect(descriptor?.display.name).toBe('Marksman');
+        expect(descriptor?.description).not.toContain(locator.pluginId);
+        expect(descriptor?.description).not.toContain('/marksman');
     });
 });

@@ -150,8 +150,8 @@ function resolveManagedDependencyProjectionGate(
         platformKey,
         title,
         executable,
-        description: localizedFallback(input.definition.description)
-            ?? `Managed runtime for ${input.pluginId}/${input.definition.id}`,
+        // Tools shows this as the row's line: say what Happier does with it, never the plugin and dependency ids.
+        description: localizedFallback(input.definition.description) ?? 'Installed and kept up to date by Happier.',
     };
 }
 

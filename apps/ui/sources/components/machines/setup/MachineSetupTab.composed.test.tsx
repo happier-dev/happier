@@ -502,6 +502,8 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect(answer('machine-setup-plan-review.administrator')).toContain(t('machinePresets.setup.review.unknown')));
     expect(answer('machine-setup-plan-review.downtime')).toContain(t('machinePresets.setup.review.unknown'));
     expect(mounted.findByTestId('machine-setup-review')).not.toBeNull();
+    // The review names what gets applied and where.
+    expect(mounted.getTextContent()).toContain(t('machinePresets.setup.tab.reviewApplyPreset', { preset: 'Build box', machine: 'devbox' }));
     expect(applied).toEqual([]);
     phase = 'apply';
     await act(async () => pressable('machine-setup-apply')!.props.onPress());

@@ -133,8 +133,6 @@ describe('getInstallablesRegistryEntries', () => {
                 installedPackagesById: {},
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 settingsById: {},
                 diagnostics: [],
@@ -175,7 +173,8 @@ describe('getInstallablesRegistryEntries', () => {
             capabilityId: 'dep.acme-tool',
             title: 'Acme Tool',
             subtitle: 'Tools for Acme workspaces',
-            iconName: 'hammer-outline',
+            // A token the app ships no glyph for still draws a mark: the generic tool glyph.
+            iconName: 'terminal',
             setupUrl: 'https://docs.acme.test/tool/setup',
             installLabels: {
                 install: 'Install',

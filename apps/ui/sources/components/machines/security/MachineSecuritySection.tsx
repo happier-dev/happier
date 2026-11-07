@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { describeMachineSetupReason } from '@/components/machines/setup/machineSetupReasonText';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -66,6 +67,8 @@ export function MachineSecuritySection(
     /** Elevation needs Manage (10-31); a Use grantee reads the facts only. */
     canManage: boolean;
     shared: boolean;
+    /** How the Machine is reached and who shares it, placed after administrator power (P-M2 order). */
+    reach?: React.ReactNode;
   }>,
 ) {
   const router = useRouter();
@@ -132,6 +135,7 @@ export function MachineSecuritySection(
         shared={props.shared}
         onOpenApproval={controls.onOpenApproval}
       />
+      {props.reach}
       <MachineSecurityView
         updates={updates}
         machineName={props.machineName}
@@ -369,29 +373,8 @@ export function describeUpdatesStatus(
   };
 }
 
-const REASON_KEYS = {
-  required_fact_unavailable:
-    'machineDetailPage.security.reasons.requiredFactUnavailable',
-  needs_admin_to_check: 'machineDetailPage.security.reasons.needsAdminToCheck',
-  package_manager_busy: 'machineDetailPage.security.reasons.packageManagerBusy',
-  foreign_effect_conflict:
-    'machineDetailPage.security.reasons.foreignEffectConflict',
-  private_scope_unenforceable: 'machineDetailPage.security.reasons.checkFailed',
-  remove_unsupported: 'machineDetailPage.security.reasons.checkFailed',
-  plan_changed: 'machineDetailPage.security.reasons.planChanged',
-  validation_failed: 'machineDetailPage.security.reasons.checkFailed',
-  native_effect_failed: 'machineDetailPage.security.reasons.checkFailed',
-  admin_access_unavailable:
-    'machineDetailPage.security.reasons.adminAccessUnavailable',
-} as const;
-
-function describeReason(reason: MachineUpdatesModel['reason']): string {
-  return t(
-    reason
-      ? REASON_KEYS[reason]
-      : 'machineDetailPage.security.reasons.checkFailed',
-  );
-}
+/** Setup's own reason copy (one owner with the Setup tab's recipe rows). */
+const describeReason = describeMachineSetupReason;
 
 /** Retained counts stay at full strength; one line says why they may be old. */
 function UpdatesFreshness(
