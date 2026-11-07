@@ -24,6 +24,12 @@ const identityResult = ManagedOidcIdentityProviderV1Schema.parse({ v: 1, owner, 
   kind: 'oidc', config: identityCreateInput.config, secret: { configured: true, health: 'configured' },
 });
 const cases = [
+  { actionId: 'secrets.shared.grants.set' as const, mode: 'revoke-all', input: {
+    resourceId: shared.resourceId, expectedRevision: 2, accountGrants: [], teamGrants: [], groupGrants: [],
+  } },
+  { actionId: 'secrets.shared.grants.set' as const, mode: 'grant-team', input: {
+    resourceId: shared.resourceId, expectedRevision: 2, accountGrants: [], teamGrants: ['recipient-team'], groupGrants: [],
+  } },
   ...(['plain', 'e2ee'] as const).flatMap(mode => {
     const storedContent = mode === 'plain'
       ? { t: 'plain', v: { v: 1, name: shared.displayName, kind: shared.kind, value: secret } }
@@ -46,7 +52,7 @@ const cases = [
 ];
 
 describe('confidential Action review declarations', () => {
-  it.each(cases)('reviews $actionId ($mode) without displaying material or losing executable operands', async ({ actionId, input: rawInput }) => {
+  it.each(cases)('reviews $actionId ($mode) without displaying material or losing executable operands', async ({ actionId, mode, input: rawInput }) => {
     const input = getActionSpec(actionId).inputSchema.parse(rawInput);
     const liveInput = actionId === 'identity.providers.create' || actionId === 'identity.providers.secret.replace'
       || actionId === 'home.settings.set';
@@ -93,7 +99,10 @@ describe('confidential Action review declarations', () => {
     });
     const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account', actionRequestId: 'review-request' } as const;
-    const initial = await executor.execute(actionId, input, context);
+    const invokingContext = actionId === 'secrets.shared.grants.set'
+      ? { ...context, surface: 'cli', authority: 'account_automation', machineId: 'controller' } as const
+      : context;
+    const initial = await executor.execute(actionId, input, invokingContext);
     expect(initial, initial.ok ? undefined : initial.errorCode).toMatchObject(liveInput ? { ok: true } : { ok: true, result: { kind: 'approval_request_created' } });
     const request = ApprovalRequestV2Schema.parse(stored);
     if (liveInput) expect(JSON.stringify(request)).not.toContain(secret);
@@ -101,6 +110,12 @@ describe('confidential Action review declarations', () => {
     const admission = resolveApprovalRequestApproveAdmission(request);
     expect(admission).toMatchObject({ status: 'available' });
     const visiblePaths = admission.presentation.rows.map(row => row.path);
+    if (actionId === 'secrets.shared.grants.set') {
+      for (const path of ['accountGrants', 'teamGrants', 'groupGrants']) {
+        expect(admission.presentation.rows).toContainEqual(expect.objectContaining({ kind: 'value', path,
+          value: path === 'teamGrants' && mode === 'grant-team' ? 'recipient-team' : '[]' }));
+      }
+    }
     expect(visiblePaths).not.toContain('clientSecret');
     expect(visiblePaths).not.toContain('storedContent');
     expect(visiblePaths).not.toContain('keyEnvelopes');

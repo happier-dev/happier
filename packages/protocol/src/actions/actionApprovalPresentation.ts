@@ -493,7 +493,8 @@ export function shouldHideApprovalField(path: string, allPaths: readonly string[
 }
 
 export function formatApprovalFieldValues(values: readonly unknown[], options: Readonly<{ preserveStructuredValues?: boolean }> = {}): string | null {
-  const displayValues = options.preserveStructuredValues ? values : values.flatMap((value) => (Array.isArray(value) ? value : [value]));
+  // An explicit empty list is a supplied clear/revoke operand, not missing context.
+  const displayValues = options.preserveStructuredValues ? values : values.flatMap((value) => (Array.isArray(value) && value.length > 0 ? value : [value]));
   const formatted = displayValues
     .map((value) => {
       // An explicitly blank string is still supplied content (for example an
