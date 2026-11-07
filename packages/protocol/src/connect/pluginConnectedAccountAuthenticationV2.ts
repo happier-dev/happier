@@ -379,7 +379,9 @@ export const PluginConnectedAccountDescriptorContributionV2Schema = lazyZodSchem
   title: PluginLocalizedStringV2Schema,
   description: z.optional(PluginLocalizedStringV2Schema),
   /** Presentation only; omission retains the host's existing service classification. */
-  ui: z.optional(z.strictObject({ category: z.literal('cloud-machines') })),
+  ui: z.optional(z.strictObject({
+    category: z.literal('cloud-machines'),
+  })),
   authentication: PluginConnectedAccountAuthenticationV2Schema,
   usageIdentity: z.optional(z.strictObject({
     providerId: z.optional(ProviderAccountUsageRecordKeyV1Schema.shape.providerId),
@@ -392,3 +394,16 @@ export const PluginConnectedAccountDescriptorContributionV2Schema = lazyZodSchem
 }));
 export type PluginConnectedAccountDescriptorContributionV2 =
   z.infer<typeof PluginConnectedAccountDescriptorContributionV2Schema>;
+
+/** One declaration-owned interpretation for fresh and retained plan observations. */
+export function resolveConnectedAccountPlanLabel(
+  value: string | null | undefined,
+  metadata: PluginConnectedAccountDescriptorContributionV2['metadata'],
+): string | null {
+  const plan = value?.trim();
+  if (!plan) return null;
+  const labels = metadata?.planLabels;
+  if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return plan;
+  const label = labels[plan.toLowerCase()];
+  return typeof label === 'string' && label.trim() ? label.trim() : plan;
+}

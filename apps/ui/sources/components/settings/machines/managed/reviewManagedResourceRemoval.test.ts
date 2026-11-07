@@ -4,7 +4,7 @@ import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines
 import type { IModal } from '@/modal';
 import { t } from '@/text';
 
-import { reviewManagedResourceRemoval } from './reviewManagedResourceRemoval';
+import { describeManagedRemovalResource, reviewManagedResourceRemoval } from './reviewManagedResourceRemoval';
 
 const canceledHetzner: ManagedResourceDependencyV1 = {
   managedId: 'cmw0pjiad007vmc0nsrva3cr7',
@@ -40,6 +40,12 @@ function recordingModal(answer: boolean) {
 }
 
 describe('reviewManagedResourceRemoval', () => {
+  it('describes confirmed absence without a bound resource as nothing created', () => {
+    const resource: ManagedResourceDependencyV1 = { managedId: 'rejected-create', homeId: 'home', custodianAccountId: 'owner',
+      intentRevision: 1, provider: { pluginId: 'happier.machine.boat', localId: 'boat' }, allocation: 'confirmed-absent' };
+    expect(describeManagedRemovalResource(resource)).toContain(t('managedMachines.inspect.notCreated'));
+    expect(describeManagedRemovalResource(resource)).not.toContain(t('managedPower.resourceAbsent'));
+  });
   it('names each resource by its provider and state, never as its raw record (CLOUD27)', async () => {
     const { modal, calls } = recordingModal(true);
     const dispositions = await reviewManagedResourceRemoval(

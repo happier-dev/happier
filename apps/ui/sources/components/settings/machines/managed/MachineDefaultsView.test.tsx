@@ -228,7 +228,7 @@ describe('MachineDefaultsView', () => {
     ).toBe('Delete after 30 min unused');
     expect(
       detailOf(screen, 'settings.machineDefaults.unknown.header'),
-    ).toBe('Until I delete it');
+    ).toBe('Always on');
   });
 
   it('writes a category choice through the canonical preference and resets it to the default', async () => {
@@ -286,7 +286,7 @@ describe('MachineDefaultsView', () => {
     await waitForHomeGovernance(() => expect(screen.findByTestId('settings.machineDefaults.unknown.keep:reset')).toBeNull());
   });
 
-  it('offers explicit Until-delete wake off by default, preserves Stop wake defaults, and excludes destruction', async () => {
+  it('offers the input wake beside Stop defaults only: never beside Always on or destruction (58d §D4)', async () => {
     state.defaults = {
       v: 1,
       unknown: {
@@ -310,26 +310,14 @@ describe('MachineDefaultsView', () => {
     expect(
       screen.findByTestId('settings.machineDefaults.local.keep:wake:switch')?.props.value,
     ).toBe(true);
+    // Always on never stops, so it offers no wake; the stored choice is untouched.
     expect(
       Boolean(screen.findByTestId('settings.machineDefaults.stopped-billed.keep:wake')),
-    ).toBe(true);
-    const retainedWake = screen.findByTestId('settings.machineDefaults.stopped-billed.keep:wake:switch');
-    expect(retainedWake?.props.value).toBe(false);
+    ).toBe(false);
     expect(
       Boolean(screen.findByTestId('settings.machineDefaults.unknown.keep:wake')),
     ).toBe(false);
     expect(state.writes).toEqual([]);
-
-    await act(async () => retainedWake!.props.onValueChange(true));
-    await waitForHomeGovernance(() => expect(state.writes).toHaveLength(1));
-    expect(state.writes).toEqual([{
-      v: 1,
-      unknown: state.defaults.unknown,
-      'stopped-billed': {
-        retention: { kind: 'until-delete' },
-        wakeOnAcceptedMessage: true,
-      },
-    }]);
   });
 
   it('pushes one category page on a phone and edits it there', async () => {

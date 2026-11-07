@@ -9,36 +9,75 @@ installSettingsViewCommonModuleMocks({ text: async () => vi.importActual<typeof 
 afterEach(() => standardCleanup());
 
 describe('retained wake choices', () => {
-    it('offers Until-delete wake on the compact detail and excludes a destruction rule', async () => {
+    it('offers the input wake beside a Stop rule on the compact detail, never beside Always on or a destruction rule', async () => {
         const { ManagedMachinePolicySection } = await import('./ManagedMachineDetailSections');
         const onChange = vi.fn();
-        const keep = { policy: { retention: { kind: 'until-delete' } as const, wakeOnAcceptedMessage: false },
+        const stop = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const;
+        const keep = { policy: { retention: stop, wakeOnAcceptedMessage: false },
             inherited: false, canWake: true, consequence: () => 'Kept', onChange, onReset: vi.fn() };
         const screen = await renderScreen(<ManagedMachinePolicySection description="Keep"
-            keep={keep} compactSummary={{ summary: 'Until deleted', onPress: vi.fn() }} testID="policy" />);
+            keep={keep} compactSummary={{ summary: 'Stop after 1 h unused', onPress: vi.fn() }} testID="policy" />);
         const wake = screen.tree.findAll(node => typeof node.props.onValueChange === 'function')[0];
         expect(wake?.props.value).toBe(false);
         await act(async () => wake?.props.onValueChange(true));
         expect(onChange).toHaveBeenCalledWith({ ...keep.policy, wakeOnAcceptedMessage: true });
-        await screen.update(<ManagedMachinePolicySection description="Keep"
-            keep={{ ...keep, policy: { retention: { kind: 'unused', afterMs: 3_600_000, effect: 'delete' }, wakeOnAcceptedMessage: false } }}
-            compactSummary={{ summary: 'Delete after unused', onPress: vi.fn() }} testID="policy" />);
-        expect(screen.tree.findAll(node => typeof node.props.onValueChange === 'function')).toHaveLength(0);
+        for (const retention of [{ kind: 'until-delete' } as const, { kind: 'unused', afterMs: 3_600_000, effect: 'delete' } as const]) {
+            await screen.update(<ManagedMachinePolicySection description="Keep"
+                keep={{ ...keep, policy: { retention, wakeOnAcceptedMessage: true } }}
+                compactSummary={{ summary: 'Kept', onPress: vi.fn() }} testID="policy" />);
+            expect(screen.tree.findAll(node => typeof node.props.onValueChange === 'function')).toHaveLength(0);
+        }
+        await screen.unmount();
+    });
+
+    it('prices Always on in its row and says what starting it bills, or that input waits when it is off (lab af-config K)', async () => {
+        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
+        const { t } = await import('@/text');
+        const props = { inherited: true, presentation: 'choices' as const, effects: ['stop', 'delete'] as const, canWake: true,
+            consequence: () => 'Kept', onChange: vi.fn(), onReset: vi.fn(), testID: 'keep',
+            costs: { alwaysOn: '$0.12 an hour', starting: 'Starting it bills at $0.12 an hour.' } };
+        const stop = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const;
+        const screen = await renderScreen(<ManagedMachineKeepControl {...props} policy={{ retention: stop, wakeOnAcceptedMessage: true }}
+            defaultPolicy={{ retention: stop, wakeOnAcceptedMessage: true }} />);
+        expect(screen.findByTestId('keep:choice:until-delete:cost')?.props.children).toBe('$0.12 an hour');
+        // The default choice says so beside its name, not in the heading.
+        expect(screen.findByTestId('keep:choice:unused:stop:3600000:default')).not.toBeNull();
+        expect(screen.findByTestId('keep:choice:until-delete:default')).toBeNull();
+        expect(screen.getTextContent()).toContain(t('managedRetention.wake'));
+        expect(screen.findByTestId('keep:wake:help')?.props.children).toBe('Starting it bills at $0.12 an hour.');
+        await screen.update(<ManagedMachineKeepControl {...props} policy={{ retention: stop, wakeOnAcceptedMessage: false }} />);
+        // One rule (R6): the cost line when there is a price, else only that opening never starts it, on or off.
+        expect(screen.findByTestId('keep:wake:help')?.props.children).toBe('Starting it bills at $0.12 an hour.');
+        await screen.update(<ManagedMachineKeepControl {...props} costs={{}} policy={{ retention: stop, wakeOnAcceptedMessage: true }} />);
+        expect(screen.findByTestId('keep:wake:help')?.props.children).toBe(t('managedRetention.wakeHelp'));
+        await screen.update(<ManagedMachineKeepControl {...props} policy={{ retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true }} />);
+        expect(screen.findByTestId('keep:wake:switch')).toBeNull();
         await screen.unmount();
     });
 });
 
 describe('a rule that cannot be edited yet', () => {
-    it('shows the current rule and the reason it is read-only in one row', async () => {
+    it('keeps the choices in place, read-only, with the reason where the consequence goes', async () => {
         const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
-        const screen = await renderScreen(<ManagedMachineKeepControl
-            policy={{ retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }} inherited={false}
-            presentation="choices" capabilitiesAvailable={false} unavailableReason="NLDW3 manages this machine and needs to be online."
-            consequence={() => 'Kept'} onChange={vi.fn()} onReset={vi.fn()} testID="keep" />);
+        const onChange = vi.fn();
+        const policy = { retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const, wakeOnAcceptedMessage: true };
+        const props = { policy, inherited: false, presentation: 'choices' as const, effects: ['stop', 'delete'] as const,
+            canWake: true, deadline: true, consequence: () => 'Kept', onChange, onReset: vi.fn(), testID: 'keep' };
+        const screen = await renderScreen(<ManagedMachineKeepControl {...props} capabilitiesAvailable={false} disabled
+            unavailableReason="NLDW3 manages this machine and needs to be online." />);
         const text = screen.getTextContent();
         expect(text).toContain('NLDW3 manages this machine and needs to be online.');
-        expect(text).not.toContain('no longer available');
-        expect(screen.findByTestId('keep:unavailable')).toBeNull();
+        expect(text).not.toContain('Kept');
+        // The same rows the editable rule draws, so its arrival changes no height: the choices, then wake.
+        const readOnlyChoices = screen.tree.findAll(node => node.props.accessibilityRole === 'radio' && typeof node.props.onPress === 'function')
+            .map(node => [node.props.testID, node.props.disabled]);
+        expect(readOnlyChoices.length).toBeGreaterThan(2);
+        expect(readOnlyChoices.every(([, disabled]) => disabled === true)).toBe(true);
+        expect(screen.findByTestId('keep:wake:switch')).not.toBeNull();
+        await screen.update(<ManagedMachineKeepControl {...props} />);
+        expect(screen.tree.findAll(node => node.props.accessibilityRole === 'radio' && typeof node.props.onPress === 'function')
+            .map(node => node.props.testID)).toEqual(readOnlyChoices.map(([testID]) => testID));
+        expect(onChange).not.toHaveBeenCalled();
         await screen.unmount();
     });
 });
@@ -76,7 +115,7 @@ describe('explicit interrupting deadline', () => {
         await screen.pressByTestIdAsync('keep:deadline:confirm');
         expect(onChange).toHaveBeenCalledTimes(1);
         expect(onChange).toHaveBeenCalledWith({
-            retention: { kind: 'deadline', at, effect: 'delete', interrupts: true }, wakeOnAcceptedMessage: false,
+            retention: { kind: 'deadline', at, effect: 'delete' }, wakeOnAcceptedMessage: false,
         });
         expect(screen.findByTestId('keep:deadline:confirm')).toBeNull();
         await screen.unmount();
@@ -86,7 +125,7 @@ describe('explicit interrupting deadline', () => {
         const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
         const { t } = await import('@/text');
         const screen = await renderScreen(<ManagedMachineKeepControl
-            policy={{ retention: { kind: 'deadline', at, effect: 'stop', interrupts: true }, wakeOnAcceptedMessage: true }}
+            policy={{ retention: { kind: 'deadline', at, effect: 'stop' }, wakeOnAcceptedMessage: true }}
             inherited presentation="choices" effects={['stop', 'delete']} canWake deadline
             consequence={() => 'Stop at the deadline'} onChange={vi.fn()} onReset={vi.fn()} testID="keep" />);
         const consequence = screen.tree.findAll(node => node.props.testID === 'keep:consequence' && node.props.children !== undefined)[0];
@@ -128,7 +167,7 @@ describe('explicit interrupting deadline', () => {
         expect(time?.props.value).toBe('18:30');
         expect(screen.findByTestId('keep:deadline:interrupts')).not.toBeNull();
         await screen.pressByTestIdAsync('keep:deadline:confirm');
-        const expected = { retention: { kind: 'deadline', at, effect: 'delete', interrupts: true }, wakeOnAcceptedMessage: false };
+        const expected = { retention: { kind: 'deadline', at, effect: 'delete' }, wakeOnAcceptedMessage: false };
         expect(onChange.mock.calls.map(([policy]) => policy)).toEqual([expected, expected]);
         expect(screen.findByTestId('keep:deadline:confirm')).toBeNull();
         await screen.unmount();
@@ -152,7 +191,7 @@ describe('explicit interrupting deadline', () => {
             && typeof node.props.onChangeText === 'function')[0]?.props.value).toBe('2099-01-02');
         await screen.pressByTestIdAsync('keep:deadline:confirm');
         // A failed Reset does not turn the authored Delete into a Stop or discard its time.
-        expect(onChange).toHaveBeenCalledWith({ retention: { kind: 'deadline', at, effect: 'delete', interrupts: true },
+        expect(onChange).toHaveBeenCalledWith({ retention: { kind: 'deadline', at, effect: 'delete' },
             wakeOnAcceptedMessage: false });
         expect(screen.findByTestId('keep:deadline:confirm')).not.toBeNull();
         await screen.pressByTestIdAsync('keep:reset');

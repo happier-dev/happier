@@ -3,10 +3,12 @@ import type { JsonValue } from '@happier-dev/protocol';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { AcquireResultV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { bindManagedMachineRoleCredentials, captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdentity, readManagedIssuedNativeFact,
     reconcileManagedMachine, type ManagedMachineReconciliation } from './reconcile.js';
 import { executeManagedMachineAcquire } from './acquire.js';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
+import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal } from './controllerErrors.js';
 
@@ -55,6 +57,41 @@ describe('portable issued native identity', () => {
         const changed = { ...row, nativeOperationRef: { ...resource, value: { id: 'another-paid-handle' } } };
         expect(() => report(changed, { kind: 'bound', resource })).toThrowError(expect.objectContaining({ code: 'resource_mismatch' }));
         expect(() => report(row, { kind: 'pending', nativeOperationRef: resource })).toThrowError(expect.objectContaining({ code: 'resource_mismatch' }));
+    });
+});
+
+describe('definite acquisition refusals', () => {
+    it.each(['provider_unavailable', 'native_trial_auto_stop_required'])('reports %s as no allocation, retaining the real refusal', async code => {
+        const run = boundary();
+        const reports: unknown[] = [];
+        await expect(reconcileManagedMachine({ ...run.input,
+            home: { ...run.input.home, row: async (path, body) => {
+                if (path === 'report') reports.push(body);
+                return run.input.home.row(path, body);
+            } },
+            createNative: () => ({ prepareRoles: async () => {}, invoke: async () => ({ kind: 'rejected', code }) }),
+        })).rejects.toMatchObject({ code });
+        expect(reports).toEqual([expect.objectContaining({ result: { kind: 'rejected', code } })]);
+        expect(run.events).not.toContain('enroll');
+    });
+
+    it('settles a typed pre-effect refusal but keeps an ordinary handler failure uncertain', async () => {
+        for (const definite of [true, false]) {
+            const run = boundary();
+            const reports: unknown[] = [];
+            const error = definite ? new ManagedMachineNativeRefusal('credential_unavailable')
+                : new ManagedMachineControllerError('credential_unavailable');
+            await expect(reconcileManagedMachine({ ...run.input,
+                home: { ...run.input.home, row: async (path, body) => {
+                    if (path === 'report') reports.push(body);
+                    return run.input.home.row(path, body);
+                } },
+                createNative: () => ({ prepareRoles: async () => {}, invoke: async () => { throw error; } }),
+            })).rejects.toBe(error);
+            expect(reports).toEqual([expect.objectContaining({ result: definite
+                ? { kind: 'rejected', code: 'credential_unavailable' }
+                : { kind: 'unknown', recovery: { reference: machine.id, reason: 'native_acquisition_unconfirmed' } } })]);
+        }
     });
 });
 
@@ -177,6 +214,52 @@ describe('portable managed reconciliation', () => {
         })).rejects.toMatchObject({ code: 'native_ssh_host_key_unavailable', details: { kind: 'managedNative', nativeCause } });
         expect(run.read().observation).toMatchObject({ reason: 'bootstrap.native_ssh_host_key_unavailable', nativeCause });
         expect(waits).toBe(0);
+    });
+
+    it.each(['authored', 'reviewed', 'options-unavailable', 'empty-options-schema'] as const)('records configuration facts once at issued acquisition (%s)', async mode => {
+        const launch = { ...machine.launch, choices: { cpu: 4, image: 'ubuntu' } };
+        const launchSchema = { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } },
+            required: ['cpu', 'image'], additionalProperties: false } satisfies PluginJsonSchemaV2;
+        const descriptor = MachineProvisionerContributionV1Schema.parse({ ...provisioner, launchSchema,
+            actions: { ...provisioner.actions, options: 'options' } });
+        const reviewedFacts = { launch, controller: machine.controller, provisioner: descriptor, optionStatus: 'current' as const,
+            billing: descriptor.billing, retentionCapabilities: descriptor.retention, prerequisites: [],
+            retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
+            nativeFacts: { image: { id: 'reviewed', title: 'Reviewed image' } } };
+        const run = boundary({ ...machine, launch, ...(mode === 'reviewed' ? { reviewedFacts } : {}) });
+        let facts: unknown;
+        const result = await reconcileManagedMachine({ ...run.input, provisioner: descriptor,
+            home: { ...run.input.home, reportIssuedAcquireFact: async (row, result, configurationFacts?: unknown) => {
+                facts = configurationFacts;
+                return { ...await run.input.home.reportIssuedAcquireFact(row, result),
+                    ...(configurationFacts ? { reviewedFacts: ManagedConfigurationFactsV1Schema.parse(configurationFacts) } : {}) };
+            } },
+            createNative: (...args) => {
+                const native = run.input.createNative(...args);
+                return { ...native, optionsInputSchema: mode === 'empty-options-schema' ? { type: 'object' as const, properties: {}, additionalProperties: false } : launchSchema, invoke: async (role, body, io) => {
+                    if (role === 'check' || role === 'options') {
+                        run.roles.push(role);
+                        if (role === 'check') return { available: true, prerequisites: [] };
+                        if (mode === 'options-unavailable') throw new Error('private provider error');
+                        expect(body).toEqual(mode === 'empty-options-schema' ? {} : launch.choices);
+                        return { base: { launch: launch.choices, nativeFacts: { image: { id: 'ubuntu', title: 'Ubuntu Linux' } } },
+                            dimensions: { size: [{ id: 'four', title: 'Four cores', assignments: [],
+                                nativeFacts: { size: { id: 'four', title: 'Four cores', cpuCores: 4 } } }], image: [], location: [], network: [], duration: [] } };
+                    }
+                    return native.invoke(role, body, io);
+                } };
+            },
+        });
+        expect(result.allocation).toBe('bound');
+        if (mode === 'reviewed') {
+            expect(facts).toBeUndefined();
+            expect(run.roles).not.toContain('options');
+        } else {
+            expect(facts).toMatchObject({ launch, provisioner: descriptor, optionStatus: mode === 'options-unavailable' ? 'unavailable' : 'current' });
+            if (mode !== 'options-unavailable') expect(facts).toMatchObject({ nativeFacts: { size: { cpuCores: 4 }, image: { title: 'Ubuntu Linux' } } });
+            expect(run.roles.filter(role => role === 'options')).toHaveLength(1);
+            expect(JSON.stringify(facts)).not.toContain('private provider error');
+        }
     });
 
     // Guest execution and Home transport are external to this portable owner.
@@ -361,6 +444,12 @@ describe('portable managed reconciliation', () => {
         expect(run.events[0]).toBe('accepted');
         expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
     });
+    it('retains the submitted and bound identities before allocation and enrollment', async () => {
+        const run = boundary();
+        expect((await reconcileManagedMachine(run.input)).enrolledMachineId).toBe('guest');
+        expect(run.events.filter(event => event !== 'report')).toEqual(['preflight', 'prepare-roles', 'submit', 'report-bound', 'enrollment-context', 'enroll']);
+        expect(run.roles).toEqual(['acquire', 'check', 'bootstrap']);
+    });
     it('retries installation on the bound resource without another allocation', async () => {
         const run = boundary({ ...machine, allocation: 'bound', resource });
         const result = await reconcileManagedMachine({ ...run.input, action: 'machines.managed.bootstrap.retry' });
@@ -368,5 +457,52 @@ describe('portable managed reconciliation', () => {
         expect(result.enrolledMachineId).toBe('guest');
         expect(run.roles).toEqual(['bootstrap']);
         expect(run.events).not.toContain('submit');
+    });
+    it.each(['unsubmitted', 'bound'] as const)('forwards only the retained public SSH keys during %s enrollment', async allocation => {
+        const credentialRef = { kind: 'shared_resource' as const, resourceId: '00000000-0000-4000-8000-000000000001' };
+        const loginPublicKey = 'ssh-ed25519 client-login-public-key';
+        const guestHostPublicKey = 'ssh-ed25519 guest-host-public-key';
+        const run = boundary(allocation === 'bound' ? { ...machine, allocation, resource, bootstrapCredentialRef: credentialRef } : machine);
+        const calls: Array<Readonly<{ role: string; body: unknown }>> = [];
+        let preparations = 0;
+        const result = await reconcileManagedMachine({ ...run.input,
+            action: allocation === 'bound' ? 'machines.managed.bootstrap.retry' : 'machines.managed.acquire',
+            provisioner: MachineProvisionerContributionV1Schema.parse({ ...provisioner,
+                bootstrapTransport: undefined, bootstrapCredential: { kind: 'ssh' } }),
+            createNative: (readMachine, readRevision) => {
+                const native = run.input.createNative(readMachine, readRevision);
+                return { ...native, bootstrapCredentialKind: 'ssh', invoke: async (role, body, io) => {
+                    calls.push({ role, body });
+                    if (role === 'bootstrap') return { kind: 'ssh', address: 'guest.example', user: 'root',
+                        credentialRef, hostKeyEvidence: { hostKey: guestHostPublicKey, fingerprint: 'SHA256:retained-public-fingerprint' } };
+                    return await native.invoke(role, body, io);
+                } };
+            },
+            bootstrap: { ...run.input.bootstrap,
+                enroll: async input => {
+                    expect(input).toMatchObject({ guestHostPublicKey, credentialRevision: 7 });
+                    return await run.input.bootstrap.enroll(input);
+                },
+                prepareCredential: async row => {
+                    preparations++;
+                    return { machine: { ...row, bootstrapCredentialRef: credentialRef }, publicKey: loginPublicKey,
+                        guestHostPublicKey, credentialRevision: 7 };
+                },
+                readCredential: async (row, revision) => {
+                    expect(row.bootstrapCredentialRef).toEqual(credentialRef);
+                    expect(revision).toBe(allocation === 'unsubmitted' ? 7 : undefined);
+                    return { publicKey: loginPublicKey, guestHostPublicKey, revision: 7 };
+                },
+            },
+        });
+        expect(result.enrolledMachineId).toBe('guest');
+        const allocations = calls.filter(call => call.role === 'acquire');
+        expect(allocations).toEqual(allocation === 'unsubmitted' ? [{ role: 'acquire', body: {
+            managedId: machine.id, launch: machine.launch.choices, bootstrapPublicKey: loginPublicKey, guestHostPublicKey,
+        } }] : []);
+        expect(calls.filter(call => call.role === 'bootstrap')).toEqual([{ role: 'bootstrap', body: {
+            resource: resource.value, credentialRef, bootstrapPublicKey: loginPublicKey, guestHostPublicKey,
+        } }]);
+        expect(preparations).toBe(allocation === 'unsubmitted' ? 1 : 0);
     });
 });

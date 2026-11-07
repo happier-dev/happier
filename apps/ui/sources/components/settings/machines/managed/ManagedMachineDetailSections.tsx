@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { keepOffersWake } from './managedRetentionPresentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -20,7 +20,7 @@ import {
 
 /**
  * The sections a created machine adds to its page (lab `m-detail`, plans 50s3/52): the live Keep it policy
- * (policy, not recipe, so it stays editable), the controller, and the recipe it was made with; its current
+ * (policy, not launch, so it stays editable), the controller, and the launch it was made with; its current
  * work is the machine page's own work sections. Each takes facts from its owner; none resolves policy or power itself.
  */
 
@@ -61,7 +61,8 @@ export const ManagedMachinePolicySection = React.memo(
               subtitle={props.compactSummary.summary}
               onPress={props.compactSummary.onPress}
             />
-            {keep.capabilitiesAvailable !== false && !keep.finiteOnly && isMachineRetainedWakeEligibleV1(keep.policy.retention) &&
+            {/* Shown read-only (keep.disabled) until the capability owner answers, so its arrival moves nothing. */}
+            {!keep.finiteOnly && keepOffersWake(keep.policy.retention) &&
             keep.canWake !== false ? (
               <WakeRow keep={keep} testID={`${props.testID}.wake`} />
             ) : null}
@@ -292,7 +293,7 @@ export const ManagedControllerMoveList = React.memo(
   },
 );
 
-export type ManagedRecipeRow = Readonly<{
+export type ManagedLaunchRow = Readonly<{
   id: string;
   title: string;
   subtitle: string;
@@ -300,17 +301,17 @@ export type ManagedRecipeRow = Readonly<{
 }>;
 
 /** What it was made with: immutable after creation (a preset edit changes only new machines). */
-export const ManagedMachineRecipeSection = React.memo(
-  function ManagedMachineRecipeSection(
+export const ManagedMachineLaunchSection = React.memo(
+  function ManagedMachineLaunchSection(
     props: Readonly<{
-      rows: readonly ManagedRecipeRow[];
+      rows: readonly ManagedLaunchRow[];
       testID: string;
     }>,
   ) {
     return (
       <ItemGroup
-        title={t('managedMachines.detail.recipeTitle')}
-        description={t('managedMachines.detail.recipeDescription')}
+        title={t('managedMachines.detail.launchTitle')}
+        description={t('managedMachines.detail.launchDescription')}
       >
         {props.rows.map((row) => (
           <Item

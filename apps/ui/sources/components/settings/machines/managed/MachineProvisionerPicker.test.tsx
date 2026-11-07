@@ -12,9 +12,23 @@ import { createDeferred, renderHook, renderScreen, standardCleanup, reportPopove
 import { createManagedControllerMachineFixture as createControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
+// The JS host the app runs in is a platform boundary. The shared runtime-fetch owner is loaded by the global
+// test setup against the node stub, so a test that is a browser says so here; every other test keeps the real answer.
+const runtimeHost = vi.hoisted(() => ({ current: null as 'browser' | 'native' | null }));
+vi.mock('@/utils/system/runtimeFetch', async (importActual) => {
+  const actual = await importActual<typeof import('@/utils/system/runtimeFetch')>();
+  return { ...actual, readRuntimeFetchHost: (input: RequestInfo | URL) => runtimeHost.current ? Promise.resolve(runtimeHost.current) : actual.readRuntimeFetchHost(input) };
+});
+// Navigation is the app shell's boundary: the picker's ways out are observed as the routes they open.
+const routerPush = vi.hoisted(() => vi.fn());
 installApprovalCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPush } }).module;
+  },
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -26,7 +40,11 @@ beforeEach(async () => {
   await harness.reset();
   resetScopedHomeActionExecutorsForTests();
 });
-afterEach(() => standardCleanup());
+afterEach(async () => {
+  standardCleanup();
+  // Retire the real Home/credential lifetimes before global setup clears their storage backing.
+  await harness.reset();
+});
 
 // The Add route owns page presentation; without it the grouped-menu header intentionally omits page actions.
 function renderPicker(element: React.ReactElement) {
@@ -35,7 +53,217 @@ function renderPicker(element: React.ReactElement) {
   );
 }
 
+// The bundled machine plugins the Account catalog reads. The Account reader loads the bundled set once per
+// test file, so every test installs the same set.
+async function installBundledMachinePlugins() {
+  const { PLUGIN } = await import('../../../../../../../packages/plugins/machine-vercel/src/manifest');
+  const { LIMA_PLUGIN } = await import('../../../../../../../packages/plugins/machine-lima/src/manifest');
+  const { PLUGIN: E2B_PLUGIN } = await import('../../../../../../../packages/plugins/machine-e2b/src/manifest');
+  const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+  const vercel = PluginPortableReleaseManifestV1Schema.parse(PLUGIN.manifest);
+  const lima = PluginPortableReleaseManifestV1Schema.parse(LIMA_PLUGIN.manifest);
+  const e2b = PluginPortableReleaseManifestV1Schema.parse(E2B_PLUGIN.manifest);
+  onTestFinished(installBundledPluginUiDeclarationsForTests([
+    { pluginId: vercel.id, pluginVersion: vercel.version, packageName: '@happier-dev/plugins-machine-vercel', displayName: 'Vercel Machines', entriesById: {}, normalizedManifest: vercel },
+    { pluginId: lima.id, pluginVersion: lima.version, packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima Machines', entriesById: {}, normalizedManifest: lima },
+    { pluginId: e2b.id, pluginVersion: e2b.version, packageName: '@happier-dev/plugins-machine-e2b', displayName: 'E2B Machines', entriesById: {}, normalizedManifest: e2b },
+  ]));
+  return { vercel, lima, e2b };
+}
+
+async function installAppOnlyMachinePlugin() {
+  await installBundledMachinePlugins();
+}
+
+// Controller-only empty/loading states require a settled Account catalog with
+// no offers; a missing Account answer is an availability failure instead.
+async function publishNoAccountProvisioners(serverId: string) {
+  const { vercel, lima, e2b } = await installBundledMachinePlugins();
+  const { PluginAccountAvailabilityIntentReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  onTestFinished(clearPluginAccountAvailabilityProjection);
+  replacePluginAccountAvailabilityProjection({
+    scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
+    snapshot: {
+      availabilityCursor: 1, materializations: [], snapshots: [],
+      intentReads: [vercel, lima, e2b].map(({ id: pluginId }) => ({
+        pluginId,
+        response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+          availabilityCursor: 1, hostingCapability: { enabled: false },
+          intent: { pluginId, desiredVersion: null, enabled: false, offlineUiHosting: 'disabled', writableCollections: [], revision: 'disabled' },
+          release: null, packageAssets: [], uiArtifacts: [],
+        }),
+      })),
+    },
+  });
+}
+
 describe('provisioner picker demand', () => {
+  it.each([
+    { name: 'agent37', load: () => import('../../../../../../../packages/plugins/machine-agent37/src/manifest') },
+    { name: 'maritime', load: () => import('../../../../../../../packages/plugins/machine-maritime/src/manifest') },
+    { name: 'hetzner', load: () => import('../../../../../../../packages/plugins/machine-hetzner/src/manifest') },
+    { name: 'e2b', load: () => import('../../../../../../../packages/plugins/machine-e2b/src/manifest') },
+    { name: 'boat', load: () => import('../../../../../../../packages/plugins/machine-boat/src/manifest') },
+  ])('offers the same $name Account action on the selected controller in a browser', async ({ name, load }) => {
+    const { PLUGIN } = await load();
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN.manifest);
+    await installBundledMachinePlugins();
+    const serverId = await harness.addHome({ name: 'Build', serverUrl: `https://${name}-daemon.example`,
+      serverIdentityId: `srv_${name}_daemon`, accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    storage.setState({ machineListByServerId: { [serverId]: [
+      createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now(), kind: 'persistent' }),
+    ] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const { MachineProvisionersListResultV1Schema } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
+    const result = MachineProvisionersListResultV1Schema.parse({ controller,
+      provisioners: manifest.contributes.machineProvisioners?.map(descriptor => ({
+        contribution: { pluginId: manifest.id, localId: descriptor.id }, occurrenceId: `occurrence-${descriptor.id}`,
+        acquireExecutionTarget: manifest.contributes.actions?.find(action => action.id === descriptor.actions.acquire)?.execution.target,
+        credentialPurposes: [], descriptor,
+      })),
+    });
+    const reply = (actionId: string, requestId: string | undefined, value: unknown) =>
+      ({ body: { v: 1, actionId, requestId, execution: { ok: true, result: value } } });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+      select: value => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return reply('machines.provisioners.list', request.requestId, result); },
+    });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.check', {
+      select: value => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return reply('machines.provisioners.check', request.requestId, { available: true }); },
+    });
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const { useManagedControllerScope } = await import('./useManagedControllerScope');
+    const onSelectProvisioner = vi.fn();
+    function SelectedControllerPicker() {
+      const scope = useManagedControllerScope({ serverId, preferred: controller, testIDPrefix: 'browser-controller' });
+      return <MachineProvisionerPicker serverId={serverId} scope={scope} onSelectProvisioner={onSelectProvisioner} />;
+    }
+    const screen = await renderPicker(<SelectedControllerPicker />);
+    try {
+      const key = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: name });
+      await waitForHomeGovernance(() => {
+        const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
+        expect(cards.find(card => card.id === key), screen.getTextContent()).toMatchObject({ action: { kind: 'choose' } });
+      });
+      const row = `managed-picker.provisioners.cloud.${key}`;
+      await act(async () => screen.pressByTestId(screen.findByTestId(`${row}.action`) ? `${row}.action` : row));
+      expect(onSelectProvisioner).toHaveBeenCalledWith({ serverId, provisioner: key, controller });
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+
+  it('retains Account provisioner descriptors when this Home has no controller', async () => {
+    await installBundledMachinePlugins();
+    const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-empty.example.test',
+      serverIdentityId: 'srv_cloud_empty', accountId: 'owner', currentAccount: true });
+    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-vercel/src/machine/schemas');
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={() => {}} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Vercel'));
+      expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
+      await waitForHomeGovernance(() => {
+        const cards = screen.tree.findAll(node => node.props.testID === 'managed-picker.provisioners')[0]?.props.cards;
+        expect(cards?.find((card: { id: string }) => card.id === buildQualifiedPluginContributionKey(contribution))).toBeDefined();
+      });
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+  it('projects the same browser handoff on a directly opened configurator instead of asking for a hidden account (R8-9)', async () => {
+    await installAppOnlyMachinePlugin();
+    const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-config.example.test',
+      serverIdentityId: 'srv_cloud_config', accountId: 'owner', currentAccount: true });
+    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-e2b/src/machine/schemas');
+    const { ACCOUNT_ID } = await import('../../../../../../../packages/plugins/machine-e2b/src/account');
+    harness.answer(serverId, '/v4/connect/qualified/accounts', {
+      body: { service: { pluginId: contribution.pluginId, localId: ACCOUNT_ID }, accounts: [] },
+    });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const { Modal } = await import('@/modal');
+    const show = vi.spyOn(Modal, 'show');
+    onTestFinished(() => show.mockRestore());
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderPicker(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)} />);
+    try {
+      await waitForHomeGovernance(() => {
+        const model = screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt)[0]?.props;
+        expect(model?.blocker).toMatchObject({ kind: 'needsApp', title: 'Needs the app', action: { label: 'Get the app' } });
+        expect(model?.receipt.primary.disabled).toBe(true);
+        expect(model?.summary.spec).toBe(model?.blocker.title);
+      });
+      const model = screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.blocker)[0]!.props;
+      await act(async () => { model.blocker.action.onPress(); });
+      expect(show).toHaveBeenCalledTimes(1);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+  it('says a browser-blocked provider needs the app and hands off without opening its configurator (58d AF8)', async () => {
+    await installAppOnlyMachinePlugin();
+    const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-web.example.test',
+      serverIdentityId: 'srv_cloud_web', accountId: 'owner', currentAccount: true });
+    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-e2b/src/machine/schemas');
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    // E2B still declares browserReachable: false; Vercel now supports the browser recipe.
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    // This device is a browser: provider calls without a controller would run in the page itself.
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const { Modal } = await import('@/modal');
+    const show = vi.spyOn(Modal, 'show');
+    onTestFinished(() => show.mockRestore());
+    const selected = vi.fn();
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={selected} />);
+    try {
+      const id = buildQualifiedPluginContributionKey(contribution);
+      type Card = { id: string; status: { label: string }; action: { label: string; disabled?: boolean; onPress(): void } };
+      let card: Card | undefined;
+      await waitForHomeGovernance(() => {
+        const cards = screen.tree.findAll(node => node.props.testID === 'managed-picker.provisioners')[0]?.props.cards as Card[] | undefined;
+        card = cards?.find(candidate => candidate.id === id);
+        // The app-only provider stays visible with a handoff instead of prompting for credentials.
+        expect(card?.status.label).toBe('Needs the app');
+      });
+      expect(card?.action.label).toBe('Get the app');
+      expect(card?.action.disabled).not.toBe(true);
+      await act(async () => { card!.action.onPress(); });
+      expect(selected).not.toHaveBeenCalled();
+      expect(show).toHaveBeenCalledTimes(1);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
   it('defaults to a controller whose pushed protocol can execute provisioner Actions instead of a remembered incompatible daemon', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
@@ -44,16 +272,15 @@ describe('provisioner picker demand', () => {
       await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const previousRuntime = getAppliedActiveServerSnapshot();
     const previousAvailable = isAppliedActiveServerRuntimeAvailable();
-    const previousTargets = storage.getState().settings.machineAdministrationTargetsLocalV1;
     onTestFinished(() => publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable));
-    onTestFinished(() => storage.setState(state => ({ settings: { ...state.settings, machineAdministrationTargetsLocalV1: previousTargets } })));
     publishAppliedActiveServerSnapshot({ ...previousRuntime, serverId, serverUrl: 'https://build.example' });
-    storage.setState(state => ({ profileScope: { serverId, accountId: 'owner' }, machineListByServerId: { srv_build: [
+    storage.setState({ profileScope: { serverId, accountId: 'owner' }, machineListByServerId: { srv_build: [
       createControllerMachineFixture({ id: 'old', installationId: 'old-installation', activeAt: Date.now(), operationProtocolCapabilitiesRevision: 3,
         operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1] } } }),
       createControllerMachineFixture({ id: 'ready', installationId: 'ready-installation', activeAt: Date.now() }),
-    ] }, machineListStatusByServerId: { srv_build: 'idle' }, settings: { ...state.settings,
-      machineAdministrationTargetsLocalV1: { 'machines.managed': { serverIdentityId: 'srv_build', machineId: 'old' } } } }));
+    ] }, machineListStatusByServerId: { srv_build: 'idle' } });
+    const { rememberMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
+    rememberMachineAdministrationTargetObservation({ serverId: 'srv_build', accountId: 'owner' }, 'machines.managed', { serverIdentityId: 'srv_build', machineId: 'old' });
     const baselineRequests = harness.requests.length;
     const automatic = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'protocol.scope' }));
     expect(automatic.getCurrent().controller?.machineId).toBe('ready');
@@ -76,71 +303,79 @@ describe('provisioner picker demand', () => {
     await ready.unmount();
   });
 
-  it('prefers already-held installed provisioners and last-used capable controllers without catalog fanout', async () => {
+  // QA-MANAGED2.md's 01:23–01:29 live default and the FIX-REVB2 continuation
+  // instruction require an admitted provisioner controller, beyond protocol support.
+  it('defaults to the admitted provisioner controller 58f6 instead of remembered online 10a7 without reads or renewal renders', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
-    const { PluginMachineMaterializationV1Schema, PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { PluginMachineMaterializationV1Schema, PluginPortableReleaseManifestV1Schema,
+      projectPluginMachineMaterializationReportFactsV1 } = await import('@happier-dev/protocol/plugins/availability');
     const { CRABBOX_PLUGIN } = await import('../../../../../../../packages/plugins/machine-crabbox/src/manifest');
-    const previousTargets = storage.getState().settings.machineAdministrationTargetsLocalV1;
     onTestFinished(clearPluginAccountAvailabilityProjection);
-    onTestFinished(() => storage.setState(state => ({ settings: { ...state.settings, machineAdministrationTargetsLocalV1: previousTargets } })));
     const manifest = PluginPortableReleaseManifestV1Schema.parse(CRABBOX_PLUGIN.manifest);
-    const materializations = ['controller-126', 'controller-127'].map(machineId => PluginMachineMaterializationV1Schema.parse({
+    const materializations = ['controller-126', '58f6'].map(machineId => PluginMachineMaterializationV1Schema.parse({
       serverIdentityId: 'srv_build', machineId, materializationId: `installed-${machineId}`, pluginId: manifest.id,
       version: manifest.version, sourceClass: 'localPath', portableRelease: false, declaredManifest: manifest,
       enabled: true, trustState: 'trusted', observedAt: 1, uiArtifacts: [],
     }));
-    const machines = Array.from({ length: 128 }, (_, index) => createControllerMachineFixture({ id: `controller-${String(index).padStart(3, '0')}`,
+    const machines = Array.from({ length: 128 }, (_, index) => createControllerMachineFixture({ id: index === 0 ? '10a7' : index === 127 ? '58f6' : `controller-${String(index).padStart(3, '0')}`,
       installationId: `installation-${index}`, activeAt: Date.now() }));
     storage.setState({ machineListByServerId: { srv_build: machines }, machineListStatusByServerId: { srv_build: 'idle' } });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+      availabilityCursor: 1, intentReads: [], materializations, snapshots: [],
+    } });
+    const installed = readPluginAccountAvailability(scope).readInstalledPlugins();
+    expect(installed.kind).toBe('available');
+    expect(installed.kind === 'available' && installed.plugins.some(plugin => plugin.installations.some(installation =>
+      installation.declarationState === 'known' && (installation.declaration?.contributes.machineProvisioners?.length ?? 0) > 0))).toBe(true);
+    const { rememberMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
+    rememberMachineAdministrationTargetObservation(scope, 'machines.managed', { serverIdentityId: 'srv_build', machineId: '10a7' });
     let renders = 0;
     const hook = await renderHook(() => {
       renders += 1;
       return useManagedControllerScope({ serverId, testIDPrefix: 'capable.scope' });
     });
-    expect(hook.getCurrent().controller?.machineId).toBe('controller-000');
+    expect(hook.getCurrent().controller?.machineId).toBe('58f6');
     const baselineRequests = harness.requests.length;
-    await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-      availabilityCursor: 1, intentReads: [], materializations, snapshots: [],
-    } }));
-    const installed = readPluginAccountAvailability(scope).readInstalledPlugins();
-    expect(installed.kind).toBe('available');
-    expect(installed.kind === 'available' && installed.plugins.some(plugin => plugin.installations.some(installation =>
-      installation.declarationState === 'known' && (installation.declaration?.contributes.machineProvisioners?.length ?? 0) > 0))).toBe(true);
-    await waitForHomeGovernance(() => expect(hook.getCurrent().controller?.machineId).toBe('controller-126'));
     const baselineRenders = renders;
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
       availabilityCursor: 2, intentReads: [], materializations, snapshots: [],
     } }));
     expect(renders - baselineRenders).toBe(0);
-    await act(async () => storage.setState(state => ({ settings: { ...state.settings,
-      machineAdministrationTargetsLocalV1: { 'machines.managed': { serverIdentityId: 'srv_build', machineId: 'controller-127' } } } })));
-    // Re-entering Create one restores the last used controller within the capable set.
+    await act(async () => rememberMachineAdministrationTargetObservation(scope, 'machines.managed', { serverIdentityId: 'srv_build', machineId: 'controller-126' }));
+    // Re-entering Create one restores a last-used controller that supports provisioners.
     await hook.unmount();
     const restored = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'capable.scope' }));
-    expect(restored.getCurrent().controller?.machineId).toBe('controller-127');
+    expect(restored.getCurrent().controller?.machineId).toBe('controller-126');
     expect(harness.requests.length - baselineRequests).toBe(0);
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-      availabilityCursor: 3, intentReads: [], materializations: materializations.map(row => row.machineId === 'controller-127' ? { ...row, enabled: false } : row), snapshots: [],
+      availabilityCursor: 3, intentReads: [], materializations: materializations.map(row => row.machineId === 'controller-126' ? { ...row, enabled: false } : row), snapshots: [],
     } }));
-    expect(restored.getCurrent().controller?.machineId).toBe('controller-126');
+    expect(restored.getCurrent().controller?.machineId).toBe('58f6');
+    // A settled source-bound declaration failure is unknown support, never a
+    // negative capability fact. The real report strips the inline manifest.
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-      availabilityCursor: 4, intentReads: [], materializations: [], snapshots: [],
+      availabilityCursor: 4, intentReads: [], materializations: materializations.map(row =>
+        projectPluginMachineMaterializationReportFactsV1(row.machineId === 'controller-126' ? { ...row, enabled: false } : row)), snapshots: [],
+    } }));
+    expect(restored.getCurrent().controller?.machineId).toBe('58f6');
+    await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+      availabilityCursor: 5, intentReads: [], materializations: [], snapshots: [],
     } }));
     expect(restored.getCurrent().controller).toBeUndefined();
     expect(harness.requests.length - baselineRequests).toBe(0);
     await restored.unmount();
     const explicit = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'capable.scope',
-      preferred: { machineId: 'controller-000', installationId: 'installation-0' } }));
-    expect(explicit.getCurrent().controller).toEqual({ machineId: 'controller-000', installationId: 'installation-0' });
+      preferred: { machineId: '10a7', installationId: 'installation-0' } }));
+    expect(explicit.getCurrent().controller).toEqual({ machineId: '10a7', installationId: 'installation-0' });
     await explicit.unmount();
   });
 
-  it('keeps confirmed-absent resources disabled in their original positions as inventory arrives and stays mounted when every resource becomes absent', () => withPopoverWebGlobals(async () => {
+  it('orders controllers by availability and removes confirmed-absent resources without redirecting the retained draft', () => withPopoverWebGlobals(async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
@@ -171,17 +406,13 @@ describe('provisioner picker demand', () => {
     await screen.pressByTestIdAsync('absent.scope.chip');
     await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
     await waitForHomeGovernance(() => expect(harness.requestsFor(listPath)).toHaveLength(1));
-    const disabled = (id: string) => {
-      const row = screen.findHostByTestId(`absent.scope.picker-option:${id}`);
-      return row?.props.disabled ?? row?.props.accessibilityState?.disabled ?? row?.props['aria-disabled'];
-    };
     const orderedOptions = () => screen.root.findAll(node => typeof node.type === 'string'
       && /^absent\.scope\.picker-option:/.test(String(node.props.testID ?? ''))).map(node => node.props.testID);
     const initialOrder = orderedOptions();
-    expect(initialOrder).toEqual(['absent.scope.picker-option:ghost', 'absent.scope.picker-option:live']);
+    expect(initialOrder).toEqual(['absent.scope.picker-option:live', 'absent.scope.picker-option:ghost']);
     await act(async () => firstRead.resolve());
-    await waitForHomeGovernance(() => expect(disabled('ghost')).toBe(true));
-    expect(orderedOptions()).toEqual(initialOrder);
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('absent.scope.picker-option:ghost')).toBeNull());
+    expect(orderedOptions()).toEqual(['absent.scope.picker-option:live']);
     expect(screen.findHostByTestId('absent.scope.picker-option:live')).not.toBeNull();
     expect(current?.controller).toEqual({ machineId: 'ghost', installationId: 'ghost-installation' });
     expect(current?.selection?.resolveExecutionTarget()).toBeNull();
@@ -189,11 +420,10 @@ describe('provisioner picker demand', () => {
     expect(onSelect).not.toHaveBeenCalled();
     managedMachines = [absent, { ...absent, id: 'ended-live-resource', enrolledMachineId: 'live' }];
     await act(async () => publishHomeAccountChange(serverId));
-    await waitForHomeGovernance(() => expect(disabled('live')).toBe(true));
-    expect(disabled('ghost')).toBe(true);
-    expect(screen.findHostByTestId('absent.scope.picker-list')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('absent.scope.picker-option:live')).toBeNull());
+    expect(screen.findHostByTestId('absent.scope.chip')).not.toBeNull();
     expect(harness.requestsFor(listPath)).toHaveLength(2);
-    expect(orderedOptions()).toEqual(initialOrder);
+    expect(orderedOptions()).toEqual([]);
     expect(current?.controller).toEqual({ machineId: 'ghost', installationId: 'ghost-installation' });
     await screen.unmount();
   }));
@@ -216,10 +446,10 @@ describe('provisioner picker demand', () => {
     await screen.pressByTestIdAsync('managed-picker.controller.chip');
     await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
     await waitForHomeGovernance(() => {
-      const row = screen.findHostByTestId('managed-picker.controller.picker-option:ghost');
-      expect(row?.props.disabled ?? row?.props.accessibilityState?.disabled ?? row?.props['aria-disabled']).toBe(true);
+      expect(screen.findHostByTestId('managed-picker.controller.picker-option:ghost')).toBeNull();
+      expect(harness.requestsFor(listPath)).toHaveLength(1);
     });
-    expect(screen.findHostByTestId('managed-picker.controller.picker-list')).not.toBeNull();
+    expect(screen.findHostByTestId('managed-picker.controller.chip')).not.toBeNull();
     expect(screen.findHostByTestId('managed-picker.no-controller')).toBeNull();
     expect(harness.requestsFor(listPath)).toHaveLength(1);
     await screen.unmount();
@@ -254,10 +484,10 @@ describe('provisioner picker demand', () => {
     expect(hook.getCurrent().managed.selection!.pickerRows).toBe(originalRows);
     await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: 0 }, []));
     expect(hook.getCurrent().managed.controller?.machineId).toBe('controller-001');
-    expect(hook.getCurrent().managed.selection!.pickerRows[0]!.candidate.availability).toBe('offline');
-    expect(hook.getCurrent().managed.selection!.pickerRows[1]).toBe(originalRows[1]);
+    expect(hook.getCurrent().managed.selection!.pickerRows.at(-1)!.candidate.availability).toBe('offline');
     expect(hook.getCurrent().administration.pickerRows[0]!.candidate.availability).toBe('offline');
     expect(hook.getCurrent().administration.pickerRows[1]).toBe(originalAdministrationRows[1]);
+    expect(hook.getCurrent().managed.selection!.pickerRows[0]).toBe(originalRows[1]);
     expect(harness.requests.length - baselineRequests).toBe(0);
     await hook.unmount();
   });
@@ -269,7 +499,22 @@ describe('provisioner picker demand', () => {
     const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
     const { t } = await import('@/text');
     const { formatLastSeen } = await import('@/utils/sessions/sessionUtils');
-    const machines = ['a', 'z'].map(id => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now() }));
+    const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+    const asleep = ManagedMachineV1Schema.parse({ id: 'sleeping-resource', homeId: 'srv_build', custodianAccountId: 'owner', enrolledMachineId: 'sleeping',
+      launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Studio', choices: {} },
+      controller: { machineId: 'z', installationId: 'z-installation' }, allocation: 'bound', creationState: 'active',
+      resource: { contributionRef: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, value: { nativeId: 'studio' } },
+      desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+      observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } });
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    let managedMachines = [asleep];
+    harness.answer(serverId, 'POST /v1/machines/managed/actions/list', { select: () => ({ body: { machines: managedMachines } }) });
+    const machines = [
+      ...['a', 'z'].map(id => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now() })),
+      createControllerMachineFixture({ id: 'b', installationId: 'b-installation', active: false, activeAt: 100 }),
+      createControllerMachineFixture({ id: 'd', installationId: 'd-installation', active: false, activeAt: 200 }),
+      createControllerMachineFixture({ id: 'sleeping', installationId: 'sleeping-installation', active: false, activeAt: 50 }),
+    ];
     storage.setState({ machineListByServerId: { srv_build: machines }, machineListStatusByServerId: { srv_build: 'idle' } });
     function ControllerPicker() { return useManagedControllerScope({ serverId, testIDPrefix: 'presence.scope' }).chip; }
     const screen = await renderScreen(<ControllerPicker />);
@@ -277,11 +522,28 @@ describe('provisioner picker demand', () => {
     await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
     const orderedOptions = () => screen.root.findAll(node => typeof node.type === 'string'
       && /^presence\.scope\.picker-option:/.test(String(node.props.testID ?? ''))).map(node => node.props.testID);
-    expect(orderedOptions()).toEqual(['presence.scope.picker-option:a', 'presence.scope.picker-option:z']);
+    await waitForHomeGovernance(() => {
+      const sleeping = screen.findHostByTestId('presence.scope.picker-option:sleeping');
+      expect(sleeping?.props.accessibilityLabel ?? sleeping?.props['aria-label']).toContain(t('managedPower.asleep'));
+    });
+    expect(orderedOptions()).toEqual(['a', 'z', 'sleeping', 'd', 'b'].map(id => `presence.scope.picker-option:${id}`));
     await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: 0 }, []));
-    expect(orderedOptions()).toEqual(['presence.scope.picker-option:a', 'presence.scope.picker-option:z']);
+    expect(orderedOptions()).toEqual(['z', 'sleeping', 'd', 'b', 'a'].map(id => `presence.scope.picker-option:${id}`));
     const row = screen.findHostByTestId('presence.scope.picker-option:a');
     expect(row?.props.accessibilityLabel ?? row?.props['aria-label']).toContain(t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(0) }));
+    managedMachines = [{ ...asleep, wakeOnAcceptedMessage: false }];
+    await act(async () => publishHomeAccountChange(serverId));
+    await waitForHomeGovernance(() => {
+      expect(orderedOptions()).toEqual(['z', 'sleeping', 'd', 'b', 'a'].map(id => `presence.scope.picker-option:${id}`));
+      const sleeping = screen.findHostByTestId('presence.scope.picker-option:sleeping');
+      expect(sleeping?.props.accessibilityLabel ?? sleeping?.props['aria-label']).toContain(t('managedPower.asleep'));
+    });
+    managedMachines = [{ ...asleep, wakeOnAcceptedMessage: false,
+      observation: { observedAt: 11, availability: 'present', power: 'running', storage: 'retained' } }];
+    await act(async () => publishHomeAccountChange(serverId));
+    await waitForHomeGovernance(() => expect(orderedOptions()).toEqual(
+      ['z', 'd', 'b', 'sleeping', 'a'].map(id => `presence.scope.picker-option:${id}`),
+    ));
     await screen.unmount();
   }));
 
@@ -335,22 +597,33 @@ describe('provisioner picker demand', () => {
     expect(scope.getCurrent().selection?.resolveExecutionTarget()).toBeNull();
     await scope.unmount();
   });
-  it('starts the next Add visit on the controller the person last picked', async () => {
+  it('PAR-R1 starts the next Add visit from its local observation without changing settings or a deliberate default', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const online = (id: string) => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), metadata: null });
     await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'), online('z')] }, machineListStatusByServerId: { srv_build: 'idle' } }));
-    // The remembered pick is a device-local Account setting, written through the sync runtime like every other target memory.
+    // A navigation observation never becomes a deliberate default, even when Settings writes are refused.
     const syncRuntime = await import('@/sync/syncEngine');
     (createRequire(import.meta.url)('../../../../sync/sync.ts') as typeof import('@/sync/sync')).registerSyncRuntime(syncRuntime);
     const previousSettings = storage.getState().settings;
     onTestFinished(() => storage.setState({ settings: previousSettings, settingsScope: null }));
     await act(async () => storage.setState({ settingsScope: { serverId, accountId: 'owner' } }));
+    await harness.setActionPolicy(serverId, 'settings.set', 'ui', 'off');
+    const { readMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
+    const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+    const device = getPersistenceStorage();
+    const settingsBytes = () => device.getAllKeys().filter(key => key.includes('settings'))
+      .map(key => [key, device.getString(key)] as const).sort(([a], [b]) => a.localeCompare(b));
     const first = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     expect(first.getCurrent().controller?.machineId).toBe('a');
+    const settingsBeforePick = storage.getState().settings;
+    const beforePick = settingsBytes();
     const target = first.getCurrent().selection?.pickerRows.find(row => row.candidate.target.machineId === 'z')?.candidate.target;
     await act(async () => first.getCurrent().selection?.selectTarget(target!));
+    expect(readMachineAdministrationTargetObservation({ serverId: 'srv_build', accountId: 'owner' }, 'machines.managed')).toEqual(target);
+    expect(storage.getState().settings).toBe(settingsBeforePick);
+    expect(settingsBytes()).toEqual(beforePick);
     await first.unmount();
     const second = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     expect(second.getCurrent().controller?.machineId).toBe('z');
@@ -429,10 +702,14 @@ describe('provisioner picker demand', () => {
     { location: 'unknown', credentialFailure: false },
     { location: 'cloud', credentialFailure: true },
     { location: 'cloud', credentialFailure: false, checkFailure: true },
+    { location: 'local', credentialFailure: false, caveat: true },
+    { location: 'local', credentialFailure: false, nativeStatus: true },
   ] as const)(
     'retains completed provider status without acquiring ($location, credential failure=$credentialFailure)',
     async ({ location, credentialFailure, ...rest }) => {
       const checkFailure = 'checkFailure' in rest;
+      const caveat = 'caveat' in rest;
+      const nativeStatus = 'nativeStatus' in rest;
       const serverId = await harness.addHome({
         name: 'Build',
         serverUrl: 'https://build.example',
@@ -459,6 +736,7 @@ describe('provisioner picker demand', () => {
         contribution,
         occurrenceId: 'occurrence',
         ...(credentialFailure ? { credentialPurposes: [{ purpose: { consumer: contribution, purpose: 'compute' }, options: [] }] } : {}),
+        acquireExecutionTarget: 'daemon' as const,
         descriptor: {
           id: 'native',
           title: 'Custom compute',
@@ -505,11 +783,14 @@ describe('provisioner picker demand', () => {
         ['machines.provisioners.list', { controller: { machineId: 'controller', installationId: 'installation' }, provisioners: [provisioner] }],
         [
           'machines.provisioners.check',
-          {
-            available: false,
-            code: 'license_required',
-            status: { key: 'native.license', fallback: 'License required' },
-          },
+          caveat
+            ? { available: true, code: 'home_not_guest_reachable', status: { key: 'native.home', fallback: 'This Home only offers a connection on the controller.' } }
+            : nativeStatus ? { available: true, code: 'native_cache_enabled', status: { key: 'native.cache', fallback: 'Image cache enabled' } }
+            : {
+              available: false,
+              code: 'license_required',
+              status: { key: 'native.license', fallback: 'License required' },
+            },
         ],
       ] as const) {
         harness.answer(serverId, `/v1/actions/${actionId}`, {
@@ -542,7 +823,7 @@ describe('provisioner picker demand', () => {
           onSelectProvisioner={onSelectProvisioner}
         />,
       );
-      const row = `managed-picker.provisioners.cloud.${buildQualifiedPluginContributionKey(contribution)}`;
+      const row = `managed-picker.provisioners.${location === 'local' ? 'local' : 'cloud'}.${buildQualifiedPluginContributionKey(contribution)}`;
       await waitForHomeGovernance(() =>
         expect(
           screen.findByTestId(`${row}.action`) ??
@@ -556,6 +837,34 @@ describe('provisioner picker demand', () => {
         const unreadable = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
         expect(unreadable[0].status.label).toBe('');
         expect(unreadable[0].action.disabled).toBe(true);
+        await screen.unmount();
+        return;
+      }
+      if (caveat) {
+        // The Home's caveat is the page's one line; the card only asks for setup and is no longer ready.
+        // It says the outcome in the app's words (never the daemon's "controller"/"endpoint" sentence) and names the fix.
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.caveat')).not.toBeNull());
+        expect(screen.getTextContent().split(t('managedMachines.add.homeUnreachable')).length - 1).toBe(1);
+        expect(screen.getTextContent()).not.toContain('This Home only offers a connection on the controller.');
+        const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
+        expect(cards[0].status).toEqual({ tone: 'attention', label: t('managedMachines.add.status.needsSetup') });
+        routerPush.mockClear();
+        await act(async () => screen.pressByTestId('managed-picker.caveat-action'));
+        expect(routerPush).toHaveBeenCalledWith(`/settings/home/${serverId}/reach`);
+        await screen.unmount();
+        return;
+      }
+      if (nativeStatus) {
+        await waitForHomeGovernance(() => {
+          const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
+          expect(cards[0].status.tone).not.toBe('none');
+        });
+        const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
+        expect(cards[0].status).toEqual({ tone: 'ready', label: 'Image cache enabled' });
+        expect(screen.findByTestId('managed-picker.caveat')).toBeNull();
+        await screen.pressByTestIdAsync(screen.findByTestId(`${row}.action`) ? `${row}.action` : row);
+        expect(onSelectProvisioner).toHaveBeenCalledWith(expect.objectContaining({ provisioner: buildQualifiedPluginContributionKey(contribution) }));
+        expect(harness.requests.some(request => request.path.includes('machines.managed.acquire'))).toBe(false);
         await screen.unmount();
         return;
       }
@@ -582,6 +891,8 @@ describe('provisioner picker demand', () => {
       if (credentialFailure) {
         const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
         expect(cards[0].status.label).toBe(t('managedMachines.add.status.noAccount'));
+        // An optional service nobody connected yet does not need the person: no amber dot (lab m-add).
+        expect(cards[0].status.tone).toBe('none');
         expect(cards[0].action.label).toBe(t('managedMachines.add.action.connect'));
       }
       expect(screen.findByTestId('managed-picker.unavailable')?.props.diagnosticCode).toBeUndefined();
@@ -608,32 +919,37 @@ describe('provisioner picker demand', () => {
   async function arrangeCatalog(hold: Readonly<{
     list?: (read: number, machineId: string) => boolean;
     check?: (read: number, localId: string) => boolean;
-    /** Declared `[localId, title, kindTitle]` per provisioner; defaults to Alpha and Beta VMs. */
-    declared?: readonly (readonly [string, string, string])[];
+    /** Declared `[localId, title, kindTitle, location?, acquire target?]` per provisioner; defaults to Alpha and Beta local VMs. */
+    declared?: readonly (readonly [string, string, string, ('local' | 'cloud')?, ('account' | 'daemon')?])[];
+    /** A Home of its own, so no earlier controller choice carries over. */
+    home?: string;
   }>) {
     const serverId = await harness.addHome({
-      name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
+      name: 'Build', serverUrl: `https://${hold.home ?? 'build'}.example`, serverIdentityId: `srv_${hold.home ?? 'build'}`, accountId: 'owner', currentAccount: true,
     });
+    const descriptor = (localId: string, title: string, kind = 'VM', location: 'local' | 'cloud' = 'local', acquire: 'account' | 'daemon' = 'daemon') => ({
+      contribution: { pluginId: 'custom.compute', localId }, occurrenceId: `occurrence-${localId}`, credentialPurposes: [],
+      acquireExecutionTarget: acquire,
+      descriptor: {
+        id: localId, title, icon: 'server', resourceKind: 'native-compute-vm', schemaVersion: 1,
+        kindTitle: { key: `${localId}.kind`, fallback: kind }, description: { key: `${localId}.description`, fallback: `${title} guest.` },
+        launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+        resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
+        // These Account-created fixture guests support calls from the browser itself.
+        ...(acquire === 'account' ? { browserReachable: true } : {}),
+        platforms: ['linux'], prerequisites: [], billing: { location, stoppedBilling: 'not-billed' },
+        retention: { supportedIntents: ['delete'] },
+        actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+      },
+    });
+    const provisioners = (hold.declared ?? [['alpha', 'Alpha', 'VM'], ['beta', 'Beta', 'VM']] as const)
+      .map(([localId, title, kind, location, acquire]) => descriptor(localId, title, kind, location, acquire));
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({
       machineListByServerId: { [serverId]: ['controller', 'other'].map(id =>
         createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), kind: 'persistent' })) },
       machineListStatusByServerId: { [serverId]: 'idle' },
     });
-    const descriptor = (localId: string, title: string, kind = 'VM') => ({
-      contribution: { pluginId: 'custom.compute', localId }, occurrenceId: `occurrence-${localId}`, acquireExecutionTarget: 'daemon' as const, credentialPurposes: [],
-      descriptor: {
-        id: localId, title, icon: 'server', resourceKind: 'native-compute-vm', schemaVersion: 1,
-        kindTitle: { key: `${localId}.kind`, fallback: kind }, description: { key: `${localId}.description`, fallback: `${title} guest.` },
-        launchSchema: { type: 'object', properties: {}, additionalProperties: false },
-        resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
-        platforms: ['linux'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
-        retention: { supportedIntents: ['delete'] },
-        actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
-      },
-    });
-    const provisioners = (hold.declared ?? [['alpha', 'Alpha', 'VM'], ['beta', 'Beta', 'VM']] as const)
-      .map(([localId, title, kind]) => descriptor(localId, title, kind));
     const reads = { list: 0, check: new Map<string, number>() };
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -656,11 +972,77 @@ describe('provisioner picker demand', () => {
         if (hold.check?.(read, localId)) await gate;
         return reply('machines.provisioners.check', request.requestId, localId === 'alpha'
           ? { ok: true, result: { available: false, code: 'license_required', status: { key: 'alpha.license', fallback: 'License required' } } }
-          : { ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' });
+          : localId === 'beta' ? { ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' }
+          : { ok: true, result: { available: true } });
       },
     });
     return { serverId, reads, release, provisioners };
   }
+
+  it('names the managing computer only beside computer-run provisioners, and folds local VMs into one row until a computer is online', async () => {
+    const { serverId } = await arrangeCatalog({ declared: [['alpha', 'Alpha', 'VM', 'local', 'daemon'], ['gamma', 'Gamma', 'Server', 'cloud', 'account']] });
+    const { t } = await import('@/text');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    // The section that carries the "Managed from" chip, read from the composed page (its header action).
+    const sectionAction = (screen: Awaited<ReturnType<typeof renderPicker>>, title: string) =>
+      screen.tree.findAll(node => node.props.title === title && 'action' in node.props)[0]?.props.action;
+    const onSelect = vi.fn();
+    const online = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={onSelect} />);
+    try {
+      await waitForHomeGovernance(() => expect(online.findByTestId('managed-picker.provisioners.local.custom.compute/alpha.action'), online.getTextContent()).not.toBeNull());
+      // Gamma acquires with the Account: its section names no computer. Alpha runs on one: its section carries the chip.
+      expect(sectionAction(online, t('managedMachines.add.cloudTitle'))).toBeUndefined();
+      expect(sectionAction(online, t('managedMachines.add.onThisComputer'))).toBeTruthy();
+      expect(online.findByTestId('managed-picker.provisioners.local.collapsed')).toBeNull();
+      // Alpha is checked on the computer; the Account creates Gamma, so the computer is never asked about it.
+      const checks = (localId: string) => harness.requestsFor('/v1/actions/machines.provisioners.check')
+        .filter(request => JSON.stringify(request).includes(`"localId":"${localId}"`));
+      await waitForHomeGovernance(() => expect(checks('alpha')).not.toHaveLength(0));
+      expect(checks('gamma')).toEqual([]);
+      await act(async () => online.pressByTestId('managed-picker.provisioners.local.custom.compute/alpha.action'));
+      expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ provisioner: 'custom.compute/alpha', controller: expect.anything() }));
+    } finally { await online.unmount(); }
+
+    // Only Account-acquired provisioners: no section names a computer.
+    const accountOnly = await arrangeCatalog({ home: 'cloud-only', declared: [['gamma', 'Gamma', 'Server', 'cloud', 'account']] });
+    const cloud = await renderPicker(<MachineProvisionerPicker serverId={accountOnly.serverId} onSelectProvisioner={vi.fn()} />);
+    try {
+      await waitForHomeGovernance(() => expect(cloud.tree.findAll(node => node.props.title === t('managedMachines.add.cloudTitle')).length).toBeGreaterThan(0));
+      expect(sectionAction(cloud, t('managedMachines.add.cloudTitle'))).toBeUndefined();
+      expect(cloud.findByTestId('managed-picker.controller.chip')).toBeNull();
+    } finally { await cloud.unmount(); }
+  });
+  it('folds computer-run VMs into one row that leads to adding a computer while no computer can run them, and does not check them', async () => {
+    const { lima } = await installBundledMachinePlugins();
+    // An Account of its own: the Account's provisioner catalog is not one an earlier test already read.
+    const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-fold.example.test',
+      serverIdentityId: 'srv_cloud_fold', accountId: 'fold-owner', currentAccount: true });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'fold-owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    runtimeHost.current = 'native';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const addComputer = vi.fn();
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} onSetUpThisComputer={addComputer} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.provisioners.local.collapsed'), screen.getTextContent()).not.toBeNull());
+      const cards = screen.tree.findAll(node => node.props.testID === 'managed-picker.provisioners')[0]?.props.cards as { title: string; location: string }[];
+      // The Account creates the cloud machine without a computer; the computer-run VM is not a card of its own.
+      expect(cards.some(card => card.location === 'cloud')).toBe(true);
+      expect(cards.some(card => card.location === 'local')).toBe(false);
+      expect(screen.getTextContent()).toContain('Lima');
+      expect(screen.findByTestId('managed-picker.controller.chip')).toBeNull();
+      await act(async () => screen.pressByTestId('managed-picker.provisioners.local.collapsed.action'));
+      expect(addComputer).toHaveBeenCalledTimes(1);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')
+        .filter(request => JSON.stringify(request).includes(lima.id))).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
 
   it('tells two provisioners of one product apart by their declared kind and says a pending check in a word', async () => {
     const { serverId, release } = await arrangeCatalog({
@@ -684,6 +1066,47 @@ describe('provisioner picker demand', () => {
       release();
     }
     await screen.unmount();
+  });
+
+  it('keeps admitted provisioner cards and their answers from the first remount frame', async () => {
+    const { serverId, release } = await arrangeCatalog({ home: 'retained-create', list: read => read > 1, check: read => read > 1 });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { setActiveServerId, getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
+    const { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const previous = storage.getState();
+    await setActiveServerId(serverId);
+    storage.getState().activateProfileScope({ serverId, accountId: 'owner' });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const { useManagedProvisioners } = await import('./useManagedProvisioners');
+    const first = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(first.getTextContent()).toContain('License required'));
+    await first.unmount();
+    const frames: string[][] = [];
+    const resumed = await renderHook(() => {
+      const catalog = useManagedProvisioners(serverId, undefined, { machineId: 'controller', installationId: 'controller-installation' });
+      frames.push(catalog.provisioners.map(item => item.descriptor.title as string));
+      return catalog;
+    });
+    try {
+      expect(frames[0]).toEqual(['Alpha', 'Beta']);
+      const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
+      try { expect(screen.getTextContent()).toContain('License required'); }
+      finally { await screen.unmount(); }
+      retireActiveServerAccountScopeLifetime();
+      await resumed.rerender();
+      expect(resumed.getCurrent().provisioners).toEqual([]);
+      await resumed.unmount();
+      const nextLifetime = await renderHook(() => useManagedProvisioners(serverId, undefined,
+        { machineId: 'controller', installationId: 'controller-installation' }));
+      try { expect(nextLifetime.getCurrent().provisioners).toEqual([]); }
+      finally { await nextLifetime.unmount(); }
+    } finally {
+      release(); await resumed.unmount();
+      publishAppliedActiveServerRuntimeAvailability(false);
+      storage.setState(previous);
+    }
   });
 
   it('keeps the answered checks on screen while the catalog is re-read', async () => {
@@ -743,7 +1166,7 @@ describe('provisioner picker demand', () => {
     const screen = await renderPicker(<FixedPicker />);
     const cards = () => screen.tree.findAll(node => Array.isArray(node.props.cards))
       .flatMap(node => node.props.cards as { title: string; status: { label: string }; action: { disabled?: boolean; onPress(): void } }[]);
-    await vi.waitFor(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.status.label, 'initial check').toBe('License required'); });
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.status.label, 'initial check').toBe('License required'); });
     harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
@@ -751,7 +1174,7 @@ describe('provisioner picker demand', () => {
     } });
     // A refreshed credential for the same Account retires the binding; an unrelated Home publication does not.
     await act(async () => { await harness.switchAccount(serverId, 'owner', { currentAccount: true }); });
-    await vi.waitFor(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.action.disabled, 'failed catalog').toBe(true); });
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.action.disabled, 'failed catalog').toBe(true); });
     expect(screen.findByTestId('managed-picker.unavailable')).not.toBeNull();
     const retained = cards().find(card => card.title === 'Alpha');
     expect(retained?.status.label).toBe('License required');
@@ -766,7 +1189,7 @@ describe('provisioner picker demand', () => {
         execution: { ok: true, result: { controller, provisioners } } }) };
     } });
     await act(async () => screen.pressByTestId('managed-picker.unavailable-action'));
-    await vi.waitFor(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.action.disabled, 'recovered catalog').not.toBe(true); });
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.action.disabled, 'recovered catalog').not.toBe(true); });
     await act(async () => cards().find(card => card.title === 'Alpha')?.action.onPress());
     expect(onSelect).toHaveBeenCalledOnce();
     await screen.unmount();
@@ -900,6 +1323,7 @@ describe('provisioner picker demand', () => {
       currentAccount: true,
     });
     const scopeId = identifierKind === 'portable' ? 'srv_build' : serverId;
+    await publishNoAccountProvisioners(scopeId);
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({
       machineListByServerId: {
@@ -965,8 +1389,21 @@ describe('provisioner picker demand', () => {
     expect(onSetUpThisComputer).toHaveBeenCalledTimes(1);
     await empty.unmount();
   });
+  it('says why nothing is listed when every controller is offline, instead of an empty page under the chip', async () => {
+    const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://offline-picker.example', serverIdentityId: 'srv_offline_picker', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
+      createControllerMachineFixture({ id: 'studio', installationId: 'studio-installation', active: false, activeAt: 0 }),
+    ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
+    expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
+    expect(screen.findByTestId('managed-picker.no-online-controller')).not.toBeNull();
+    await screen.unmount();
+  });
   it('waits for the Home\u2019s machine list instead of saying no machine can create machines', async () => {
     const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://unsynced-picker.example', serverIdentityId: 'srv_unsynced_picker', accountId: 'owner', currentAccount: true });
+    await publishNoAccountProvisioners(homeId);
     const { storage } = await import('@/sync/domains/state/storage');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);

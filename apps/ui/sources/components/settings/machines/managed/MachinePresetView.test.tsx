@@ -1,3 +1,16 @@
+import {
+  createManagedCpuOptionsFixture,
+  createMachineProvisionerOptionsFixture,
+  createDelegatedManagedPresetFixture,
+} from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import {
+  ExternalActionExecutionAuthorizationV1Schema,
+  ExternalActionExecutionAuthorizationRequestV1Schema,
+  ExternalActionRequestEnvelopeSchema,
+} from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -6,804 +19,3046 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import {
+  createHomeGovernanceHarness,
+  installHomeGovernanceBoundaries,
+  waitForHomeGovernance,
+} from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installMachinesSettingsCommonModuleMocks } from '../machinesSettingsTestHelpers';
-import { teamSummaryFixture, teamCapabilitiesFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import {
+  teamSummaryFixture,
+  teamCapabilitiesFixture,
+} from '@/dev/testkit/fixtures/teamFixtures';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createManagedControllerMachineFixture as createMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { PluginJsonSchemaV2Schema, PluginProjectedActionV2Schema, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginActionSchemasReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+  PluginJsonSchemaV2Schema,
+  type PluginJsonSchemaV2,
+} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import {
+  PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+  DaemonContributionRegistryProjectionDescribeResponseSchema,
+  DaemonPluginActionSchemasReadResponseSchema,
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
-const route = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const route = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: {} as Record<string, string | string[] | undefined> }));
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+// Native application identity is an OS boundary; match the existing artifact-cache host setup.
+vi.mock('expo-application', () => ({ applicationId: null, nativeApplicationVersion: null, nativeBuildVersion: null }));
 // Vitest substitutes Metro's deferred loader, not the admitted Action or inventory logic.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
-    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
-    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
-});
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
-    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+vi.mock(
+  '@/sync/ops/actions/frontDoorRuntimeActionExecutor',
+  async (importOriginal) => {
+    const original =
+      await importOriginal<
+        typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')
+      >();
+    const { createFrontDoorActionExecuteForVitest } =
+      await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return {
+      ...original,
+      createFrontDoorActionExecute:
+        createFrontDoorActionExecuteForVitest(original),
+    };
+  },
+);
+vi.mock(
+  '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
+  async () => {
+    const { createServerScopedMachineRpcBoundaryMock } =
+      await import('@/dev/testkit/mocks/serverScopedRpc');
     return createServerScopedMachineRpcBoundaryMock(boundary.rpc);
-});
+  },
+);
 installMachinesSettingsCommonModuleMocks({
-    text: async () => vi.importActual<typeof import('@/text')>('@/text'),
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ router: route }).module;
-    },
+  text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: route, params: () => route.params }).module;
+  },
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 // Transform the real owners after the transport/platform boundaries, outside the case budget.
-const { MachinePresetView } = await import('./MachinePresetView');
-const { AllMachinesIndex: MachinesSettingsView } = await import('@/components/machines/index/AllMachinesIndex');
-const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+const { MachinePresetView, MachinePresetScreen } = await import('./MachinePresetView');
+const { ManagedMachineDetailScreen } = await import('./ManagedMachineDetail');
+const { ManagedMachineConfigurationScreen } = await import('./ManagedMachineConfigurationScreen');
+const { AllMachinesIndex: MachinesSettingsView } =
+  await import('@/components/machines/index/AllMachinesIndex');
+const { ManagedMachineConfigurationView } =
+  await import('./ManagedMachineConfigurationView');
 const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
 const { Item } = await import('@/components/ui/lists/Item');
-const { MachineConfigurationReceipt } = await import('./MachineConfigurationReceipt');
+const { MachineConfigurationReceipt } =
+  await import('./MachineConfigurationReceipt');
 const { MachinePresetDetail } = await import('./MachinePresetDetail');
-const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-const { InstalledPluginBrandMark } = await import('@/components/plugins/shared/InstalledPluginBrandMark');
+const { DropdownMenu } =
+  await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { HappierBrandMark } =
+  await import('@/components/ui/media/HappierBrandMark');
 const { t } = await import('@/text');
-const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
-const { resetMachineProjectionReadsForTests } = await import('@/sync/ops/machineContributionRegistryProjection');
+const { resolveServerProfileScopeIdForIdentifier } =
+  await import('@/sync/domains/server/serverProfiles');
+const { clearDaemonMergedProjectionCacheForTests } =
+  await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { resetMachineProjectionReadsForTests } =
+  await import('@/sync/ops/machineContributionRegistryProjection');
+const { observeMachinePresenceForTest } =
+  await import('@/dev/testkit/harness/machinePresence');
 beforeEach(async () => {
-    await harness.reset();
-    route.push.mockReset();
-    route.replace.mockReset();
-    (await import('@/sync/ops/actions/scopedHomeActionExecutor')).resetScopedHomeActionExecutorsForTests();
-    clearDaemonMergedProjectionCacheForTests(); resetMachineProjectionReadsForTests();
-    boundary.rpc.mockReset().mockResolvedValue({ ok: false, code: 'unsupported' });
+  await harness.reset();
+  const { storage } = await import('@/sync/domains/state/storage');
+  // The inventory's ordered rows and exact-id index are one fixture lifetime.
+  storage.setState({ machines: {}, machineListByServerId: {}, machineRecordsByServerId: {}, machineListStatusByServerId: {} });
+  route.push.mockReset();
+  route.replace.mockReset();
+  route.params = {};
+  (
+    await import('@/sync/ops/actions/scopedHomeActionExecutor')
+  ).resetScopedHomeActionExecutorsForTests();
+  clearDaemonMergedProjectionCacheForTests();
+  resetMachineProjectionReadsForTests();
+  boundary.rpc
+    .mockReset()
+    .mockResolvedValue({ ok: false, code: 'unsupported' });
 });
 afterEach(async () => {
-    standardCleanup();
-    (await import('@/sync/domains/machines/reachability/machineReachability')).clearMachineRequestReachabilityForTest();
+  standardCleanup();
+  (
+    await import('@/sync/domains/machines/reachability/machineReachability')
+  ).clearMachineRequestReachabilityForTest();
 });
 
-const preset = { id: 'preset', homeId: 'srv_history', revision: 3, name: 'Build box',
-    owner: { kind: 'account', accountId: 'owner' },
-    recipe: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Future guest', choices: {} },
-    controller: { machineId: 'controller', installationId: 'installation' }, simultaneousLimit: { maximum: 2 } } as const;
-const savedCredential = { purpose: { consumer: preset.recipe.provider, purpose: 'native-management' },
-    account: { service: { pluginId: 'custom.compute', localId: 'native-account' }, accountId: 'saved-native-account' } } as const;
-const resource = { id: 'resource', homeId: 'srv_history', custodianAccountId: 'owner', preset: { id: 'preset', revision: 1 },
-    launch: { ...preset.recipe, name: 'Original guest' }, controller: preset.controller,
-    resource: { contributionRef: preset.recipe.provider, schemaVersion: 1, value: { nativeId: 'original' } },
-    allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
-    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'guest' } as const;
-const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution: preset.recipe.provider, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, credentialPurposes: [], descriptor: {
-    id: 'native', title: 'Custom compute', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
-    launchSchema: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 } }, additionalProperties: false },
-    resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
-    billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['delete'] },
-    actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
-} };
+const preset = {
+  id: 'preset',
+  homeId: 'srv_history',
+  revision: 3,
+  name: 'Build box',
+  owner: { kind: 'account', accountId: 'owner' },
+  launch: {
+    provider: { pluginId: 'custom.compute', localId: 'native' },
+    schemaVersion: 1,
+    name: 'Future guest',
+    choices: {},
+  },
+  controller: { machineId: 'controller', installationId: 'installation' },
+  simultaneousLimit: { maximum: 2 },
+} as const;
+const savedCredential = {
+  purpose: { consumer: preset.launch.provider, purpose: 'native-management' },
+  account: {
+    service: { pluginId: 'custom.compute', localId: 'native-account' },
+    accountId: 'saved-native-account',
+  },
+} as const;
+const resource = {
+  id: 'resource',
+  homeId: 'srv_history',
+  custodianAccountId: 'owner',
+  preset: { id: 'preset', revision: 1 },
+  launch: { ...preset.launch, name: 'Original guest' },
+  controller: preset.controller,
+  resource: {
+    contributionRef: preset.launch.provider,
+    schemaVersion: 1,
+    value: { nativeId: 'original' },
+  },
+  allocation: 'bound',
+  creationState: 'active',
+  desired: 'start',
+  desiredWhen: 'now',
+  intentRevision: 1,
+  retention: { kind: 'until-delete' },
+  wakeOnAcceptedMessage: false,
+  enrolledMachineId: 'guest',
+} as const;
+const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
+  contribution: preset.launch.provider,
+  occurrenceId: 'occurrence',
+  credentialPurposes: [],
+  acquireExecutionTarget: 'daemon' as const,
+  descriptor: {
+    id: 'native',
+    title: 'Custom compute',
+    icon: 'server',
+    resourceKind: 'VM',
+    schemaVersion: 1,
+    launchSchema: {
+      type: 'object',
+      properties: { cpu: { type: 'integer', minimum: 1 } },
+      additionalProperties: false,
+    },
+    resourceSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    platforms: ['linux'],
+    prerequisites: [],
+    billing: { location: 'cloud', stoppedBilling: 'billed' },
+    retention: { supportedIntents: ['delete'] },
+    actions: {
+      check: 'check',
+      options: 'options',
+      acquire: 'acquire',
+      bootstrap: 'bootstrap',
+      inspect: 'inspect',
+      destroy: 'destroy',
+    },
+  },
+};
 
-function seedOptionsDeclaration(row: MachineProvisionersListResultV1['provisioners'][number], inputSchema: PluginJsonSchemaV2,
-    schemaAvailable: boolean | 'missing-input-schema' = true, installed?: Readonly<Record<string, unknown>>) {
-    const localId = row.descriptor.actions.options;
-    if (!localId) throw new Error('The provisioner must declare an options Action');
-    const action = { pluginId: row.contribution.pluginId, localId };
-    const actionKey = buildQualifiedPluginContributionKey(action);
-    // Infrastructure role metadata may be CLI/plugin-only. Reading its public
-    // schema for a managed options query does not make it a new UI Action.
-    const projectedAction = PluginProjectedActionV2Schema.parse({ id: action.localId, pluginId: action.pluginId,
-        occurrenceId: row.occurrenceId, title: 'Read native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
-        execution: { target: 'daemon' }, available: true, dangerLevel: 'safe' });
-    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
-        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
-        installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId,
-            ...installed } },
+function seedOptionsDeclaration(
+  row: MachineProvisionersListResultV1['provisioners'][number],
+  inputSchema: PluginJsonSchemaV2,
+  schemaAvailable: boolean | 'missing-input-schema' = true,
+  installed?: Readonly<Record<string, unknown>>,
+) {
+  const localId = row.descriptor.actions.options;
+  if (!localId)
+    throw new Error('The provisioner must declare an options Action');
+  const action = { pluginId: row.contribution.pluginId, localId };
+  const actionKey = buildQualifiedPluginContributionKey(action);
+  // Infrastructure role metadata may be CLI/plugin-only. Reading its public
+  // schema for a managed options query does not make it a new UI Action.
+  const projectedAction = PluginProjectedActionV2Schema.parse({
+    id: action.localId,
+    pluginId: action.pluginId,
+    occurrenceId: row.occurrenceId,
+    title: 'Read native options',
+    scopes: ['machine'],
+    surfaces: ['cli', 'plugin'],
+    execution: { target: 'daemon' },
+    available: true,
+    dangerLevel: 'safe',
+  });
+  const projection =
+    DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+      protocolVersion: 1,
+      projection: {
+        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        agentsById: {},
+        diagnostics: [],
         familiesById: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.familiesById,
-            machineProvisioners: { family: 'machineProvisioners', entriesById: {
-                [buildQualifiedPluginContributionKey(row.contribution)]: {
-                    id: buildQualifiedPluginContributionKey(row.contribution), pluginId: action.pluginId,
-                    pluginVersion: '1.0.0', occurrenceId: row.occurrenceId, definition: row.descriptor,
-                },
-            } },
+          machineProvisioners: { family: 'machineProvisioners', entriesById: {
+            [buildQualifiedPluginContributionKey(row.contribution)]: {
+              id: buildQualifiedPluginContributionKey(row.contribution), pluginId: action.pluginId,
+              pluginVersion: '1.0.0', occurrenceId: row.occurrenceId, definition: row.descriptor,
+            },
+          } },
+        },
+        installedPackagesById: {
+          [action.pluginId]: {
+            ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById[
+              'acme.review'
+            ],
+            id: action.pluginId,
+            ...installed,
+          },
         },
         actionsById: { [actionKey]: projectedAction },
-    } });
-    boundary.rpc.mockImplementation(async (request: { machineId: string; method: string; payload: unknown }) => {
-        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return projection;
-        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
-            expect(request.machineId).toBe(preset.controller.machineId);
-            expect(request.payload).toEqual({ machineId: preset.controller.machineId,
-                expectedOccurrenceId: projectedAction.occurrenceId, qualifiedActionId: actionKey });
-            return DaemonPluginActionSchemasReadResponseSchema.parse(schemaAvailable === 'missing-input-schema'
-                ? { ok: true } : schemaAvailable ? { ok: true, inputSchema } : { ok: false, code: 'stale_occurrence' });
-        }
-        return { ok: false, code: 'unsupported' };
+      },
     });
+  boundary.rpc.mockImplementation(
+    async (request: {
+      machineId: string;
+      method: string;
+      payload: unknown;
+    }) => {
+      if (
+        request.method ===
+        RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+      )
+        return projection;
+      if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+        expect(request.machineId).toBe(preset.controller.machineId);
+        expect(request.payload).toEqual({
+          machineId: preset.controller.machineId,
+          expectedOccurrenceId: projectedAction.occurrenceId,
+          qualifiedActionId: actionKey,
+        });
+        return DaemonPluginActionSchemasReadResponseSchema.parse(
+          schemaAvailable === 'missing-input-schema'
+            ? { ok: true }
+            : schemaAvailable
+              ? { ok: true, inputSchema }
+              : { ok: false, code: 'stale_occurrence' },
+        );
+      }
+      return { ok: false, code: 'unsupported' };
+    },
+  );
+}
+
+function sizeControl(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
+  return screen.tree.findAll(
+    (node) =>
+      node.props.testID === 'managed-config.sizes' &&
+      typeof node.props.onChange === 'function',
+  )[0];
 }
 
 async function seed() {
-    const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example', serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
-    await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });
-    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
-    harness.answer(serverId, '/v1/machines/managed/actions/list', { select: input => ({ body: { machines:
-        input && typeof input === 'object' && 'archived' in input ? [] : [resource] } }) });
-    return serverId;
+  const serverId = await harness.addHome({
+    name: 'History',
+    serverUrl: 'https://history.example',
+    serverIdentityId: 'srv_history',
+    accountId: 'owner',
+    currentAccount: true,
+  });
+  await harness.addHome({
+    name: 'Other',
+    serverUrl: 'https://other.example',
+    serverIdentityId: 'srv_other',
+    accountId: 'other',
+  });
+  harness.answer(serverId, '/v1/machines/presets/get', {
+    body: { kind: 'found', preset },
+  });
+  harness.answer(serverId, '/v1/machines/managed/actions/list', {
+    select: (input) => ({
+      body: {
+        machines:
+          input && typeof input === 'object' && 'archived' in input
+            ? []
+            : [resource],
+      },
+    }),
+  });
+  return serverId;
 }
 
 async function seedConfiguration(serverId: string) {
-    seedOptionsDeclaration(provisioner, PluginJsonSchemaV2Schema.parse({ type: 'object', properties: {}, additionalProperties: false }));
-    const { storage } = await import('@/sync/domains/state/storage');
-    const machine = createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId,
-        activeAt: Date.now() });
-    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
-    storage.setState({ machineListByServerId: { [scopeId]: [machine] }, machineListStatusByServerId: { [scopeId]: 'idle' } });
-    for (const [actionId, result] of [
-        ['machines.provisioners.list', { controller: preset.controller, provisioners: [provisioner] }],
-        ['machines.provisioners.check', { available: true }],
-        ['machines.provisioners.options', { choices: [{ id: 'saved', title: 'Saved size', launch: {} },
-            { id: 'large', title: 'Larger size', launch: { cpu: 4 } }] }],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+  seedOptionsDeclaration(
+    provisioner,
+    PluginJsonSchemaV2Schema.parse({
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    }),
+  );
+  const { storage } = await import('@/sync/domains/state/storage');
+  const machine = createMachineFixture({
+    id: preset.controller.machineId,
+    installationId: preset.controller.installationId,
+    activeAt: Date.now(),
+  });
+  const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+  storage.getState().applyMachines([machine], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+  observeMachinePresenceForTest({ serverId: scopeId, accountId: 'owner' }, [machine.id]);
+  for (const [actionId, result] of [
+    [
+      'machines.provisioners.list',
+      { controller: preset.controller, provisioners: [provisioner] },
+    ],
+    ['machines.provisioners.check', { available: true }],
+    [
+      'machines.provisioners.options',
+      createManagedCpuOptionsFixture([
+        { id: 'saved', title: 'Saved size' },
+        { id: 'large', title: 'Larger size', cpu: 4 },
+      ]),
+    ],
+  ] as const)
+    harness.answer(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-        expect(request.target).toEqual({ kind: 'machine', machineId: preset.controller.machineId });
-        expect(request.input).toMatchObject({ homeId: preset.homeId, controller: preset.controller });
-        return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
-    } });
-    return scopeId;
+        expect(request.target).toEqual({
+          kind: 'machine',
+          machineId: preset.controller.machineId,
+        });
+        expect(request.input).toMatchObject({
+          homeId: preset.homeId,
+          controller: preset.controller,
+        });
+        return {
+          body: {
+            v: 1,
+            actionId,
+            requestId: request.requestId,
+            execution: { ok: true, result },
+          },
+        };
+      },
+    });
+  return scopeId;
 }
 
 describe('reachable preset detail', () => {
-    it.each([false, true])('preserves the same Home/Account editor through credential rebinding (preset: %s)', async editingPreset => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
-            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)}
-            {...(editingPreset ? { presetId: preset.id, presetOnly: true } : {})} initialController={preset.controller} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:large')).not.toBeNull());
-        await act(async () => screen.pressByTestId('managed-config.choice:large'));
-        if (editingPreset) await act(async () => screen.changeTextByTestId('managed-config.environment.setup.input', 'echo unsaved recipe'));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        const retiredCreate = screen.findByTestId('managed-config.create')?.props.onPress;
-        let release = () => {};
-        const gate = new Promise<void>(resolve => { release = resolve; });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: async value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            await gate;
-            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
-                execution: { ok: true, result: { controller: preset.controller, provisioners: [provisioner] } } } };
-        } });
-        try {
-            await act(async () => { await harness.addHome({ name: 'Refresh', serverUrl: 'https://refresh.example', serverIdentityId: 'srv_refresh', accountId: 'refresh' }); });
-            await flushHookEffects();
-            await retiredCreate?.();
-            expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
-            expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(0);
-            if (editingPreset) expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe('echo unsaved recipe');
-            expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
-        } finally { release(); }
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        if (editingPreset) expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe('echo unsaved recipe');
-        await act(async () => { await harness.switchAccount(serverId, 'other-owner'); });
-        await flushHookEffects();
-        expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).not.toBe('echo unsaved recipe');
-        await screen.unmount();
+  it('settles a pending managed birth read as a typed cancellation when its Account changes', async () => {
+    const serverId = await seed();
+    const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+    await setServerProfileIdentityForUrl('https://history.example', preset.homeId);
+    const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId });
+    await harness.setActionPolicy(serverId, 'machines.managed.birth.get', 'ui', 'allowed');
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+    const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    const { readManagedCreationScopeBirthSource } = await import('@/sync/ops/actions/managedCreationScopeBinding');
+    const response = createDeferred<void>();
+    harness.answer(serverId, 'POST /v1/machines/managed/actions/birth.get', {
+      body: { source: null }, respondAfter: response.promise,
     });
-    it('retains preset collection and detail across a same-Account rebind and withdraws them on Account loss', async () => {
-        const serverId = await seed();
-        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
-        const { useMachinePresets, useMachinePresetDetail } = await import('./useMachinePresets');
-        const homes = [serverId];
-        const visible: boolean[] = [];
-        const hook = await renderHook(() => {
-            const collection = useMachinePresets(homes);
-            const detail = useMachinePresetDetail(serverId, preset.id);
-            visible.push(collection.presetsByServerId[serverId]?.[0]?.id === preset.id && detail.state.value?.preset.id === preset.id);
-            return { collection, detail };
+    const scope = await renderHook(() => useServerCredentialAccountScopeBinding(serverId));
+    let retirement: Readonly<{ dispose(): void }> | undefined;
+    try {
+      await waitForHomeGovernance(() => expect(scope.getCurrent().binding?.accountId).toBe('owner'));
+      const binding = scope.getCurrent().binding!;
+      const controller = new AbortController();
+      retirement = binding.onRetire(() => controller.abort());
+      const rejected = vi.fn();
+      const settlement = readManagedCreationScopeBirthSource({ machine: { homeId: preset.homeId, id: resource.id },
+        accountLifetime: binding, signal: controller.signal }).catch(rejected);
+      await waitForHomeGovernance(() => {
+        expect(rejected.mock.calls).toEqual([]);
+        expect(harness.requestsFor('/v1/machines/managed/actions/birth.get')).toHaveLength(1);
+      });
+      await act(async () => { await harness.switchAccount(serverId, 'other-owner'); });
+      await flushHookEffects();
+      expect(binding.isCurrent()).toBe(false);
+      expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ code: 'action_account_scope_changed' }));
+      await settlement;
+    } finally {
+      response.resolve();
+      retirement?.dispose();
+      await scope.unmount();
+    }
+  });
+
+  it('opens a setup-only Preset without creation provider, credential or native reads', async () => {
+    const serverId = await seed();
+    // A real controller and provider exist on this Home, but this Preset does
+    // not attach either. Availability must not create demand on their behalf.
+    await seedConfiguration(serverId);
+    const setupOnly = ManagedMachinePresetV1Schema.parse({
+      id: preset.id, homeId: preset.homeId, revision: 4,
+      name: 'Retained build setup', owner: preset.owner,
+      setup: { scripts: [{ body: '\r\necho retained setup\r\n', affects: 'none' }] },
+    });
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: setupOnly },
+    });
+    harness.answer(serverId, '/v1/machines/managed/actions/list', {
+      body: { machines: [] },
+    });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={setupOnly.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.tree.findByType(MachinePresetDetail).props.model.name)
+        .toBe(setupOnly.name));
+      await flushHookEffects({ cycles: 30 });
+      expect(screen.findByTestId('machine-preset.read-state')).toBeNull();
+      expect(screen.tree.findByType(MachinePresetDetail).props.model.onCreateOne).toBeUndefined();
+      expect(harness.requests.filter(request => request.path.includes('machines.provisioners.'))).toEqual([]);
+      expect(harness.requests.filter(request => /\/(?:connect|connected-services|account\/profile)(?:\/|$)/.test(request.path))).toEqual([]);
+      expect(boundary.rpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
+  it('opens a setup-only Preset editor without making controller readiness a dependency of its Preset read', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    const setupOnly = ManagedMachinePresetV1Schema.parse({
+      id: preset.id, homeId: preset.homeId, revision: 4,
+      name: 'Retained editor setup', owner: preset.owner,
+      setup: { scripts: [{ body: '\r\necho exact editor setup\r\n', affects: 'none' }] },
+    });
+    let presetReadAnswered = false;
+    harness.answer(serverId, '/v1/machines/presets/get', { select: () => {
+      presetReadAnswered = true;
+      return { body: { kind: 'found', preset: setupOnly } };
+    } });
+    const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)}
+      presetId={setupOnly.id} presetOnly initialController={preset.controller} />);
+    try {
+      await waitForHomeGovernance(() => expect(presetReadAnswered).toBe(true));
+      await flushHookEffects({ cycles: 30 });
+      expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
+      expect(screen.findByTestId('managed-config.error')).toBeNull();
+      expect(harness.requests.filter(request => request.path.includes('machines.provisioners.'))).toEqual([]);
+      expect(harness.requests.filter(request => /\/(?:connect|connected-services|account\/profile)(?:\/|$)/.test(request.path))).toEqual([]);
+      expect(boundary.rpc).not.toHaveBeenCalled();
+      expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+      expect(harness.requestsFor('/v1/machines/presets/create')).toEqual([]);
+    } finally { await screen.unmount(); }
+  });
+
+  it.each([
+    ['bundled-local', { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, 'Cua', 'local'],
+    ['bundled-cloud', { pluginId: 'happier.machine.cua', localId: 'byoc' }, 'Cua BYOC', 'cloud'],
+    ['unavailable', preset.launch.provider, null, 'unknown'],
+  ] as const)('attributes an archived preset receipt to its real service or leaves it unnamed (%s)', async (_kind, provider, title, billing) => {
+    const serverId = await seed();
+    const archived = { ...preset, archivedAt: 1, launch: { ...preset.launch, provider } };
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: archived } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.archived.action')).not.toBeNull());
+    const receipt = screen.tree.findByType(MachineConfigurationReceipt).props.model;
+    expect(receipt.spec).toBe(title ?? '');
+    expect(receipt.cost).toEqual(billing === 'local'
+      // A sentence never says "Runs on Unknown" (VD G2): an unnamed controller is the managing computer.
+      ? { kind: 'local', computer: t('managedMachines.receipt.managingComputer'), meters: [],
+          note: t('managedMachines.receipt.headroomUnknown', { computer: t('managedMachines.receipt.managingComputer') }) }
+      : { kind: 'unpriced', provider: title });
+    await screen.unmount();
+  });
+
+  it('keeps the running limit billing warning off a preset that runs on its controller and bills nobody', async () => {
+    const serverId = await seed();
+    const local = { ...preset, launch: { ...preset.launch, provider: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' } } };
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: local } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    await waitForHomeGovernance(() => expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.cost?.kind).toBe('local'));
+    expect(screen.getTextContent()).not.toContain(t('machinePresets.limitHelp'));
+    await screen.unmount();
+  });
+
+  it('opens an unqualified managed preset route in the current Home and carries that scope into history', async () => {
+    const serverId = await seed();
+    const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId });
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    route.params = { presetId: 'preset' };
+    const screen = await renderSettingsView(<MachinePresetScreen />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull());
+    expect(harness.requestsFor('/v1/machines/presets/get').every(request => request.serverId === serverId)).toBe(true);
+    await act(async () => screen.pressByTestId('machine-preset.detail.machine.resource'));
+    expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/guest?serverId=${encodeURIComponent(scopeId)}`);
+  });
+
+  it('opens an unqualified managed resource route in the current Home', async () => {
+    const serverId = await seed();
+    const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId });
+    route.params = { id: 'resource' };
+    harness.answer(serverId, '/v1/machines/managed/actions/get', { body: { ...resource, enrolledMachineId: undefined } });
+    const screen = await renderSettingsView(<ManagedMachineDetailScreen />);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Original guest'));
+    expect(harness.requestsFor('/v1/machines/managed/actions/get')).toHaveLength(1);
+  });
+
+  it.each(['detail', 'editor'] as const)('reads no private creation data for an unknown Preset (%s)', async surface => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'refused', code: 'preset_not_found' },
+    });
+    const screen = await renderSettingsView(surface === 'detail'
+      ? <MachinePresetView serverId={serverId} presetId="missing-preset" />
+      : <ManagedMachineConfigurationView serverId={serverId} presetId="missing-preset"
+          provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)} presetOnly />);
+    try {
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1));
+      await flushHookEffects({ cycles: 30 });
+      expect(harness.requests.filter(request => request.path.includes('machines.provisioners.'))).toEqual([]);
+      expect(boundary.rpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
+  it('keeps an explicit unknown managed preset Home from falling through to the current Home', async () => {
+    await seed();
+    route.params = { presetId: preset.id, serverId: ['missing-home'] };
+    const screen = await renderSettingsView(<MachinePresetScreen />);
+    await flushHookEffects({ cycles: 3 });
+    // The same refusal the cold link gets: the Home is not saved here, so there is nothing to read again.
+    expect(screen.findByTestId('managed-route-unknown-home')).not.toBeNull();
+    expect(screen.findByTestId('machine-preset.read-state')).toBeNull();
+    expect(screen.findByTestId('machine-preset.detail')).toBeNull();
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(0);
+  });
+
+  it('refuses an explicit unknown Home on the configuration route the same way', async () => {
+    await seed();
+    route.params = { presetId: preset.id, provisioner: buildQualifiedPluginContributionKey(preset.launch.provider), presetOnly: 'true', serverId: 'missing-home' };
+    const screen = await renderSettingsView(<ManagedMachineConfigurationScreen />);
+    await flushHookEffects({ cycles: 3 });
+    expect(screen.findByTestId('managed-route-unknown-home')).not.toBeNull();
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(0);
+  });
+
+  it('opens an unqualified managed preset configuration route in the current Home', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId });
+    route.params = { presetId: preset.id, provisioner: buildQualifiedPluginContributionKey(preset.launch.provider), presetOnly: 'true' };
+    const screen = await renderSettingsView(<ManagedMachineConfigurationScreen />);
+    await waitForHomeGovernance(() => expect(sizeControl(screen)?.props.sizes.some((size: { id: string }) => size.id === 'large')).toBe(true));
+    expect(harness.requestsFor('/v1/machines/presets/get').every(request => request.serverId === serverId)).toBe(true);
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+  });
+
+  it('updates Team spending opt-in through the revisioned detail Action and preserves a Manage refusal', async () => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const teamPreset = {
+      ...preset,
+      owner: { kind: 'team', teamId: 'team-1' } as const,
+      teamAcquireDelegated: false,
+    };
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: teamPreset },
+    });
+    await harness.requireUiApproval(serverId, 'machines.presets.update');
+    const { useMachinePresetDetail } = await import('./useMachinePresets');
+    const { useActionApprovalContinuation } =
+      await import('@/components/approvals/useActionApprovalContinuation');
+    const registrations: string[] = [];
+    const hook = await renderHook(() => {
+      const detail = useMachinePresetDetail(scopeId, preset.id, (value) => {
+        registrations.push(
+          typeof value === 'string' ? value : value.artifactId,
+        );
+        approval.requestApproval(value);
+      });
+      const approval = useActionApprovalContinuation({
+        scopeKey: 'team-spending',
+        serverId: scopeId,
+        onExecuted: detail.refresh,
+      });
+      return detail;
+    });
+    await waitForHomeGovernance(() =>
+      expect(hook.getCurrent().state.value?.preset.id).toBe(preset.id),
+    );
+    try {
+      await act(async () => {
+        await hook.getCurrent().update({ teamAcquireDelegated: true });
+      });
+      await waitForHomeGovernance(() => expect(registrations).toHaveLength(1));
+      expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(
+        0,
+      );
+      const delegated = {
+        ...teamPreset,
+        revision: preset.revision + 1,
+        teamAcquireDelegated: true,
+      };
+      harness.answer(serverId, '/v1/machines/presets/update', {
+        body: { kind: 'saved', preset: delegated },
+      });
+      harness.answer(serverId, '/v1/machines/presets/get', {
+        body: { kind: 'found', preset: delegated },
+      });
+      await act(async () => {
+        await expect(
+          decideApprovalAsInbox(scopeId, registrations[0]!, 'approve'),
+        ).resolves.toMatchObject({ ok: true });
+      });
+      await waitForHomeGovernance(() =>
+        expect(hook.getCurrent().state.value?.preset.teamAcquireDelegated).toBe(
+          true,
+        ),
+      );
+      await act(async () => {
+        await hook.getCurrent().update({ teamAcquireDelegated: false });
+      });
+      await waitForHomeGovernance(() => expect(registrations).toHaveLength(2));
+      harness.answer(serverId, '/v1/machines/presets/update', {
+        status: 403,
+        body: { kind: 'refused', code: 'permission_denied' },
+      });
+      await act(async () => {
+        await expect(
+          decideApprovalAsInbox(scopeId, registrations[1]!, 'approve'),
+        ).resolves.toMatchObject({ ok: true });
+      });
+      await waitForHomeGovernance(() =>
+        expect(hook.getCurrent().mutationResult).toEqual({
+          kind: 'refused',
+          code: 'permission_denied',
+        }),
+      );
+      expect(
+        harness
+          .requestsFor('/v1/machines/presets/update')
+          .map((request) => request.input),
+      ).toEqual([
+        {
+          homeId: preset.homeId,
+          id: preset.id,
+          expectedRevision: preset.revision,
+          patch: { teamAcquireDelegated: true },
+        },
+        {
+          homeId: preset.homeId,
+          id: preset.id,
+          expectedRevision: delegated.revision,
+          patch: { teamAcquireDelegated: false },
+        },
+      ]);
+    } finally {
+      await hook.unmount();
+    }
+  });
+  it.each(['use', 'create'] as const)(
+    'reviews a delegated Team preset without controller inventory, credential choices or private probes (%s)',
+    async (intent) => {
+      const serverId = await seed();
+      const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+      const { storage } = await import('@/sync/domains/state/storage');
+      storage.getState().applyMachines([], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+      const delegated = createDelegatedManagedPresetFixture({
+        preset: {
+          ...preset,
+          owner: { kind: 'team', teamId: 'team-1' },
+          controllerDisplayName: 'Company builder',
+          retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' },
+          wakeOnAcceptedMessage: false,
+        },
+        descriptor: {
+          ...provisioner.descriptor,
+          enrollmentRole: 'sandbox',
+          retention: { supportedIntents: ['start', 'stop', 'delete'] },
+          actions: { ...provisioner.descriptor.actions, power: 'power' },
+        },
+        custodianAccountId: 'company',
+        installationPublicKey: encodeBase64(
+          tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey,
+          'base64url',
+        ),
+      });
+      harness.answer(serverId, '/v1/machines/presets/get', {
+        body: { kind: 'found', preset: delegated },
+      });
+      const { bindHomeDomainActionHttpRequestV1 } =
+        await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+      const request = bindHomeDomainActionHttpRequestV1('teams.get', {
+        v: 1,
+        teamId: 'team-1',
+      });
+      harness.answer(serverId, request.path, {
+        body: teamSummaryFixture({
+          capabilities: teamCapabilitiesFixture({ manageSettings: false }),
+        }),
+      });
+      harness.answer(
+        serverId,
+        '/v1/actions/machines.managed.acquire/execution-authorization',
+        {
+          select: (value) => {
+            const issued =
+              ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+            const envelope = ExternalActionRequestEnvelopeSchema.parse(
+              issued.envelope,
+            );
+            return {
+              body: ExternalActionExecutionAuthorizationV1Schema.parse({
+                v: 1,
+                token: 'home-signed-delegated-root',
+                binding: {
+                  serverIdentityId: preset.homeId,
+                  accountId: 'owner',
+                  authentication: { kind: 'account', tokenEpoch: 0 },
+                  machineId: preset.controller.machineId,
+                  installationId: preset.controller.installationId,
+                  custodianAccountId: 'company',
+                  accountEncryptionMode: 'plain',
+                  actionId: 'machines.managed.acquire',
+                  requestId: envelope.requestId,
+                  target: envelope.target,
+                  requestEnvelopeDigest:
+                    computeExternalActionRequestEnvelopeDigestV1(envelope),
+                },
+              }),
+            };
+          },
+        },
+      );
+      harness.answer(serverId, '/v1/actions/machines.managed.acquire', {
+        select: (value) => {
+          if (!value || typeof value !== 'object' || !('envelope' in value))
+            throw new Error('Expected signed delegated Action');
+          const envelope = ExternalActionRequestEnvelopeSchema.parse(
+            value.envelope,
+          );
+          if (envelope.v !== 1)
+            throw new Error('Expected the fixture plain Account envelope');
+          expect(envelope.input).toMatchObject({
+            selection: {
+              kind: 'preset',
+              homeId: preset.homeId,
+              id: preset.id,
+              revision: preset.revision,
+            },
+            retention: delegated.retention,
+            wakeOnAcceptedMessage: false,
+            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+          });
+          return {
+            body: {
+              v: 1,
+              actionId: 'machines.managed.acquire',
+              requestId: envelope.requestId,
+              execution: {
+                ok: true,
+                result: { managedId: 'delegated-created' },
+              },
+            },
+          };
+        },
+      });
+      const onUse = vi.fn();
+      const screen = await renderSettingsView(
+        <ManagedMachineConfigurationView
+          serverId={scopeId}
+          provisioner={buildQualifiedPluginContributionKey(
+            preset.launch.provider,
+          )}
+          presetId={preset.id}
+          onUse={intent === 'use' ? onUse : undefined}
+        />,
+      );
+      const actionTestId =
+        intent === 'use' ? 'managed-config.use' : 'managed-config.create';
+      await waitForHomeGovernance(() =>
+        expect(screen.findByTestId(actionTestId)?.props.disabled).toBe(false),
+      );
+      expect(screen.tree.findAll(node => node.props.children === 'Company builder').length).toBeGreaterThan(0);
+      await act(async () => screen.pressByTestId(actionTestId));
+      if (intent === 'use')
+        expect(onUse).toHaveBeenCalledWith(
+          expect.objectContaining({
+            selection: {
+              kind: 'preset',
+              homeId: preset.homeId,
+              id: preset.id,
+              revision: preset.revision,
+            },
+            receipt: expect.objectContaining({
+              retention: delegated.retention,
+              wakeOnAcceptedMessage: false,
+            }),
+            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+          }),
+        );
+      else
+        await waitForHomeGovernance(() =>
+          expect(route.replace).toHaveBeenCalledWith(
+            `/settings/machines/managed/delegated-created?serverId=${encodeURIComponent(scopeId)}`,
+          ),
+        );
+      expect(
+        harness.requests.filter((row) =>
+          row.path.includes('/actions/machines.provisioners.'),
+        ),
+      ).toHaveLength(0);
+      expect(
+        boundary.rpc.mock.calls.filter(
+          ([row]) =>
+            row.method ===
+              RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ||
+            row.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ,
+        ),
+      ).toHaveLength(0);
+      expect(
+        screen.tree.findAll(
+          (node) =>
+            typeof node.props.testID === 'string' &&
+            (node.props.testID.startsWith('managed-config.credential:') ||
+              node.props.testID.startsWith('managed-config.connect:')),
+        ),
+      ).toHaveLength(0);
+      if (intent === 'use') {
+        harness.answer(serverId, '/v1/machines/presets/get', {
+          body: {
+            kind: 'found',
+            preset: {
+              ...delegated,
+              delegatedAcquire: {
+                kind: 'unavailable',
+                code: 'controller_unavailable',
+              },
+            },
+          },
         });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().detail.state.value?.preset.id).toBe(preset.id));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().collection.presetsByServerId[serverId]?.[0]?.id).toBe(preset.id));
-        const start = visible.length;
-        await act(async () => { await harness.addHome({ name: 'Refresh', serverUrl: 'https://refresh.example', serverIdentityId: 'srv_refresh', accountId: 'refresh' }); });
-        await flushHookEffects();
-        expect(visible.slice(start).length).toBeGreaterThan(0);
-        expect(visible.slice(start).every(Boolean)).toBe(true);
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'refused', code: 'permission_denied' } });
-        harness.answer(serverId, '/v1/machines/presets/list', { status: 403, body: { kind: 'refused', code: 'permission_denied' } });
-        await act(async () => { await harness.switchAccount(serverId, 'other-owner'); });
-        await flushHookEffects();
-        expect(hook.getCurrent().detail.state.value).toBeNull();
-        expect(hook.getCurrent().collection.presetsByServerId[serverId]).toBeUndefined();
-        await hook.unmount();
-    });
-    it('reopens retired resources from the Machines archive without returning them to its active list', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
-        await setActiveServer({ serverId, scope: 'tab' });
-        await harness.selectHomes([serverId]);
-        harness.answer(serverId, '/v1/machines/managed/actions/list', { select: input => ({ body: { machines:
-            input && typeof input === 'object' && 'archived' in input ? [{ ...resource, archivedAt: 1 }] : [] } }) });
-        const screen = await renderSettingsView(<MachinesSettingsView />);
-        await waitForHomeGovernance(() => {
-            expect(Boolean(screen.findByTestId(`settings.machines.archived.${scopeId}`))).toBe(true);
+        const { publishHomeAccountChange } =
+          await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(scopeId));
+        await waitForHomeGovernance(() =>
+          expect(
+            screen.tree.findAll(
+              (node) =>
+                node.props.testID === 'managed-config.error' &&
+                node.props.diagnosticCode === 'controller_unavailable',
+            ).length,
+          ).toBeGreaterThan(0),
+        );
+        await waitForHomeGovernance(() =>
+          expect(
+            screen.findByTestId('managed-config.use')?.props.disabled,
+          ).toBe(true),
+        );
+        expect(
+          harness.requests.filter((row) =>
+            row.path.includes('/actions/machines.provisioners.'),
+          ),
+        ).toHaveLength(0);
+        harness.answer(serverId, '/v1/machines/presets/get', {
+          body: {
+            kind: 'found',
+            preset: {
+              ...delegated,
+              revision: delegated.revision + 1,
+              teamAcquireDelegated: false,
+              delegatedAcquire: {
+                kind: 'unavailable',
+                code: 'permission_denied',
+              },
+            },
+          },
         });
-        expect(screen.findByTestId(`settings.machines.managed.${scopeId}.resource`)).toBeNull();
-        await act(async () => screen.pressByTestId(`settings.machines.archived.${scopeId}`));
-        await waitForHomeGovernance(() => expect(screen.findByTestId(`settings.machines.managed.${scopeId}.resource`)).not.toBeNull());
-        await act(async () => screen.pressByTestId(`settings.machines.managed.${scopeId}.resource`));
-        expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/managed/resource?serverId=${encodeURIComponent(scopeId)}`);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+        await act(async () => publishHomeAccountChange(scopeId));
+        await waitForHomeGovernance(() =>
+          expect(
+            screen.tree.findAll(
+              (node) =>
+                node.props.testID === 'managed-config.error' &&
+                node.props.diagnosticCode === 'permission_denied',
+            ).length,
+          ).toBeGreaterThan(0),
+        );
+        expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(
+          true,
+        );
+        expect(
+          harness.requests.filter((row) =>
+            row.path.includes('/actions/machines.provisioners.'),
+          ),
+        ).toHaveLength(0);
+      }
+      await screen.unmount();
+    },
+  );
+  it.each(['check', 'options'] as const)(
+    'keeps a native %s refusal diagnostic on the saved launch',
+    async (role) => {
+      const serverId = await seed();
+      const scopeId = await seedConfiguration(serverId);
+      harness.answer(serverId, `/v1/actions/machines.provisioners.${role}`, {
+        select: (value) => {
+          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          const nativeCause = {
+            httpStatusClass: '4xx',
+            code: 'forbidden',
+          } as const;
+          return {
+            body: {
+              v: 1,
+              actionId: `machines.provisioners.${role}`,
+              requestId: request.requestId,
+              execution: {
+                ok: true,
+                result:
+                  role === 'check'
+                    ? {
+                        available: false,
+                        code: 'provider_unavailable',
+                        nativeCause,
+                      }
+                    : {
+                        dimensions: {
+                          size: [],
+                          image: [],
+                          location: [],
+                          network: [],
+                          duration: [],
+                        },
+                        code: 'provider_unavailable',
+                        nativeCause,
+                      },
+              },
+            },
+          };
+        },
+      });
+      const screen = await renderSettingsView(
+        <MachinePresetView serverId={scopeId} presetId={preset.id} />,
+      );
+      await waitForHomeGovernance(() =>
+        expect(
+          screen.tree.findAll(
+            (node) =>
+              node.props.testID ===
+                'machine-preset.configuration-unavailable' &&
+              node.props.diagnosticCode ===
+                'provider_unavailable · HTTP 4xx · forbidden',
+          ).length,
+        ).toBeGreaterThan(0),
+      );
+      expect(
+        harness.requestsFor('/v1/actions/machines.managed.acquire'),
+      ).toHaveLength(0);
+      await screen.unmount();
+    },
+  );
+  it.each([false, true])(
+    'preserves the same Home/Account editor through credential rebinding (preset: %s)',
+    async (editingPreset) => {
+      const serverId = await seed();
+      const scopeId = await seedConfiguration(serverId);
+      const screen = await renderSettingsView(
+        <ManagedMachineConfigurationView
+          serverId={scopeId}
+          provisioner={buildQualifiedPluginContributionKey(
+            preset.launch.provider,
+          )}
+          {...(editingPreset ? { presetId: preset.id, presetOnly: true } : {})}
+          initialController={preset.controller}
+        />,
+      );
+      await waitForHomeGovernance(() =>
+        expect(
+          sizeControl(screen)?.props.sizes.some(
+            (size: { id: string }) => size.id === 'large',
+          ),
+        ).toBe(true),
+      );
+      await act(async () => sizeControl(screen)?.props.onChange('large'));
+      if (editingPreset)
+        await act(async () =>
+          screen.changeTextByTestId(
+            'managed-config.setup.setup.input',
+            'echo unsaved launch',
+          ),
+        );
+      await waitForHomeGovernance(() =>
+        expect(
+          screen.findByTestId('managed-config.create')?.props.disabled,
+        ).toBe(false),
+      );
+      const retiredCreate = screen.findByTestId('managed-config.create')?.props
+        .onPress;
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+        select: async (value) => {
+          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          await gate;
+          return {
+            body: {
+              v: 1,
+              actionId: 'machines.provisioners.list',
+              requestId: request.requestId,
+              execution: {
+                ok: true,
+                result: {
+                  controller: preset.controller,
+                  provisioners: [provisioner],
+                },
+              },
+            },
+          };
+        },
+      });
+      try {
+        await act(async () => {
+          await harness.addHome({
+            name: 'Refresh',
+            serverUrl: 'https://refresh.example',
+            serverIdentityId: 'srv_refresh',
+            accountId: 'refresh',
+          });
+        });
+        await flushHookEffects();
+        await retiredCreate?.();
+        expect(
+          harness.requestsFor('/v1/actions/machines.managed.acquire'),
+        ).toHaveLength(0);
+        expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(
+          0,
+        );
+        if (editingPreset)
+          expect(
+            screen.findByTestId('managed-config.setup.setup.input')?.props
+              .value,
+          ).toBe('echo unsaved launch');
+        expect(sizeControl(screen)?.props.value).toBe('large');
+      } finally {
+        release();
+      }
+      await waitForHomeGovernance(() =>
+        expect(
+          screen.findByTestId('managed-config.create')?.props.disabled,
+        ).toBe(false),
+      );
+      if (editingPreset)
+        expect(
+          screen.findByTestId('managed-config.setup.setup.input')?.props.value,
+        ).toBe('echo unsaved launch');
+      await act(async () => {
+        await harness.switchAccount(serverId, 'other-owner');
+      });
+      await flushHookEffects();
+      expect(
+        screen.findByTestId('managed-config.setup.setup.input')?.props.value,
+      ).not.toBe('echo unsaved launch');
+      await screen.unmount();
+    },
+  );
+  it('retains preset collection and detail across a same-Account rebind and withdraws them on Account loss', async () => {
+    const serverId = await seed();
+    harness.answer(serverId, '/v1/machines/presets/list', {
+      body: { kind: 'listed', presets: [preset] },
     });
-    it('hides Create one on the addressed Account opt-out while keeping edits and history available', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+    const { useMachinePresets, useMachinePresetDetail } =
+      await import('./useMachinePresets');
+    const homes = [serverId];
+    const visible: boolean[] = [];
+    const hook = await renderHook(() => {
+      const collection = useMachinePresets(homes);
+      const detail = useMachinePresetDetail(serverId, preset.id);
+      visible.push(
+        collection.presetsByServerId[serverId]?.[0]?.id === preset.id &&
+          detail.state.value?.preset.id === preset.id,
+      );
+      return { collection, detail };
+    });
+    await waitForHomeGovernance(() =>
+      expect(hook.getCurrent().detail.state.value?.preset.id).toBe(preset.id),
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        hook.getCurrent().collection.presetsByServerId[serverId]?.[0]?.id,
+      ).toBe(preset.id),
+    );
+    const start = visible.length;
+    await act(async () => {
+      await harness.addHome({
+        name: 'Refresh',
+        serverUrl: 'https://refresh.example',
+        serverIdentityId: 'srv_refresh',
+        accountId: 'refresh',
+      });
+    });
+    await flushHookEffects();
+    expect(visible.slice(start).length).toBeGreaterThan(0);
+    expect(visible.slice(start).every(Boolean)).toBe(true);
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'refused', code: 'permission_denied' },
+    });
+    harness.answer(serverId, '/v1/machines/presets/list', {
+      status: 403,
+      body: { kind: 'refused', code: 'permission_denied' },
+    });
+    await act(async () => {
+      await harness.switchAccount(serverId, 'other-owner');
+    });
+    await flushHookEffects();
+    expect(hook.getCurrent().detail.state.value).toBeNull();
+    expect(
+      hook.getCurrent().collection.presetsByServerId[serverId],
+    ).toBeUndefined();
+    await hook.unmount();
+  });
+  it('reopens retired resources from the Machines archive without returning them to its active list', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const { setActiveServer } =
+      await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId, scope: 'tab' });
+    await harness.selectHomes([serverId]);
+    harness.answer(serverId, '/v1/machines/managed/actions/list', {
+      select: (input) => ({
+        body: {
+          machines:
+            input && typeof input === 'object' && 'archived' in input
+              ? [{ ...resource, archivedAt: 1 }]
+              : [],
+        },
+      }),
+    });
+    const screen = await renderSettingsView(<MachinesSettingsView />);
+    await waitForHomeGovernance(() => {
+      expect(
+        Boolean(screen.findByTestId(`settings.machines.archived.${scopeId}`)),
+      ).toBe(true);
+    });
+    expect(
+      screen.findByTestId(`settings.machines.managed.${scopeId}.resource`),
+    ).toBeNull();
+    // Off the rail the fold's own row draws the canonical disclosure caret, closed until it is opened.
+    const caretStates = () => [
+      ...new Set(
+        screen.root
+          .findAll(
+            (node) =>
+              typeof node.type !== 'string' &&
+              node.props.reducedMotion !== undefined &&
+              node.props.expanded !== undefined,
+          )
+          .map((node) => node.props.expanded),
+      ),
+    ];
+    expect(caretStates()).toEqual([false]);
+    await act(async () =>
+      screen.pressByTestId(`settings.machines.archived.${scopeId}`),
+    );
+    expect(caretStates()).toEqual([true]);
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId(`settings.machines.managed.${scopeId}.resource`),
+      ).not.toBeNull(),
+    );
+    await act(async () =>
+      screen.pressByTestId(`settings.machines.managed.${scopeId}.resource`),
+    );
+    expect(route.push).toHaveBeenLastCalledWith(
+      `/settings/machines/managed/resource?serverId=${encodeURIComponent(scopeId)}`,
+    );
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
+  it('hides Create one on the addressed Account opt-out while keeping edits and history available', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    harness.answer(serverId, '/v2/account/settings', {
+      body: {
+        content: {
+          t: 'plain',
+          v: {
             managedMachineCreationEnabled: false,
-        } }, version: 1 } });
-        const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId="preset" />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull());
-        await flushHookEffects();
-        expect(Boolean(screen.findByTestId('machine-preset.detail.createOne'))).toBe(false);
-        expect(screen.findByTestId('machine-preset.creation-disabled')).not.toBeNull();
-        expect(screen.findByTestId('machine-preset.edit')).not.toBeNull();
-        expect(screen.findByTestId('machine-preset.detail.archive')).not.toBeNull();
-        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+          },
+        },
+        version: 1,
+      },
+    });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={scopeId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.detail.machine.resource'),
+      ).not.toBeNull(),
+    );
+    await flushHookEffects();
+    expect(
+      Boolean(screen.findByTestId('machine-preset.detail.createOne')),
+    ).toBe(false);
+    expect(
+      screen.findByTestId('machine-preset.creation-disabled'),
+    ).not.toBeNull();
+    expect(screen.findByTestId('machine-preset.edit')).not.toBeNull();
+    expect(screen.findByTestId('machine-preset.detail.archive')).not.toBeNull();
+    harness.answer(serverId, '/v2/account/settings', {
+      body: {
+        content: {
+          t: 'plain',
+          v: {
             managedMachineCreationEnabled: true,
-        } }, version: 2 } });
-        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        await act(async () => publishHomeAccountChange(scopeId));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.createOne')).not.toBeNull());
-        expect(screen.findByTestId('machine-preset.creation-disabled')).toBeNull();
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+          },
+        },
+        version: 2,
+      },
     });
-    it('withdraws a Team preset editor when its Team read loses access without changing the credential or preset response', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const teamPreset = { ...preset, owner: { kind: 'team', teamId: 'team-1' }, environment: { setupScript: 'echo team setup' } };
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: teamPreset } });
-        const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
-        const request = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' });
-        harness.answer(serverId, request.path, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: true }) }) });
-        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
-            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)} presetId={preset.id} presetOnly />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe('echo team setup'));
-        harness.answer(serverId, request.path, { status: 403, body: { code: 'permission_denied' } });
-        const { refreshTeam } = await import('@/sync/engine/teams/teamsDirectoryEngine');
-        const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-        const { createTeamAddress } = await import('@/sync/domains/teams/teamAddress');
-        const scope = createServerAccountScope(scopeId, 'owner');
-        const address = createTeamAddress(scopeId, 'team-1');
-        if (!scope || !address) throw new Error('Expected the seeded exact Team scope');
-        await act(async () => { await refreshTeam(scope, address); });
-        await flushHookEffects();
-        expect(screen.findByTestId('managed-config.environment.setup.input')).toBeNull();
-        expect(screen.findByTestId('managed-config.choice:large')).toBeNull();
-        expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
+    const { publishHomeAccountChange } =
+      await import('@/sync/runtime/orchestration/homeAccountChange');
+    await act(async () => publishHomeAccountChange(scopeId));
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.detail.createOne'),
+      ).not.toBeNull(),
+    );
+    expect(screen.findByTestId('machine-preset.creation-disabled')).toBeNull();
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
+  it('offers no Create one while its provisioner cannot create here, and says why instead', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    harness.answer(serverId, '/v2/account/settings', {
+      body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 },
     });
-    it.each(['permission_denied', 'unavailable'])('refreshes protected editor content on Home changes (%s)', async code => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const environment = { setupScript: 'echo protected setup', secretRefs: { v: 1, bindings: { TOKEN: { ref: 'protected-secret' } } } };
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...preset, environment } } });
-        await harness.requireUiApproval(serverId, 'machines.presets.update');
-        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
-            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)} presetId={preset.id} presetOnly />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe(environment.setupScript));
-        await act(async () => screen.changeTextByTestId('managed-config.environment.setup.input', 'echo unsaved setup'));
-        await act(async () => screen.pressByTestId('managed-config.choice:large'));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        await act(async () => screen.pressByTestId('managed-config.create'));
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-        const pendingId = harness.artifacts(serverId).list()[0]!.id;
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'refused', code } });
-        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        await act(async () => publishHomeAccountChange(scopeId));
-        await flushHookEffects();
-        expect(harness.requestsFor('/v1/machines/presets/get'), 'The mounted preset editor must refresh its read on the same Home wake').toHaveLength(2);
-        if (code === 'permission_denied') {
-            expect(screen.findByTestId('managed-config.environment.setup.input')).toBeNull();
-            expect(screen.findByTestId('managed-config.environment.secret:TOKEN')).toBeNull();
-            expect(screen.findByTestId('managed-config.choice:large')).toBeNull();
-            expect(screen.findByTestId('managed-config.receipt')).toBeNull();
-            expect(screen.findByTestId('managed-config.create')).toBeNull();
-        } else {
-            expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe('echo unsaved setup');
-            expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
-        }
-        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...preset, revision: 4 } } });
-        await expect(decideApprovalAsInbox(scopeId, pendingId, 'approve')).resolves.toMatchObject({ ok: true });
-        await flushHookEffects();
-        if (code === 'permission_denied') expect(route.replace).not.toHaveBeenCalled();
-        else expect(route.replace).toHaveBeenCalledWith(`/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`);
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+      status: 503,
+      body: { code: 'controller_unavailable' },
     });
-    it.each([true, false, 'missing-input-schema'] as const)('revalidates saved native sizing only through its current declared same-path selectors (schema available: %s)', async schemaAvailable => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        // Public Cua schemas/options from machine-cua/src/machine/schemas.ts
-        // and nativeFacts.ts: runtime, image and reviewed size share launch paths;
-        // `on` belongs only to launch, never to the options input.
-        const size = { cpu: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 10 * 1024 ** 3 };
-        const selectors = { runtimeId: 'gvisor', imageId: 'ghcr.io/trycua/browser:latest', size };
-        const launch = { on: 'local', ...selectors };
-        const sizeSchema = { type: 'object', properties: {
-            cpu: { type: 'integer', minimum: 1, maximum: 4_294_967_295 },
-            memoryBytes: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-            diskBytes: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-        }, required: ['cpu', 'memoryBytes', 'diskBytes'], additionalProperties: false };
-        const inputSchema = PluginJsonSchemaV2Schema.parse({ type: 'object', properties: {
-            runtimeId: { anyOf: ['gvisor', 'runc', 'qemu', 'lume'].map(value => ({ type: 'string', const: value })) },
-            imageId: { type: 'string', minLength: 1 }, size: sizeSchema,
-        }, additionalProperties: false });
-        const cua: MachineProvisionersListResultV1['provisioners'][number] = { ...provisioner,
-            contribution: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' }, descriptor: { ...provisioner.descriptor,
-                id: 'local-sandbox', title: 'Cua local sandbox', resourceKind: 'cua-local-sandbox',
-                launchSchema: { type: 'object', properties: { ...inputSchema.properties, on: { type: 'string', const: 'local' } },
-                    required: ['on', 'runtimeId', 'imageId', 'size'], additionalProperties: false },
-                billing: { location: 'local', stoppedBilling: 'not-billed' },
-                actions: { ...provisioner.descriptor.actions, options: 'sandbox-options' },
-            } };
-        seedOptionsDeclaration(cua, inputSchema, schemaAvailable);
-        const saved = { ...preset, recipe: { ...preset.recipe, provider: cua.contribution, choices: launch } };
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
-                execution: { ok: true, result: { controller: preset.controller, provisioners: [cua] } } } };
-        } });
-        let available = true;
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            expect(request.target).toEqual({ kind: 'machine', machineId: preset.controller.machineId });
-            const reviewed = request.input !== null && typeof request.input === 'object' && 'selectors' in request.input
-                && pluginJsonValuesEqual(request.input.selectors, selectors);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-                execution: { ok: true, result: { choices: [{ id: `gvisor:${selectors.imageId}`, title: selectors.imageId,
-                    available, ...(available && reviewed ? { launch } : {}), nativeFacts: {
-                        ...(reviewed ? { size: { id: '2:4294967296:10737418240', title: '2 CPU', cpuCores: size.cpu,
-                            memoryBytes: size.memoryBytes, diskBytes: size.diskBytes } } : {}),
-                        image: { id: selectors.imageId, title: selectors.imageId }, location: { id: 'gvisor', title: 'gvisor' },
-                    } }] } } } };
-        } });
-        const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail')).not.toBeNull());
-        if (schemaAvailable !== true) {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.configuration-unavailable')).not.toBeNull());
-            expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
-        } else {
-            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.options').length).toBeGreaterThan(0));
-            const first = ExternalActionRequestEnvelopeV1Schema.parse(harness.requestsFor('/v1/actions/machines.provisioners.options')[0]!.input);
-            expect(first.input).toEqual({ homeId: preset.homeId, controller: preset.controller,
-                contribution: cua.contribution, selectors });
-            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('2 CPU'));
-            expect(screen.getTextContent()).toContain(selectors.imageId);
-            expect(screen.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
-            // The native owner can invalidate that exact image's disk sizing.
-            // Refresh must retain reviewed sizing and disclose unavailability,
-            // never choose a replacement or acquire another resource.
-            available = false;
-            const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-            await act(async () => publishHomeAccountChange(scopeId));
-            await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.configuration-unavailable')).not.toBeNull());
-            expect(screen.getTextContent()).toContain('2 CPU');
-            expect(screen.getTextContent()).toContain(selectors.imageId);
-        }
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={scopeId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.configuration-unavailable'),
+      ).not.toBeNull(),
+    );
+    await flushHookEffects();
+    // A form that cannot succeed is never offered: the line above says why, and its Retry is the way on.
+    expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    // The same holds when the provisioner list itself can't be read.
+    await screen.unmount();
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+      status: 503,
+      body: { code: 'controller_unavailable' },
     });
-
-    it('shows current labelled recipe facts from the saved launch rather than the first available choice', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const { storage } = await import('@/sync/domains/state/storage');
-        const originalController = createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId,
-            metadata: { ...createMachineFixture().metadata!, displayName: 'Original preset controller' } });
-        storage.getState().applyMachines([originalController], true, { sourceServerId: scopeId });
-        const saved = { ...preset, recipe: { ...preset.recipe, choices: { cpu: 4 }, credentials: [savedCredential] } };
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            expect(request.target).toEqual({ kind: 'machine', machineId: preset.controller.machineId });
-            expect(request.input).toMatchObject({ homeId: preset.homeId, controller: preset.controller });
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-                execution: { ok: true, result: { choices: request.input && typeof request.input === 'object'
-                    && 'credentials' in request.input && JSON.stringify(request.input.credentials) === JSON.stringify([savedCredential]) ? [
-                    { id: 'other', title: 'Other recipe', launch: { cpu: 8 }, nativeFacts: { size: { id: 'other', title: 'Other size' } } },
-                    { id: 'saved', title: 'Saved recipe', launch: { cpu: 4 }, nativeFacts: {
-                        size: { id: 'large', title: 'Four cores', cpuCores: 4 }, image: { id: 'linux', title: 'Linux guest' },
-                        location: { id: 'west', title: 'West coast' } },
-                        prices: [{ amount: '0.012', currency: 'USD', unit: 'hour', source: 'Native quote', observedAt: 10 }] },
-                ] : [] } } } };
-        } });
-        const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail')).not.toBeNull());
-        await flushHookEffects();
-        expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
-        for (const actionId of ['machines.provisioners.check', 'machines.provisioners.options']) {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(harness.requestsFor(`/v1/actions/${actionId}`)[0]!.input);
-            expect(envelope.input).toMatchObject({ credentials: [savedCredential] });
-        }
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Four cores'));
-        expect(screen.getTextContent()).toContain('Linux guest');
-        expect(screen.getTextContent()).toContain('West coast');
-        expect(screen.getTextContent()).toContain('Native quote');
-        expect(screen.getTextContent()).not.toContain('Other size');
-        expect(screen.findRowByTitle('Original guest')).not.toBeNull();
-        expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.facts).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'controller', value: 'Original preset controller' }),
-        ]));
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-                execution: { ok: true, result: { choices: [{ id: 'other', title: 'Other recipe', launch: { cpu: 8 },
-                    nativeFacts: { size: { id: 'other', title: 'Other size' } } }] } } } };
-        } });
-        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        await act(async () => publishHomeAccountChange(scopeId));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.configuration-unavailable')).not.toBeNull());
-        expect(screen.getTextContent()).toContain('Four cores');
-        expect(screen.getTextContent()).toContain('Native quote');
-        expect(screen.getTextContent()).not.toContain('Other size');
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { status: 503, body: { code: 'unavailable' } });
-        const priorReads = harness.requestsFor('/v1/actions/machines.provisioners.options').length;
-        await act(async () => screen.pressByTestId('machine-preset.configuration-unavailable-action'));
-        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(priorReads + 1));
-        expect(screen.getTextContent()).toContain('Four cores');
-        expect(screen.getTextContent()).toContain('Native quote');
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
-        // A new installation can reuse a Machine id, but cannot supply the
-        // human identity of the preset's retained original controller.
-        await act(async () => storage.getState().applyMachines([{ ...originalController, installationId: 'replacement-installation',
-            seq: originalController.seq + 1, updatedAt: originalController.updatedAt + 1,
-            metadata: { ...originalController.metadata!, displayName: 'Replacement controller computer' } }], true, { sourceServerId: scopeId }));
-        await flushHookEffects();
-        const receipt = screen.tree.findByType(MachineConfigurationReceipt).props.model;
-        expect(receipt.facts).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'controller', value: t('common.unknown') })]));
-        // The page says what the preset makes; its sections never repeat their own title, and the edit rule is not the page's purpose.
-        const detailModel = screen.tree.findByType(MachinePresetDetail).props.model;
-        expect(detailModel.audience.description).not.toBe(t('machinePresets.audience'));
-        expect(detailModel.description).not.toBe(t('machinePresets.futureOnly'));
-        expect(detailModel.description).not.toBe('');
-        expect(JSON.stringify(receipt.facts)).not.toContain('Replacement controller computer');
-        expect(receipt.facts.find((fact: { id: string; value: string }) => fact.id === 'controller').value).not.toBe(preset.controller.machineId);
+    const listFailed = await renderSettingsView(
+      <MachinePresetView serverId={scopeId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(listFailed.findByTestId('machine-preset.provider-error')).not.toBeNull(),
+    );
+    await flushHookEffects();
+    expect(listFailed.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    await listFailed.unmount();
+  });
+  it('withdraws a Team preset editor when its Team read loses access without changing the credential or preset response', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const teamPreset = {
+      ...preset,
+      owner: { kind: 'team', teamId: 'team-1' },
+      setup: { scripts: [{ body: 'echo team setup' }] },
+    };
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: teamPreset },
     });
-
-    it('opens New preset through the exact controller picker and saves a recipe without acquiring', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const picker = await renderSettingsView(<MachineProvisionerPicker serverId={scopeId} presetOnly />);
-        // The Home's one controller is preselected, so its catalog is the first frame.
-        const providerKey = buildQualifiedPluginContributionKey(preset.recipe.provider);
-        const actionId = `managed-picker.provisioners.cloud.${providerKey}.action`;
-        const rowId = `managed-picker.provisioners.cloud.${providerKey}`;
-        await waitForHomeGovernance(() => expect(picker.findByTestId(actionId) ?? picker.findByTestId(rowId)).not.toBeNull());
-        await act(async () => picker.pressByTestId(picker.findByTestId(actionId) ? actionId : rowId));
-        const href = String(route.push.mock.calls.at(-1)?.[0]);
-        const destination = new URL(href, 'https://happier.example');
-        expect(destination.pathname).toBe(`/settings/machines/add/${encodeURIComponent(providerKey)}`);
-        expect(Object.fromEntries(destination.searchParams)).toEqual({ serverId: scopeId, presetOnly: 'true',
-            machineId: preset.controller.machineId, installationId: preset.controller.installationId });
-        await picker.unmount();
-        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId} provisioner={providerKey}
-            presetOnly initialController={preset.controller} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:large')).not.toBeNull());
-        await act(async () => screen.pressByTestId('managed-config.choice:large'));
-        expect(screen.findByTestId('managed-config.receipt:keep:choice:deadline')).toBeNull();
-        harness.answer(serverId, '/v1/machines/presets/create', { select: input => {
-            expect(input).toMatchObject({ homeId: preset.homeId, name: 'Custom compute', owner: preset.owner,
-                controller: preset.controller, recipe: { ...preset.recipe, name: 'Custom compute', choices: { cpu: 4 } } });
-            const id = input && typeof input === 'object' && 'id' in input ? input.id : null;
-            expect(typeof id).toBe('string');
-            return { body: { kind: 'saved', preset: { ...preset, id, revision: 1, name: 'Custom compute',
-                recipe: { ...preset.recipe, name: 'Custom compute', choices: { cpu: 4 } } } } };
-        } });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        await act(async () => screen.pressByTestId('managed-config.create'));
-        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
-        const createdInput = harness.requestsFor('/v1/machines/presets/create')[0]?.input;
-        if (!createdInput || typeof createdInput !== 'object' || !('id' in createdInput) || typeof createdInput.id !== 'string') {
-            throw new Error('Expected the strict preset creation input');
-        }
-        const createdId = createdInput.id;
-        await waitForHomeGovernance(() => expect(route.replace).toHaveBeenLastCalledWith(`/settings/machines/presets/${createdId}?serverId=${encodeURIComponent(scopeId)}`));
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    const { bindHomeDomainActionHttpRequestV1 } =
+      await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+    const request = bindHomeDomainActionHttpRequestV1('teams.get', {
+      v: 1,
+      teamId: 'team-1',
     });
-
-    it('preserves an edited recipe after rejection and revision conflict, then saves through normal approval', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        await harness.requireUiApproval(serverId, 'machines.presets.update');
-        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
-            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)} presetId={preset.id} presetOnly />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:large')).not.toBeNull());
-        await act(async () => screen.pressByTestId('managed-config.choice:large'));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        await act(async () => screen.pressByTestId('managed-config.create'));
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-        expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
-        const rejectedId = harness.artifacts(serverId).list()[0]!.id;
-        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        await act(async () => publishHomeAccountChange(scopeId));
-        await flushHookEffects();
-        expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(2);
-        expect(screen.findByTestId('managed-config.approval')).not.toBeNull();
-        await expect(decideApprovalAsInbox(scopeId, rejectedId, 'reject')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
-        expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
+    harness.answer(serverId, request.path, {
+      body: teamSummaryFixture({
+        capabilities: teamCapabilitiesFixture({ manageSettings: true }),
+      }),
+    });
+    const screen = await renderSettingsView(
+      <ManagedMachineConfigurationView
+        serverId={scopeId}
+        provisioner={buildQualifiedPluginContributionKey(
+          preset.launch.provider,
+        )}
+        presetId={preset.id}
+        presetOnly
+      />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('managed-config.setup.setup.input')?.props.value,
+      ).toBe('echo team setup'),
+    );
+    harness.answer(serverId, request.path, {
+      status: 403,
+      body: { code: 'permission_denied' },
+    });
+    const { refreshTeam } =
+      await import('@/sync/engine/teams/teamsDirectoryEngine');
+    const { createServerAccountScope } =
+      await import('@/sync/domains/scope/serverAccountScope');
+    const { createTeamAddress } =
+      await import('@/sync/domains/teams/teamAddress');
+    const scope = createServerAccountScope(scopeId, 'owner');
+    const address = createTeamAddress(scopeId, 'team-1');
+    if (!scope || !address)
+      throw new Error('Expected the seeded exact Team scope');
+    await act(async () => {
+      await refreshTeam(scope, address);
+    });
+    await flushHookEffects();
+    expect(screen.findByTestId('managed-config.setup.setup.input')).toBeNull();
+    expect(sizeControl(screen)).toBeUndefined();
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
+  });
+  it.each(['permission_denied', 'unavailable'])(
+    'refreshes protected editor content on Home changes (%s)',
+    async (code) => {
+      const serverId = await seed();
+      const scopeId = await seedConfiguration(serverId);
+      const setup = {
+        scripts: [{ body: 'echo protected setup' }],
+        secretRefs: { v: 1, bindings: { TOKEN: { ref: 'protected-secret' } } },
+      };
+      harness.answer(serverId, '/v1/machines/presets/get', {
+        body: { kind: 'found', preset: { ...preset, setup } },
+      });
+      await harness.requireUiApproval(serverId, 'machines.presets.update');
+      const screen = await renderSettingsView(
+        <ManagedMachineConfigurationView
+          serverId={scopeId}
+          provisioner={buildQualifiedPluginContributionKey(
+            preset.launch.provider,
+          )}
+          presetId={preset.id}
+          presetOnly
+        />,
+      );
+      await waitForHomeGovernance(() =>
+        expect(
+          screen.findByTestId('managed-config.setup.setup.input')?.props.value,
+        ).toBe(setup.scripts[0]!.body),
+      );
+      await act(async () =>
+        screen.changeTextByTestId(
+          'managed-config.setup.setup.input',
+          'echo unsaved setup',
+        ),
+      );
+      await act(async () => sizeControl(screen)?.props.onChange('large'));
+      await waitForHomeGovernance(() =>
+        expect(
+          screen.findByTestId('managed-config.create')?.props.disabled,
+        ).toBe(false),
+      );
+      await act(async () => screen.pressByTestId('managed-config.create'));
+      await waitForHomeGovernance(() =>
+        expect(harness.artifacts(serverId).list()).toHaveLength(1),
+      );
+      const pendingId = harness.artifacts(serverId).list()[0]!.id;
+      harness.answer(serverId, '/v1/machines/presets/get', {
+        body: { kind: 'refused', code },
+      });
+      const { publishHomeAccountChange } =
+        await import('@/sync/runtime/orchestration/homeAccountChange');
+      await act(async () => publishHomeAccountChange(scopeId));
+      await flushHookEffects();
+      expect(
+        harness.requestsFor('/v1/machines/presets/get'),
+        'The mounted preset editor must refresh its read on the same Home wake',
+      ).toHaveLength(2);
+      if (code === 'permission_denied') {
+        expect(
+          screen.findByTestId('managed-config.setup.setup.input'),
+        ).toBeNull();
+        expect(
+          screen.findByTestId('managed-config.setup.secret:TOKEN'),
+        ).toBeNull();
+        expect(sizeControl(screen)).toBeUndefined();
+        expect(screen.findByTestId('managed-config.receipt')).toBeNull();
+        expect(screen.findByTestId('managed-config.create')).toBeNull();
+      } else {
+        expect(
+          screen.findByTestId('managed-config.setup.setup.input')?.props.value,
+        ).toBe('echo unsaved setup');
+        expect(sizeControl(screen)?.props.value).toBe('large');
+      }
+      harness.answer(serverId, '/v1/machines/presets/update', {
+        body: { kind: 'saved', preset: { ...preset, revision: 4 } },
+      });
+      await expect(
+        decideApprovalAsInbox(scopeId, pendingId, 'approve'),
+      ).resolves.toMatchObject({ ok: true });
+      await flushHookEffects();
+      if (code === 'permission_denied')
         expect(route.replace).not.toHaveBeenCalled();
-        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'conflict', currentRevision: 4 } });
-        await act(async () => screen.pressByTestId('managed-config.create'));
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
-        const conflictId = harness.artifacts(serverId).list()[1]!.id;
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...preset, revision: 4 } } });
-        await act(async () => publishHomeAccountChange(scopeId, [preset.id], { changeKinds: ['artifact', 'account'] }));
-        await flushHookEffects();
-        expect(screen.findByTestId('managed-config.approval')).not.toBeNull();
-        expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
-        await expect(decideApprovalAsInbox(scopeId, conflictId, 'approve')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
-        expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
-        expect(route.replace).not.toHaveBeenCalled();
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...preset, revision: 4 } } });
-        await act(async () => screen.pressByTestId('managed-config.error-action'));
-        await flushHookEffects();
-        expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(4);
-        expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
-        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...preset, revision: 5,
-            recipe: { ...preset.recipe, choices: { cpu: 4 } } } } });
-        await act(async () => screen.pressByTestId('managed-config.create'));
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(3));
-        const savedId = harness.artifacts(serverId).list()[2]!.id;
-        await expect(decideApprovalAsInbox(scopeId, savedId, 'approve')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(route.replace).toHaveBeenLastCalledWith(`/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`));
-        expect(harness.requestsFor('/v1/machines/presets/update').map(request => request.input)).toEqual([
-            expect.objectContaining({ homeId: preset.homeId, id: preset.id, expectedRevision: 3,
-                patch: expect.objectContaining({ recipe: { ...preset.recipe, choices: { cpu: 4 } }, controller: preset.controller }) }),
-            expect.objectContaining({ homeId: preset.homeId, id: preset.id, expectedRevision: 4,
-                patch: expect.objectContaining({ recipe: { ...preset.recipe, choices: { cpu: 4 } } }) }),
-        ]);
-        expect(harness.requestsFor('/v1/machines/presets/create')).toEqual([]);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+      else
+        expect(route.replace).toHaveBeenCalledWith(
+          `/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`,
+        );
+    },
+  );
+  it.each([true, false, 'missing-input-schema'] as const)(
+    'revalidates saved native sizing only through its current declared same-path selectors (schema available: %s)',
+    async (schemaAvailable) => {
+      const serverId = await seed();
+      const scopeId = await seedConfiguration(serverId);
+      // Public Cua schemas/options from machine-cua/src/machine/schemas.ts
+      // and nativeFacts.ts: runtime, image and reviewed size share launch paths;
+      // `on` belongs only to launch, never to the options input.
+      const size = {
+        cpu: 2,
+        memoryBytes: 4 * 1024 ** 3,
+        diskBytes: 10 * 1024 ** 3,
+      };
+      const selectors = {
+        runtimeId: 'gvisor',
+        imageId: 'ghcr.io/trycua/browser:latest',
+        size,
+      };
+      const launch = { on: 'local', ...selectors };
+      const sizeSchema = {
+        type: 'object',
+        properties: {
+          cpu: { type: 'integer', minimum: 1, maximum: 4_294_967_295 },
+          memoryBytes: {
+            type: 'integer',
+            minimum: 1,
+            maximum: Number.MAX_SAFE_INTEGER,
+          },
+          diskBytes: {
+            type: 'integer',
+            minimum: 1,
+            maximum: Number.MAX_SAFE_INTEGER,
+          },
+        },
+        required: ['cpu', 'memoryBytes', 'diskBytes'],
+        additionalProperties: false,
+      };
+      const inputSchema = PluginJsonSchemaV2Schema.parse({
+        type: 'object',
+        properties: {
+          runtimeId: {
+            anyOf: ['gvisor', 'runc', 'qemu', 'lume'].map((value) => ({
+              type: 'string',
+              const: value,
+            })),
+          },
+          imageId: { type: 'string', minLength: 1 },
+          size: sizeSchema,
+        },
+        additionalProperties: false,
+      });
+      const cua: MachineProvisionersListResultV1['provisioners'][number] = {
+        ...provisioner,
+        contribution: {
+          pluginId: 'happier.machine.cua',
+          localId: 'local-sandbox',
+        },
+        descriptor: {
+          ...provisioner.descriptor,
+          id: 'local-sandbox',
+          title: 'Cua local sandbox',
+          resourceKind: 'cua-local-sandbox',
+          launchSchema: {
+            type: 'object',
+            properties: {
+              ...inputSchema.properties,
+              on: { type: 'string', const: 'local' },
+            },
+            required: ['on', 'runtimeId', 'imageId', 'size'],
+            additionalProperties: false,
+          },
+          billing: { location: 'local', stoppedBilling: 'not-billed' },
+          actions: {
+            ...provisioner.descriptor.actions,
+            options: 'sandbox-options',
+          },
+        },
+      };
+      seedOptionsDeclaration(cua, inputSchema, schemaAvailable);
+      const saved = {
+        ...preset,
+        launch: {
+          ...preset.launch,
+          provider: cua.contribution,
+          choices: launch,
+        },
+      };
+      harness.answer(serverId, '/v1/machines/presets/get', {
+        body: { kind: 'found', preset: saved },
+      });
+      harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+        select: (value) => {
+          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          return {
+            body: {
+              v: 1,
+              actionId: 'machines.provisioners.list',
+              requestId: request.requestId,
+              execution: {
+                ok: true,
+                result: { controller: preset.controller, provisioners: [cua] },
+              },
+            },
+          };
+        },
+      });
+      let available = true;
+      harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+        select: (value) => {
+          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          expect(request.target).toEqual({
+            kind: 'machine',
+            machineId: preset.controller.machineId,
+          });
+          const reviewed =
+            request.input !== null &&
+            typeof request.input === 'object' &&
+            'selectors' in request.input &&
+            pluginJsonValuesEqual(request.input.selectors, selectors);
+          return {
+            body: {
+              v: 1,
+              actionId: 'machines.provisioners.options',
+              requestId: request.requestId,
+              execution: {
+                ok: true,
+                result: createMachineProvisionerOptionsFixture({
+                  ...(available && reviewed
+                    ? {
+                        base: {
+                          launch,
+                          nativeFacts: {
+                            ...(reviewed
+                              ? {
+                                  size: {
+                                    id: '2:4294967296:10737418240',
+                                    title: '2 CPU',
+                                    cpuCores: size.cpu,
+                                    memoryBytes: size.memoryBytes,
+                                    diskBytes: size.diskBytes,
+                                  },
+                                }
+                              : {}),
+                            image: {
+                              id: selectors.imageId,
+                              title: selectors.imageId,
+                            },
+                            location: { id: 'gvisor', title: 'gvisor' },
+                          },
+                        },
+                      }
+                    : {}),
+                }),
+              },
+            },
+          };
+        },
+      });
+      const screen = await renderSettingsView(
+        <MachinePresetView serverId={scopeId} presetId={preset.id} />,
+      );
+      await waitForHomeGovernance(() =>
+        expect(screen.findByTestId('machine-preset.detail')).not.toBeNull(),
+      );
+      if (schemaAvailable !== true) {
+        await waitForHomeGovernance(() =>
+          expect(
+            screen.findByTestId('machine-preset.configuration-unavailable'),
+          ).not.toBeNull(),
+        );
+        expect(
+          harness.requestsFor('/v1/actions/machines.provisioners.options'),
+        ).toHaveLength(0);
+      } else {
+        await waitForHomeGovernance(() =>
+          expect(
+            harness.requestsFor('/v1/actions/machines.provisioners.options')
+              .length,
+          ).toBeGreaterThan(0),
+        );
+        const first = ExternalActionRequestEnvelopeV1Schema.parse(
+          harness.requestsFor('/v1/actions/machines.provisioners.options')[0]!
+            .input,
+        );
+        expect(first.input).toEqual({
+          homeId: preset.homeId,
+          controller: preset.controller,
+          contribution: cua.contribution,
+          selectors,
+        });
+        await waitForHomeGovernance(() =>
+          expect(screen.getTextContent()).toContain('2 CPU'),
+        );
+        expect(screen.getTextContent()).toContain(selectors.imageId);
+        expect(
+          screen.findByTestId('machine-preset.configuration-unavailable'),
+        ).toBeNull();
+        // The native owner can invalidate that exact image's disk sizing.
+        // Refresh must retain reviewed sizing and disclose unavailability,
+        // never choose a replacement or acquire another resource.
+        available = false;
+        const { publishHomeAccountChange } =
+          await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(scopeId));
+        await waitForHomeGovernance(() =>
+          expect(
+            screen.findByTestId('machine-preset.configuration-unavailable'),
+          ).not.toBeNull(),
+        );
+        expect(screen.getTextContent()).toContain('2 CPU');
+        expect(screen.getTextContent()).toContain(selectors.imageId);
+      }
+      expect(
+        harness.requestsFor('/v1/actions/machines.managed.acquire'),
+      ).toEqual([]);
+    },
+  );
+
+  it('shows current labelled launch facts from the saved launch rather than the first available choice', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const originalController = createMachineFixture({
+      id: preset.controller.machineId,
+      installationId: preset.controller.installationId,
+      activeAt: Date.now(),
+      metadata: {
+        ...createMachineFixture().metadata!,
+        displayName: 'Original preset controller',
+      },
     });
-
-    it('saves a preset copy with its explicit Keep and wake choices without allocating or editing the original', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const policy = { retention: { kind: 'unused', afterMs: 7_200_000, effect: 'delete' }, wakeOnAcceptedMessage: false } as const;
-        const original = { ...preset, recipe: { ...preset.recipe, credentials: [savedCredential] }, ...policy };
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: original } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
-                execution: { ok: true, result: { controller: preset.controller, provisioners: [{ ...provisioner,
-                    credentialPurposes: [{ purpose: savedCredential.purpose,
-                        options: [{ value: savedCredential.account, label: 'Saved native account' }] }],
-                }] } } } };
-        } });
-        harness.answer(serverId, '/v1/machines/presets/create', { select: input => {
-            const id = input && typeof input === 'object' && 'id' in input ? input.id : null;
-            return { body: { kind: 'saved', preset: { ...original, id, revision: 1 } } };
-        } });
-        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
-            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)} presetId={preset.id} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false));
-        await act(async () => screen.pressByTestId('managed-config.save-preset'));
-        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
-        const copied = harness.requestsFor('/v1/machines/presets/create')[0]!.input;
-        expect(copied).toMatchObject({ homeId: preset.homeId, recipe: original.recipe, controller: preset.controller, ...policy });
-        for (const actionId of ['machines.provisioners.check', 'machines.provisioners.options']) {
-            const requests = harness.requestsFor(`/v1/actions/${actionId}`);
-            expect(requests.length).toBeGreaterThan(0);
-            for (const request of requests) expect(ExternalActionRequestEnvelopeV1Schema.parse(request.input).input)
-                .toMatchObject({ credentials: [savedCredential] });
-        }
-        expect(copied).not.toMatchObject({ id: preset.id });
-        expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    storage
+      .getState()
+      .applyMachines([originalController], true, { sourceServerId: scopeId });
+    observeMachinePresenceForTest({ serverId: scopeId, accountId: 'owner' }, [
+      originalController.id,
+    ]);
+    const saved = {
+      ...preset,
+      launch: {
+        ...preset.launch,
+        choices: { cpu: 4 },
+        credentials: [savedCredential],
+      },
+    };
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: saved },
     });
-
-    it('mounts accessible presets in the Machines collection and opens the selected Home', async () => {
-        const serverId = await seed();
-        await harness.selectHomes([serverId]);
-        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
-        const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
-        const screen = await renderSettingsView(<MachinesSettingsView />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId(`settings.machines.preset.${scopeId}.preset`)).not.toBeNull());
-        await act(async () => screen.pressByTestId(`settings.machines.preset.${scopeId}.preset`));
-        expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`);
-        // The group creates a preset from its header "+"; no separate "New preset" row repeats it.
-        expect(screen.getTextContent()).not.toContain(t('machinePresets.newPreset'));
-        await act(async () => screen.pressByTestId(`settings.machines.presets.new.${scopeId}`));
-        expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/presets/new?serverId=${encodeURIComponent(scopeId)}`);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+      select: (value) => {
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        expect(request.target).toEqual({
+          kind: 'machine',
+          machineId: preset.controller.machineId,
+        });
+        expect(request.input).toMatchObject({
+          homeId: preset.homeId,
+          controller: preset.controller,
+        });
+        return {
+          body: {
+            v: 1,
+            actionId: 'machines.provisioners.options',
+            requestId: request.requestId,
+            execution: {
+              ok: true,
+              result: createMachineProvisionerOptionsFixture(
+                request.input &&
+                  typeof request.input === 'object' &&
+                  'credentials' in request.input &&
+                  JSON.stringify(request.input.credentials) ===
+                    JSON.stringify([savedCredential])
+                  ? {
+                      base: {
+                        launch: { cpu: 4 },
+                        nativeFacts: {
+                          size: {
+                            id: 'large',
+                            title: 'Four cores',
+                            cpuCores: 4,
+                          },
+                          image: { id: 'linux', title: 'Linux guest' },
+                          location: { id: 'west', title: 'West coast' },
+                        },
+                        prices: [
+                          {
+                            amount: '0.012',
+                            currency: 'USD',
+                            unit: 'hour',
+                            source: 'Native quote',
+                            observedAt: 10,
+                          },
+                        ],
+                      },
+                    }
+                  : {},
+              ),
+            },
+          },
+        };
+      },
     });
-
-    it('opens history and edits the future recipe on the captured Home without acquiring compute', async () => {
-        const serverId = await seed();
-        const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
-        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            expect(request.target).toEqual({ kind: 'machine', machineId: preset.controller.machineId });
-            expect(request.input).toEqual({ homeId: preset.homeId, controller: preset.controller });
-            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
-                execution: { ok: true, result: { controller: preset.controller, provisioners: [provisioner] } } } };
-        } });
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull());
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Custom compute'));
-        expect(screen.findRowByTitle('Original guest')).not.toBeNull();
-        expect(screen.findRowByTitle('Original guest')?.props.subtitle).toContain('1');
-        await act(async () => screen.pressByTestId('machine-preset.detail.machine.resource'));
-        expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/guest?serverId=${encodeURIComponent(scopeId)}`);
-        await act(async () => screen.pressByTestId('machine-preset.edit'));
-        const configurationPath = `/settings/machines/add/${encodeURIComponent(buildQualifiedPluginContributionKey(preset.recipe.provider))}?serverId=${encodeURIComponent(scopeId)}&presetId=preset`;
-        expect(route.push).toHaveBeenLastCalledWith(`${configurationPath}&presetOnly=true`);
-        await act(async () => screen.pressByTestId('machine-preset.detail.createOne'));
-        expect(route.push).toHaveBeenLastCalledWith(configurationPath);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={scopeId} presetId={preset.id} />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('machine-preset.detail')).not.toBeNull(),
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        harness.requestsFor('/v1/actions/machines.provisioners.options'),
+        screen.getTextContent(),
+      ).toHaveLength(1),
+    );
+    for (const actionId of [
+      'machines.provisioners.check',
+      'machines.provisioners.options',
+    ]) {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(
+        harness.requestsFor(`/v1/actions/${actionId}`)[0]!.input,
+      );
+      expect(envelope.input).toMatchObject({ credentials: [savedCredential] });
+    }
+    await waitForHomeGovernance(() =>
+      expect(screen.getTextContent()).toContain('Four cores'),
+    );
+    expect(screen.getTextContent()).toContain('Linux guest');
+    expect(screen.getTextContent()).toContain('West coast');
+    expect(screen.getTextContent()).toContain('Native quote');
+    expect(screen.getTextContent()).not.toContain('Other size');
+    const { publishHomeAccountChange } =
+      await import('@/sync/runtime/orchestration/homeAccountChange');
+    const configurationReads = () => ['check', 'options'].map(kind =>
+      harness.requestsFor(`/v1/actions/machines.provisioners.${kind}`).length);
+    const initialReads = configurationReads();
+    await act(async () => {
+      publishHomeAccountChange(scopeId, undefined, { machineResourcesAffect: false });
+      publishHomeAccountChange('unrelated-home');
     });
-
-    it('archives and restores the preset with its reviewed revision without changing its admitted resources', async () => {
-        const serverId = await seed();
-        const archived = { ...preset, revision: 4, archivedAt: 1 };
-        harness.answer(serverId, '/v1/machines/presets/archive', { body: { kind: 'saved', preset: archived } });
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.archive')).not.toBeNull());
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: archived } });
-        await act(async () => screen.pressByTestId('machine-preset.detail.archive'));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.restore')).not.toBeNull());
-        harness.answer(serverId, '/v1/machines/presets/restore', { body: { kind: 'saved', preset: { ...preset, revision: 5 } } });
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...preset, revision: 5 } } });
-        await act(async () => screen.pressByTestId('machine-preset.detail.restore'));
-        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/restore')[0]?.input).toEqual({ homeId: 'srv_history', id: 'preset', expectedRevision: 4 }));
-        expect(harness.requestsFor('/v1/machines/presets/archive')[0]?.input).toEqual({ homeId: 'srv_history', id: 'preset', expectedRevision: 3 });
-        expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull();
-        expect(harness.requests.filter(request => request.path.includes('/managed/')).every(request => request.path.endsWith('/list'))).toBe(true);
-        expect(harness.requests.filter(request => request.path.startsWith('/v1/actions/'))
-            .every(request => request.path === '/v1/actions/machines.provisioners.list')).toBe(true);
+    await flushHookEffects();
+    expect(configurationReads()).toEqual(initialReads);
+    expect(screen.findRowByTitle('Original guest')).not.toBeNull();
+    expect(
+      screen.tree.findByType(MachineConfigurationReceipt).props.model.facts,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'controller',
+          value: 'Original preset controller',
+        }),
+      ]),
+    );
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+      select: (value) => {
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return {
+          body: {
+            v: 1,
+            actionId: 'machines.provisioners.options',
+            requestId: request.requestId,
+            execution: {
+              ok: true,
+              result: createMachineProvisionerOptionsFixture({
+                base: {
+                  launch: { cpu: 8 },
+                  nativeFacts: { size: { id: 'other', title: 'Other size' } },
+                },
+              }),
+            },
+          },
+        };
+      },
     });
-
-    it('edits Running at once and Managed from in place through the reviewed preset update Action', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const { storage } = await import('@/sync/domains/state/storage');
-        const builder = createMachineFixture({ id: 'builder', installationId: 'builder-installation',
-            metadata: { ...createMachineFixture().metadata!, displayName: 'Builder' } });
-        storage.setState({ machineListByServerId: { [scopeId]: [
-            createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId }), builder] } });
-        await harness.requireUiApproval(serverId, 'machines.presets.update');
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        const field = (testID: string) => screen.findAllByType(DropdownMenu)
-            .find(menu => menu.props.itemTrigger?.itemProps?.testID === testID);
-        await waitForHomeGovernance(() => expect(field('machine-preset.detail.limit')?.props.selectedId).toBe('2'));
-        expect(field('machine-preset.detail.controller')?.props.selectedId).toBe(preset.controller.machineId);
-        expect(field('machine-preset.detail.controller')?.props.items.map((item: { id: string }) => item.id))
-            .toEqual(expect.arrayContaining([preset.controller.machineId, 'builder']));
-
-        const limited = { ...preset, revision: 4, simultaneousLimit: { maximum: 3 } };
-        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: limited } });
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: limited } });
-        await act(async () => field('machine-preset.detail.limit')!.props.onSelect('3'));
-        // The edit asks first, exactly like the configurator's Save; nothing is written before approval.
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-        expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
-        await expect(decideApprovalAsInbox(scopeId, harness.artifacts(serverId).list()[0]!.id, 'approve')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(field('machine-preset.detail.limit')?.props.selectedId).toBe('3'));
-
-        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'conflict', currentRevision: 5 } });
-        await act(async () => field('machine-preset.detail.controller')!.props.onSelect('builder'));
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(2));
-        await expect(decideApprovalAsInbox(scopeId, harness.artifacts(serverId).list()[1]!.id, 'approve')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.mutation-error')).not.toBeNull());
-        expect(harness.requestsFor('/v1/machines/presets/update').map(request => request.input)).toEqual([
-            { homeId: preset.homeId, id: preset.id, expectedRevision: 3, patch: { simultaneousLimit: { maximum: 3 } } },
-            { homeId: preset.homeId, id: preset.id, expectedRevision: 4,
-                patch: { controller: { machineId: 'builder', installationId: 'builder-installation' } } },
-        ]);
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+    await act(async () => publishHomeAccountChange(scopeId));
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.configuration-unavailable'),
+      ).not.toBeNull(),
+    );
+    expect(screen.getTextContent()).toContain('Four cores');
+    expect(screen.getTextContent()).toContain('Native quote');
+    expect(screen.getTextContent()).not.toContain('Other size');
+    expect(configurationReads()).toEqual(initialReads.map(count => count + 1));
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', {
+      status: 503,
+      body: { code: 'unavailable' },
     });
+    const priorReads = harness.requestsFor(
+      '/v1/actions/machines.provisioners.options',
+    ).length;
+    await act(async () =>
+      screen.pressByTestId('machine-preset.configuration-unavailable-action'),
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        harness.requestsFor('/v1/actions/machines.provisioners.options'),
+      ).toHaveLength(priorReads + 1),
+    );
+    expect(screen.getTextContent()).toContain('Four cores');
+    expect(screen.getTextContent()).toContain('Native quote');
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+    // A new installation can reuse a Machine id, but cannot supply the
+    // human identity of the preset's retained original controller.
+    await act(async () =>
+      storage
+        .getState()
+        .applyMachines(
+          [
+            {
+              ...originalController,
+              installationId: 'replacement-installation',
+              seq: originalController.seq + 1,
+              updatedAt: originalController.updatedAt + 1,
+              metadata: {
+                ...originalController.metadata!,
+                displayName: 'Replacement controller computer',
+              },
+            },
+          ],
+          true,
+          { sourceServerId: scopeId },
+        ),
+    );
+    await flushHookEffects();
+    const receipt = screen.tree.findByType(MachineConfigurationReceipt).props
+      .model;
+    expect(receipt.facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'controller',
+          value: t('common.unknown'),
+        }),
+      ]),
+    );
+    // The page says what the preset makes; its sections never repeat their own title, and the edit rule is not the page's purpose.
+    const detailModel = screen.tree.findByType(MachinePresetDetail).props.model;
+    expect(detailModel.audience.description).not.toBe(
+      t('machinePresets.audience'),
+    );
+    expect(detailModel.description).not.toBe(t('machinePresets.futureOnly'));
+    expect(detailModel.description).not.toBe('');
+    expect(JSON.stringify(receipt.facts)).not.toContain(
+      'Replacement controller computer',
+    );
+    expect(
+      receipt.facts.find(
+        (fact: { id: string; value: string }) => fact.id === 'controller',
+      ).value,
+    ).not.toBe(preset.controller.machineId);
+  });
 
-    it('refreshes controller subtitles to unknown after that Home withdraws presence', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        const model = () => screen.findAllByType(MachinePresetDetail)[0]?.props.model;
-        await waitForHomeGovernance(() => expect(model()?.controller.row.subtitle).toBe(t('status.online')));
-        const { withdrawMachinePresenceForScope, captureMachinePresenceObservation } = await import('@/sync/domains/machines/reachability/machineReachability');
-        const scope = { serverId: scopeId, accountId: 'owner' };
-        await act(async () => withdrawMachinePresenceForScope(scope));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(model()?.controller.row.subtitle).toBe(t('common.unknown'));
-        expect(model()?.controller.row.choices[0].subtitle).toBe(t('common.unknown'));
-        await act(async () => captureMachinePresenceObservation(scope)([preset.controller.machineId]));
-        await waitForHomeGovernance(() => expect(model()?.controller.row.subtitle).toBe(t('status.online')));
+  it('opens New preset through the exact controller picker and saves a launch without acquiring', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const picker = await renderSettingsView(
+      <MachineProvisionerPicker serverId={scopeId} presetOnly />,
+    );
+    // The Home's one controller is preselected, so its catalog is the first frame.
+    const providerKey = buildQualifiedPluginContributionKey(
+      preset.launch.provider,
+    );
+    const actionId = `managed-picker.provisioners.cloud.${providerKey}.action`;
+    const rowId = `managed-picker.provisioners.cloud.${providerKey}`;
+    await waitForHomeGovernance(() =>
+      expect(
+        picker.findByTestId(actionId) ?? picker.findByTestId(rowId),
+      ).not.toBeNull(),
+    );
+    await act(async () =>
+      picker.pressByTestId(picker.findByTestId(actionId) ? actionId : rowId),
+    );
+    const href = String(route.push.mock.calls.at(-1)?.[0]);
+    const destination = new URL(href, 'https://happier.example');
+    expect(destination.pathname).toBe(
+      `/settings/machines/add/${encodeURIComponent(providerKey)}`,
+    );
+    expect(Object.fromEntries(destination.searchParams)).toEqual({
+      serverId: scopeId,
+      presetOnly: 'true',
+      machineId: preset.controller.machineId,
+      installationId: preset.controller.installationId,
     });
+    await picker.unmount();
+    const screen = await renderSettingsView(
+      <ManagedMachineConfigurationView
+        serverId={scopeId}
+        provisioner={providerKey}
+        presetOnly
+        initialController={preset.controller}
+      />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        sizeControl(screen)?.props.sizes.some(
+          (size: { id: string }) => size.id === 'large',
+        ),
+      ).toBe(true),
+    );
+    await act(async () => sizeControl(screen)?.props.onChange('large'));
+    expect(
+      screen.findByTestId('managed-config.receipt:keep:choice:deadline'),
+    ).toBeNull();
+    harness.answer(serverId, '/v1/machines/presets/create', {
+      select: (input) => {
+        expect(input).toMatchObject({
+          homeId: preset.homeId,
+          name: 'Custom compute',
+          owner: preset.owner,
+          controller: preset.controller,
+          launch: {
+            ...preset.launch,
+            name: 'Custom compute',
+            choices: { cpu: 4 },
+          },
+        });
+        const id =
+          input && typeof input === 'object' && 'id' in input ? input.id : null;
+        expect(typeof id).toBe('string');
+        return {
+          body: {
+            kind: 'saved',
+            preset: {
+              ...preset,
+              id,
+              revision: 1,
+              name: 'Custom compute',
+              launch: {
+                ...preset.launch,
+                name: 'Custom compute',
+                choices: { cpu: 4 },
+              },
+            },
+          },
+        };
+      },
+    });
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(
+        false,
+      ),
+    );
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() =>
+      expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(
+        1,
+      ),
+    );
+    const createdInput = harness.requestsFor('/v1/machines/presets/create')[0]
+      ?.input;
+    if (
+      !createdInput ||
+      typeof createdInput !== 'object' ||
+      !('id' in createdInput) ||
+      typeof createdInput.id !== 'string'
+    ) {
+      throw new Error('Expected the strict preset creation input');
+    }
+    const createdId = createdInput.id;
+    await waitForHomeGovernance(() =>
+      expect(route.replace).toHaveBeenLastCalledWith(
+        `/settings/machines/presets/${createdId}?serverId=${encodeURIComponent(scopeId)}`,
+      ),
+    );
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
 
-    it('does not name a withdrawn controller offline while its provisioner catalog is unavailable', async () => {
-        const serverId = await seed();
-        const scopeId = await seedConfiguration(serverId);
-        const { useManagedControllerScope } = await import('./useManagedControllerScope');
-        const controllerScope = await renderHook(() => useManagedControllerScope({ serverId: scopeId, preferred: preset.controller, testIDPrefix: 'withdrawn-controller' }));
-        await waitForHomeGovernance(() => expect(controllerScope.getCurrent().controller).toEqual(preset.controller));
-        const { withdrawMachinePresenceForScope } = await import('@/sync/domains/machines/reachability/machineReachability');
-        await act(async () => withdrawMachinePresenceForScope({ serverId: scopeId, accountId: 'owner' }));
-        expect(controllerScope.getCurrent()).toMatchObject({ controller: preset.controller, machine: { id: preset.controller.machineId } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { status: 503, body: { code: 'unavailable' } });
-        const screen = await renderSettingsView(<MachineProvisionerPicker serverId={scopeId} scope={controllerScope.getCurrent()} />);
-        await flushHookEffects({ cycles: 3, turns: 3 });
-        expect(screen.findByTestId('managed-picker.unavailable'), screen.getTextContent()).not.toBeNull();
-        expect(screen.findByTestId('managed-picker.offline')).toBeNull();
+  it('preserves an edited launch after rejection and revision conflict, then saves through normal approval', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    await harness.requireUiApproval(serverId, 'machines.presets.update');
+    const screen = await renderSettingsView(
+      <ManagedMachineConfigurationView
+        serverId={scopeId}
+        provisioner={buildQualifiedPluginContributionKey(
+          preset.launch.provider,
+        )}
+        presetId={preset.id}
+        presetOnly
+      />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        sizeControl(screen)?.props.sizes.some(
+          (size: { id: string }) => size.id === 'large',
+        ),
+      ).toBe(true),
+    );
+    await act(async () => sizeControl(screen)?.props.onChange('large'));
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(
+        false,
+      ),
+    );
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() =>
+      expect(harness.artifacts(serverId).list()).toHaveLength(1),
+    );
+    expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+    const rejectedId = harness.artifacts(serverId).list()[0]!.id;
+    const { publishHomeAccountChange } =
+      await import('@/sync/runtime/orchestration/homeAccountChange');
+    await act(async () => publishHomeAccountChange(scopeId));
+    await flushHookEffects();
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(2);
+    expect(screen.findByTestId('managed-config.approval')).not.toBeNull();
+    await expect(
+      decideApprovalAsInbox(scopeId, rejectedId, 'reject'),
+    ).resolves.toMatchObject({ ok: true });
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-config.error')).not.toBeNull(),
+    );
+    expect(sizeControl(screen)?.props.value).toBe('large');
+    expect(route.replace).not.toHaveBeenCalled();
+    harness.answer(serverId, '/v1/machines/presets/update', {
+      body: { kind: 'conflict', currentRevision: 4 },
     });
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() =>
+      expect(harness.artifacts(serverId).list()).toHaveLength(2),
+    );
+    const conflictId = harness.artifacts(serverId).list()[1]!.id;
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: { ...preset, revision: 4 } },
+    });
+    await act(async () =>
+      publishHomeAccountChange(scopeId, [preset.id], {
+        changeKinds: ['artifact', 'account'],
+      }),
+    );
+    await flushHookEffects();
+    expect(screen.findByTestId('managed-config.approval')).not.toBeNull();
+    expect(sizeControl(screen)?.props.value).toBe('large');
+    await expect(
+      decideApprovalAsInbox(scopeId, conflictId, 'approve'),
+    ).resolves.toMatchObject({ ok: true });
+    await waitForHomeGovernance(() =>
+      expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(
+        1,
+      ),
+    );
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(
+        false,
+      ),
+    );
+    expect(sizeControl(screen)?.props.value).toBe('large');
+    expect(route.replace).not.toHaveBeenCalled();
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: { ...preset, revision: 4 } },
+    });
+    await act(async () => screen.pressByTestId('managed-config.error-action'));
+    await flushHookEffects();
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(4);
+    expect(sizeControl(screen)?.props.value).toBe('large');
+    harness.answer(serverId, '/v1/machines/presets/update', {
+      body: {
+        kind: 'saved',
+        preset: {
+          ...preset,
+          revision: 5,
+          launch: { ...preset.launch, choices: { cpu: 4 } },
+        },
+      },
+    });
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() =>
+      expect(harness.artifacts(serverId).list()).toHaveLength(3),
+    );
+    const savedId = harness.artifacts(serverId).list()[2]!.id;
+    await expect(
+      decideApprovalAsInbox(scopeId, savedId, 'approve'),
+    ).resolves.toMatchObject({ ok: true });
+    await waitForHomeGovernance(() =>
+      expect(route.replace).toHaveBeenLastCalledWith(
+        `/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`,
+      ),
+    );
+    expect(
+      harness
+        .requestsFor('/v1/machines/presets/update')
+        .map((request) => request.input),
+    ).toEqual([
+      expect.objectContaining({
+        homeId: preset.homeId,
+        id: preset.id,
+        expectedRevision: 3,
+        patch: expect.objectContaining({
+          launch: { ...preset.launch, choices: { cpu: 4 } },
+          controller: preset.controller,
+        }),
+      }),
+      expect.objectContaining({
+        homeId: preset.homeId,
+        id: preset.id,
+        expectedRevision: 4,
+        patch: expect.objectContaining({
+          launch: { ...preset.launch, choices: { cpu: 4 } },
+        }),
+      }),
+    ]);
+    expect(harness.requestsFor('/v1/machines/presets/create')).toEqual([]);
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
 
-    it('marks the provisioner with its package’s contributed brand mark', async () => {
-        const serverId = await seed();
-        await seedConfiguration(serverId);
-        const resource = { pluginId: preset.recipe.provider.pluginId, localId: 'brand-icon' };
-        const digest = `sha256:${'c'.repeat(64)}`;
-        // The wrapped UI Vitest owner runs at the package root.
-        const bytes = readFileSync(join(resolve(process.cwd(), '../..'), 'packages/plugins/machine-hetzner/assets/brand.png'));
-        seedOptionsDeclaration(provisioner, PluginJsonSchemaV2Schema.parse({ type: 'object', properties: {}, additionalProperties: false }), true,
-            { source: { kind: 'localPath', locator: '/plugins/custom-compute' }, occurrenceId: 'package-occurrence',
-                brand: { state: 'available', resource, digest, width: 256, height: 256 } });
-        const projected = boundary.rpc.getMockImplementation()!;
-        // Daemon Resource transport only: brand admission and rendering stay real.
-        boundary.rpc.mockImplementation(async (request: { machineId: string; method: string; payload: unknown }) =>
-            request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
-                ? { ok: true, resource, kind: 'asset', contentType: 'image/png', digest, bytesBase64: bytes.toString('base64') }
-                : projected(request));
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        await waitForHomeGovernance(() => expect(screen.findAllByType(InstalledPluginBrandMark)
-            .some(node => node.props.brand.bytes?.byteLength === bytes.byteLength)).toBe(true));
+  it('saves a preset copy with its explicit Keep and wake choices without allocating or editing the original', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const policy = {
+      retention: { kind: 'unused', afterMs: 7_200_000, effect: 'delete' },
+      wakeOnAcceptedMessage: false,
+    } as const;
+    const original = {
+      ...preset,
+      launch: { ...preset.launch, credentials: [savedCredential] },
+      ...policy,
+    };
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: original },
     });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+      select: (value) => {
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return {
+          body: {
+            v: 1,
+            actionId: 'machines.provisioners.list',
+            requestId: request.requestId,
+            execution: {
+              ok: true,
+              result: {
+                controller: preset.controller,
+                provisioners: [
+                  {
+                    ...provisioner,
+                    credentialPurposes: [
+                      {
+                        purpose: savedCredential.purpose,
+                        options: [
+                          {
+                            value: savedCredential.account,
+                            label: 'Saved native account',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        };
+      },
+    });
+    harness.answer(serverId, '/v1/machines/presets/create', {
+      select: (input) => {
+        const id =
+          input && typeof input === 'object' && 'id' in input ? input.id : null;
+        return {
+          body: { kind: 'saved', preset: { ...original, id, revision: 1 } },
+        };
+      },
+    });
+    const screen = await renderSettingsView(
+      <ManagedMachineConfigurationView
+        serverId={scopeId}
+        provisioner={buildQualifiedPluginContributionKey(
+          preset.launch.provider,
+        )}
+        presetId={preset.id}
+      />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('managed-config.save-preset')?.props.disabled,
+      ).toBe(false),
+    );
+    await act(async () => screen.pressByTestId('managed-config.save-preset'));
+    await waitForHomeGovernance(() =>
+      expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(
+        1,
+      ),
+    );
+    const copied = harness.requestsFor('/v1/machines/presets/create')[0]!.input;
+    expect(copied).toMatchObject({
+      homeId: preset.homeId,
+      launch: original.launch,
+      controller: preset.controller,
+      ...policy,
+    });
+    for (const actionId of [
+      'machines.provisioners.check',
+      'machines.provisioners.options',
+    ]) {
+      const requests = harness.requestsFor(`/v1/actions/${actionId}`);
+      expect(requests.length).toBeGreaterThan(0);
+      for (const request of requests)
+        expect(
+          ExternalActionRequestEnvelopeV1Schema.parse(request.input).input,
+        ).toMatchObject({ credentials: [savedCredential] });
+    }
+    expect(copied).not.toMatchObject({ id: preset.id });
+    expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
 
-    it('draws a preset row with its provider’s brand mark at the row’s size (the rail and the machine picker)', async () => {
-        const serverId = await seed();
-        await seedConfiguration(serverId);
-        const resource = { pluginId: preset.recipe.provider.pluginId, localId: 'brand-icon' };
-        const digest = `sha256:${'d'.repeat(64)}`;
-        const bytes = readFileSync(join(resolve(process.cwd(), '../..'), 'packages/plugins/machine-hetzner/assets/brand.png'));
-        seedOptionsDeclaration(provisioner, PluginJsonSchemaV2Schema.parse({ type: 'object', properties: {}, additionalProperties: false }), true,
-            { source: { kind: 'localPath', locator: '/plugins/custom-compute' }, occurrenceId: 'package-occurrence',
-                brand: { state: 'available', resource, digest, width: 256, height: 256 } });
-        const projected = boundary.rpc.getMockImplementation()!;
-        // Daemon Resource transport only: the recipe's provider resolves through the real projection and brand owners.
-        boundary.rpc.mockImplementation(async (request: { machineId: string; method: string; payload: unknown }) =>
-            request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
-                ? { ok: true, resource, kind: 'asset', contentType: 'image/png', digest, bytesBase64: bytes.toString('base64') }
-                : projected(request));
-        const { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE } = await import('./useManagedProvisionerPresentation');
-        const screen = await renderSettingsView(<ManagedPresetMark serverId={serverId} preset={preset} size={MANAGED_PROVISIONER_MARK_SIZE.rail} />);
-        await waitForHomeGovernance(() => expect(screen.findAllByType(InstalledPluginBrandMark)
-            .some(node => node.props.pixelSize === MANAGED_PROVISIONER_MARK_SIZE.rail
-                && node.props.brand.bytes?.byteLength === bytes.byteLength)).toBe(true));
+  it('mounts accessible presets in the Machines collection and opens the selected Home', async () => {
+    const serverId = await seed();
+    await harness.selectHomes([serverId]);
+    harness.answer(serverId, '/v1/machines/presets/list', {
+      body: { kind: 'listed', presets: [preset] },
     });
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const screen = await renderSettingsView(<MachinesSettingsView />);
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId(`settings.machines.preset.${scopeId}.preset`),
+      ).not.toBeNull(),
+    );
+    await act(async () =>
+      screen.pressByTestId(`settings.machines.preset.${scopeId}.preset`),
+    );
+    expect(route.push).toHaveBeenLastCalledWith(
+      `/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`,
+    );
+    // The group creates a preset from its header "+"; no separate "New preset" row repeats it.
+    expect(screen.getTextContent()).not.toContain(
+      t('machinePresets.newPreset'),
+    );
+    await act(async () =>
+      screen.pressByTestId(`settings.machines.presets.new.${scopeId}`),
+    );
+    expect(route.push).toHaveBeenLastCalledWith(
+      `/settings/machines/presets/new?serverId=${encodeURIComponent(scopeId)}`,
+    );
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
 
-    it('withdraws recipe and history after the credential lifetime retires', async () => {
-        const serverId = await seed();
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).not.toBeNull());
-        harness.answer(serverId, '/v1/machines/presets/get', { status: 403, body: { kind: 'refused', code: 'permission_denied' } });
-        await act(async () => { await harness.switchAccount(serverId, 'other-owner'); });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.machine.resource')).toBeNull());
-        expect(screen.findByTestId('machine-preset.edit')).toBeNull();
+  it('opens history and edits the future launch on the captured Home without acquiring compute', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+      select: (value) => {
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        expect(request.target).toEqual({
+          kind: 'machine',
+          machineId: preset.controller.machineId,
+        });
+        expect(request.input).toEqual({
+          homeId: preset.homeId,
+          controller: preset.controller,
+        });
+        return {
+          body: {
+            v: 1,
+            actionId: 'machines.provisioners.list',
+            requestId: request.requestId,
+            execution: {
+              ok: true,
+              result: {
+                controller: preset.controller,
+                provisioners: [provisioner],
+              },
+            },
+          },
+        };
+      },
     });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.detail.machine.resource'),
+      ).not.toBeNull(),
+    );
+    await waitForHomeGovernance(() =>
+      expect(screen.getTextContent()).toContain('Custom compute'),
+    );
+    expect(screen.findRowByTitle('Original guest')).not.toBeNull();
+    expect(screen.findRowByTitle('Original guest')?.props.subtitle).toContain(
+      '1',
+    );
+    await act(async () =>
+      screen.pressByTestId('machine-preset.detail.machine.resource'),
+    );
+    expect(route.push).toHaveBeenLastCalledWith(
+      `/settings/machines/guest?serverId=${encodeURIComponent(scopeId)}`,
+    );
+    await act(async () => screen.pressByTestId('machine-preset.edit'));
+    const configurationPath = `/settings/machines/add/${encodeURIComponent(buildQualifiedPluginContributionKey(preset.launch.provider))}?serverId=${encodeURIComponent(scopeId)}&presetId=preset`;
+    expect(route.push).toHaveBeenLastCalledWith(
+      `${configurationPath}&presetOnly=true`,
+    );
+    await act(async () =>
+      screen.pressByTestId('machine-preset.detail.createOne'),
+    );
+    expect(route.push).toHaveBeenLastCalledWith(configurationPath);
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
 
-    it('uses the Team capability projection for management even when the viewer role says owner', async () => {
-        const serverId = await seed();
-        const teamPreset = { ...preset, owner: { kind: 'team', teamId: 'team-1' } } as const;
-        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: teamPreset } });
-        const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
-        const request = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' });
-        harness.answer(serverId, request.path, { body: teamSummaryFixture({ name: 'Platform', viewerRole: 'owner',
-            capabilities: teamCapabilitiesFixture({ manageSettings: false }) }) });
-        const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId="preset" />);
-        await waitForHomeGovernance(() => expect(screen.findRowByTitle('Platform')).not.toBeNull());
-        expect(screen.findByTestId('machine-preset.edit')).toBeNull();
-        expect(screen.findByTestId('machine-preset.detail.archive')).toBeNull();
-        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+  it('archives and restores the preset with its reviewed revision without changing its admitted resources', async () => {
+    const serverId = await seed();
+    const archived = { ...preset, revision: 4, archivedAt: 1 };
+    harness.answer(serverId, '/v1/machines/presets/archive', {
+      body: { kind: 'saved', preset: archived },
     });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.detail.archive'),
+      ).not.toBeNull(),
+    );
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: archived },
+    });
+    await act(async () =>
+      screen.pressByTestId('machine-preset.detail.archive'),
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.archived.action'),
+      ).not.toBeNull(),
+    );
+    // FIX-PRESETS-BRIEF F2: one rendered explanation owns the archived state, and it carries the way back.
+    expect(screen.getTextContent().split(t('machinePresets.archived')).length - 1).toBe(1);
+    // FIDELITY-3: an archived preset makes nothing, so the header does not also say it can create one.
+    const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+    expect(screen.tree.findByType(PageHeader).props.description).toBeUndefined();
+    expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    harness.answer(serverId, '/v1/machines/presets/restore', {
+      body: { kind: 'saved', preset: { ...preset, revision: 5 } },
+    });
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: { ...preset, revision: 5 } },
+    });
+    await act(async () =>
+      screen.pressByTestId('machine-preset.archived.action'),
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        harness.requestsFor('/v1/machines/presets/restore')[0]?.input,
+      ).toEqual({ homeId: 'srv_history', id: 'preset', expectedRevision: 4 }),
+    );
+    expect(
+      harness.requestsFor('/v1/machines/presets/archive')[0]?.input,
+    ).toEqual({ homeId: 'srv_history', id: 'preset', expectedRevision: 3 });
+    expect(
+      screen.findByTestId('machine-preset.detail.machine.resource'),
+    ).not.toBeNull();
+    expect(
+      harness.requests
+        .filter((request) => request.path.includes('/managed/'))
+        .every((request) => request.path.endsWith('/list')),
+    ).toBe(true);
+    expect(
+      harness.requests
+        .filter((request) => request.path.startsWith('/v1/actions/'))
+        .every(
+          (request) =>
+            request.path === '/v1/actions/machines.provisioners.list',
+        ),
+    ).toBe(true);
+  });
+
+  it('leaves an archived preset with its one notice when the provisioner read fails, since it makes nothing either way', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: { ...preset, archivedAt: 1 } },
+    });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+      status: 503,
+      body: { code: 'controller_unavailable' },
+    });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.archived.action'),
+      ).not.toBeNull(),
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        harness.requestsFor('/v1/actions/machines.provisioners.list').length,
+      ).toBeGreaterThan(0),
+    );
+    // The same failure on an active preset is the creation line; here it would be a second, moot message under the notice.
+    expect(screen.findByTestId('machine-preset.provider-error')).toBeNull();
+    expect(screen.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
+  });
+
+  it('edits Running at once and Managed from in place through the reviewed preset update Action', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const builder = createMachineFixture({
+      id: 'builder',
+      installationId: 'builder-installation',
+      metadata: { ...createMachineFixture().metadata!, displayName: 'Builder' },
+    });
+    storage.getState().applyMachines([
+      createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId }),
+      builder,
+    ], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+    await harness.requireUiApproval(serverId, 'machines.presets.update');
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    const field = (testID: string) =>
+      screen
+        .findAllByType(DropdownMenu)
+        .find((menu) => menu.props.itemTrigger?.itemProps?.testID === testID);
+    await waitForHomeGovernance(() =>
+      expect(field('machine-preset.detail.limit')?.props.selectedId).toBe('2'),
+    );
+    expect(field('machine-preset.detail.controller')?.props.selectedId).toBe(
+      preset.controller.machineId,
+    );
+    expect(
+      field('machine-preset.detail.controller')?.props.items.map(
+        (item: { id: string }) => item.id,
+      ),
+    ).toEqual(expect.arrayContaining([preset.controller.machineId, 'builder']));
+
+    const limited = {
+      ...preset,
+      revision: 4,
+      simultaneousLimit: { maximum: 3 },
+    };
+    harness.answer(serverId, '/v1/machines/presets/update', {
+      body: { kind: 'saved', preset: limited },
+    });
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: limited },
+    });
+    await act(async () =>
+      field('machine-preset.detail.limit')!.props.onSelect('3'),
+    );
+    // The edit asks first, exactly like the configurator's Save; nothing is written before approval.
+    await waitForHomeGovernance(() =>
+      expect(harness.artifacts(serverId).list()).toHaveLength(1),
+    );
+    expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+    await expect(
+      decideApprovalAsInbox(
+        scopeId,
+        harness.artifacts(serverId).list()[0]!.id,
+        'approve',
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    await waitForHomeGovernance(() =>
+      expect(field('machine-preset.detail.limit')?.props.selectedId).toBe('3'),
+    );
+
+    harness.answer(serverId, '/v1/machines/presets/update', {
+      body: { kind: 'conflict', currentRevision: 5 },
+    });
+    await act(async () =>
+      field('machine-preset.detail.controller')!.props.onSelect('builder'),
+    );
+    await waitForHomeGovernance(() =>
+      expect(harness.artifacts(serverId).list()).toHaveLength(2),
+    );
+    await expect(
+      decideApprovalAsInbox(
+        scopeId,
+        harness.artifacts(serverId).list()[1]!.id,
+        'approve',
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.mutation-error'),
+      ).not.toBeNull(),
+    );
+    expect(
+      harness
+        .requestsFor('/v1/machines/presets/update')
+        .map((request) => request.input),
+    ).toEqual([
+      {
+        homeId: preset.homeId,
+        id: preset.id,
+        expectedRevision: 3,
+        patch: { simultaneousLimit: { maximum: 3 } },
+      },
+      {
+        homeId: preset.homeId,
+        id: preset.id,
+        expectedRevision: 4,
+        patch: {
+          controller: {
+            machineId: 'builder',
+            installationId: 'builder-installation',
+          },
+        },
+      },
+    ]);
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
+
+  it('names its controller apart from same-named machines, in the Managed from sentence and its choices', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const named = (id: string, installationId: string) => createMachineFixture({
+      id, installationId, metadata: { ...createMachineFixture().metadata!, displayName: 'Builder' },
+    });
+    storage.getState().applyMachines([
+      named(preset.controller.machineId, preset.controller.installationId), named('twin', 'twin-installation'),
+    ], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    const field = () => screen.findAllByType(DropdownMenu)
+      .find((menu) => menu.props.itemTrigger?.itemProps?.testID === 'machine-preset.detail.controller');
+    await waitForHomeGovernance(() => expect(field()?.props.items).toHaveLength(2));
+    const titles = field()!.props.items.map((item: { title: string }) => item.title);
+    // Two machines called "Builder" read as two different choices, never the same label twice.
+    expect(new Set(titles).size).toBe(2);
+    const controllerTitle = field()!.props.items
+      .find((item: { id: string }) => item.id === preset.controller.machineId).title as string;
+    expect(controllerTitle).not.toBe('Builder');
+    // The sentence names the same machine the choice does (a word joiner may keep a hyphenated name together).
+    const description = String(screen.findGroup(t('managedMachines.config.managedFrom'))?.props.description).replace(/\u2060/g, '');
+    expect(description).toContain(controllerTitle);
+    await screen.unmount();
+  });
+
+  it('refreshes controller subtitles to unknown after that Home withdraws presence', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    const model = () =>
+      screen.findAllByType(MachinePresetDetail)[0]?.props.model;
+    await waitForHomeGovernance(() =>
+      expect(model()?.controller.row.subtitle).toBe(t('status.online')),
+    );
+    const {
+      withdrawMachinePresenceForScope,
+      captureMachinePresenceObservation,
+    } =
+      await import('@/sync/domains/machines/reachability/machineReachability');
+    const scope = { serverId: scopeId, accountId: 'owner' };
+    await act(async () => withdrawMachinePresenceForScope(scope));
+    await flushHookEffects({ cycles: 2, turns: 2 });
+    expect(model()?.controller.row.subtitle).toBe(t('common.unknown'));
+    expect(model()?.controller.row.choices[0].subtitle).toBe(
+      t('common.unknown'),
+    );
+    await act(async () =>
+      captureMachinePresenceObservation(scope)([preset.controller.machineId]),
+    );
+    await waitForHomeGovernance(() =>
+      expect(model()?.controller.row.subtitle).toBe(t('status.online')),
+    );
+  });
+
+  it('does not name a withdrawn controller offline while its provisioner catalog is unavailable', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    const { useManagedControllerScope } =
+      await import('./useManagedControllerScope');
+    const controllerScope = await renderHook(() =>
+      useManagedControllerScope({
+        serverId: scopeId,
+        preferred: preset.controller,
+        testIDPrefix: 'withdrawn-controller',
+      }),
+    );
+    await waitForHomeGovernance(() =>
+      expect(controllerScope.getCurrent().controller).toEqual(
+        preset.controller,
+      ),
+    );
+    const { withdrawMachinePresenceForScope } =
+      await import('@/sync/domains/machines/reachability/machineReachability');
+    await act(async () =>
+      withdrawMachinePresenceForScope({
+        serverId: scopeId,
+        accountId: 'owner',
+      }),
+    );
+    expect(controllerScope.getCurrent()).toMatchObject({
+      controller: preset.controller,
+      machine: { id: preset.controller.machineId },
+    });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
+      status: 503,
+      body: { code: 'unavailable' },
+    });
+    const screen = await renderSettingsView(
+      <MachineProvisionerPicker
+        serverId={scopeId}
+        scope={controllerScope.getCurrent()}
+      />,
+    );
+    await flushHookEffects({ cycles: 3, turns: 3 });
+    expect(
+      screen.findByTestId('managed-picker.unavailable'),
+      screen.getTextContent(),
+    ).not.toBeNull();
+    expect(screen.findByTestId('managed-picker.offline')).toBeNull();
+  });
+
+  it('marks the provisioner with its package’s contributed brand mark', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    const resource = {
+      pluginId: preset.launch.provider.pluginId,
+      localId: 'brand-icon',
+    };
+    const digest = `sha256:${'c'.repeat(64)}`;
+    // The wrapped UI Vitest owner runs at the package root.
+    const bytes = readFileSync(
+      join(
+        resolve(process.cwd(), '../..'),
+        'packages/plugins/machine-hetzner/assets/brand.png',
+      ),
+    );
+    seedOptionsDeclaration(
+      provisioner,
+      PluginJsonSchemaV2Schema.parse({
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      }),
+      true,
+      {
+        source: { kind: 'localPath', locator: '/plugins/custom-compute' },
+        occurrenceId: 'package-occurrence',
+        brand: {
+          state: 'available',
+          resource,
+          digest,
+          width: 256,
+          height: 256,
+        },
+      },
+    );
+    const projected = boundary.rpc.getMockImplementation()!;
+    // Daemon Resource transport only: brand admission and rendering stay real.
+    boundary.rpc.mockImplementation(
+      async (request: {
+        machineId: string;
+        method: string;
+        payload: unknown;
+      }) =>
+        request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
+          ? {
+              ok: true,
+              resource,
+              kind: 'asset',
+              contentType: 'image/png',
+              digest,
+              bytesBase64: bytes.toString('base64'),
+            }
+          : projected(request),
+    );
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen
+          .findAllByType(HappierBrandMark)
+          .some(
+            (node) => node.props.brand.bytes?.byteLength === bytes.byteLength,
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it('draws a preset row with its provider’s brand mark at the row’s size (the rail and the machine picker)', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    const resource = {
+      pluginId: preset.launch.provider.pluginId,
+      localId: 'brand-icon',
+    };
+    const digest = `sha256:${'d'.repeat(64)}`;
+    const bytes = readFileSync(
+      join(
+        resolve(process.cwd(), '../..'),
+        'packages/plugins/machine-hetzner/assets/brand.png',
+      ),
+    );
+    seedOptionsDeclaration(
+      provisioner,
+      PluginJsonSchemaV2Schema.parse({
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      }),
+      true,
+      {
+        source: { kind: 'localPath', locator: '/plugins/custom-compute' },
+        occurrenceId: 'package-occurrence',
+        brand: {
+          state: 'available',
+          resource,
+          digest,
+          width: 256,
+          height: 256,
+        },
+      },
+    );
+    const projected = boundary.rpc.getMockImplementation()!;
+    // Daemon Resource transport only: the launch's provider resolves through the real projection and brand owners.
+    boundary.rpc.mockImplementation(
+      async (request: {
+        machineId: string;
+        method: string;
+        payload: unknown;
+      }) =>
+        request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
+          ? {
+              ok: true,
+              resource,
+              kind: 'asset',
+              contentType: 'image/png',
+              digest,
+              bytesBase64: bytes.toString('base64'),
+            }
+          : projected(request),
+    );
+    const { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE } =
+      await import('./useManagedProvisionerPresentation');
+    const screen = await renderSettingsView(
+      <ManagedPresetMark
+        serverId={serverId}
+        preset={preset}
+        size={MANAGED_PROVISIONER_MARK_SIZE.rail}
+      />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen
+          .findAllByType(HappierBrandMark)
+          .some(
+            (node) =>
+              node.props.pixelSize === MANAGED_PROVISIONER_MARK_SIZE.rail &&
+              node.props.brand.bytes?.byteLength === bytes.byteLength,
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it('marks a setup-only preset with the setup glyph and reads no provider projection for it', async () => {
+    const serverId = await seed();
+    const before = boundary.rpc.mock.calls.length;
+    const {
+      ManagedPresetMark,
+      MANAGED_PROVISIONER_MARK_SIZE,
+      MACHINE_SETUP_PRESET_GLYPH,
+    } = await import('./useManagedProvisionerPresentation');
+    // A setup-only preset carries no creation: no launch, no controller.
+    const screen = await renderSettingsView(
+      <ManagedPresetMark
+        serverId={serverId}
+        preset={{ launch: null, controller: null }}
+        size={MANAGED_PROVISIONER_MARK_SIZE.rail}
+      />,
+    );
+    const { Icon } = await import('@/components/ui/icons/Icon');
+    expect(screen.findAllByType(Icon).map((node) => node.props.name)).toEqual([
+      MACHINE_SETUP_PRESET_GLYPH,
+    ]);
+    expect(screen.findAllByType(HappierBrandMark)).toHaveLength(0);
+    expect(boundary.rpc.mock.calls.length).toBe(before);
+  });
+
+  it('opens a setup-only preset detail with its setup and no creation reads', async () => {
+    const serverId = await seed();
+    const { launch: _launch, controller: _controller, simultaneousLimit: _limit, ...rest } = preset;
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: { ...rest, name: 'Web host setup', setup: {
+        items: [{ kind: 'softwareRecipe', selection: { ref: { pluginId: 'happier.machine.recipes', recipeId: 'google-chrome', revision: '1' }, inputs: {} } }],
+        scripts: [{ body: 'echo ready' }] } } },
+    });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('machine-preset.detail')).not.toBeNull(),
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('Web host setup');
+    // A setup-only preset makes nothing: no provider catalog, no create, no Managed from, no Machines made from it.
+    expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toHaveLength(0);
+    expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    expect(text).not.toContain(t('machinePresets.madeFrom'));
+    expect(text).not.toContain(t('machinePresets.archiveHelp'));
+    expect(text).toContain(t('machinePresets.archiveSetupHelp'));
+    // What it sets up counts its Store items too, and says each fact once (no spec line repeating the rows).
+    expect(text).toContain(t('machinePresets.setup.itemCount', { count: 1 }));
+    expect(text).not.toContain(t('machinePresets.setup.fact', { label: t('machinePresets.setup.setup'),
+      value: t('machinePresets.setup.setupLines', { count: 1 }) }));
+    await screen.unmount();
+  });
+
+  it('withdraws launch and history after the credential lifetime retires', async () => {
+    const serverId = await seed();
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.detail.machine.resource'),
+      ).not.toBeNull(),
+    );
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      status: 403,
+      body: { kind: 'refused', code: 'permission_denied' },
+    });
+    await act(async () => {
+      await harness.switchAccount(serverId, 'other-owner');
+    });
+    await waitForHomeGovernance(() =>
+      expect(
+        screen.findByTestId('machine-preset.detail.machine.resource'),
+      ).toBeNull(),
+    );
+    expect(screen.findByTestId('machine-preset.edit')).toBeNull();
+  });
+
+  it('uses the Team capability projection for management even when the viewer role says owner', async () => {
+    const serverId = await seed();
+    const teamPreset = {
+      ...preset,
+      owner: { kind: 'team', teamId: 'team-1' },
+    } as const;
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: teamPreset },
+    });
+    const { bindHomeDomainActionHttpRequestV1 } =
+      await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+    const request = bindHomeDomainActionHttpRequestV1('teams.get', {
+      v: 1,
+      teamId: 'team-1',
+    });
+    harness.answer(serverId, request.path, {
+      body: teamSummaryFixture({
+        name: 'Platform',
+        viewerRole: 'owner',
+        capabilities: teamCapabilitiesFixture({ manageSettings: false }),
+      }),
+    });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(screen.findRowByTitle('Platform')).not.toBeNull(),
+    );
+    expect(screen.findByTestId('machine-preset.edit')).toBeNull();
+    expect(screen.findByTestId('machine-preset.detail.archive')).toBeNull();
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+  });
+
+  it('lets a Team manager turn member creation on and off through the revisioned update, and shows it read-only to everyone else', async () => {
+    const serverId = await seed();
+    const teamPreset = {
+      ...preset,
+      owner: { kind: 'team', teamId: 'team-1' },
+      teamAcquireDelegated: false,
+    } as const;
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: teamPreset },
+    });
+    const { bindHomeDomainActionHttpRequestV1 } =
+      await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+    const request = bindHomeDomainActionHttpRequestV1('teams.get', {
+      v: 1,
+      teamId: 'team-1',
+    });
+    harness.answer(serverId, request.path, {
+      body: teamSummaryFixture({
+        name: 'Platform',
+        capabilities: teamCapabilitiesFixture({ manageSettings: true }),
+      }),
+    });
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    const toggle = () =>
+      screen.findByTestId('machine-preset.detail.memberCreate.switch');
+    await waitForHomeGovernance(() =>
+      expect(toggle()?.props.value).toBe(false),
+    );
+    expect(toggle()?.props.disabled).toBeFalsy();
+    const enabled = {
+      ...teamPreset,
+      revision: preset.revision + 1,
+      teamAcquireDelegated: true,
+    };
+    harness.answer(serverId, '/v1/machines/presets/update', {
+      body: { kind: 'saved', preset: enabled },
+    });
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: enabled },
+    });
+    await act(async () => {
+      await toggle()!.props.onValueChange(true);
+    });
+    await waitForHomeGovernance(() => expect(toggle()?.props.value).toBe(true));
+    await waitForHomeGovernance(() =>
+      expect(toggle()?.props.disabled).toBeFalsy(),
+    );
+    const withdrawn = {
+      ...enabled,
+      revision: enabled.revision + 1,
+      teamAcquireDelegated: false,
+    };
+    harness.answer(serverId, '/v1/machines/presets/update', {
+      body: { kind: 'saved', preset: withdrawn },
+    });
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: withdrawn },
+    });
+    await act(async () => {
+      await toggle()!.props.onValueChange(false);
+    });
+    await waitForHomeGovernance(() =>
+      expect(toggle()?.props.value).toBe(false),
+    );
+    expect(
+      harness
+        .requestsFor('/v1/machines/presets/update')
+        .map((row) => row.input),
+    ).toEqual([
+      {
+        homeId: preset.homeId,
+        id: preset.id,
+        expectedRevision: preset.revision,
+        patch: { teamAcquireDelegated: true },
+      },
+      {
+        homeId: preset.homeId,
+        id: preset.id,
+        expectedRevision: enabled.revision,
+        patch: { teamAcquireDelegated: false },
+      },
+    ]);
+    await screen.unmount();
+
+    harness.answer(serverId, request.path, {
+      body: teamSummaryFixture({
+        name: 'Platform',
+        capabilities: teamCapabilitiesFixture({ manageSettings: false }),
+      }),
+    });
+    const viewer = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        viewer.findByTestId('machine-preset.detail.memberCreate.switch')?.props
+          .disabled,
+      ).toBe(true),
+    );
+    expect(
+      viewer.findRowByTitle(t('machinePresets.memberCreateRow'))?.props
+        .subtitle,
+    ).toBe(t('machinePresets.memberCreateManagersOnly', { team: 'Platform' }));
+    await viewer.unmount();
+  });
+
+  it('offers no member-creation control on a personal preset', async () => {
+    const serverId = await seed();
+    const screen = await renderSettingsView(
+      <MachinePresetView serverId={serverId} presetId="preset" />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('machine-preset.detail.limit')).not.toBeNull(),
+    );
+    expect(
+      screen.findByTestId('machine-preset.detail.memberCreate.switch'),
+    ).toBeNull();
+    await screen.unmount();
+  });
 });

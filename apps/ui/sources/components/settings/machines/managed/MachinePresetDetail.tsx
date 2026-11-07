@@ -6,6 +6,7 @@ import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -45,7 +46,8 @@ export type ManagedLinkedMachine = Readonly<{
 /** A preset as Machines shows it (lab `m-presets`): who can use it, its limit, its controller, what it made. */
 export type MachinePresetDetailModel = Readonly<{
   name: string;
-  description: string;
+  /** Absent while the page's one message is a state notice (an archived preset makes nothing). */
+  description?: string;
   mark: React.ReactNode;
   meta: readonly PageHeaderMetaFact[];
   audience: Readonly<{
@@ -55,15 +57,29 @@ export type MachinePresetDetailModel = Readonly<{
     title: string;
     subtitle: string;
   }>;
-  /** Optional simultaneous limit; local and cloud recipes may both belong to a Team. */
-  limit?: Readonly<{ description: string; row: ManagedFieldRowModel }>;
+  /** A Team preset's explicit opt-in: members may create from it, spending on its controller's credentials. */
+  memberCreate?: Readonly<{
+    description: string;
+    title: string;
+    /** Withdrawal while on; the reason it is read-only for a viewer who cannot manage. */
+    subtitle?: string;
+    value: boolean;
+    disabled: boolean;
+    /** A viewer who cannot manage: only the switch is dimmed; the row and its reason stay fully legible. */
+    readOnly?: boolean;
+    onChange: (value: boolean) => void;
+  }>;
+  /** Optional simultaneous limit; local and cloud launchs may both belong to a Team. */
+  limit?: Readonly<{ description?: string; row: ManagedFieldRowModel }>;
   controller?: Readonly<{ description: string; row: ManagedFieldRowModel }>;
-  machines: readonly ManagedLinkedMachine[];
+  /** Machines made from it; absent for a setup-only preset, which never makes one. */
+  machines?: readonly ManagedLinkedMachine[];
   receipt: ManagedReceiptModel;
+  /** What archiving leaves in place; defaults to the Machines made from it. */
+  archiveHelp?: string;
   onCreateOne?: () => void;
   onMore?: () => void;
   onArchive?: () => void;
-  onRestore?: () => void;
   archivePending?: boolean;
   notice?: React.ReactNode;
 }>;
@@ -77,18 +93,18 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
 ) {
   const { theme } = useUnistyles();
   const { model } = props;
-  const closing = model.onArchive || model.onRestore ? (
-        // Closes the page: the quiet archive (or restore) button, then its one consequence line.
-        <ItemGroup surface="none" accessibilityLabel={model.onRestore ? t('common.restore') : t('machinePresets.archive')}>
+  // Restore lives in the archived notice, beside the state it undoes; only Archive closes the page.
+  const closing = model.onArchive ? (
+        <ItemGroup surface="none" accessibilityLabel={t('machinePresets.archive')}>
           <SectionButtonRow
             testID={`${props.testID}.closing`}
-            footnote={model.onRestore ? t('machinePresets.archived') : t('machinePresets.archiveHelp')}
+            footnote={model.archiveHelp ?? t('machinePresets.archiveHelp')}
           >
             <RoundButton
-              testID={`${props.testID}.${model.onRestore ? 'restore' : 'archive'}`}
+              testID={`${props.testID}.archive`}
               size="normal"
               display="inverted"
-              title={model.onRestore ? t('common.restore') : t('machinePresets.archive')}
+              title={t('machinePresets.archive')}
               loading={model.archivePending}
               disabled={model.archivePending}
               leading={
@@ -98,7 +114,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
                   color={theme.colors.text.primary}
                 />
               }
-              onPress={model.onRestore ?? model.onArchive}
+              onPress={model.onArchive}
             />
           </SectionButtonRow>
         </ItemGroup>
@@ -107,8 +123,9 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
     <ManagedReceiptPageLayout
       testID={props.testID}
       compact={props.compact}
+      notice={model.notice}
       receipt={model.receipt}
-      // A preset is its recipe: a phone leads with it, and the archive row always ends the page.
+      // A preset is its launch: a phone leads with it, and the archive row always ends the page.
       compactReceipt="first"
       closing={closing}
       header={{
@@ -147,7 +164,6 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         ),
       }}
     >
-      {model.notice}
       <ItemGroup
         title={t('machinePresets.audience')}
         description={model.audience.description}
@@ -162,6 +178,30 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           showChevron={false}
         />
       </ItemGroup>
+      {model.memberCreate ? (
+        <ItemGroup
+          title={t('machinePresets.memberCreate')}
+          description={model.memberCreate.description}
+        >
+          <Item
+            testID={`${props.testID}.memberCreate`}
+            title={model.memberCreate.title}
+            subtitle={model.memberCreate.subtitle}
+            subtitleLines={0}
+            showChevron={false}
+            mode={model.memberCreate.readOnly ? 'info' : undefined}
+            rightElement={
+              <Switch
+                testID={`${props.testID}.memberCreate.switch`}
+                accessibilityLabel={model.memberCreate.title}
+                value={model.memberCreate.value}
+                disabled={model.memberCreate.disabled}
+                onValueChange={model.memberCreate.onChange}
+              />
+            }
+          />
+        </ItemGroup>
+      ) : null}
       {model.limit ? (
         <ItemGroup
           title={t('machinePresets.runningAtOnce')}
@@ -184,6 +224,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           />
         </ItemGroup>
       ) : null}
+      {model.machines ? (
       <ItemGroup
         title={t('machinePresets.madeFrom')}
         titleAccessory={<ManagedSectionCount count={model.machines.length} />}
@@ -210,6 +251,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           ))
         )}
       </ItemGroup>
+      ) : null}
     </ManagedReceiptPageLayout>
   );
 });

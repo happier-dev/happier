@@ -12,3 +12,8 @@ export const HAPPIER_DESKTOP_DOWNLOAD_URL = 'https://happier.dev/download';
  */
 export const HAPPIER_APP_STORE_SHORT_URL = 'https://happier.dev/appstore';
 export const HAPPIER_GOOGLE_PLAY_SHORT_URL = 'https://happier.dev/playstore';
+/**
+ * The app's universal-link origin (`app.config.js` `hostedLinkHosts`): a path under it opens that page in
+ * the installed app, and the hosted web app otherwise.
+ */
+export const HAPPIER_APP_LINK_ORIGIN = 'https://app.happier.dev';

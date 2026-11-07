@@ -25,7 +25,8 @@ afterEach(() => {
   modal.hide.mockClear();
 });
 
-async function renderConfigurator(onCreate: () => void, primaryLabel = 'Create server', primaryTestID?: string, tabBarHeight = 0) {
+async function renderConfigurator(onCreate: () => void, primaryLabel = 'Create server', primaryTestID?: string, tabBarHeight = 0, scopeChip?: React.ReactNode,
+  extra?: Readonly<{ compact?: boolean; blocker?: import('./ManagedMachineConfigurator').ManagedConfiguratorBlocker; children?: React.ReactNode }>) {
   const { ManagedMachineConfigurator } =
     await import('./ManagedMachineConfigurator');
   const { SessionCockpitBottomChromeHeightContext } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
@@ -36,7 +37,9 @@ async function renderConfigurator(onCreate: () => void, primaryLabel = 'Create s
       title="New Hetzner server"
       description="Pick its size, system and place."
       mark={null}
-      compact
+      actions={scopeChip}
+      compact={extra?.compact ?? true}
+      blocker={extra?.blocker}
       summary={{
         value: '€0.0119',
         unit: 'an hour',
@@ -52,7 +55,7 @@ async function renderConfigurator(onCreate: () => void, primaryLabel = 'Create s
         primary: { label: primaryLabel, onPress: onCreate, testID: primaryTestID },
       }}
     >
-      {null}
+      {extra?.children ?? null}
     </ManagedMachineConfigurator>
     </SessionCockpitBottomChromeHeightContext.Provider>,
   );
@@ -85,6 +88,14 @@ describe('ManagedMachineConfigurator on a phone', () => {
     expect(Number(StyleSheet.flatten(screen.findByTestId('cfg.summary.frame')!.props.style)?.marginBottom)).toBeGreaterThanOrEqual(84);
     await screen.unmount();
   });
+  it('keeps the managing machine in view as its own row, since the header folds its actions away on a phone', async () => {
+    const { Text } = await import('react-native');
+    const screen = await renderConfigurator(vi.fn(), 'Create', undefined, 0, <Text testID="cfg.chip">NLDW3 · 230d</Text>);
+    const row = screen.findByTestId('cfg.scope');
+    expect(row).toBeTruthy();
+    expect(row!.findAll(node => node.props.testID === 'cfg.chip').length).toBeGreaterThan(0);
+    await screen.unmount();
+  });
   it('opens the receipt as a sheet from the summary bar without creating anything', async () => {
     const onCreate = vi.fn();
     const screen = await renderConfigurator(onCreate);
@@ -97,5 +108,38 @@ describe('ManagedMachineConfigurator on a phone', () => {
       screen.pressByTestId('cfg.summary.create');
     });
     expect(onCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ManagedMachineConfigurator with a blocker (R8-9)', () => {
+  for (const compact of [true, false]) {
+    it(`draws the blocker and its one action in the form column instead of choices that cannot be used (${compact ? 'phone' : 'wide'})`, async () => {
+      const { Text } = await import('react-native');
+      const onGetApp = vi.fn();
+      const screen = await renderConfigurator(vi.fn(), 'Create server', undefined, 0, undefined, {
+        compact,
+        blocker: { kind: 'needsApp', title: 'Needs the app', reason: 'Hetzner can\u2019t be reached from a browser.',
+          action: { label: 'Get the app', onPress: onGetApp } },
+        children: <Text testID="cfg.choice">Size</Text>,
+      });
+      const blocker = screen.findByTestId('cfg.blocker');
+      expect(blocker).toBeTruthy();
+      type Node = { children: ReadonlyArray<Node | string> };
+      const textOf = (node: Node): string => node.children.map(child => typeof child === 'string' ? child : textOf(child)).join('');
+      const text = textOf(blocker as unknown as Node);
+      expect(text).toContain('Needs the app');
+      expect(text).toContain('Hetzner can\u2019t be reached from a browser.');
+      expect(screen.findByTestId('cfg.choice')).toBeFalsy();
+      await act(async () => screen.pressByTestId('cfg.blocker.action'));
+      expect(onGetApp).toHaveBeenCalledTimes(1);
+      await screen.unmount();
+    });
+  }
+  it('keeps its choices when nothing blocks them', async () => {
+    const { Text } = await import('react-native');
+    const screen = await renderConfigurator(vi.fn(), 'Create server', undefined, 0, undefined, { children: <Text testID="cfg.choice">Size</Text> });
+    expect(screen.findByTestId('cfg.choice')).toBeTruthy();
+    expect(screen.findByTestId('cfg.blocker')).toBeFalsy();
+    await screen.unmount();
   });
 });

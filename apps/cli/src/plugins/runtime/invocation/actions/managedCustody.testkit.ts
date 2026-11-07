@@ -21,7 +21,7 @@ import { createTargetActionHostBindingResolver, type ResolveTargetActionHostBind
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { addExecServiceBinding, addConnectedAccountsAvailablePluginInvocationServiceBinding, createPluginInvocationServicesFactory, createLoggerAvailablePluginInvocationServiceBinding, createUnavailablePluginServicesFactory } from '../services/factory';
+import { createPluginInvocationServicesFactory, createPluginInvocationServiceBinding, createUnavailablePluginServicesFactory } from '../services/factory';
 import { createStablePluginConnectedAccountsHost, type StablePluginConnectedAccountsOwner } from '../services/connectedAccounts';
 import { createManagedServiceCredentialFileOwner } from '../services/managedServiceCredentialFileOwner';
 import { createPluginInvocationSecretRedactor, type PluginInvocationLogSink } from '../services/logger';
@@ -62,7 +62,7 @@ export function roleInput(localId: string): JsonValue {
 }
 export function roleResult(localId: string): JsonValue {
     if (localId === 'check') return { available: true };
-    if (localId === 'options') return { choices: [] };
+    if (localId === 'options') return { dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
     if (localId === 'acquire' || localId === 'reconcile' || localId === 'rebuild') return { kind: 'bound', resource: { contributionRef: { pluginId, localId: 'vm' }, schemaVersion: 1, value: {} } };
     if (localId === 'bootstrap') return { kind: 'native', transport: { contributionRef: { pluginId, localId: 'vm' }, schemaVersion: 1 } };
     if (localId === 'inspect') return { observedAt: 0, availability: 'present' };
@@ -101,6 +101,8 @@ export function fixture(options: Readonly<{
         context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     onOrdinary?: (context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     fixtureManifest?: CanonicalPluginManifest;
+    /** Invoking-process host boundary; placement admission itself remains real. */
+    executionRealm?: 'account';
     referenceManifests?: readonly CanonicalPluginManifest[];
     credentialPurposes?: readonly Readonly<{ purpose: string; service: Readonly<{ pluginId: string; localId: string }> }>[];
     afterActivation?: () => void; credentialOwner?: StablePluginConnectedAccountsOwner;
@@ -250,9 +252,9 @@ export function fixture(options: Readonly<{
         }),
         resolveHostBinding: options.resolveHostBinding ?? createTargetActionHostBindingResolver(options.credentialOwner || options.nativeCommandArgs || options.nativeCredentialService ? {
             createServiceBinding: options.createHostServiceBinding ?? ((occurrence, id, requests) => {
-                const binding = createLoggerAvailablePluginInvocationServiceBinding(occurrence, id);
-                const execBinding = options.nativeCommandArgs ? addExecServiceBinding(binding, requests ?? []) : binding;
-                return options.credentialOwner ? addConnectedAccountsAvailablePluginInvocationServiceBinding(execBinding) : execBinding;
+                const binding = createPluginInvocationServiceBinding(occurrence, id);
+                const execBinding = options.nativeCommandArgs ? binding : binding;
+                return options.credentialOwner ? execBinding : execBinding;
             }),
         } : undefined),
         createServices(seed, binding) {
@@ -291,6 +293,7 @@ export function fixture(options: Readonly<{
     // invocation, policy admission and handler execution remain real.
     const runtimeRegistry = {
         contributes, targetActionInvocations,
+        ...(options.executionRealm ? { executionRealm: options.executionRealm } : {}),
         // The daemon's placement resolver is a host/environment boundary.
         resolveCurrentPluginApprovalReplayPlacement: async () => ({ serverId: 'home-1', machineId: 'controller-1' }),
         readPluginOccurrenceId: () => currentOccurrenceId,

@@ -32,6 +32,7 @@ import {
   describeDefaultPolicy,
   describeRetention,
   describeFiniteRetention,
+  keepOffersWake,
   retentionChoiceId,
   type RetentionEffect,
   type RetentionParking,
@@ -44,8 +45,6 @@ export type ManagedMachineKeepControlProps = Readonly<{
   defaultPolicy?: MachineRetentionPolicyV1;
   /** True while nothing is chosen here, so the default applies and there is nothing to reset. */
   inherited: boolean;
-  /** The category the default comes from ("Cloud billed while stopped"), named on an inherited choice. */
-  categoryLabel?: string;
   /**
    * `field`: a When unused select and the wake switch as page rows (Machine defaults, phone pages).
    * `choices`: three quiet radios with the consequence beneath (the configurator receipt, a machine's
@@ -60,6 +59,11 @@ export type ManagedMachineKeepControlProps = Readonly<{
   consequence: (retention: RetentionV1) => string;
   /** False when the provider cannot start the same machine again, so wake is not offered. */
   canWake?: boolean;
+  /**
+   * The provider's own rates, already said (`describeKeepCosts`): Always on's cost in its row, and what a
+   * start bills under the input-wake switch. Absent where no price is known; nothing is guessed.
+   */
+  costs?: Readonly<{ alwaysOn?: string; starting?: string }>;
   /** The declared native resource cannot stop and keep the same allocation. */
   finiteOnly?: boolean;
   /** A live detail cannot offer policy edits until its current native capability owner qualifies it. */
@@ -102,8 +106,7 @@ export type ManagedMachineKeepControlProps = Readonly<{
 export const ManagedMachineKeepControl = React.memo(
   function ManagedMachineKeepControl(props: ManagedMachineKeepControlProps) {
     if (props.finiteOnly) return <KeepFinite {...props} />;
-    const wakeShown =
-      props.canWake !== false && isMachineRetainedWakeEligibleV1(props.policy.retention);
+    const wakeShown = props.canWake !== false && keepOffersWake(props.policy.retention);
     const setRetention = (retention: RetentionV1) => {
       const preserveWake = retention.kind === 'until-delete' ||
         (props.policy.retention.kind !== 'until-delete' && isMachineRetainedWakeEligibleV1(props.policy.retention));
@@ -328,30 +331,26 @@ function KeepChoices(props: InnerProps) {
       ),
     });
   };
-  // Keep the draft's owner mounted while native qualification refreshes.
-  if (props.capabilitiesAvailable === false) return <UnavailableKeepPolicy {...props} />;
+  // Until its capability owner qualifies it, the rule keeps the same rows, read-only, with the reason where the
+  // consequence goes: their arrival only enables them, so nothing below moves. The draft's owner stays mounted.
+  const readOnly = props.capabilitiesAvailable === false;
+  const disabled = props.disabled || readOnly;
+  const defaultId = props.defaultPolicy ? retentionChoiceId(props.defaultPolicy.retention) : null;
+  const shownDraft = readOnly ? null : draft;
   return (
     <View testID={props.testID} style={styles.choices}>
       <View style={[styles.head, props.showLabel ? null : styles.headEnd]}>
         {props.showLabel ? (
           <Text style={styles.quiet}>{t('managedRetention.keepIt')}</Text>
         ) : null}
-        {props.inherited ? (
-          props.categoryLabel ? (
-            <Text style={styles.quiet} numberOfLines={1}>
-              {t('managedRetention.defaultCategory', {
-                category: props.categoryLabel,
-              })}
-            </Text>
-          ) : null
-        ) : (
+        {props.inherited ? null : (
           <ResetLink
             testID={`${props.testID}:reset`}
             onPress={async () => {
               const saved = await props.onReset();
               if (saved !== false) setDraft(currentDraft => currentDraft === draft ? null : currentDraft);
             }}
-            disabled={props.disabled || !props.defaultPolicy}
+            disabled={disabled || !props.defaultPolicy}
             underline
           />
         )}
@@ -360,18 +359,29 @@ function KeepChoices(props: InnerProps) {
         accessibilityLabel={t('managedRetention.keepIt')}
         options={rows}
         value={selectedId}
-        disabled={props.disabled}
+        disabled={disabled}
         theme={radioTheme}
         testIDPrefix={`${props.testID}:choice`}
         onChange={(id) => {
           const row = rows.find((candidate) => candidate.id === id);
           if (row) choose(row);
         }}
-        renderTitle={(option) => <Text style={styles.choiceText}>{option.title}</Text>}
+        renderTitle={(option) => {
+          // The default choice says so beside its name; Always on carries its cost in the right column (lab af-config K).
+          const isDefault = option.id === defaultId;
+          const cost = option.id === 'until-delete' ? props.costs?.alwaysOn : undefined;
+          return isDefault || cost ? (
+            <View style={styles.choiceRow}>
+              <Text style={[styles.choiceText, styles.choiceTitle]}>{option.title}</Text>
+              {isDefault ? <Text testID={`${props.testID}:choice:${option.id}:default`} style={styles.quiet}>{t('common.default')}</Text> : null}
+              {cost ? <Text testID={`${props.testID}:choice:until-delete:cost`} style={styles.choiceCost} numberOfLines={1}>{cost}</Text> : null}
+            </View>
+          ) : <Text style={styles.choiceText}>{option.title}</Text>;
+        }}
       />
-      {draft ? (
+      {shownDraft ? (
         <DeadlineEditor
-          draft={draft}
+          draft={shownDraft}
           effects={effects}
           parking={props.parking}
           disabled={props.disabled}
@@ -383,6 +393,11 @@ function KeepChoices(props: InnerProps) {
             if (saved !== false) setDraft(currentDraft => currentDraft === draft ? null : currentDraft);
           }}
         />
+      ) : readOnly ? (
+        // Read-only, the reason it cannot change yet takes the consequence's reserved lines.
+        <Text testID={`${props.testID}:consequence`} style={[styles.consequence, styles.reserved]} accessibilityLiveRegion="polite">
+          {props.nativeExpiry ?? props.unavailableReason ?? t('managedMachines.options.unavailable')}
+        </Text>
       ) : props.deadline && current.kind === 'deadline' ? (
         // The chosen row already says when; what stays worth saying is that it will not wait for work.
         <View style={[styles.reserved, styles.deadlineNote]} accessibilityLiveRegion="polite">
@@ -398,17 +413,18 @@ function KeepChoices(props: InnerProps) {
           {props.consequence(props.policy.retention)}
         </Text>
       )}
-      {props.wakeShown && !draft ? (
+      {props.wakeShown && !shownDraft ? (
         <View style={styles.wake}>
           <View style={styles.wakeText}>
             <Text style={styles.choiceText}>{t('managedRetention.wake')}</Text>
-            <Text style={styles.quiet}>{t('managedRetention.wakeHelp')}</Text>
+            {/* One rule: what a start bills when the price is known, else only that opening never starts it. */}
+            <Text testID={`${props.testID}:wake:help`} style={styles.quiet}>{props.costs?.starting ?? t('managedRetention.wakeHelp')}</Text>
           </View>
           <Switch
             testID={`${props.testID}:wake:switch`}
             accessibilityLabel={t('managedRetention.wake')}
             value={props.policy.wakeOnAcceptedMessage}
-            disabled={props.disabled}
+            disabled={disabled}
             onValueChange={props.setWake}
           />
         </View>
@@ -457,7 +473,7 @@ function DeadlineEditor(
   const retention: RetentionV1 | null =
     at === null
       ? null
-      : { kind: 'deadline', at, effect: draft.effect, interrupts: true };
+      : { kind: 'deadline', at, effect: draft.effect };
   return (
     <View testID={props.testID} style={styles.deadline}>
       {props.effects.length > 1 ? (
@@ -551,7 +567,6 @@ function ResetLink(
       accessibilityRole="button"
       disabled={props.disabled}
       onPress={props.onPress}
-      hitSlop={8}
     >
       <Text style={[styles.reset, props.underline ? styles.underline : null]}>
         {t('managedRetention.resetToDefault')}
@@ -611,6 +626,23 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...rowDescription,
     color: theme.colors.text.primary,
+  },
+  choiceRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: theme.space.s8,
+  },
+  choiceTitle: {
+    flexShrink: 1,
+  },
+  choiceCost: {
+    ...Typography.default(),
+    ...Typography.tabular(),
+    ...happierPageTextMetrics('meta'),
+    color: theme.colors.text.tertiary,
+    marginLeft: 'auto',
   },
   deadline: {
     gap: theme.space.s12,

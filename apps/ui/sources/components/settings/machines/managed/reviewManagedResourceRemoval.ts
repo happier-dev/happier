@@ -7,6 +7,7 @@ import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18
 import { t } from '@/text';
 
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
+import { managedConfirmedAbsenceState } from './managedCreationPresentation';
 
 /** What the person knows the resource as: its provider and kind ("Hetzner VM"), from the provisioner's own declaration. */
 function managedResourceName(resource: ManagedResourceDependencyV1): string {
@@ -20,7 +21,7 @@ function managedResourceName(resource: ManagedResourceDependencyV1): string {
 
 /** The review's recovery facts in the lifecycle vocabulary the machine's own page uses; null when nothing more is known. */
 function managedResourceState(resource: ManagedResourceDependencyV1, name: string): ManagedLifecycleState | null {
-    if (resource.allocation === 'confirmed-absent') return { kind: 'absent' };
+    if (resource.allocation === 'confirmed-absent') return managedConfirmedAbsenceState(resource);
     if (resource.cleanup) return resource.cleanup.disposition === 'pending' && resource.cleanup.reason === 'creation_canceled'
         ? { kind: 'creationCanceledCleanup' } : { kind: 'cleanupUnknown' };
     if (resource.allocation === 'may-exist') return { kind: 'mayExist', name };

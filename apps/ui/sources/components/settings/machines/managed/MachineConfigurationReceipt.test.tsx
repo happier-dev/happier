@@ -68,6 +68,22 @@ function textContent(
 }
 
 describe('MachineConfigurationReceipt', () => {
+  it('draws its chosen facts through the public Metadata group, a value still being read holding its place', async () => {
+    const screen = await renderReceipt({
+      facts: [
+        { id: 'image', label: 'Image', value: 'Ubuntu 24.04' },
+        { id: 'controller', label: 'Managed from', value: null },
+      ],
+    });
+    const group = screen.findByTestId('receipt:facts');
+    expect(group?.props.role).toBe('group');
+    expect(textContent(screen, 'receipt:fact:image')).toBe('Image Ubuntu 24.04');
+    // The pending fact keeps its label and a bar where the value will be, and no value text.
+    expect(textContent(screen, 'receipt:fact:controller')).toBe('Managed from');
+    expect(screen.findByTestId('receipt:fact:controller:pending')).not.toBeNull();
+    await screen.unmount();
+  });
+
   it('never presents an unknown price as free and states a returned price with when it was checked', async () => {
     const unpriced = await renderReceipt({
       cost: { kind: 'unpriced', provider: 'Crabbox' },
@@ -77,6 +93,13 @@ describe('MachineConfigurationReceipt', () => {
     );
     expect(textContent(unpriced, 'receipt:cost')).not.toContain('No bill');
     unpriced.unmount();
+
+    const unnamed = await renderReceipt({ cost: { kind: 'unpriced', provider: null } });
+    const { t } = await import('@/text');
+    expect(textContent(unnamed, 'receipt:cost')).toBe(t('managedMachines.price.unavailable', { provider: null }));
+    expect(textContent(unnamed, 'receipt:cost')).not.toContain('null');
+    expect(textContent(unnamed, 'receipt:cost')).not.toContain('Unknown');
+    await unnamed.unmount();
 
     const priced = await renderReceipt({
       cost: {
@@ -139,7 +162,7 @@ describe('MachineConfigurationReceipt', () => {
     await screen.unmount();
   });
 
-  it('offers explicit wake for Until-delete while its inherited default stays off and Delete disables wake', async () => {
+  it('offers no wake beside Always on, the D21 wake default on a newly chosen Stop, and none after Delete', async () => {
     const changes: MachineRetentionPolicyV1[] = [];
     const resets: number[] = [];
     const screen = await renderReceipt({
@@ -147,7 +170,6 @@ describe('MachineConfigurationReceipt', () => {
         policy: untilDelete,
         defaultPolicy: untilDelete,
         inherited: true,
-        categoryLabel: 'Cloud billed while stopped',
         consequence: (retention) =>
           retention.kind === 'until-delete'
             ? 'It keeps running, and billing, until you delete it.'
@@ -159,13 +181,9 @@ describe('MachineConfigurationReceipt', () => {
     for (const id of ['until-delete', 'unused:stop:3600000', 'unused:delete:3600000']) {
       expect(screen.findByTestId(`receipt:keep:choice:${id}`)).not.toBeNull();
     }
-    // Until-delete can be stopped manually; its category default leaves wake off until chosen.
+    // Always on never stops, so it offers no wake (58d §D4); its stored choice stays off.
     expect(screen.findByTestId('receipt:keep:reset')).toBeNull();
-    const wake = screen.tree.findAll(node => node.props.testID === 'receipt:keep:wake:switch'
-      && typeof node.props.onValueChange === 'function')[0];
-    expect(wake?.props.value).toBe(false);
-    await act(async () => wake?.props.onValueChange(true));
-    expect(changes.at(-1)).toEqual({ ...untilDelete, wakeOnAcceptedMessage: true });
+    expect(screen.findByTestId('receipt:keep:wake:switch')).toBeNull();
 
     await act(async () => {
       screen.pressByTestId('receipt:keep:choice:unused:stop:3600000');

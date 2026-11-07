@@ -31,6 +31,43 @@ function provisioner(title: string, location: 'local' | 'cloud'): MachineProvisi
 }
 
 describe('Machine Defaults declarations and controller-local availability', () => {
+    it('settles without commits for unrelated settings and commits a changed creation default once', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const previous = storage.getState();
+        const features = createRootLayoutFeaturesResponse();
+        const home = await serveActionHomes({ homes: [
+            { key: 'defaults', serverUrl: 'https://qap2-defaults.test', accountId: 'owner', currentAccount: true },
+        ], route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+            ? Response.json(features) : undefined });
+        onTestFinished(async () => {
+            storage.setState({ settings: previous.settings, settingsScope: previous.settingsScope,
+                profileScope: previous.profileScope, machineListByServerId: previous.machineListByServerId });
+            await home.dispose();
+        });
+        await loadSyncSingletonForTests();
+        const { MachineDefaultsView } = await import('./MachineDefaultsView');
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="defaults" onRender={() => { commits += 1; }}>
+            <MachineDefaultsView />
+        </React.Profiler>);
+        onTestFinished(() => screen.unmount());
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machineDefaults.creationEnabled.switch')!.props.disabled).not.toBe(true));
+        const initialCommits = commits;
+        for (let version = 1; version <= 5; version += 1) {
+            await act(async () => storage.getState().applySettings({
+                ...storage.getState().settings, analyticsOptOut: version % 2 === 0,
+            }, version));
+        }
+        expect(commits - initialCommits).toBe(0);
+        const control = () => screen.findByTestId('settings.machineDefaults.creationEnabled.switch')!;
+        const next = !control().props.value;
+        await act(async () => storage.getState().applySettings({
+            ...storage.getState().settings, managedMachineCreationEnabled: next,
+        }, 6));
+        expect(control().props.value).toBe(next);
+        expect(commits - initialCommits).toBe(1);
+    });
+
     it.each(['creation', 'retention'] as const)('honors the Account settings.set policy when changing %s', async (operation) => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
@@ -97,7 +134,7 @@ describe('Machine Defaults declarations and controller-local availability', () =
         await screen.unmount();
     });
 
-    it('aggregates actual installed controllers of only the focused Home without pretending a Home-global catalog', async () => {
+    it('reads only the selected controller of the focused Home and keeps Defaults independent of installed catalogs', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const previous = storage.getState();
         const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: 'srv_build' } } });
@@ -109,7 +146,7 @@ describe('Machine Defaults declarations and controller-local availability', () =
             if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(features);
             if (request.path !== '/v1/actions/machines.provisioners.list') return undefined;
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
-            // A controller that is online but cannot answer its catalog: the others' names still arrive.
+            // A failed refresh must preserve this Account's last successful catalog.
             if (envelope.target?.kind === 'machine' && envelope.target.machineId === 'failing-controller') return Response.json({ error: 'unavailable' }, { status: 503 });
             const rows = envelope.target?.kind === 'machine' && envelope.target.machineId === 'local-controller'
                 ? [provisioner('Local guest', 'local')] : [provisioner('Cloud service', 'cloud')];
@@ -132,25 +169,22 @@ describe('Machine Defaults declarations and controller-local availability', () =
                 createMachineFixture({ id: 'failing-controller', installationId: 'failing-installation', activeAt: Date.now() })],
             [otherHome]: [createMachineFixture({ id: 'other-controller', installationId: 'other-installation' })],
         } });
-        const controllers: readonly ManagedControllerV1[] = [
-            { machineId: 'local-controller', installationId: 'local-installation' },
-            { machineId: 'cloud-controller', installationId: 'cloud-installation' },
-        ];
+        const controller: ManagedControllerV1 = { machineId: 'local-controller', installationId: 'local-installation' };
         const { useManagedProvisioners } = await import('./useManagedProvisioners');
         const transport = await import('@/utils/system/runtimeFetch');
         const fetch = vi.spyOn(transport, 'runtimeFetch');
         onTestFinished(() => fetch.mockRestore());
-        const catalog = await renderHook((selected: readonly ManagedControllerV1[]) => useManagedProvisioners(focusedHome, undefined, selected),
-            { initialProps: controllers });
+        const catalog = await renderHook((selected: ManagedControllerV1) => useManagedProvisioners(focusedHome, undefined, selected),
+            { initialProps: controller });
         await vi.waitFor(() => expect(catalog.getCurrent().loading).toBe(false));
         expect(catalog.getCurrent().error).toBeNull();
-        expect(catalog.getCurrent().provisioners.map(row => row.descriptor.title)).toEqual(['Local guest', 'Cloud service']);
+        expect(catalog.getCurrent().provisioners.map(row => row.descriptor.title)).toEqual(['Local guest']);
         const modeReads = () => fetch.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/encryption').length;
         const initialModeReads = modeReads();
         expect(initialModeReads).toBeGreaterThan(0);
         const initialCatalogReads = home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list').length;
         // Machine presence updates rebuild these objects without changing any catalog demand.
-        await catalog.rerender(controllers.map(controller => ({ ...controller })));
+        await catalog.rerender({ ...controller });
         await vi.waitFor(() => expect(catalog.getCurrent().loading).toBe(false));
         expect(modeReads()).toBe(initialModeReads);
         expect(home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list')).toHaveLength(initialCatalogReads);
@@ -158,17 +192,22 @@ describe('Machine Defaults declarations and controller-local availability', () =
         await act(async () => catalog.getCurrent().refresh());
         await vi.waitFor(() => expect(catalog.getCurrent().loading).toBe(false));
         expect(home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list')).toHaveLength(initialCatalogReads * 2);
-        // Real controller membership changes still refresh the projection.
-        await catalog.rerender(controllers.slice(0, 1));
+        // Changing the selected controller still reads its exact catalog.
+        await catalog.rerender({ machineId: 'cloud-controller', installationId: 'cloud-installation' });
         await vi.waitFor(() => expect(catalog.getCurrent().loading).toBe(false));
         expect(home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list')).toHaveLength(initialCatalogReads * 2 + 1);
-        expect(catalog.getCurrent().provisioners.map(row => row.descriptor.title)).toEqual(['Local guest']);
+        expect(catalog.getCurrent().provisioners.map(row => row.descriptor.title)).toEqual(['Cloud service']);
+        await catalog.rerender({ machineId: 'failing-controller', installationId: 'failing-installation' });
+        await vi.waitFor(() => expect(catalog.getCurrent().loading).toBe(false));
+        expect(catalog.getCurrent().error).toBeTruthy();
+        expect(catalog.getCurrent().provisioners.map(row => row.descriptor.title)).toEqual(['Cloud service']);
+        const settledCatalogReads = home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list').length;
         await catalog.unmount();
         const { MachineDefaultsView } = await import('./MachineDefaultsView');
         const screen = await renderScreen(<MachineDefaultsView />);
         expect(screen.getTextContent()).toContain('Lima');
         expect(screen.getTextContent()).toContain('Hetzner');
-        expect(home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list')).toHaveLength(initialCatalogReads * 2 + 1);
+        expect(home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list')).toHaveLength(settledCatalogReads);
         expect(home.requests.filter(request => request.path === '/v1/actions/machines.provisioners.list').map(request => request.body)).toEqual(expect.arrayContaining([
             expect.objectContaining({ target: { kind: 'machine', machineId: 'local-controller' }, input: { homeId: 'srv_build', controller: { machineId: 'local-controller', installationId: 'local-installation' } } }),
             expect.objectContaining({ target: { kind: 'machine', machineId: 'cloud-controller' }, input: { homeId: 'srv_build', controller: { machineId: 'cloud-controller', installationId: 'cloud-installation' } } }),

@@ -9,6 +9,7 @@ import { describeRetention as describeSharedRetention, formatRetentionDuration a
 
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatPriceUnit, formatProviderAmount, type ProviderPrice } from './managedMachineDisplay';
 
 /**
  * Words and choices for the one Keep it / wake control (plans 51/52). Policy resolution stays in the
@@ -64,7 +65,7 @@ export function describeRetention(
     suspendAt: time => t('managedRetention.suspendAt', { time }),
   } });
 }
-/** The descriptor facts a consequence depends on: where it runs, whether stopped bills, and who bills. */
+/** stoppedBilling describes compute. Retained storage can still bill independently of that fact. */
 export type RetentionConsequenceFacts = Readonly<{
   location: 'local' | 'cloud' | 'unknown';
   stoppedBilling: 'billed' | 'not-billed' | 'unknown';
@@ -74,7 +75,23 @@ export type RetentionConsequenceFacts = Readonly<{
   parking?: RetentionParking;
   /** The resource kind ("Sandbox"), for "Cua pauses this sandbox". */
   kind?: string;
+  /** What the provider bills for storage it keeps while stopped; said as a short rate, never its label. */
+  storageCharges?: readonly ProviderPrice[];
 }>;
+
+/**
+ * The stopped storage rate as a short value ("$0.08 per GB-month"): the provider's labels are prose for its own
+ * pricing page, not a receipt. Several charges in one unit read as "from" the lowest; otherwise the first.
+ */
+function describeStoppedStorageRate(charges: readonly ProviderPrice[] | undefined): string | null {
+  const first = charges?.[0];
+  if (!first) return null;
+  const say = (price: ProviderPrice) => `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`;
+  if (!charges.every(price => price.unit === first.unit && price.currency === first.currency)) return say(first);
+  const lowest = charges.reduce((low, price) => Number(price.amount) < Number(low.amount) ? price : low, first);
+  return charges.some(price => Number(price.amount) !== Number(lowest.amount))
+    ? t('managedRetention.storageFrom', { rate: say(lowest) }) : say(lowest);
+}
 
 /**
  * What the chosen Keep rule means for the machine and its bill, said once under the choices. The
@@ -111,10 +128,13 @@ export function describeRetentionConsequence(
       return t('managedRetention.consequence.stopBilled', {
         provider: facts.provider,
       });
-    case 'not-billed':
-      return t('managedRetention.consequence.stopNotBilled', {
-        provider: facts.provider,
-      });
+    case 'not-billed': {
+      // The one statement of the stopped cost: with its storage rate when the provider declares one.
+      const rate = describeStoppedStorageRate(facts.storageCharges);
+      return rate
+        ? t('managedRetention.consequence.stopNotBilledStorage', { provider: facts.provider, rate })
+        : t('managedRetention.consequence.stopNotBilled', { provider: facts.provider });
+    }
     case 'unknown':
       return t('managedRetention.consequence.stopUnknown', {
         provider: facts.provider,
@@ -122,12 +142,37 @@ export function describeRetentionConsequence(
   }
 }
 
+/**
+ * Whether Keep it offers "Start it for new messages and runs" beside this rule (58d §D4): only beside a rule
+ * that stops the machine. Always on never stops, and a deleted machine has nothing to start; the stored
+ * wake choice is kept either way, so changing the rule back shows it as it was.
+ */
+export function keepOffersWake(retention: RetentionV1): boolean {
+  return retention.kind !== 'until-delete' && isMachineRetainedWakeEligibleV1(retention);
+}
+
+/**
+ * What Always on and a start cost, in the provider's own rates (lab af-config K): its published monthly
+ * rate when it has one, else its running rate. An hourly rate is never multiplied into a month.
+ */
+export function describeKeepCosts(prices: readonly ProviderPrice[] | undefined): Readonly<{ alwaysOn?: string; starting?: string }> {
+  const running = prices?.[0];
+  if (!running) return {};
+  const rate = `${formatProviderAmount(running)} ${formatPriceUnit(running.unit)}`;
+  // The same line item's monthly rate (a storage charge's month is not the machine's).
+  const monthly = prices.find(price => price.unit === 'month' && JSON.stringify(price.label) === JSON.stringify(running.label));
+  return {
+    alwaysOn: monthly && monthly !== running ? t('managedRetention.aboutMonthly', { amount: formatProviderAmount(monthly) }) : rate,
+    starting: t('managedRetention.startingBills', { price: rate }),
+  };
+}
+
 /** The one-line summary a closed row shows: "Stop after 1 h unused · wakes". */
 export function describeRetentionPolicy(
   policy: MachineRetentionPolicyV1,
 ): string {
   const label = describeRetention(policy.retention);
-  return isMachineRetainedWakeEligibleV1(policy.retention) && policy.wakeOnAcceptedMessage
+  return keepOffersWake(policy.retention) && policy.wakeOnAcceptedMessage
     ? `${label} · ${t('managedRetention.wakes')}`
     : label;
 }
@@ -137,7 +182,7 @@ export function describeDefaultPolicy(
   policy: MachineRetentionPolicyV1,
 ): string {
   const label = describeRetention(policy.retention);
-  if (!isMachineRetainedWakeEligibleV1(policy.retention)) return label;
+  if (!keepOffersWake(policy.retention)) return label;
   return `${label} · ${policy.wakeOnAcceptedMessage ? t('managedRetention.wakeOn') : t('managedRetention.wakeOff')}`;
 }
 

@@ -422,11 +422,12 @@ describe('daemon managed Machine Action factory', () => {
         }
         expect(nativeEffects).toEqual([]);
     });
-    it.each(['cleanup', 'rearmed-wake', 'stale-running-wake', 'denied-wake', 'retired-wake', 'cleanup-native-refused'] as const)(
+    it.each(['cleanup', 'rearmed-wake', 'stale-running-wake', 'denied-wake', 'retired-wake', 'reconnected-wake', 'cleanup-native-refused'] as const)(
         'resumes %s through the remote app replay adapter and actual live operation', async purpose => {
         const wake = !purpose.startsWith('cleanup');
         const denied = purpose === 'denied-wake';
         const retired = purpose === 'retired-wake';
+        const reconnected = purpose === 'reconnected-wake';
         const nativeRefused = purpose === 'cleanup-native-refused';
         const nativeDetails = { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } as const;
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
@@ -690,16 +691,23 @@ describe('daemon managed Machine Action factory', () => {
             // original invocation, not a deciding-process executor, owns CAS.
             // The actual UI default owner selects its local waiter in one
             // process; its independent-app journey is a separate UI gate.
-            const replay = retired ? await operations.handlers.cancel({ operationId: 'cleanup-operation' })
+            // A guest reconnect removes its compute wake from Home's census.
+            // Withdrawing that scheduler job must preserve Pending's independent
+            // authorization for the guest's imminent Session activation.
+            if (reconnected) {
+                rearmed = false;
+                runtime!.notifyChanged();
+            }
+            const replay = reconnected ? undefined : retired ? await operations.handlers.cancel({ operationId: 'cleanup-operation' })
                 : denied ? await app.execute('approval.request.decide', { artifactId: artifact.id, decision: 'reject' }, decisionContext)
                     : await replayLiveCliApproval({ artifactId: artifact.id, request: asked, decision: 'approve',
                         context: decisionContext, account: approvingAccount });
-            if (!retired) expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
+            if (!retired && !reconnected) expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
             const outcome = await settled;
-            expect(outcome, JSON.stringify({ outcome, effects, controllerPaths })).toMatchObject({ result: retired ? { ok: false, errorCode: 'cancelled' }
+            expect(outcome, JSON.stringify({ outcome, effects, controllerPaths })).toMatchObject({ result: retired || reconnected ? { ok: false, errorCode: 'cancelled' }
                 : denied ? { ok: false, errorCode: 'approval_rejected' }
                     : nativeRefused ? { ok: false, errorCode: 'provider_unavailable', details: nativeDetails } : { ok: true } });
-            expect(effects).toEqual(denied || retired ? [] : wake ? ['power', 'bootstrap'] : ['destroy']);
+            expect(effects).toEqual(denied || retired || reconnected ? [] : wake ? ['power', 'bootstrap'] : ['destroy']);
             if (!wake && !nativeRefused) {
                 expect(readRetirementApproval('matching-delete-approval')).toMatchObject({ status: 'canceled' });
                 expect(readRetirementApproval('other-delete-approval')).toMatchObject({ status: 'open' });
@@ -721,11 +729,11 @@ describe('daemon managed Machine Action factory', () => {
             if (wake && (denied || retired)) {
                 expect(failedActivation).toMatchObject({ status: 'failed', failureCode: denied ? 'managed_start_denied' : 'managed_start_failed' });
             } else expect(failedActivation).toBeUndefined();
-            if (!retired) expect(storedApproval()).toMatchObject(denied ? { status: 'rejected' }
+            if (!retired && !reconnected) expect(storedApproval()).toMatchObject(denied ? { status: 'rejected' }
                 : nativeRefused ? { status: 'failed', execution: { ok: false, errorCode: 'provider_unavailable' } }
                     : { status: 'executed', execution: { ok: true } });
             expect(await operations.handlers.getV2({ operationId: 'cleanup-operation', waitForTerminal: true }))
-                .toMatchObject({ kind: 'found', operation: { state: retired ? 'cancelled' : denied || nativeRefused ? 'failed' : 'succeeded',
+                .toMatchObject({ kind: 'found', operation: { state: retired || reconnected ? 'cancelled' : denied || nativeRefused ? 'failed' : 'succeeded',
                     ...(nativeRefused ? { error: { errorCode: 'provider_unavailable', details: nativeDetails } } : {}) } });
         } finally {
             await operations.handlers.cancel({ operationId: 'cleanup-operation' });

@@ -19,8 +19,7 @@ import {
 import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearanceSettings';
 import { MachineSummaryAppearanceSection } from '@/components/machines/summary/MachineSummaryAppearanceSection';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { useDeclaredSettingsWrite } from '@/components/settings/shell/useDeclaredSettingsWrite';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -78,8 +77,7 @@ function categoryHref(category: MachineRetentionCategoryV1): string {
 export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
   const activeHome = useActiveServerSnapshot();
   const router = useRouter();
-  const execution = useMountedActionExecution(activeHome.serverId);
-  const writeSetting = useDeclaredSettingsWrite(execution);
+  const { setSetting: writeSetting, ready, approval } = useSettingActionFeedback();
   const { localized } = useManagedProvisionerPresentation({ serverId: activeHome.serverId });
   const providerNames = React.useMemo(() => projectManagedRetentionProviders(
     Object.values(BUNDLED_MACHINE_PROVISIONER_DECLARATIONS), localized), [localized]);
@@ -114,8 +112,8 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
   const focusedModel = focused
     ? (categories.find((entry) => entry.category === focused) ?? null)
     : null;
-  const disabled = !execution.ready || execution.approval.approvalPending;
-  const approvalId = execution.approval.approvalId;
+  const disabled = !ready || approval.approvalPending;
+  const approvalId = approval.approvalId;
   const approvalNotice = approvalId ? <AttentionBanner
     testID="settings.machineDefaults.approval" tone="neutral"
     title={t('approvals.title')} description={t('approvals.status.open')}

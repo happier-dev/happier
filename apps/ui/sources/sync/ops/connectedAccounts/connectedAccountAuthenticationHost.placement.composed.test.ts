@@ -52,6 +52,28 @@ await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST, targ
     projectPath: 'packages/plugins/claude', entryPath: 'packages/plugins/claude/src/connectedAccounts/account.ts',
     packageName: '@happier-dev/plugins-claude' });
 const service = { pluginId: PLUGIN_MANIFEST.id, localId: descriptor.id };
+const blockedManualProviders = [
+    { name: 'Agent37', directory: 'machine-agent37', load: () => import('../../../../../../packages/plugins/machine-agent37/src/manifest') },
+    { name: 'Maritime', directory: 'machine-maritime', load: () => import('../../../../../../packages/plugins/machine-maritime/src/manifest') },
+    { name: 'Freestyle', directory: 'machine-freestyle', load: () => import('../../../../../../packages/plugins/machine-freestyle/src/manifest') },
+    { name: 'Railway', directory: 'machine-railway', load: () => import('../../../../../../packages/plugins/machine-railway/src/manifest') },
+    { name: 'Superserve', directory: 'machine-superserve', load: () => import('../../../../../../packages/plugins/machine-superserve/src/manifest') },
+    { name: 'Supabase', directory: 'deployment-supabase', load: () => import('../../../../../../packages/plugins/deployment-supabase/src/manifest') },
+] as const;
+// Packaged app inventory is immutable after its first load. Prepare every real
+// provider before an Account activates it, rather than appending between cases.
+const blockedManualInventories: Readonly<{ name: string; service: typeof service }>[] = [];
+for (const provider of blockedManualProviders) {
+    const manifest = (await provider.load()).PLUGIN_MANIFEST;
+    const declared = manifest.contributes.connectedAccountDescriptors?.find(value => value.authentication.account);
+    const target = declared?.authentication.account;
+    if (!declared || !target) throw new Error('Missing actual manual Account authentication artifact');
+    await prepareAuthenticationInventory(packaged, { manifest, target,
+        projectPath: `packages/plugins/${provider.directory}`,
+        entryPath: `packages/plugins/${provider.directory}/src/${provider.directory === 'deployment-supabase' ? 'accountRuntime' : 'account'}.ts`,
+        packageName: `@happier-dev/plugins-${provider.directory}` });
+    blockedManualInventories.push({ name: provider.name, service: { pluginId: manifest.id, localId: declared.id } });
+}
 const { Platform } = await import('react-native');
 const platformDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
@@ -302,6 +324,55 @@ it.each(['beginConnect', 'beginReconnect'] as const)('routes Claude %s and its a
         expect(fixture.outgoing.map(value => value.method)).toEqual([
             `${machineId}:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, `${machineId}:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`,
         ]);
+        expect(fixture.vendorRequests()).toBe(0);
+    } finally { captured.dispose(); }
+});
+
+it.each([false, true])('admits the browser-blocked description fallback only with Machine authentication support (%s)', async supportsAuthentication => {
+    const selectedService = blockedManualInventories[0]!.service;
+    const fixture = await restorePlacementAccount({ service: selectedService, modeId: 'token', kind: 'manual',
+        machineId: 'description-machine', supportsAuthentication });
+    const captured = await captureLazyActionAccountContext(fixture.serverId);
+    try {
+        const result = await createUiConnectedAccountAuthenticationHost(captured).describeService(selectedService, 'description-machine');
+        expect({ status: result.description?.status,
+            code: result.description && 'code' in result.description ? result.description.code : undefined }).toEqual(supportsAuthentication
+            ? { status: 'described', code: undefined } : { status: 'unavailable', code: 'cli_update_required' });
+        expect(fixture.outgoing.map(request => request.method)).toEqual(supportsAuthentication
+            ? [`description-machine:${CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD}`] : []);
+        if (!supportsAuthentication) expect(fixture.machineReads()).toBe(0);
+        expect(fixture.transactions.size).toBe(0);
+    } finally { captured.dispose(); }
+});
+
+it.each(blockedManualInventories)('routes $name manual Connect through the selected Machine and retains its attempt address', async provider => {
+    const selectedService = provider.service;
+    const fixture = await restorePlacementAccount({ service: selectedService, modeId: 'token', kind: 'manual',
+        machineId: 'manual-executor', supportsAuthentication: true });
+    const captured = await captureLazyActionAccountContext(fixture.serverId);
+    try {
+        const host = createUiConnectedAccountAuthenticationHost(captured);
+        const modes = await host.readAccountAuthenticationModes(selectedService);
+        expect(modes, JSON.stringify(modes)).toMatchObject({
+            status: 'available', modeIds: [], machineRequiredModeIds: ['token'],
+        });
+        const refused = await host.authenticationCommand(undefined, { operation: 'beginConnect', service: selectedService, modeId: 'token' });
+        expect(refused).toEqual({ status: 'unavailable', code: 'connected_account_browser_sign_in_machine_unavailable' });
+        expect(fixture.transactions.size).toBe(0);
+        const machineId = 'manual-executor';
+        const result = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect', {
+            service: selectedService, modeId: 'token', machineId,
+        }, fixture.context);
+        const response = result.ok && result.result && typeof result.result === 'object' ? result.result : {};
+        expect({ ok: result.ok, status: 'status' in response ? response.status : undefined }).toEqual({ ok: true, status: 'awaitingManual' });
+        expect([...fixture.transactions.values()].map(value => ({ machineId: value.scope.machineId, service: value.scope.service })))
+            .toEqual([{ machineId, service: selectedService }]);
+        for (const operation of ['read', 'reconcile'] as const) {
+            expect((await createUiConnectedAccountAuthenticationHost(captured).authenticationCommand('new-selection', {
+                operation, attemptId: 'machine-attempt',
+            })).status).toBe('awaitingManual');
+        }
+        expect(fixture.outgoing.map(value => value.method)).toEqual(Array(3).fill(`${machineId}:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`));
         expect(fixture.vendorRequests()).toBe(0);
     } finally { captured.dispose(); }
 });

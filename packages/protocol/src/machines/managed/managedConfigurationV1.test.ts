@@ -4,10 +4,53 @@ import { z } from 'zod/mini';
 import * as protocol from './managedConfigurationV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
-import { ManagedAcquireInputV1Schema, ManagedErrorV1Schema, resolveManagedAcquireReviewV1 } from './actionsV1.js';
-import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionInputV1Schema, ManagedErrorV1Schema, resolveManagedAcquireReviewV1 } from './actionsV1.js';
+import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
+import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '../../plugins/contributions/machineProvisioners.js';
+import { createPluginJsonSchemaZodValueAdapter } from '../../plugins/actions/jsonSchemaValidation.js';
 
 describe('managed preset executable selection', () => {
+  it('captures native option facts for an already authored launch through the shared receipt builder', () => {
+    const launchSchema = { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } },
+      required: ['cpu', 'image'], additionalProperties: false } as const;
+    const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1,
+      name: 'Guest', choices: { cpu: 4, image: 'ubuntu' } };
+    const selectedBilling = { location: 'cloud', stoppedBilling: 'not-billed', storageCharges: [
+      { amount: '0.08', currency: 'USD', unit: 'GB-month', source: 'https://native.example/pricing', observedAt: 1 },
+    ] } as const;
+    const options = MachineProvisionerOptionsResultV1Schema.parse({
+      base: { launch: launch.choices, nativeFacts: { image: { id: 'ubuntu', title: 'Ubuntu Linux' } } },
+      dimensions: { size: [{ id: 'four', title: 'Four cores', assignments: [],
+        billing: selectedBilling, nativeFacts: { size: { id: 'four', title: 'Four cores', cpuCores: 4, memoryBytes: 4 * 2 ** 30 } } }],
+        image: [], location: [], network: [], duration: [] },
+    });
+    const facts = protocol.buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(launchSchema),
+      launch, optionProjection: projectMachineProvisionerSelectionV1({ options, launchSchema,
+        selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) }), optionStatus: 'current', prerequisites: [],
+      billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['delete'] },
+      machineOverride: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+    expect(facts).toMatchObject({ launch, billing: selectedBilling, optionStatus: 'current', nativeFacts: {
+      image: { title: 'Ubuntu Linux' }, size: { cpuCores: 4, memoryBytes: 4 * 2 ** 30 },
+    } });
+  });
+  it('admits controller-free one-off and preset reviews without confusing their policy carriers', () => {
+    const enrollmentIdentity = { kind: 'existingUser', role: 'adopted' } as const;
+    const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+    const policy = { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } as const;
+    const oneOff = { selection: { kind: 'one-off', homeId: 'home', launch, ...policy }, enrollmentIdentity };
+    const preset = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }, ...policy, enrollmentIdentity };
+    for (const input of [oneOff, preset]) {
+      const admitted = ManagedAcquireInputV1Schema.parse(input);
+      expect(resolveManagedAcquireReviewV1(admitted)).toEqual({ homeId: 'home', ...policy });
+    }
+    const admission = { input: oneOff, requestId: 'request', continuationPresent: false, requestEnvelopeDigest: 'a'.repeat(43) };
+    expect(ManagedAdmissionInputV1Schema.parse(admission)).toEqual(admission);
+    expect(ManagedAdmissionInputV1Schema.safeParse({ ...admission, requestEnvelopeDigest: 'malformed' }).success).toBe(false);
+    const continuation = { managedId: 'managed', creationRequestId: 'request', expectedIntentRevision: 0,
+      acquireRequestEnvelopeDigest: admission.requestEnvelopeDigest };
+    expect(ExternalActionManagedContinuationV1Schema.parse(continuation)).toEqual(continuation);
+    expect(ExternalActionManagedContinuationV1Schema.safeParse({ ...continuation, controller: { machineId: 'half-pair' } }).success).toBe(false);
+  });
   it('retains the exact strict provisioner descriptor in a controller-free reviewed receipt', () => {
     const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'VM', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
       launchSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -28,7 +71,7 @@ describe('managed preset executable selection', () => {
       expect(ManagedErrorV1Schema.parse({ code })).toEqual({ code });
     }
   });
-  it('admits only the reviewed Home-qualified preset revision, never caller-supplied recipe or authority', () => {
+  it('admits only the reviewed Home-qualified preset revision, never caller-supplied launch or authority', () => {
     const schema: unknown = Reflect.get(protocol, 'ManagedPresetSelectionV1Schema');
     expect(schema).toBeInstanceOf(z.ZodMiniType);
     if (!(schema instanceof z.ZodMiniType)) throw new Error('The preset selection validator is missing');
@@ -58,9 +101,28 @@ describe('reviewed managed configuration facts', () => {
     name: 'guest', choices: { cores: 2 } };
   const controller = { machineId: 'host-a', installationId: 'installation-a' };
 
+  it('detaches frozen contributed launch choices into a mutable wire receipt', () => {
+    const nativeChoices = { sizes: [2, 4] };
+    Object.freeze(nativeChoices.sizes);
+    Object.freeze(nativeChoices);
+    const facts = protocol.buildManagedConfigurationFactsV1({
+      choicesSchema: createPluginJsonSchemaZodValueAdapter({ type: 'object',
+        properties: { sizes: { type: 'array', items: { type: 'integer' } } }, required: ['sizes'], additionalProperties: false }),
+      launch: { ...launch, choices: nativeChoices }, controller, optionStatus: 'current', prerequisites: [],
+      billing: { location: 'cloud', stoppedBilling: 'unknown' }, retentionCapabilities: { supportedIntents: ['delete'] },
+    });
+    const copied = facts.launch.choices;
+    if (!copied || typeof copied !== 'object' || Array.isArray(copied) || !Array.isArray(copied.sizes))
+      throw new Error('Expected native sizing choices');
+    copied.sizes.push(8);
+    expect(copied).toEqual({ sizes: [2, 4, 8] });
+    expect(nativeChoices).toEqual({ sizes: [2, 4] });
+  });
+
   it('preserves a declared native duration in the same labelled option and immutable fact seam', () => {
     const duration = { id: 'lease-two-hours', title: '2 hours', afterMs: 7_200_000 };
-    const options = MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: { cores: 2 }, nativeFacts: { duration } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
+    const options = MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: { cores: 2 }, nativeFacts: { duration } },
+      dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
     const facts = protocol.buildManagedConfigurationFactsV1({ choicesSchema: choices, launch, controller,
       optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'unknown' },
       retentionCapabilities: { supportedIntents: ['delete'], finiteOnly: true }, nativeFacts: options.base!.nativeFacts });
@@ -101,8 +163,10 @@ describe('reviewed managed configuration facts', () => {
 
   it('preserves a native no-cap fact separately from the provider monthly rate through options and reviewed receipts', () => {
     const price = { amount: '12', currency: 'USD', unit: 'month', source: 'native-api', observedAt: 10 };
-    const options = MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: {}, prices: [price], nativeFacts: { monthlyCapStatus: 'none' } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
-    const selected = options.base!;
+    const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+    const options = MachineProvisionerOptionsResultV1Schema.parse({ dimensions: { ...dimensions, size: [{ id: 'native-size', title: 'Native size',
+      assignments: [], prices: [price], nativeFacts: { monthlyCapStatus: 'none' } }] } });
+    const selected = options.dimensions.size[0]!;
     const facts = protocol.buildManagedConfigurationFactsV1({ choicesSchema: choices, launch, controller,
       optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' },
       retentionCapabilities: { supportedIntents: ['delete'] }, prices: selected.prices, nativeFacts: selected.nativeFacts });
@@ -110,9 +174,10 @@ describe('reviewed managed configuration facts', () => {
     expect(protocol.ManagedConfigurationFactsV1ReadSchema.parse({ ...facts,
       nativeFacts: { monthlyCapStatus: 'unknown', future: true } }).nativeFacts)
       .toEqual({ monthlyCapStatus: 'unknown' });
-    expect(MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: {}, prices: [price] }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } })
-      .base?.nativeFacts).toBeUndefined();
-    expect(MachineProvisionerOptionsResultV1Schema.safeParse({ base: { launch: {}, nativeFacts: { monthlyCapStatus: 'inferred-from-rate' } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } }).success).toBe(false);
+    expect(MachineProvisionerOptionsResultV1Schema.parse({ dimensions: { ...dimensions, size: [{ id: 'unmeasured', title: 'Unmeasured', assignments: [], prices: [price] }] } })
+      .dimensions.size[0]?.nativeFacts).toBeUndefined();
+    expect(MachineProvisionerOptionsResultV1Schema.safeParse({ dimensions: { ...dimensions, size: [{ id: 'invalid', title: 'Invalid', assignments: [],
+      nativeFacts: { monthlyCapStatus: 'inferred-from-rate' } }] } }).success).toBe(false);
   });
 
   it('snapshots the reviewed native dimensions without changing the executable launch', () => {
@@ -172,11 +237,12 @@ describe('reviewed managed configuration facts', () => {
     }
     expect(schema.safeParse({ ...selection, controller: { poolId: 'pool-a' } }).success).toBe(false);
     expect(schema.safeParse({ ...selection, launch: { ...launch, choices: { cores: 2, foreign: true } } }).success).toBe(false);
-    const request = ManagedAcquireInputV1Schema.parse({ selection });
+    const enrollmentIdentity = { kind: 'existingUser', role: 'adopted' } as const;
+    const request = ManagedAcquireInputV1Schema.parse({ selection, enrollmentIdentity });
     expect(resolveManagedAcquireReviewV1(request)).toMatchObject({ homeId: selection.homeId,
       controller, retention: selection.retention, wakeOnAcceptedMessage: false });
     expect(ManagedAcquireInputV1Schema.safeParse({ selection, controller }).success).toBe(false);
-    const preset = { selection: { kind: 'preset', homeId: 'home-a', id: 'preset', revision: 4 },
+    const preset = { enrollmentIdentity, selection: { kind: 'preset', homeId: 'home-a', id: 'preset', revision: 4 },
       controller, retention: selection.retention, wakeOnAcceptedMessage: false };
     expect(ManagedAcquireInputV1Schema.safeParse(preset).success).toBe(true);
     expect(ManagedAcquireInputV1Schema.safeParse({ selection: preset.selection }).success).toBe(false);

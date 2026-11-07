@@ -16,6 +16,24 @@ it('preserves manual credential-check reachability through the UI projection', (
   expect(projection.authentication.modes[0]).toMatchObject({ kind: 'manual', browserReachability: 'unreachable' });
 });
 
+it('preserves declared browser exchange reachability through the UI projection', () => {
+  for (const kind of ['oauthAuthorizationCode', 'oauthDeviceCode'] as const) {
+    const mode = { id: 'oauth', kind, outcomeReconciliation: 'none', browserReachability: 'unreachable',
+      ...(kind === 'oauthAuthorizationCode' ? { callbackUrl: 'https://callback.test', pkce: 'required' } : {}) };
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: 'example', title: 'Example', authentication: { defaultModeId: 'oauth', modes: [mode] },
+    });
+    const projection = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+      descriptor, serviceId: 'example', pluginId: 'acme.example', provenance: 'external', sourceKind: 'installed',
+      availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+    }));
+    expect(projection.authentication.modes[0]).toMatchObject({ browserReachability: 'unreachable' });
+    for (const browserReachability of ['reachable', 'unknown', 'maybe']) {
+      expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, browserReachability }).success).toBe(false);
+    }
+  }
+});
+
 it('defers only declared optional Account configuration fields until OAuth succeeds', () => {
   const mode = { id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
     pkce: 'required', outcomeReconciliation: 'providerCheck', postAuthenticationFieldIds: ['accountId'],
@@ -110,6 +128,29 @@ it('refuses unsafe manual setup destinations and undeclared setup authority', ()
   } }).success).toBe(false);
 });
 
+it('distinguishes a declared native credential import from a new manual authentication', () => {
+  const mode = { id: 'existing-login', kind: 'manual', outcomeReconciliation: 'none', fields: [], credentialOrigin: 'native_import' };
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(mode).success).toBe(true);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, credentialOrigin: 'authentication' }).success).toBe(true);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, credentialOrigin: 'unknown-origin' }).success).toBe(false);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, kind: 'oauthDeviceCode' }).success).toBe(false);
+});
+
+it('admits explicit Account-direct canonical manual fields without admitting daemon configuration or OAuth', () => {
+  const mode = { id: 'key', kind: 'manual', outcomeReconciliation: 'none', accountDirectSave: true,
+    fields: [{ id: 'token', title: 'Key', secret: true, schema: { type: 'string', minLength: 1 } }] };
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(mode).success).toBe(true);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, accountDirectSave: { fieldKeys: { token: 'apiKey' } } }).success).toBe(true);
+  for (const fieldKeys of [{ unknown: 'apiKey' }, { token: '' }, { token: '__proto__' }]) {
+    expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, accountDirectSave: { fieldKeys } }).success).toBe(false);
+  }
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode,
+    fields: [...mode.fields, { ...mode.fields[0], id: 'apiKey' }], accountDirectSave: { fieldKeys: { token: 'apiKey' } } }).success).toBe(false);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, accountDirectSave: false }).success).toBe(false);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, configuration: { scope: 'account', changeBehavior: 'reconnect',
+    fields: [{ id: 'endpoint', title: 'Endpoint', secret: false, required: true, schema: { type: 'string' } }] } }).success).toBe(false);
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse({ ...mode, kind: 'oauthDeviceCode' }).success).toBe(false);
+});
 
 it('refuses authorization-code descriptors that omit their callback URL', () => {
   const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none' };

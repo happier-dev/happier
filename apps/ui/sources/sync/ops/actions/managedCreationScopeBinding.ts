@@ -1,31 +1,19 @@
 import type { AutomationRunLifecycleSource } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
-import { ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedGetOutputV1Schema, ManagedMachineBirthResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { SessionTriggerAddRequestV1Schema, SessionTriggerUpdateRequestV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerListResultV1Schema,
     WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-
-import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { resolveUiClientEncryptionRequirementForScope } from '@/sync/domains/settings/clientEncryptionRequirement';
-import { getStorage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
-import { serverFetch } from '@/sync/http/client';
-import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
-import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { classifyHomeActionOutcome, observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { resolveManagedMachineArchiveChoiceAvailability, type ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
-import { resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { buildManagedCreationScopeTriggerTarget } from '@/sync/domains/machines/managedCreationScopeTrigger';
 
 export type ManagedCreationScopeSource = Readonly<{ kind: 'session'; sessionId: string }>
     | Readonly<{ kind: 'run'; source: AutomationRunLifecycleSource }>;
@@ -35,55 +23,39 @@ export type ManagedCreationScopeBindingResult = Readonly<{ kind: 'kept' }>
     | Readonly<{ kind: 'unavailable'; availability: ManagedMachineArchiveChoiceAvailability }>
     | Readonly<{ kind: 'incomplete'; code: string; artifactId?: string }>;
 
-/** Birth provenance stays independent of today's controller after a Move. */
-export function isManagedCreationScopeBirthSession(session: Pick<Session, 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'>,
-    machine: Readonly<{ homeId: string; id: string }>): boolean {
-    const parsed = SessionCreationCorrespondenceV1ReadSchema.safeParse(readSessionOwnerMetadataView(session)?.sessionCreationCorrespondenceV1);
-    const birth = parsed.success ? parsed.data.recipe.managedCreation : undefined;
-    return birth?.homeId === machine.homeId && birth.managedId === machine.id;
-}
-
 /**
- * Keep has no FIN trigger to name its source. Read the addressed Home's existing active and
- * archived Session pages, including owner metadata, without publishing Sessions or list membership.
+ * Keep has no FIN trigger to name its source. Read the exact non-content birth relationship
+ * from the Run or Session owner without opening content or scanning either inventory.
  */
-export async function readManagedCreationScopeBirthSessionId(input: Readonly<{
+export async function readManagedCreationScopeBirthSource(input: Readonly<{
     machine: Readonly<{ homeId: string; id: string }>;
     accountLifetime: ServerAccountScopeLifetime;
     signal: AbortSignal;
-}>): Promise<string | null> {
+}>): Promise<ManagedCreationScopeSource | null> {
     const current = () => !input.signal.aborted && input.accountLifetime.isCurrent();
     if (!current()) throw new Error('action_account_scope_changed');
-    return runWithServerRequestAuthorityForServerAccountScope({ scope: input.accountLifetime.scope,
-        activeRequest: (path, init) => serverFetch(path, init, { includeAuth: false }) }, async authority => {
-        const credentials = authority.context.credentials;
-        if (!credentials || !current()) throw new Error('action_account_scope_changed');
-        const accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, { request: authority.request, signal: input.signal });
-        const encryption = accountCurrentness.mode === 'plain' ? null : await createEncryptionFromAuthCredentials(credentials);
-        const matches = new Set<string>();
-        const sessionDataKeys = new Map<string, Uint8Array>();
-        const sessionDataKeyEnvelopes = new Map<string, string>();
-        for (const path of ['/v2/sessions', '/v2/sessions/archived']) {
-            let cursor: string | null = null;
-            do {
-                const page = await fetchAndApplySessions({ serverId: authority.scope.serverId,
-                    source: { kind: 'ordinary', path, allowV1Fallback: false }, sessionListCursor: cursor,
-                    credentials, accountCurrentness, encryption, sessionDataKeys, sessionDataKeyEnvelopes,
-                    request: authority.request, signal: input.signal, shouldContinue: current,
-                    clientEncryptionRequirement: resolveUiClientEncryptionRequirementForScope({ scope: authority.scope,
-                        focusedSettings: getStorage().getState().settings }),
-                    awaitSessionListHydration: true,
-                    applySessions: sessions => {
-                        if (!current()) return;
-                        for (const session of sessions) if (isManagedCreationScopeBirthSession(session, input.machine)) matches.add(session.id);
-                    }, log: { log: () => {} } });
-                if (!page.current || !current()) throw new Error('action_account_scope_changed');
-                if (page.metadataUpgradeRequiredCount) throw new Error('session_owner_metadata_unavailable');
-                for (const id of matches) if (page.isSessionCurrent?.(id) === false) matches.delete(id);
-                cursor = page.hasNext ? page.nextCursor : null;
-            } while (cursor !== null);
-        }
-        return matches.size === 1 ? [...matches][0]! : null;
+    const actionId = 'machines.managed.birth.get';
+    const actionInput = { homeId: input.machine.homeId, managedId: input.machine.id };
+    const scope = input.accountLifetime.scope;
+    const executeAction = createFrontDoorActionExecute();
+    const failed = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    return awaitActionApprovalResult<ReturnType<typeof ManagedMachineBirthResultV1Schema.parse>, ManagedCreationScopeSource | null>({
+        signal: input.signal,
+        execute: async callbacks => {
+            const result = await executeAction(actionId, actionInput, {
+                surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId, signal: input.signal,
+            });
+            if (!current()) return failed('action_account_scope_changed');
+            const outcome = observeHomeActionOutcome<ReturnType<typeof ManagedMachineBirthResultV1Schema.parse>, typeof actionId>({
+                result, actionId, actionInput, scope, signal: input.signal,
+                onSucceeded: callbacks.onApprovalSucceeded, onFailed: callbacks.onApprovalFailed,
+            });
+            if (outcome.kind === 'approval_pending') return { approvalPending: true };
+            if (outcome.kind === 'failed') return failed(homeDomainFailureCode(outcome.failure));
+            return ManagedMachineBirthResultV1Schema.parse(outcome.result).source;
+        },
+        succeeded: value => ManagedMachineBirthResultV1Schema.parse(value).source,
+        failed, aborted: () => failed('action_account_scope_changed'),
     });
 }
 
@@ -115,11 +87,11 @@ export type ManagedCreationScopeRule = Readonly<{
 
 /** Reads the creation-scope rule FIN holds for this managed row, if the owner chose Stop or Delete. */
 export function readManagedCreationScopeRule(sets: readonly WorkflowTriggerSetV1[],
-    machine: Readonly<{ homeId: string; id: string }>): ManagedCreationScopeRule | null {
+    machine: Readonly<{ homeId: string; id: string }>, birth?: ManagedCreationScopeSource | null): ManagedCreationScopeRule | null {
     for (const set of sets) {
         if (!set.enabled) continue;
         const match = matchManagedCreationScopeTrigger(set, machine);
-        if (!match) continue;
+        if (!match || birth && !sameStrictJsonValue(match.source, birth)) continue;
         const status = 'status' in match.trigger ? match.trigger.status : null;
         const afterMs = 'afterMs' in match.managed.input ? match.managed.input.afterMs : undefined;
         return { binding: { automationId: set.automationId, triggerId: match.trigger.id, source: match.source },
@@ -200,15 +172,10 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
         const sets = WorkflowTriggerListResultV1Schema.parse(listed.result).sets;
         const effect = input.draft.archiveEffect;
         const afterMs = input.draft.receipt.retention.kind === 'unused' ? input.draft.receipt.retention.afterMs : undefined;
-        const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [], blocks: [{
-            kind: 'action', id: 'managed-scope-end', actionId: effect === 'stop' ? 'machines.managed.power.set' : 'machines.managed.delete',
-            input: { homeId: { kind: 'literal', value: machine.homeId }, managedId: { kind: 'literal', value: machine.id },
-                when: { kind: 'literal', value: 'after-idle' }, intent: { kind: 'literal', value: effect === 'stop' ? resolveMachineRetentionNativeIntentV1('stop', input.draft.receipt.retentionCapabilities.supportedIntents) ?? 'stop' : effect },
-                ...(afterMs === undefined ? {} : { afterMs: { kind: 'literal', value: afterMs } }),
-                ...(effect === 'delete' ? { reviewedDependencies: { kind: 'literal', value: true } } : {}) },
-        }] });
+        const target = buildManagedCreationScopeTriggerTarget({ homeId: machine.homeId, managedId: machine.id, effect,
+            supportedIntents: input.draft.receipt.retentionCapabilities.supportedIntents, afterMs });
         const project = machine.controller ? { machineId: machine.controller.machineId, directory: '~' } : undefined;
-        const common = { project, target: { kind: 'inline' as const, definition }, executionTarget: { kind: 'detached_run' as const } };
+        const common = { project, target, executionTarget: { kind: 'detached_run' as const } };
         for (const set of sets) {
             const match = matchManagedCreationScopeTrigger(set, machine);
             if (!match || !sameStrictJsonValue(match.source, input.source)) continue;

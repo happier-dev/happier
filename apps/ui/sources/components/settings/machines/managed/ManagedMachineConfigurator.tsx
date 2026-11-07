@@ -14,7 +14,9 @@ import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -27,6 +29,7 @@ import {
   type ManagedReceiptModel,
 } from './MachineConfigurationReceipt';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
+import { ManagedScopeRow } from './ManagedScopeRow';
 import { useLiveValue, useLiveValueChannel, type LiveValueChannel } from './liveValueChannel';
 
 /** What the phone's sticky bar says about the draft: its price (or "No bill") and the choices in one line. */
@@ -34,6 +37,14 @@ export type ManagedConfiguratorSummary = Readonly<{
   value: string;
   unit: string;
   spec: string;
+}>;
+
+export type ManagedConfiguratorBlocker = Readonly<{
+  kind: 'needsApp';
+  title: string;
+  /** Why, in the person's words, so the page still says what stands between them and Create. */
+  reason?: string;
+  action: Readonly<{ label: string; onPress(): void }>;
 }>;
 
 /**
@@ -50,11 +61,13 @@ export const ManagedMachineConfigurator = React.memo(
       /** The page's one-sentence purpose; a phone shows the title only (lab m-config Ap). */
       description?: string;
       mark: React.ReactNode;
-      /** The page scope ("Managed from" chip), in the header's actions slot. */
+      /** The page scope ("Managed from" chip): the header's actions slot, or its own row on a phone. */
       actions?: React.ReactNode;
       children: React.ReactNode;
       receipt: ManagedReceiptModel;
       summary: ManagedConfiguratorSummary;
+      /** The owning model's next step, drawn in the form column by the surface owner. */
+      blocker?: ManagedConfiguratorBlocker;
       compact: boolean;
       testID: string;
     }>,
@@ -64,6 +77,20 @@ export const ManagedMachineConfigurator = React.memo(
     React.useEffect(() => () => {
       if (receiptSheet.current) Modal.hide(receiptSheet.current);
     }, []);
+    // While something blocks the page, its one line and action are the form column: choices that could not be
+    // used are not drawn (R8-9). The receipt keeps its disabled Create and says the same reason.
+    const form = props.blocker ? (
+      <ItemGroup surface="none">
+        <SurfaceStateCard
+          testID={`${props.testID}.blocker`}
+          kind="unavailable"
+          size="line"
+          title={props.blocker.title}
+          reason={props.blocker.reason}
+          action={{ ...props.blocker.action, testID: `${props.testID}.blocker.action` }}
+        />
+      </ItemGroup>
+    ) : props.children;
     if (!props.compact) {
     return (
       <ManagedReceiptPageLayout
@@ -72,7 +99,7 @@ export const ManagedMachineConfigurator = React.memo(
         compact={false}
         testID={props.testID}
       >
-        {props.children}
+        {form}
       </ManagedReceiptPageLayout>
     );
   }
@@ -83,9 +110,10 @@ export const ManagedMachineConfigurator = React.memo(
             title={props.title}
             description={props.description}
             leading={props.mark}
-            actions={props.actions}
           />
-          {props.children}
+          {/* The header folds its actions into the navigation overflow on a phone; the scope stays in view as its own row. */}
+          {props.actions ? <ManagedScopeRow testID={`${props.testID}.scope`} chip={props.actions} /> : null}
+          {form}
         </ItemList>
         <SummaryBar
           summary={props.summary}
@@ -185,7 +213,8 @@ function ReceiptSheet(
       phonePresentation: 'sheet',
     });
   }, [setChrome]);
-  return <MachineConfigurationReceipt model={model} testID={props.testID} />;
+  // The sheet is the card: the receipt lies flat on it, keeping its section dividers.
+  return <MachineConfigurationReceipt model={model} surface="flat" testID={props.testID} />;
 }
 
 const styles = StyleSheet.create((theme) => ({
