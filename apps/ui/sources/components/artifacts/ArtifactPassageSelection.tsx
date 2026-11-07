@@ -17,15 +17,19 @@ import {
   mapMarkdownSourceToRenderedRange,
   mapRenderedSelectionToMarkdownSource,
 } from '@/components/markdown/rendering/markdownSelectionSource';
-import { MarkdownView, type MarkdownRenderedSelection, type MarkdownSelectionAction, type MarkdownSourceRangeAction } from '@/components/markdown/MarkdownView';
+import { type MarkdownRenderedSelection, type MarkdownSelectionAction, type MarkdownSourceRangeAction } from '@/components/markdown/MarkdownView';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Text } from '@/components/ui/text/Text';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
+import { ProseDiffViewer } from '@/components/ui/code/diff/prose/ProseDiffViewer';
+
 import { useArtifactActionsClient } from './artifactActionsClient';
 import type { DocPassageMarginLocation } from './docPassageMargin';
+import { ArtifactProseBody } from './ArtifactProseBody';
+import type { DocBodySegment, DocSuggestionPaint } from './docSuggestionPaint';
 
 type Revision = Readonly<{ headerVersion: number; bodyVersion: number }>;
 type Selected = Readonly<{
@@ -56,6 +60,15 @@ export type ArtifactPassageMargin = Readonly<{
   attach?: Readonly<{ discussionId: string; complete: (passage: DocPassageRefV1) => void }> | null;
   /** Whether the threads sit beside the passages (wide) or open on their own (narrow). */
   reportShown?: (shown: boolean) => void;
+  /**
+   * What the comments column shows while it has no thread cards (loading, none yet, unavailable). The
+   * column stands beside the body whenever it fits, so the body never moves when threads arrive.
+   */
+  idle?: React.ReactNode;
+  /** Current suggestions painted in the body (web); `null`/absent when the body reads as written. */
+  paint?: DocSuggestionPaint | null;
+  /** Start a comment as a new thread beside its passage (lab K1-S); only while the margin is shown. */
+  startComment?: (passage: DocPassageRefV1) => void;
 }>;
 
 /** UI-D supplies the visible native refinement host without replacing rich Markdown or its marks. */
@@ -102,7 +115,7 @@ export function ArtifactPassageSelection(
 ): React.ReactElement {
   const scope = useActiveServerAccountScope();
   if (props.revision === null)
-    return <MarkdownView testID="artifact:body" markdown={props.markdown} />;
+    return <ArtifactProseBody testID="artifact:body" markdown={props.markdown} />;
   if (Platform.OS !== 'web')
     return <NativePassageSelection key={JSON.stringify([props.artifactId, scope?.serverId, scope?.accountId])}
       {...props} revision={props.revision} scope={scope} />;
@@ -111,8 +124,9 @@ export function ArtifactPassageSelection(
 
 /**
  * Without a margin beside the body (a phone, a narrow pane) a passage that changed after its comment
- * has no place to stand in the text, so its own thread card leads the body: the same card the margin
- * draws, carrying the notice, Open version and Attach to new text. Placed threads open as pages.
+ * has no place to stand in the text, so its own thread card follows the body: the same card the margin
+ * draws, carrying the notice, Open version and Attach to new text. It comes after the text so the Doc
+ * never moves down when threads arrive; the Comments list marks it Changed. Placed threads open as pages.
  */
 function ChangedPassageCards(props: Readonly<{ margin: ArtifactPassageMargin | undefined }>) {
   const ids = (props.margin?.passages ?? []).filter((passage) => passage.location.state === 'detached').map((passage) => passage.id);
@@ -215,8 +229,7 @@ function NativePassageSelection(
   }], [artifactId, attaching, client, markdown, props.onRequestNativeSelection, revision, router, scope]);
   return (
     <View>
-      <ChangedPassageCards margin={margin} />
-      <MarkdownView
+      <ArtifactProseBody
         testID="artifact:body"
         markdown={markdown}
         selectionActions={selectionActions}
@@ -225,6 +238,7 @@ function NativePassageSelection(
         onPressSourceRange={marks ? openPassage : undefined}
         sourceRangePressable={isMarked}
       />
+      <ChangedPassageCards margin={margin} />
     </View>
   );
 }
@@ -267,8 +281,27 @@ function WebPassageSelection(
   const client = useArtifactActionsClient();
   const scope = useActiveServerAccountScope();
   const container = React.useRef<View>(null);
+  // The body as read: one run of the Doc's own Markdown, or runs around each painted suggestion. Each run is
+  // its own Markdown at its own source offset, so selections and passages map into the Doc exactly as before.
+  const paint = props.margin?.paint ?? null;
+  const segments = React.useMemo<readonly DocBodySegment[]>(
+    // A plan made for other text (the body moved on under it) is not used: the runs must be this body.
+    () => paint && paint.segments.map((segment) => segment.markdown).join('') === props.markdown
+      ? paint.segments : [{ kind: 'prose', start: 0, markdown: props.markdown }],
+    [paint, props.markdown],
+  );
+  const segmentViews = React.useRef(new Map<number, View>());
+  const segmentsRef = React.useRef(segments);
+  segmentsRef.current = segments;
   const [selected, setSelected] = React.useState<Selected | null>(null);
   const [width, setWidth] = React.useState(0);
+  // Measure before the first paint: onLayout reports a frame later, which would paint the body at full
+  // width once before the comments column takes its place beside it.
+  const frame = React.useRef<View>(null);
+  React.useLayoutEffect(() => {
+    const measured = (frame.current as unknown as HTMLElement | null)?.getBoundingClientRect?.().width;
+    if (measured) setWidth(measured);
+  }, []);
   const cardViews = React.useRef(new Map<string, View>());
   const [marks, setMarks] = React.useState<
     ReadonlyMap<string, readonly Rect[]>
@@ -277,9 +310,10 @@ function WebPassageSelection(
     ReadonlyMap<string, number>
   >(new Map());
   const margin = props.margin;
-  // The page widens its column while a Doc has threads (lab K1-A/R): the body keeps a reading measure
-  // on the left and the threads take a fixed margin beside it. Too narrow for both: no margin.
-  const wide = margin !== undefined && margin.passages.length > 0 && width >= MARGIN_MIN_FRAME_WIDTH;
+  // A Doc's page takes the wide column (lab K1-A/R): the body keeps a reading measure on the left and
+  // the comments column stands beside it whatever its threads' state, so nothing moves when they arrive.
+  // Too narrow for both: no margin.
+  const wide = margin !== undefined && width >= MARGIN_MIN_FRAME_WIDTH;
   const reportShown = margin?.reportShown;
   React.useEffect(() => {
     reportShown?.(wide);
@@ -308,17 +342,22 @@ function WebPassageSelection(
       const range = selection.getRangeAt(0);
       if (!element.contains(range.commonAncestorContainer))
         return setSelected(null);
+      // A selection is read in the run of the Doc it lies in; a painted suggestion is not the Doc's text.
+      const run = readSegmentElements(segmentsRef.current, segmentViews.current)
+        .find(({ node }) => node.contains(range.commonAncestorContainer));
+      if (!run || run.segment.kind !== 'prose') return setSelected(null);
       const before = document.createRange();
-      before.selectNodeContents(element);
+      before.selectNodeContents(run.node);
       before.setEnd(range.startContainer, range.startOffset);
       const start = before.toString().length;
-      const source = mapRenderedSelectionToMarkdownSource({
-        markdown: props.markdown,
-        rendered: element.textContent ?? '',
+      const local = mapRenderedSelectionToMarkdownSource({
+        markdown: run.segment.markdown,
+        rendered: run.node.textContent ?? '',
         start,
         end: start + range.toString().length,
       });
-      if (!source) return setSelected(null);
+      if (!local) return setSelected(null);
+      const source = { start: local.start + run.segment.start, end: local.end + run.segment.start };
       // The affordance belongs to where the selection starts, not the middle of a multi-line block.
       const box = range.getClientRects()[0] ?? range.getBoundingClientRect();
       const frame = element.getBoundingClientRect();
@@ -334,7 +373,7 @@ function WebPassageSelection(
     };
     document.addEventListener('selectionchange', read);
     return () => document.removeEventListener('selectionchange', read);
-  }, [props.markdown]);
+  }, []);
 
   // Where each placed passage is drawn: the Markdown owner maps its source range to the rendered
   // text, and the browser gives that text's line boxes. Re-measured when the body reflows.
@@ -347,29 +386,38 @@ function WebPassageSelection(
     }
     let frameRequest = 0;
     const measure = () => {
-      const rendered = element.textContent ?? '';
       const frame = element.getBoundingClientRect();
+      const relative = (rect: DOMRect | Rect): Rect => ({
+        top: rect.top - frame.top,
+        left: rect.left - frame.left,
+        width: rect.width,
+        height: rect.height,
+      });
+      const runs = readSegmentElements(segments, segmentViews.current);
       const next = new Map<string, readonly Rect[]>();
       for (const passage of passages) {
         if (passage.location.state === 'detached') continue;
-        const at = mapMarkdownSourceToRenderedRange({
-          markdown: props.markdown,
-          rendered,
-          ...passage.location.range,
-        });
-        const range = at ? domRangeAt(element, at.start, at.end) : null;
-        if (!range) continue;
-        next.set(
-          passage.id,
-          [...range.getClientRects()]
-            .filter((rect) => rect.width > 0 && rect.height > 0)
-            .map((rect) => ({
-              top: rect.top - frame.top,
-              left: rect.left - frame.left,
-              width: rect.width,
-              height: rect.height,
-            })),
-        );
+        const { start, end } = passage.location.range;
+        const rects: Rect[] = [];
+        for (const { segment, node } of runs) {
+          const segmentEnd = segment.start + segment.markdown.length;
+          if (end <= segment.start || start >= segmentEnd) continue;
+          // A painted suggestion stands for its passage as a whole: its thread aligns with the painted block.
+          if (segment.kind === 'suggestion') {
+            if (segment.id === passage.id) rects.push(relative(node.getBoundingClientRect()));
+            continue;
+          }
+          const at = mapMarkdownSourceToRenderedRange({
+            markdown: segment.markdown,
+            rendered: node.textContent ?? '',
+            start: Math.max(start, segment.start) - segment.start,
+            end: Math.min(end, segmentEnd) - segment.start,
+          });
+          const range = at ? domRangeAt(node, at.start, at.end) : null;
+          if (!range) continue;
+          for (const rect of range.getClientRects()) if (rect.width > 0 && rect.height > 0) rects.push(relative(rect));
+        }
+        if (rects.length > 0) next.set(passage.id, rects);
       }
       setMarks(next);
     };
@@ -387,7 +435,7 @@ function WebPassageSelection(
       cancelAnimationFrame(frameRequest);
       observer?.disconnect();
     };
-  }, [passages, props.markdown, wide]);
+  }, [passages, segments, wide]);
 
   // A click (not a selection) gathers every hit before the shared thread/list decision.
   React.useEffect(() => {
@@ -400,6 +448,8 @@ function WebPassageSelection(
       const y = event.clientY - frame.top;
       const hits: string[] = [];
       for (const [id, rects] of marksRef.current) {
+        // A painted suggestion answers its own press.
+        if (marginRef.current?.paint?.painted.has(id)) continue;
         if (
           rects.some(
             (rect) =>
@@ -433,7 +483,10 @@ function WebPassageSelection(
     document.getSelection()?.removeAllRanges();
     setSelected(null);
     const attach = marginRef.current?.attach;
+    const startComment = wideRef.current ? marginRef.current?.startComment : undefined;
     if (attach) attach.complete(passage);
+    // Beside the body the comment opens in the margin, at its passage; without a margin it opens as a page.
+    else if (startComment) startComment(passage);
     else router.push(client.beginPassageComment(passage) as Href);
   }, [
     client,
@@ -480,13 +533,13 @@ function WebPassageSelection(
   return (
     <View
       style={wide ? styles.row : null}
+      ref={frame}
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
     >
-      {wide ? null : <ChangedPassageCards margin={margin} />}
-      <View ref={container} style={[styles.frame, wide ? styles.body : null]}>
+      <View ref={container} testID="artifact:passage-body" style={[styles.frame, wide ? styles.body : null]}>
         {placed.map((passage) => {
           const rects = marks.get(passage.id);
-          if (!rects || passage.location.state === 'detached') return null;
+          if (!rects || passage.location.state === 'detached' || segments.some((segment) => segment.kind === 'suggestion' && segment.id === passage.id)) return null;
           const focused = margin?.focusedId === passage.id;
           const revised = passage.location.state === 'revised';
           return rects.map((rect, index) => (
@@ -519,7 +572,25 @@ function WebPassageSelection(
             />
           ));
         })}
-        <MarkdownView testID="artifact:body" markdown={props.markdown} />
+        {segments.map((segment, index) => (
+          <View
+            key={`${segment.kind}:${segment.start}`}
+            ref={(view) => {
+              if (view) segmentViews.current.set(index, view);
+              else segmentViews.current.delete(index);
+            }}
+          >
+            {segment.kind === 'prose' ? (
+              <ArtifactProseBody testID={index === 0 ? 'artifact:body' : undefined} markdown={segment.markdown} />
+            ) : (
+              <PaintedSuggestion
+                segment={segment}
+                focused={margin?.focusedId === segment.id}
+                onPress={() => activatePassageThreads([segment.id], marginRef.current, wideRef.current)}
+              />
+            )}
+          </View>
+        ))}
         {selected && client && scope ? (
           <View
             style={[styles.anchor, { top: selected.top, left: selected.left }]}
@@ -560,11 +631,13 @@ function WebPassageSelection(
           </View>
         ) : null}
       </View>
+      {wide ? null : <ChangedPassageCards margin={margin} />}
       {wide && margin ? (
         <View
           testID="artifact:passage-margin"
           style={[styles.margin, { minHeight: marginHeight }]}
         >
+          {cards.length === 0 ? margin.idle : null}
           {cards.map((card) => (
             <View
               key={card.id}
@@ -584,9 +657,61 @@ function WebPassageSelection(
   );
 }
 
+/** The elements of the body's runs, in order, paired with the run each one draws. */
+function readSegmentElements(segments: readonly DocBodySegment[], views: ReadonlyMap<number, View>) {
+  return segments.flatMap((segment, index) => {
+    const node = views.get(index) as unknown as HTMLElement | undefined;
+    return node ? [{ segment, node }] : [];
+  });
+}
+
+/**
+ * A current suggestion painted where it applies (lab K1-A): its paragraph read as words, the suggested
+ * words struck and inserted through the one prose diff owner, a pencil in the gutter. Pressing it shows
+ * its thread. Nothing here applies anything; Accept stays on the thread's card.
+ */
+function PaintedSuggestion(props: Readonly<{
+  segment: Extract<DocBodySegment, { kind: 'suggestion' }>;
+  focused: boolean;
+  onPress: () => void;
+}>) {
+  const { theme } = useUnistyles();
+  const { segment } = props;
+  return (
+    <Pressable
+      testID={`artifact:passage-suggestion:${segment.id}`}
+      accessibilityRole="button"
+      accessibilityLabel={t('artifacts.browser.proposal.title')}
+      onPress={props.onPress}
+      style={[styles.suggestion, props.focused ? { backgroundColor: theme.colors.state.active.background } : null]}
+    >
+      <View style={styles.gutter} pointerEvents="none">
+        <Icon name="pencil-simple" size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />
+      </View>
+      <ProseDiffViewer
+        mode="text"
+        testID={`artifact:passage-suggestion:${segment.id}.diff`}
+        oldText={segment.before}
+        newText={segment.after}
+        prose={{ oldLabel: t('artifacts.browser.proposal.before'), newLabel: t('artifacts.browser.proposal.after'), words: true }}
+      />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
+  suggestion: {
+    position: 'relative',
+    marginVertical: theme.space.s8,
+    borderRadius: theme.borderRadius.sm,
+  },
+  gutter: {
+    position: 'absolute',
+    top: theme.space.s2,
+    left: -(ICON_SIZE.sm + theme.space.s8),
+  },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s32 },
-  changed: { gap: theme.space.s12, marginBottom: theme.space.s16 },
+  changed: { gap: theme.space.s12, marginTop: theme.space.s16 },
   frame: { position: 'relative' },
   body: { flex: 1, minWidth: 0 },
   margin: { width: MARGIN_WIDTH, position: 'relative' },

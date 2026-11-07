@@ -53,7 +53,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function mountPassages(width: number, attach?: NonNullable<Parameters<typeof ArtifactPassageSelection>[0]['margin']>['attach']) {
+async function mountPassages(width: number, attach?: NonNullable<Parameters<typeof ArtifactPassageSelection>[0]['margin']>['attach'],
+  startComment?: (passage: unknown) => void) {
   // `moved`: a passage that changed after its comment; it has no place in the body and is never marked.
   const onFocus = vi.fn();
   const onOpen = vi.fn();
@@ -65,7 +66,7 @@ async function mountPassages(width: number, attach?: NonNullable<Parameters<type
         { id: 'quote', location: { state: 'exact', range: { start: 9, end: 26 } } },
         { id: 'moved', location: { state: 'detached' } },
       ],
-      focusedId: null, onFocus, onOpen, onOpenThreadList, renderCard: id => <View testID={`card:${id}`} />, attach,
+      focusedId: null, onFocus, onOpen, onOpenThreadList, renderCard: id => <View testID={`card:${id}`} />, attach, startComment,
     }} />, { createNodeMock: () => body });
   await act(async () => {
     screen.findAllByType('View').find(node => typeof node.props.onLayout === 'function')!.props.onLayout({
@@ -145,6 +146,21 @@ describe('web passage re-attachment', () => {
   });
 });
 
+describe('web inline comment', () => {
+  it('starts the comment beside its passage in the margin instead of opening a page', async () => {
+    const startComment = vi.fn();
+    const { screen } = await mountPassages(1000, undefined, startComment);
+    const selected = document.createRange();
+    selected.setStart(body.firstChild!, 9);
+    selected.setEnd(body.firstChild!, 26);
+    document.getSelection()!.addRange(selected);
+    await act(async () => { document.dispatchEvent(new Event('selectionchange')); });
+    await act(async () => { screen.findAllHostsByTestId('artifact:passage-comment')[0]!.props.onPress(); });
+    expect(startComment).toHaveBeenCalledOnce();
+    expect(startComment.mock.calls[0]![0]).toMatchObject({ range: { start: 9, end: 26 }, quote: markdown.slice(9, 26) });
+  });
+});
+
 describe('web changed passages without a margin', () => {
   it('shows the changed passage\'s own card above the body, and no placed thread, where no margin fits', async () => {
     const { screen } = await mountPassages(400);
@@ -172,5 +188,105 @@ describe('web changed passages without a margin', () => {
     await act(async () => { screen.findAllHostsByTestId('artifact:passage-comment')[0]!.props.onPress(); });
     expect(complete).toHaveBeenCalledOnce();
     expect(complete.mock.calls[0]![0]).toMatchObject({ range: { start: 9, end: 26 }, quote: markdown.slice(9, 26) });
+  });
+});
+
+describe('web comments column', () => {
+  async function mountColumn(width: number) {
+    const margin = (passages: readonly string[], idle: React.ReactNode) => ({
+      passages: passages.map(id => ({ id, location: { state: 'exact' as const, range: { start: 0, end: markdown.length } } })),
+      focusedId: null, onFocus: vi.fn(), onOpen: vi.fn(), renderCard: (id: string) => <View testID={`card:${id}`} />, idle,
+    });
+    const element = (passages: readonly string[], idle: React.ReactNode) => <ArtifactPassageSelection artifactId="runbook" markdown={markdown}
+      revision={{ headerVersion: 1, bodyVersion: 1 }} margin={margin(passages, idle)} />;
+    const screen = await renderScreen(element([], <View testID="idle:loading" />), { createNodeMock: () => body });
+    await act(async () => {
+      screen.findAllByType('View').find(node => typeof node.props.onLayout === 'function')!.props.onLayout({
+        nativeEvent: { layout: { width, height: 100, x: 0, y: 0 } },
+      });
+    });
+    // The body's box: its own frame's flattened style and the row it stands in.
+    const bodyBox = () => {
+      const frame = screen.findAllHostsByTestId('artifact:passage-body')[0];
+      return JSON.stringify([frame?.props.style, frame?.parent?.props.style]);
+    };
+    const rerender = async (passages: readonly string[], idle: React.ReactNode) => act(async () => { screen.update(element(passages, idle)); });
+    return { screen, bodyBox, rerender };
+  }
+
+  it('keeps the column and the body where they are from loading to threads and to none on a wide layout', async () => {
+    const { screen, bodyBox, rerender } = await mountColumn(1000);
+    expect(screen.findAllHostsByTestId('artifact:passage-margin')).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('idle:loading')).toHaveLength(1);
+    const loading = bodyBox();
+
+    await rerender(['paragraph'], null);
+    expect(screen.findAllHostsByTestId('artifact:passage-margin')).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('card:paragraph')).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('idle:loading')).toHaveLength(0);
+    expect(bodyBox()).toBe(loading);
+
+    await rerender([], <View testID="idle:empty" />);
+    expect(screen.findAllHostsByTestId('artifact:passage-margin')).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('idle:empty')).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('card:paragraph')).toHaveLength(0);
+    expect(bodyBox()).toBe(loading);
+  });
+
+  it('has no column where it does not fit beside the body', async () => {
+    const { screen } = await mountColumn(400);
+    expect(screen.findAllHostsByTestId('artifact:passage-margin')).toHaveLength(0);
+    expect(screen.findAllHostsByTestId('idle:loading')).toHaveLength(0);
+  });
+});
+
+describe('web comments column first paint', () => {
+  it('stands beside the body from the first commit, before any layout event', async () => {
+    const wideNode = document.createElement('div');
+    vi.spyOn(wideNode, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 100));
+    const screen = await renderScreen(<ArtifactPassageSelection artifactId="runbook" markdown={markdown}
+      revision={{ headerVersion: 1, bodyVersion: 1 }} margin={{ passages: [], focusedId: null, onFocus: vi.fn(), onOpen: vi.fn(),
+        renderCard: () => null, idle: <View testID="idle:loading" /> }} />, { createNodeMock: () => wideNode });
+    expect(screen.findAllHostsByTestId('artifact:passage-margin')).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('idle:loading')).toHaveLength(1);
+  });
+});
+
+describe('web changed passages keep the body in place', () => {
+  it('puts the changed passage card after the body where no margin fits, so the body never moves down', async () => {
+    const { screen } = await mountPassages(400);
+    const order = screen.findAll(node => typeof node.type === 'string' && (node.props.testID === 'artifact:passage-body' || node.props.testID === 'artifact:passage-changed'))
+      .map(node => node.props.testID);
+    expect([...new Set(order)]).toEqual(['artifact:passage-body', 'artifact:passage-changed']);
+  });
+});
+
+type TextNode = Readonly<{ children: ReadonlyArray<TextNode | string> }>;
+const textOf = (node: TextNode): string => node.children.map(child => typeof child === 'string' ? child : textOf(child)).join('');
+
+describe('web painted suggestion', () => {
+  it('paints a current suggestion in the body, struck and inserted, and shows its thread when pressed', async () => {
+    const doc = 'Keep the key.\n\nA replay shows two rows.\n\nClose it.';
+    const start = doc.indexOf('two rows');
+    const { planDocSuggestionPaint } = await import('./docSuggestionPaint');
+    const paint = planDocSuggestionPaint({ markdown: doc, suggestions: [{ id: 'sug', range: { start, end: start + 8 }, after: 'one row' }] });
+    const onFocus = vi.fn();
+    const onOpen = vi.fn();
+    const screen = await renderScreen(<ArtifactPassageSelection artifactId="runbook" markdown={doc}
+      revision={{ headerVersion: 1, bodyVersion: 1 }} margin={{
+        passages: [{ id: 'sug', location: { state: 'exact', range: { start, end: start + 8 } } }],
+        focusedId: null, onFocus, onOpen, renderCard: id => <View testID={`card:${id}`} />, paint,
+      }} />, { createNodeMock: () => body });
+    const painted = screen.findAllHostsByTestId('artifact:passage-suggestion:sug');
+    expect(painted).toHaveLength(1);
+    expect(screen.findAllHostsByTestId('artifact:passage-suggestion:sug.diff.removed').map(textOf).join('')).toContain('two');
+    expect(screen.findAllHostsByTestId('artifact:passage-suggestion:sug.diff.added').map(textOf).join('')).toContain('one');
+    // The rest of the Doc is still read as written, before and after the painted paragraph.
+    expect(screen.getTextContent()).toContain('Keep the key.');
+    expect(screen.getTextContent()).toContain('Close it.');
+    await act(async () => { painted[0]!.props.onPress(); });
+    // Narrow (no margin width measured): the thread opens.
+    expect(onOpen).toHaveBeenCalledWith('sug');
+    expect(onFocus).not.toHaveBeenCalled();
   });
 });

@@ -36,7 +36,7 @@ const root: DiscussionOpenedMessageV1 = {
 const thread = (
   location: DocPassageMarginThread['location'], passage: DocPassageRefV1 = firstPassage,
 ): DocPassageMarginThread<DiscussionOpenedMessageV1> => ({ discussionId: 'thread-1', passage, original: firstPassage, location, root,
-  replies: [], proposal: null, acceptedProposal: null });
+  replies: [], proposal: null, acceptedProposal: null, suggestion: null });
 
 async function mount(input: Readonly<{ thread: DocPassageMarginThread<DiscussionOpenedMessageV1>; attaching?: boolean }>) {
   const handlers = { onReattach: vi.fn(), onCancelReattach: vi.fn(), onOpenHistory: vi.fn() };
@@ -122,7 +122,9 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
     try {
       const agentSession = createSessionFixture({ id: 'runbook-agent', serverId: 'home', metadataLayoutVersion: 1,
         metadata: { path: '', host: '' }, ownerMetadataView: { name: 'Support runbook', host: 'box', path: '/runbook' } });
-      storage.setState({ sessionListRowsByServerId: { home: { 'runbook-agent': buildSessionListRenderableFromSession(agentSession) } } });
+      await act(async () => {
+        storage.setState({ sessionListRowsByServerId: { home: { 'runbook-agent': buildSessionListRenderableFromSession(agentSession) } } });
+      });
       const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
       const reply: DiscussionOpenedMessageV1 = {
         ...root, id: 'm2', seq: 2, createdAt: 2, authorAccountId: 'alice',
@@ -134,6 +136,37 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
       const line = view.screen.findByTestId(`${id}.reply`);
       const lineText = line!.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children).join(' ');
       expect(lineText).toContain('Support runbook');
-    } finally { storage.setState(previousState); }
+    } finally {
+      await act(async () => { storage.setState(previousState); });
+    }
+  });
+
+  it('names an agent suggestion by its Session on the proposal card, not as the Account that runs it', async () => {
+    const previousState = storage.getState();
+    try {
+      const agentSession = createSessionFixture({ id: 'runbook-agent', serverId: 'home', metadataLayoutVersion: 1,
+        metadata: { path: '', host: '' }, ownerMetadataView: { name: 'Support runbook', host: 'box', path: '/runbook' } });
+      await act(async () => {
+        storage.setState({ sessionListRowsByServerId: { home: { 'runbook-agent': buildSessionListRenderableFromSession(agentSession) } } });
+      });
+      const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
+      const proposal: DiscussionOpenedMessageV1 = {
+        ...root, id: 'm2', seq: 2, createdAt: 2, authorAccountId: 'alice',
+        accountActor: { accountId: 'alice', profile: { name: 'QA owner' } } as DiscussionOpenedMessageV1['accountActor'],
+        producerV1: { kind: 'agent', sessionId: 'runbook-agent' } as DiscussionOpenedMessageV1['producerV1'],
+        messageRef: { ...root.messageRef, messageId: 'm2' }, replyTarget: { kind: 'message', messageId: 'm1' },
+        content: { kind: 'doc_edit_proposal', proposal: {
+          target: firstPassage, baseRevision: firstPassage.revision, before: firstPassage.quote,
+          after: 'Up to 3 attempts', reason: 'Budget changed.',
+        } },
+      };
+      const view = await mount({ thread: { ...source, replies: [proposal], proposal } });
+      const card = view.screen.findByTestId(`${id}.proposal`);
+      const cardText = card!.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children).join(' ');
+      expect(cardText).toContain('Support runbook');
+      expect(cardText).not.toContain('QA owner');
+    } finally {
+      await act(async () => { storage.setState(previousState); });
+    }
   });
 });

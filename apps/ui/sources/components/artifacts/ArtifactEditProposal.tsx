@@ -19,6 +19,9 @@ import { buildMentionRefForKindV1, MENTION_KIND_V1 } from '@happier-dev/protocol
 import { buildDiscussionAccountMentionPayload } from '@/components/discussions/discussionComposerDocument';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ProseDiffViewer } from '@/components/ui/code/diff/prose/ProseDiffViewer';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -33,15 +36,24 @@ import { t } from '@/text';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { readViewportClass } from '@/utils/platform/useViewportClass';
 import type { ArtifactActionsClient } from './artifactActionsClient';
-import { artifactViewRoute } from './artifactBrowserModel';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
+import {
+  admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation,
+  useDocEditOperation, type DocEditOperationKind,
+} from './docEditOperation';
 
 type Revision = Readonly<{ headerVersion: number; bodyVersion: number }>;
 type Currency = 'unknown' | 'current' | 'movedOn';
 type Busy = 'accept' | 'decline' | 'undo' | null;
+type UndoOutcome = Readonly<{ state: 'done'; revision: Revision }>
+  | Readonly<{ state: 'conflict' | 'failed' }>;
 type DocReadValue = Extract<Awaited<ReturnType<ArtifactActionsClient['readDoc']>>, { ok: true }>['value'];
 export type AdmittedDocRead = Readonly<{ status: 'loading' | 'unavailable' }>
   | Readonly<{ status: 'ready'; value: DocReadValue }>;
+
+const DOC_EDIT_ACTION = {
+  accept: 'doc.edit.accept', decline: 'doc.edit.decline', undo: 'artifact.revisions.restore',
+} as const satisfies Record<DocEditOperationKind, string>;
 
 /** The Action's typed refusal when the Doc is no longer at the revision the person reviewed. */
 const VERSION_MISMATCH = 'version_mismatch';
@@ -49,6 +61,95 @@ const VERSION_MISMATCH = 'version_mismatch';
 const sameRevision = (left: Revision, right: Revision) =>
   left.headerVersion === right.headerVersion &&
   left.bodyVersion === right.bodyVersion;
+
+function freshestRevision(admitted: Revision | null, stored: Revision | null): Revision | null {
+  if (!admitted) return stored;
+  if (!stored) return admitted;
+  // Both facts are scoped to this Doc. Either monotonic component advancing means the retained
+  // admitted read is older than the store fact that woke this card while its refresh is pending.
+  return stored.headerVersion > admitted.headerVersion || stored.bodyVersion > admitted.bodyVersion
+    ? stored
+    : admitted;
+}
+
+function revisionCurrency(current: Revision | null, basis: Revision): Currency {
+  if (!current) return 'unknown';
+  if (sameRevision(current, basis)) return 'current';
+  return current.headerVersion > basis.headerVersion || current.bodyVersion > basis.bodyVersion
+    ? 'movedOn'
+    : 'unknown';
+}
+
+function readRevisionKey(key: string): Revision | null {
+  if (key === '') return null;
+  const separator = key.indexOf(':');
+  if (separator === -1) return null;
+  return {
+    headerVersion: Number(key.slice(0, separator)),
+    bodyVersion: Number(key.slice(separator + 1)),
+  };
+}
+
+/** The approval observer is demand-mounted: settled and ordinary open cards carry no continuation stack. */
+function DocEditApprovalContinuation(props: Readonly<{
+  client: ArtifactActionsClient;
+  operationKey: string;
+  heldKind: DocEditOperationKind;
+  heldApprovalId: string;
+  settleDecision: (decided: DocEditProposalDispositionV1) => void;
+  refuseDecision: (code: string) => void;
+  settleUndo: (outcome: UndoOutcome) => void;
+}>): null {
+  const settlement = React.useRef({
+    settleDecision: props.settleDecision,
+    refuseDecision: props.refuseDecision,
+    settleUndo: props.settleUndo,
+  });
+  settlement.current = {
+    settleDecision: props.settleDecision,
+    refuseDecision: props.refuseDecision,
+    settleUndo: props.settleUndo,
+  };
+  const { requestApproval } = useActionApprovalContinuation({
+    scopeKey: `${props.client.scope.serverId}:${props.client.scope.accountId}`,
+    serverId: props.client.scope.serverId,
+    onExecuted: () => {},
+  });
+  React.useEffect(() => {
+    const release = () => {
+      if (readDocEditOperation(props.operationKey)?.approvalId === props.heldApprovalId) {
+        releaseDocEditOperation(props.operationKey);
+      }
+    };
+    requestApproval(createActionApprovalContinuation({
+      artifactId: props.heldApprovalId,
+      scope: props.client.scope,
+      actionId: DOC_EDIT_ACTION[props.heldKind],
+      onSucceeded: (value: unknown) => {
+        release();
+        if (props.heldKind === 'undo') {
+          settlement.current.settleUndo({ state: 'done', revision: (value as { revision: Revision }).revision });
+        } else {
+          settlement.current.settleDecision(
+            (value as { docEditProposalDispositionV1: DocEditProposalDispositionV1 }).docEditProposalDispositionV1,
+          );
+        }
+      },
+      onFailed: (code, failure) => {
+        release();
+        const reason = failure?.errorCode ?? code;
+        // A refused or canceled request changes nothing: the card shows what it showed before it.
+        if (code === 'approval_rejected' || code === 'approval_canceled') return;
+        if (props.heldKind === 'undo') {
+          settlement.current.settleUndo({ state: reason === VERSION_MISMATCH ? 'conflict' : 'failed' });
+        } else {
+          settlement.current.refuseDecision(reason);
+        }
+      },
+    }));
+  }, [props.client.scope, props.heldApprovalId, props.heldKind, props.operationKey, requestApproval]);
+  return null;
+}
 
 /**
  * A suggested edit in its passage thread (C5 L8 / lab K1): the reviewed before/after through the one
@@ -75,6 +176,8 @@ export function ArtifactEditProposal(
      * message's byline; a Discussion message already names its speaker above the card.
      */
     namesProposer?: boolean;
+    /** The Doc's body paints this suggestion in place (lab K1-A): while it is current the card leaves the diff to it. */
+    diffInBody?: boolean;
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
@@ -94,11 +197,12 @@ export function ArtifactEditProposal(
       : (acknowledged ?? props.disposition ?? { state: 'open' as const });
   // The Doc's revision as the app already holds it (kept current by sync, as the Doc page reads it): when
   // another edit lands, this suggestion's currency is read again rather than left as it was on mount.
-  const docRevisionKey = getStorage()((state) => {
+  const storedRevisionKey = getStorage()((state) => {
     if (!areServerAccountScopesEqual(state.profileScope, client.scope)) return '';
     const stored = state.artifacts[artifactId];
-    return stored ? `${stored.headerVersion}.${stored.bodyVersion ?? ''}` : '';
+    return stored?.bodyVersion === undefined ? '' : `${stored.headerVersion}:${stored.bodyVersion}`;
   });
+  const storedRevision = readRevisionKey(storedRevisionKey);
   const [standaloneRead, setStandaloneRead] = React.useState<Readonly<{
     client: ArtifactActionsClient; artifactId: string; read: AdmittedDocRead;
   }> | null>(null);
@@ -108,20 +212,24 @@ export function ArtifactEditProposal(
     && docRead.value.ref.artifactId === artifactId
     && areServerProfileIdentifiersEquivalent(docRead.value.ref.serverId, client.scope.serverId)
       ? docRead.value.artifact : null;
+  const currentRevision = freshestRevision(admitted?.revision ?? null, storedRevision);
   const [refusal, setRefusal] = React.useState<
     'movedOn' | 'cantEdit' | 'failed' | null
   >(null);
   const [busy, setBusy] = React.useState<Busy>(null);
   const currency: Currency = refusal === 'movedOn' ? 'movedOn'
-    : admitted ? sameRevision(admitted.revision, base) ? 'current' : 'movedOn' : 'unknown';
-  const [undo, setUndo] = React.useState<
-    | Readonly<{ state: 'done'; revision: Revision }>
-    | Readonly<{ state: 'conflict' | 'failed' }>
-    | null
-  >(null);
+    : admitted ? revisionCurrency(currentRevision, base) : 'unknown';
+  const [undo, setUndo] = React.useState<UndoOutcome | null>(null);
+  // One admission for this proposal's Accept, Decline and Undo, across this card, its compact notice and a
+  // remounted card (Back); a gated Action stays held until its approval settles.
+  const operationKey = proposalRef ? docEditOperationKey(client.scope, proposalRef.messageId) : null;
+  const operation = useDocEditOperation(operationKey);
+  const approvalOperation = operation?.approvalId ? operation : null;
 
   React.useEffect(() => {
-    if (props.docRead !== undefined || disposition.state !== 'open') return;
+    // A parent shares one read across visible Discussion cards. A standalone accepted receipt still
+    // needs this same current-Doc fact before its restore can be offered; a declined receipt does not.
+    if (props.docRead !== undefined || disposition.state === 'declined') return;
     let live = true;
     setStandaloneRead({ client, artifactId, read: { status: 'loading' } });
     // The Doc lives in this thread's Home (C5 §4), which the client is already bound to; its stored
@@ -136,11 +244,30 @@ export function ArtifactEditProposal(
     return () => {
       live = false;
     };
-  }, [client, artifactId, base, disposition.state, docRevisionKey, props.docRead]);
+  }, [client, artifactId, base, disposition.state, storedRevisionKey, props.docRead]);
+
+  // A gated Action waits on a person's approval; the Inbox request is where that is decided.
+  const openApproval = React.useCallback(
+    (approvalId: string) => router.push(buildApprovalHref(approvalId, client.scope.serverId) as never),
+    [client.scope.serverId, router],
+  );
+
+  /** The one place a decision's settled disposition lands, however the Action was admitted or approved. */
+  const settleDecision = React.useCallback((decided: DocEditProposalDispositionV1) => {
+    setAcknowledged(decided);
+    // On a phone the receipt scrolls away with the thread; the app's one notice confirms the new
+    // version and keeps Undo in reach (lab K1-Rp). Wider layouts show the receipt in place.
+    if (decided.state === 'accepted' && readViewportClass() === 'compact' && operationKey)
+      announceAccepted(client, artifactId, base.bodyVersion, decided.acceptedRevision, operationKey, openApproval);
+  }, [artifactId, base.bodyVersion, client, openApproval, operationKey]);
+  const refuseDecision = React.useCallback((code: string) => {
+    if (code === VERSION_MISMATCH) setRefusal('movedOn');
+    else setRefusal(code === 'doc_edit_proposal_edit_access_required' ? 'cantEdit' : 'failed');
+  }, []);
 
   const decide = React.useCallback(
     async (kind: 'accept' | 'decline') => {
-      if (!proposalRef || busy) return;
+      if (!proposalRef || !operationKey || busy || !admitDocEditOperation(operationKey, kind)) return;
       setBusy(kind);
       setRefusal(null);
       const outcome =
@@ -148,32 +275,20 @@ export function ArtifactEditProposal(
           ? await client.acceptEdit({ proposalRef, expectedRevision: base })
           : await client.declineEdit({ proposalRef });
       setBusy(null);
-      if ('approvalId' in outcome) return;
-      if (outcome.ok) {
-        const decided = outcome.value.docEditProposalDispositionV1;
-        setAcknowledged(decided);
-        // On a phone the receipt scrolls away with the thread; the app's one notice confirms the new
-        // version and keeps Undo in reach (lab K1-Rp). Wider layouts show the receipt in place.
-        if (decided.state === 'accepted' && readViewportClass() === 'compact')
-          announceAccepted(client, artifactId, base.bodyVersion, decided.acceptedRevision);
+      if ('approvalId' in outcome) {
+        holdDocEditApproval(operationKey, outcome.approvalId);
+        openApproval(outcome.approvalId);
         return;
       }
-      const code = outcome.failure.code;
-      if (code === VERSION_MISMATCH) {
-        setRefusal('movedOn');
-        return;
-      }
-      setRefusal(
-        code === 'doc_edit_proposal_edit_access_required'
-          ? 'cantEdit'
-          : 'failed',
-      );
+      releaseDocEditOperation(operationKey);
+      if (outcome.ok) settleDecision(outcome.value.docEditProposalDispositionV1);
+      else refuseDecision(outcome.failure.code);
     },
-    [base, busy, client, proposalRef],
+    [base, busy, client, proposalRef, operationKey, openApproval, settleDecision, refuseDecision],
   );
 
   const undoAccepted = React.useCallback(async () => {
-    if (disposition.state !== 'accepted' || busy) return;
+    if (disposition.state !== 'accepted' || busy || !operationKey || !admitDocEditOperation(operationKey, 'undo')) return;
     setBusy('undo');
     const outcome = await client.restoreRevision({
       artifactId,
@@ -181,7 +296,13 @@ export function ArtifactEditProposal(
       expectedRevision: disposition.acceptedRevision,
     });
     setBusy(null);
-    if ('approvalId' in outcome) return;
+    // Waiting on approval is not an outcome: the operation stays held (no second request from this card,
+    // its notice or a remounted card) and its approval's settlement decides what the receipt says next.
+    if ('approvalId' in outcome) {
+      holdDocEditApproval(operationKey, outcome.approvalId);
+      return;
+    }
+    releaseDocEditOperation(operationKey);
     setUndo(
       outcome.ok
         ? { state: 'done', revision: outcome.value.revision }
@@ -189,18 +310,21 @@ export function ArtifactEditProposal(
           ? { state: 'conflict' }
           : { state: 'failed' },
     );
-  }, [artifactId, base.bodyVersion, busy, client, disposition]);
+  }, [artifactId, base.bodyVersion, busy, client, disposition, operationKey]);
 
   const docTitle = typeof admitted?.header.title === 'string' ? admitted.header.title : null;
   const readOnly = refusal === 'cantEdit' || admitted?.access === 'view';
-  // Compare: the version the suggestion was reviewed against beside the current text, in History.
-  const compare = React.useCallback(() => showArtifactHistorySheet({
+  // History is the one place to pick a version. Compare opens it on the version the suggestion was
+  // reviewed against, beside the current text; a refused Undo opens it as it is.
+  const openHistory = React.useCallback((compareFromBodyVersion?: number) => showArtifactHistorySheet({
     artifactId, client, currentDoc: admitted ?? undefined,
-    name: docTitle || t('artifacts.untitled'), canRestore: !readOnly, compareFromBodyVersion: base.bodyVersion,
-  }), [admitted, artifactId, base.bodyVersion, client, docTitle, readOnly]);
+    name: docTitle || undefined, canRestore: !readOnly,
+    ...(compareFromBodyVersion === undefined ? {} : { compareFromBodyVersion }),
+  }), [admitted, artifactId, client, docTitle, readOnly]);
+  const compare = React.useCallback(() => openHistory(base.bodyVersion), [base.bodyVersion, openHistory]);
   const proposer = props.proposer ?? null;
-  const askable = proposalRef !== null && proposer !== null
-    && !('accountId' in proposer.mention && proposer.mention.accountId === props.viewerAccountId);
+  const proposedByViewer = proposer !== null && 'accountId' in proposer.mention && proposer.mention.accountId === props.viewerAccountId;
+  const askable = proposalRef !== null && proposer !== null && !proposedByViewer;
   // Ask to redo prepares an addressed reply in this thread; the person still reads and sends it.
   const askToRedo = React.useCallback(() => {
     if (!proposalRef || !proposer) return;
@@ -215,10 +339,6 @@ export function ArtifactEditProposal(
     }) as never);
   }, [client, proposalRef, proposer, router]);
 
-  const openDocument = React.useCallback(
-    () => router.push(artifactViewRoute(artifactId) as never),
-    [artifactId, router],
-  );
   const decider = (accountId: string) =>
     accountId === props.viewerAccountId
       ? null
@@ -234,10 +354,21 @@ export function ArtifactEditProposal(
         testID: `${testID}.undone`, mark: 'undone',
         text: t('artifacts.browser.proposal.undone', { n: undo.revision.bodyVersion }),
       });
-      if (undo?.state === 'conflict') lines.push({
+      if (approvalOperation?.kind === 'undo') {
+        const { approvalId } = approvalOperation;
+        lines.push({
+          testID: `${testID}.undoPending`, mark: 'warning', tone: 'warning', text: t('approvals.waitingForYou'),
+          action: { label: t('approvals.review'), onPress: () => openApproval(approvalId!), testID: `${testID}.undoPending.open` },
+        });
+      }
+      // Undo restores over the accepted revision only: a Doc that has moved on since says so from the first
+      // mount, not after a refused press.
+      const acceptedCurrency = revisionCurrency(currentRevision, disposition.acceptedRevision);
+      const undoStale = undo?.state === 'conflict' || (acceptedCurrency === 'movedOn' && undo === null);
+      if (undoStale) lines.push({
         testID: `${testID}.undoConflict`, mark: 'warning', tone: 'warning',
         text: t('artifacts.browser.proposal.undoConflict'),
-        action: { label: t('artifacts.browser.proposal.openDocument'), onPress: openDocument },
+        action: { label: t('artifacts.browser.proposal.openHistory'), onPress: () => openHistory(), testID: `${testID}.undoConflict.open` },
       });
       if (undo?.state === 'failed') lines.push({
         testID: `${testID}.undoFailed`, mark: 'failed', tone: 'danger', text: t('artifacts.browser.proposal.failed'),
@@ -247,8 +378,10 @@ export function ArtifactEditProposal(
         receipt: {
           testID: `${testID}.accepted`, mark: 'accepted',
           text: who ? t('artifacts.browser.proposal.acceptedBy', { who, n }) : t('artifacts.browser.proposal.acceptedByYou', { n }),
-          action: undo?.state === 'done' ? undefined : {
-            label: t('artifacts.browser.proposal.undo'), busy: busy === 'undo',
+          // Undo is offered while it can still act: not after it ran or conflicted, and not while an operation
+          // for this proposal (this card's, its notice's, or an approval it waits on) holds custody.
+          action: (undo && undo.state !== 'failed') || acceptedCurrency !== 'current' || approvalOperation ? undefined : {
+            label: t('artifacts.browser.proposal.undo'), busy: busy === 'undo', disabled: operation !== null && busy !== 'undo',
             onPress: () => void undoAccepted(), testID: `${testID}.undo`,
           },
         },
@@ -265,18 +398,28 @@ export function ArtifactEditProposal(
         },
       };
     }
+    const locked = busy !== null || operation !== null;
     const decline = proposalRef ? {
       testID: `${testID}.decline`, label: t('artifacts.browser.proposal.decline'),
-      disabled: busy !== null, onPress: () => void decide('decline'),
+      disabled: locked, onPress: () => void decide('decline'),
     } : undefined;
     const open = {
       state: 'open' as const,
-      title: props.namesProposer && proposer
+      // Your own suggestion has no one to name: "You suggests an edit" never reads.
+      title: props.namesProposer && proposer && !proposedByViewer
         ? t('artifacts.browser.proposal.titleBy', { who: proposer.label })
         : t('artifacts.browser.proposal.title'),
       basedOn: t('artifacts.browser.proposal.basedOn', { n: base.bodyVersion }),
       reason: proposal.reason,
     };
+    // A decision waiting on its approval is the whole story: one request, led to by Review.
+    if (approvalOperation && approvalOperation.kind !== 'undo') {
+      const { approvalId } = approvalOperation;
+      return { ...open, basedOn: undefined, footer: { kind: 'note', line: {
+        testID: `${testID}.decisionPending`, mark: 'warning', tone: 'warning', text: t('approvals.waitingForYou'),
+        action: { label: t('approvals.review'), onPress: () => openApproval(approvalId!), testID: `${testID}.decisionPending.open` },
+      } } };
+    }
     if (currency === 'movedOn' || refusal === 'movedOn') {
       // Two ways forward (lab K1-ST): see what changed, or ask for a fresh suggestion. A suggestion
       // that can no longer apply can still be declined; that needs no Doc rewrite.
@@ -309,28 +452,43 @@ export function ArtifactEditProposal(
             ? { indicator: 'current', testID: `${testID}.current`, text: t('artifacts.browser.proposal.current', { n: base.bodyVersion }) }
             : undefined,
       decline,
-      accept: proposalRef ? {
+      // Unknown admission is not evidence that the reviewed Doc revision is still current.
+      accept: proposalRef && currency === 'current' ? {
         testID: `${testID}.accept`, label: t('artifacts.browser.proposal.accept'),
-        disabled: busy !== null, busy: busy === 'accept', onPress: () => void decide('accept'),
+        disabled: locked, busy: busy === 'accept', onPress: () => void decide('accept'),
       } : undefined,
     } };
   })();
 
   return (
-    <HappierDocEditProposal
-      testID={testID}
-      before={proposal.before}
-      after={proposal.after}
-      labels={{ before: t('artifacts.browser.proposal.before'), after: t('artifacts.browser.proposal.after') }}
-      decision={decision}
-      Text={ProposalText}
-      Mark={ProposalMark}
-      Button={ProposalButton}
-      Diff={ProposalDiff}
-      Spinner={ProposalSpinner}
-      style={styles.card}
-      space={theme.space}
-    />
+    <>
+      {operationKey && approvalOperation?.approvalId ? (
+        <DocEditApprovalContinuation
+          client={client}
+          operationKey={operationKey}
+          heldKind={approvalOperation.kind}
+          heldApprovalId={approvalOperation.approvalId}
+          settleDecision={settleDecision}
+          refuseDecision={refuseDecision}
+          settleUndo={setUndo}
+        />
+      ) : null}
+      <HappierDocEditProposal
+        testID={testID}
+        before={proposal.before}
+        after={proposal.after}
+        labels={{ before: t('artifacts.browser.proposal.before'), after: t('artifacts.browser.proposal.after') }}
+        decision={decision}
+        Text={ProposalText}
+        Mark={ProposalMark}
+        Button={ProposalButton}
+        // The diff is printed once: in the body while the suggestion is current there, else on the card.
+        Diff={props.diffInBody === true && disposition.state === 'open' && currency === 'current' ? NoProposalDiff : ProposalDiff}
+        Spinner={ProposalSpinner}
+        style={styles.card}
+        space={theme.space}
+      />
+    </>
   );
 }
 
@@ -397,10 +555,13 @@ function ProposalDiff(props: HappierDocEditProposalDiffProps) {
       testID={props.testID}
       oldText={props.before}
       newText={props.after}
-      contextLines={0}
-      prose={{ oldLabel: props.beforeLabel, newLabel: props.afterLabel }}
+      prose={{ oldLabel: props.beforeLabel, newLabel: props.afterLabel, words: true }}
     />
   );
+}
+
+function NoProposalDiff(): null {
+  return null;
 }
 
 function ProposalSpinner() {
@@ -426,7 +587,10 @@ const stylesheet = StyleSheet.create((theme) => ({
 const ACCEPTED_NOTICE_KEY = 'artifacts.proposal.accepted';
 
 /** The accepted-edit notice; its Undo restores the base version unless the Doc moved on since. */
-function announceAccepted(client: ArtifactActionsClient, artifactId: string, baseBodyVersion: number, accepted: Revision): void {
+export function announceAccepted(
+  client: ArtifactActionsClient, artifactId: string, baseBodyVersion: number, accepted: Revision,
+  operationKey: string, openApproval: (approvalId: string) => void,
+): void {
   publishPresentationNotice({
     key: ACCEPTED_NOTICE_KEY,
     severity: 'info',
@@ -434,8 +598,20 @@ function announceAccepted(client: ArtifactActionsClient, artifactId: string, bas
     undo: {
       label: t('artifacts.browser.proposal.undo'),
       run: () => {
+        // The card's own Undo and this one are one operation: whichever is admitted first holds custody, and
+        // while that request waits on its approval this entry leads to it instead of creating another.
+        if (!admitDocEditOperation(operationKey, 'undo')) {
+          const waiting = readDocEditOperation(operationKey)?.approvalId;
+          if (waiting) openApproval(waiting);
+          return;
+        }
         void client.restoreRevision({ artifactId, bodyVersion: baseBodyVersion, expectedRevision: accepted }).then((outcome) => {
-          if ('approvalId' in outcome) return;
+          if ('approvalId' in outcome) {
+            holdDocEditApproval(operationKey, outcome.approvalId);
+            openApproval(outcome.approvalId);
+            return;
+          }
+          releaseDocEditOperation(operationKey);
           publishPresentationNotice(outcome.ok
             ? { key: ACCEPTED_NOTICE_KEY, severity: 'info', message: t('artifacts.browser.proposal.undone', { n: outcome.value.revision.bodyVersion }) }
             : { key: ACCEPTED_NOTICE_KEY, severity: 'warning', message: outcome.failure.code === VERSION_MISMATCH

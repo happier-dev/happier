@@ -49,6 +49,11 @@ export type DocPassageMarginThread<
   proposal: M | null;
   /** The suggested edit accepted into the revision being read, which may precede a later open one. */
   acceptedProposal: M | null;
+  /**
+   * The open suggestion as it would change the text being read: only while the Doc is at the revision it
+   * was based on and its words are still there. The body paints it; otherwise its card shows the diff.
+   */
+  suggestion: Readonly<{ range: Readonly<{ start: number; end: number }>; after: string }> | null;
 }>;
 
 export type DocPassageMarginAccepted = Readonly<{
@@ -178,6 +183,11 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
         };
       }
     }
+    const openContent = open?.content && 'kind' in open.content && open.content.kind === 'doc_edit_proposal'
+      ? open.content.proposal : null;
+    const suggestion = openContent && sameRevision(openContent.baseRevision, input.revision)
+      && input.source.slice(openContent.target.range.start, openContent.target.range.end) === openContent.before
+      ? { range: openContent.target.range, after: openContent.after } : null;
     threads.push({
       discussionId: thread.discussionId,
       passage,
@@ -187,6 +197,7 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
       replies,
       proposal,
       acceptedProposal,
+      suggestion,
     });
   }
   const position = (thread: DocPassageMarginThread<M>) =>

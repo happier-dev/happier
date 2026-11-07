@@ -5,7 +5,7 @@ import { HappierThreadMessage } from '@happier-dev/plugin-ui/components';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 
 import { DiscussionMessageContent } from '@/components/discussions/DiscussionMessageContent';
-import { resolveDiscussionMessageAuthorLabel } from '@/components/discussions/discussionTimelineProjection';
+import { resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel } from '@/components/discussions/discussionTimelineProjection';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -18,6 +18,8 @@ import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import type { ArtifactActionsClient } from './artifactActionsClient';
 import { ArtifactEditProposal, type AdmittedDocRead } from './ArtifactEditProposal';
 import { readDocPassageThreadQuote, type DocPassageMarginThread } from './docPassageMargin';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 
 const NO_SESSION_LABEL = () => null;
 
@@ -42,6 +44,8 @@ export function ArtifactPassageThreadCard(
     onOpenHistory: (compareFromBodyVersion: number) => void;
     onReattach: () => void;
     onCancelReattach: () => void;
+    /** The Doc's body shows this thread's suggestion in place; its card then carries no diff. */
+    diffInBody?: boolean;
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
@@ -81,24 +85,49 @@ export function ArtifactPassageThreadCard(
   // Who suggested the edit, named as the thread names them: an agent by its Session, a person by name.
   // A Workflow Run is neither; it can't be asked to redo, so it names no proposer to address.
   // An agent's message speaks as its Session (C7), in the latest-reply line as in the proposal title.
-  const producerSessionId = thread.proposal?.producerV1?.kind === 'agent' ? thread.proposal.producerV1.sessionId : null;
-  const replySessionId = latestReply?.producerV1?.kind === 'agent' ? latestReply.producerV1.sessionId : null;
   const serverId = root.messageRef.discussion.serverId;
+  const speakerMessages = React.useMemo(
+    () => [root, ...thread.replies],
+    [root, thread.replies],
+  );
+  const speakerSessionIds = React.useMemo(
+    () => [
+      ...new Set(
+        speakerMessages.flatMap((message) =>
+          message.producerV1?.kind === 'agent'
+            ? [message.producerV1.sessionId]
+            : [],
+        ),
+      ),
+    ],
+    [speakerMessages],
+  );
   const producerAddresses = React.useMemo(
-    () => [producerSessionId, replySessionId].flatMap((sessionId) => (sessionId ? [{ serverId, sessionId }] : [])),
-    [producerSessionId, replySessionId, serverId],
+    () => speakerSessionIds.map((sessionId) => ({ serverId, sessionId })),
+    [serverId, speakerSessionIds],
   );
   const producerTitles = useSessionDisplayTitles(producerAddresses);
-  const producerTitle = producerSessionId ? (producerTitles[0] ?? null) : null;
-  const replyTitle = replySessionId ? (producerTitles[producerSessionId ? 1 : 0] ?? null) : null;
+  const producerLabels = React.useMemo(
+    () => new Map(speakerSessionIds.map((sessionId, index) => [sessionId, producerTitles[index] ?? null])),
+    [producerTitles, speakerSessionIds],
+  );
+  const resolveSpeakerLabel = React.useCallback(
+    (message: DiscussionOpenedMessageV1) =>
+      resolveDiscussionMessageSpeakerLabel(message, {
+        account: resolveAccountLabel,
+        session: (sessionId) => producerLabels.get(sessionId) ?? null,
+        workflowRun: () => null,
+      }),
+    [producerLabels, resolveAccountLabel],
+  );
   const proposer = React.useMemo(() => {
     const message = thread.proposal;
     if (!message) return null;
-    const accountLabel = resolveDiscussionMessageAuthorLabel(message);
-    if (message.producerV1?.kind === 'agent') return { label: producerTitle ?? accountLabel, mention: { sessionId: message.producerV1.sessionId } };
+    const speakerLabel = resolveSpeakerLabel(message);
+    if (message.producerV1?.kind === 'agent') return { label: speakerLabel, mention: { sessionId: message.producerV1.sessionId } };
     if (message.producerV1) return null;
-    return message.authorAccountId ? { label: accountLabel, mention: { accountId: message.authorAccountId } } : null;
-  }, [producerTitle, thread.proposal]);
+    return message.authorAccountId ? { label: speakerLabel, mention: { accountId: message.authorAccountId } } : null;
+  }, [resolveSpeakerLabel, thread.proposal]);
   const testID = `artifact:passage-thread:${thread.discussionId}`;
   const proposalContent =
     thread.proposal?.content &&
@@ -143,11 +172,10 @@ export function ArtifactPassageThreadCard(
             </Text>
           ) : null}
         </Pressable>
-        <Pressable
+        <HappierPressable
           testID={`${testID}.open`}
           accessibilityRole="link"
           accessibilityLabel={t('artifacts.browser.passage.openConversation')}
-          hitSlop={8}
           onPress={props.onOpen}
           style={({ pressed }) => [
             styles.open,
@@ -159,7 +187,7 @@ export function ArtifactPassageThreadCard(
             size={ICON_SIZE.xs}
             color={theme.colors.text.tertiary}
           />
-        </Pressable>
+        </HappierPressable>
       </View>
       {reattached ? (
         <Text testID={`${testID}.earlier`} variant="meta" numberOfLines={1} style={styles.earlier}>
@@ -187,8 +215,7 @@ export function ArtifactPassageThreadCard(
         attribution={
           <>
             <Text style={styles.author}>
-              {resolveAccountLabel(root.authorAccountId ?? '') ??
-                resolveDiscussionMessageAuthorLabel(root)}
+              {resolveSpeakerLabel(root)}
             </Text>
             {root.createdAt > 0 ? (
               <Text style={styles.timestamp}>
@@ -218,9 +245,7 @@ export function ArtifactPassageThreadCard(
           <Text variant="meta" numberOfLines={1} style={styles.replyText}>
             {t('artifacts.browser.passage.replied', {
               name:
-                replyTitle ??
-                resolveAccountLabel(latestReply.authorAccountId ?? '') ??
-                resolveDiscussionMessageAuthorLabel(latestReply),
+                resolveSpeakerLabel(latestReply),
               time: formatShortRelativeTime(latestReply.createdAt),
             })}
           </Text>
@@ -290,8 +315,23 @@ export function ArtifactPassageThreadCard(
           resolveAccountLabel={resolveAccountLabel}
           proposer={proposer}
           namesProposer
+          diffInBody={props.diffInBody}
         />
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * A thread card while the Doc's threads are still on their way (lab L8 ST loading): the card's own frame
+ * with three placeholder rows, so the comments column reads as coming rather than empty.
+ */
+export function ArtifactPassageThreadCardPlaceholder(): React.ReactElement {
+  const { theme } = useUnistyles();
+  return (
+    <View testID="artifact:comments.loading" style={styles.card}>
+      <SkeletonRows rows={3} accessibilityLabel={t('artifacts.browser.passage.threadsTitle')}
+        geometry={{ insetStart: 0, insetEnd: 0, glyphColumn: ICON_SIZE.sm, glyphSize: ICON_SIZE.sm, gap: theme.space.s10 }} />
     </View>
   );
 }

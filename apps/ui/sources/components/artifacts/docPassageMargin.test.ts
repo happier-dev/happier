@@ -76,6 +76,23 @@ function proposal(
 }
 
 describe('buildDocPassageMargin', () => {
+  it('names an open suggestion for the body only while the Doc is still at the revision it was based on', () => {
+    const replay = passage(source1, 'A replay shows two rows.');
+    const after = 'A replay shows one row.';
+    const threads = [{ discussionId: 'd-replay', messages: [comment('d-replay', replay), proposal('d-replay', replay, after, undefined)] }];
+    const current = buildDocPassageMargin({ source: source1, revision: r1, threads });
+    expect(current.threads[0]?.suggestion).toEqual({ range: replay.range, after });
+
+    const movedOn = buildDocPassageMargin({ source: `${source1} More.`, revision: r2, threads });
+    expect(movedOn.threads[0]?.suggestion).toBeNull();
+
+    const declined = buildDocPassageMargin({ source: source1, revision: r1, threads: [{ discussionId: 'd-replay', messages: [
+      comment('d-replay', replay),
+      proposal('d-replay', replay, after, { state: 'declined', decidedBy: { accountId: 'you', atMs: 1 } }),
+    ] }] });
+    expect(declined.threads[0]?.suggestion).toBeNull();
+  });
+
   it('orders threads by where their passage sits and keeps an unplaceable passage, last, as changed', () => {
     const replay = passage(source1, 'A replay shows two rows.');
     const check = passage(source1, 'Check the dashboard.');
