@@ -44,6 +44,7 @@ import { type PluginContributedActionController, type PluginContributedActionDes
 import { useSessionConnectedServicesAuthSwitch } from "@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch";
 import { useExistingSessionCapabilitiesChip } from "@/components/sessions/capabilities/useSessionCapabilitiesChip";
 import { executeSessionLifecycleAction } from "@/components/sessions/actions/sessionActionExecution";
+import type { CurrentUiContextCommandInvocation } from "@/components/appShell/currentUiContext/CurrentUiContextCommands";
 import { type SessionConnectedServiceAuthSwitchResult, setSessionConnectedServiceAuthBinding } from "@/sync/ops/connectedServices/sessionAuthSwitch";
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
 import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/sessionSpawnFailurePresentation";
@@ -247,6 +248,8 @@ import { resolveSessionGoalActionCapabilityProfile, supportsEditableSessionGoals
 import type { SessionParticipantTarget } from "@/sync/domains/session/participants/participantTargets";
 import type { PendingMessage } from "@/sync/domains/state/storageTypes";
 import { resolvePendingActivationBanner } from "@/components/sessions/pending/resolvePendingActivationBanner";
+import { useManagedWakeRecovery } from "@/components/sessions/pending/useManagedWakeRecovery";
+import { submitPendingActivationRequest } from "@/components/sessions/pending/pendingActivationRequest";
 import { findExchangeCheckInRoot, SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
 import { useManagedPendingWakeObservation } from "@/components/sessions/pending/useManagedPendingWakeObservation";
 import { useMachineListStatusForServer } from "@/sync/domains/state/storage";
@@ -257,9 +260,7 @@ import { describeMachinePresenceLine } from "@/utils/sessions/machinePresenceLin
 import { resolveHomeDisplayLabel } from "@/components/settings/server/homeDisplayName";
 import { machineCollectionHref } from "@/components/settings/machines/collection/machineCollectionModel";
 import { presentMachineAgentStartRefusal } from "@/components/machines/agents/presentMachineAgentStartRefusal";
-import { publishHomeAccountChange } from "@/sync/runtime/orchestration/homeAccountChange";
-import { classifyHomeActionOutcome } from "@/sync/ops/home/homeActionOutcome";
-import { createActionApprovalContinuation, resumeActionExecutionResult } from "@/components/approvals/actionApprovalContinuation";
+import { resumeActionExecutionResult } from "@/components/approvals/actionApprovalContinuation";
 import type { ComposerStructuredInputMention } from "@/sync/domains/input/draftValues/sessionDraftValueTypes";
 import type { StorageState } from "@/sync/store/types";
 import { readSessionWorkStatePrimaryItemV1 } from "@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary";
@@ -1251,7 +1252,7 @@ export function useSessionComposerController({
         }
         return existingSessionComposerOwner.read().revision;
     }, [existingSessionComposerOwner, sessionId]);
-    const actionExecutor = React.useMemo(() => createDefaultActionExecutor({
+    const actionExecutorOptions = React.useMemo<NonNullable<Parameters<typeof createDefaultActionExecutor>[0]>>(() => ({
         currentAgentCapabilities: currentLifecycleAgentCapabilities,
         ...(sessionAccountScope ? { currentSessionPresentationApply: {
             ...sessionAccountScope,
@@ -1300,6 +1301,8 @@ export function useSessionComposerController({
         sessionId,
         sessionRouteServerId,
     ]);
+    const actionExecutor = React.useMemo(() => createDefaultActionExecutor(actionExecutorOptions), [actionExecutorOptions]);
+    const resumeActions = useMountedActionExecution(sessionAccountScope ?? sessionRouteServerId, { executorOptions: actionExecutorOptions });
     // Reference search has no Account data, but it is still daemon work scoped to
     // the active Account. Borrow the incumbent lifetime as a currentness fence.
     const composerReferenceAccountLifetime = sessionAccountLifetime;
@@ -1580,7 +1583,9 @@ export function useSessionComposerController({
         activeAt: session.activeAt,
         pendingActivationAuthorization: session.pendingActivationAuthorization,
         pendingActivationFailureDetails: session.pendingActivationFailureDetails,
-    }, sessionMachineAccessRemoved), [pendingMessages, session.activeAt, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionMachineAccessRemoved]);
+        active: session.active,
+        lastRuntimeIssue: session.lastRuntimeIssue,
+    }, sessionMachineAccessRemoved), [pendingMessages, session.active, session.activeAt, session.lastRuntimeIssue, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionMachineAccessRemoved]);
     const [pendingActivationActionBusy, setPendingActivationActionBusy] = React.useState(false);
     const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
     const goalControlMachineRecord = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
@@ -2506,7 +2511,7 @@ export function useSessionComposerController({
         markCurrentUsageLimitRecoveryOperationStatus(status);
         return true;
     }, [markCurrentUsageLimitRecoveryOperationStatus, markUsageLimitRecoveryIssueResolved]);
-    const { execute: executeRecoveryAction } = useMountedActionExecution(sessionAccountScope);
+    const executeRecoveryAction = resumeActions.execute;
     const executeUsageLimitRecoveryAction = React.useCallback(async (
         actionId: 'session.usageLimit.checkNow' | 'session.usageLimit.waitResume.enable'
             | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.consumeResetCredit',
@@ -4509,12 +4514,14 @@ export function useSessionComposerController({
         busy: boolean;
         failure: Extract<ReturnType<typeof resolveResumeFailurePresentation>, { kind: 'directory_missing' }>;
         targetHome: ReturnType<typeof resolvePortableServerIdentityForRoutingId>;
+        invocation?: CurrentUiContextCommandInvocation;
     }> | null>(null);
     const currentDirectoryRecovery = directoryRecovery?.scopeKey === sessionAccountScopeKey ? directoryRecovery : null;
 
     // Both explicit Resume and the queue control consume the banner owner's
     // current decision and rearm the same admitted input through its normal owner.
-    const handlePendingActivationRequest = React.useCallback(async (action: 'process_when_online' | 'keep_queued'): Promise<boolean> => {
+    const handlePendingActivationRequest = React.useCallback(async (action: 'process_when_online' | 'keep_queued',
+        invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => {
         const lifetime = sessionAccountLifetime;
         const presentation = pendingActivationPresentation;
         const row = presentation?.row;
@@ -4524,20 +4531,10 @@ export function useSessionComposerController({
         const cancellation = new AbortController();
         const retirement = lifetime.onRetire(() => cancellation.abort());
         try {
-            const requestedAction = row.pendingRequestedAction;
-            const input = { sessionId, localId: row.localId, serverId: lifetime.scope.serverId,
-                requestedAction: action === 'keep_queued' && requestedAction?.kind === 'send_now'
-                    ? { v: 1, kind: 'enqueue' } : requestedAction ?? { v: 1, kind: 'enqueue' },
-                resumeWhenAvailable: action === 'process_when_online' };
-            const initial = await actionExecutor.execute('session.pending.action.set', input, {
-                surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-                serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId, signal: cancellation.signal,
-            });
-            if (!lifetime.isCurrent()) return false;
-            requireActionSuccess(await resumeActionExecutionResult({ result: initial, actionId: 'session.pending.action.set',
-                actionInput: input, scope: lifetime.scope, signal: cancellation.signal,
-                onApprovalPending: pendingRecoveryApproval.requestApproval }));
-            return lifetime.isCurrent();
+            const executor = invocation ? { execute: (actionId: Parameters<typeof actionExecutor.execute>[0], input: unknown) =>
+                invocation.execute(resumeActions, actionId, input) } : actionExecutor;
+            return await submitPendingActivationRequest({ actionExecutor: executor, lifetime, sessionId, row: { ...row, localId: row.localId },
+                action, signal: cancellation.signal, onApprovalPending: pendingRecoveryApproval.requestApproval });
         } catch (error) {
             if (lifetime.isCurrent()) Modal.alert(t('common.error'), error instanceof Error ? error.message
                 : t(action === 'keep_queued' ? 'session.pendingMessages.errors.updateFailed' : 'session.pendingMessages.errors.sendFailed'));
@@ -4546,14 +4543,16 @@ export function useSessionComposerController({
             retirement.dispose();
             if (lifetime.isCurrent()) setPendingActivationActionBusy(false);
         }
-    }, [actionExecutor, pendingActivationActionBusy, pendingActivationPresentation, pendingRecoveryApproval.requestApproval, sessionAccountLifetime, sessionId]);
+    }, [actionExecutor, pendingActivationActionBusy, pendingActivationPresentation, pendingRecoveryApproval.requestApproval,
+        resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, sessionAccountLifetime, sessionId]);
 
     // Explicit Resume and accepted input wake failures share the same recovery projection.
     const presentResumeFailureRecovery = React.useCallback((presentation: ReturnType<typeof resolveResumeFailurePresentation>,
         silent = false, targetHome = resolvePortableServerIdentityForRoutingId(sessionRouteServerId),
-        agentTitle = currentAgentLabel): boolean => {
+        agentTitle = currentAgentLabel, invocation?: CurrentUiContextCommandInvocation): boolean => {
         if (presentation.kind === 'directory_missing') {
-            setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false, failure: presentation, targetHome });
+            setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false, failure: presentation, targetHome,
+                ...(invocation ? { invocation } : {}) });
             return true;
         }
         if (presentation.kind === 'agent_setup') {
@@ -4571,7 +4570,8 @@ export function useSessionComposerController({
         router, sessionAccountScopeKey, sessionRouteServerId]);
 
     // Handle resuming an inactive session
-    const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean; approvedNewDirectoryCreation?: boolean }): Promise<boolean> => {
+    const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean; approvedNewDirectoryCreation?: boolean;
+        invocation?: CurrentUiContextCommandInvocation }): Promise<boolean> => {
         const silent = opts?.silent === true;
         const resumeMachineId = reachableMachineTarget?.machineId ?? ownerMetadata?.machineId ?? null;
         const resumeDirectory = reachableMachineTarget?.basePath ?? ownerMetadata?.path ?? null;
@@ -4635,7 +4635,7 @@ export function useSessionComposerController({
 
         if (resumeEligibility !== 'unknown' && !isMachineReachable) {
             if (pendingActivationPresentation?.primaryAction === 'process_when_online') {
-                return await handlePendingActivationRequest('process_when_online');
+                return await handlePendingActivationRequest('process_when_online', opts?.invocation);
             }
             maybeAlert(t(pendingActivationPresentation?.titleKey ?? (machineReachability === 'unknown'
                 ? 'newSession.machineUnavailableStatus' : 'session.machineOfflineCannotResume')));
@@ -4644,23 +4644,21 @@ export function useSessionComposerController({
 
         try {
             if (!sessionAccountLifetime?.isCurrent() || !sessionRouteServerId) return false;
-            const result = await actionExecutor.execute('session.open', {
+            const input = {
                 sessionId,
                 serverId: sessionRouteServerId,
-                intent: 'resume',
+                intent: 'resume' as const,
                 ...(opts?.approvedNewDirectoryCreation === true ? {
                     approvedNewDirectoryCreation: true,
                 } : {}),
-            }, {
-                serverId: sessionRouteServerId,
-                expectedAccountId: sessionAccountLifetime.scope.accountId,
-                surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-            });
+            };
+            const result = await (opts?.invocation ? opts.invocation.execute(resumeActions, 'session.open', input)
+                : resumeActions.execute('session.open', input));
 
             if (!result.ok) {
                 const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error, details: result.details },
                     t('session.resumeFailed'), resolveSessionActionDefaultTarget(sessionActionDefaultBackend));
-                if (presentResumeFailureRecovery(presentation, silent, targetHome)) return false;
+                if (presentResumeFailureRecovery(presentation, silent, targetHome, undefined, opts?.invocation)) return false;
                 if (presentation.kind === 'plugin_disabled' && presentation.pluginId) {
                     const pluginId = presentation.pluginId;
                     if (!silent) alertActionFailure({ reason: presentation.message, code: presentation.errorCode,
@@ -4690,68 +4688,29 @@ export function useSessionComposerController({
             maybeAlert(t('session.resumeFailed'), readRpcErrorCode(error));
             return false;
         }
-    }, [actionExecutor, agentId, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
+    }, [resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, agentId, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
     handleUsageLimitRecoveryResumeNowRef.current = handleResumeSession;
 
-    const handleManagedWakeRecovery = React.useCallback(async (action: 'inspect' | 'retry' | 'resume' | 'withdraw') => {
-        const lifetime = sessionAccountLifetime;
-        const presentation = pendingActivationPresentation;
-        const projection = presentation?.managedWakeProjection;
-        const target = managedWakeAuthorization?.managedWakeTargetV1;
-        if (!lifetime?.isCurrent() || !presentation || !projection || !target || pendingActivationActionBusy) return;
-        const cancellation = new AbortController();
-        const retirement = lifetime.onRetire(() => cancellation.abort());
-        setPendingActivationActionBusy(true);
-        try {
-            if (action === 'retry') {
-                if (presentation.primaryAction === 'retry' && presentation.row) await handleResumeSession();
-            } else if (action === 'resume') {
-                if (projection.canResumeRuntime && presentation.row) await handleResumeSession();
-            } else if (action === 'withdraw') {
-                const row = presentation.row;
-                if (projection.canWithdraw && row) await handleEditPendingMessage({ id: row.id, text: row.text,
-                    displayText: row.displayText, message: row, mode: 'withdraw' });
-            } else {
-                const inspectInput = {
-                    homeId: target.homeId, managedId: target.managedId,
-                };
-                const result = await actionExecutor.execute('machines.managed.inspect', inspectInput,
-                    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-                    serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
-                    signal: cancellation.signal });
-                if (!lifetime.isCurrent() || cancellation.signal.aborted) return;
-                const refresh = () => {
-                    if (lifetime.isCurrent() && !cancellation.signal.aborted) publishHomeAccountChange(lifetime.scope.serverId, [target.managedId]);
-                };
-                const fail = () => {
-                    if (lifetime.isCurrent() && !cancellation.signal.aborted) Modal.alert(t('common.error'), t('managedMachines.detail.loadFailed'));
-                };
-                const outcome = classifyHomeActionOutcome(result);
-                if (outcome.kind === 'completed') refresh();
-                else if (outcome.kind === 'failed') fail();
-                else pendingRecoveryApproval.requestApproval(createActionApprovalContinuation<unknown, 'machines.managed.inspect'>({
-                    artifactId: outcome.artifactId, actionId: 'machines.managed.inspect', scope: lifetime.scope,
-                    expectedInput: inspectInput, signal: cancellation.signal, onSucceeded: refresh, onFailed: fail,
-                }));
-            }
-        } catch (error) {
-            if (lifetime.isCurrent() && !cancellation.signal.aborted) Modal.alert(t('common.error'),
-                error instanceof Error ? error.message : t('managedMachines.detail.loadFailed'));
-        } finally {
-            retirement.dispose();
-            if (lifetime.isCurrent()) setPendingActivationActionBusy(false);
-        }
-    }, [actionExecutor, handleEditPendingMessage, handleResumeSession, managedWakeAuthorization,
-        pendingActivationActionBusy, pendingActivationPresentation, pendingRecoveryApproval.requestApproval, sessionAccountLifetime]);
+    const withdrawManagedWakeInput = React.useCallback(async (row: PendingMessage) => {
+        await handleEditPendingMessage({ id: row.id, text: row.text,
+            displayText: row.displayText, message: row, mode: 'withdraw' });
+    }, [handleEditPendingMessage]);
+    const handleManagedWakeRecovery = useManagedWakeRecovery({
+        accountLifetime: sessionAccountLifetime, authorization: managedWakeAuthorization,
+        presentation: pendingActivationPresentation, actionExecutor,
+        busy: pendingActivationActionBusy, setBusy: setPendingActivationActionBusy,
+        requestApproval: pendingRecoveryApproval.requestApproval,
+        onResume: handleResumeSession, onWithdraw: withdrawManagedWakeInput,
+    });
 
     const handleContinueInFreshFolder = React.useCallback(async () => {
         setDirectoryRecovery(current => current?.scopeKey === sessionAccountScopeKey ? { ...current, busy: true } : current);
         try {
-            await handleResumeSession({ approvedNewDirectoryCreation: true });
+            await handleResumeSession({ approvedNewDirectoryCreation: true, invocation: currentDirectoryRecovery?.invocation });
         } finally {
             setDirectoryRecovery((current) => current?.scopeKey === sessionAccountScopeKey ? { ...current, busy: false } : current);
         }
-    }, [handleResumeSession, sessionAccountScopeKey]);
+    }, [currentDirectoryRecovery?.invocation, handleResumeSession, sessionAccountScopeKey]);
 
     // The committed-but-inactive recovery. The banner offers it only once
     // canonical facts say the Session has no live runtime, and it does nothing
@@ -4768,7 +4727,7 @@ export function useSessionComposerController({
 
     useSessionResumeRequestListener(
         sessionId,
-        React.useCallback(() => handleResumeSession(), [handleResumeSession]),
+        React.useCallback(invocation => handleResumeSession({ invocation }), [handleResumeSession]),
         sessionRouteServerId,
     );
 

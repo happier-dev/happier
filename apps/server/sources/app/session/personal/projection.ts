@@ -30,6 +30,7 @@ import {
 } from "./discussionFacts";
 import { projectSessionFollowFacts } from "./followFacts";
 import { loadSessionRuleReadStatesInTx, type SessionRuleReadStates } from "./readState";
+import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
 /** Select only the requesting Account's private relations beside canonical access facts. */
 export function createSessionPersonalProjectionSelect(accountId: string, context: SessionAccessProjectionContext = {}) {
@@ -42,6 +43,10 @@ export function createSessionPersonalProjectionSelect(accountId: string, context
         latestTurnStatus: true,
         lastRuntimeIssue: true,
         pendingBlockedCount: true,
+        pendingActivationRequestId: true,
+        pendingActivationRequestedAt: true,
+        pendingActivationStatus: true,
+        pendingActivationFailureCode: true,
         pendingPermissionRequestCount: true,
         pendingSharedActionConfirmationCount: true,
         pendingUserActionRequestCount: true,
@@ -79,6 +84,10 @@ export function createSessionPersonalAttentionProjectionSelectForAccounts(accoun
         latestTurnStatus: true,
         lastRuntimeIssue: true,
         pendingBlockedCount: true,
+        pendingActivationRequestId: true,
+        pendingActivationRequestedAt: true,
+        pendingActivationStatus: true,
+        pendingActivationFailureCode: true,
         pendingPermissionRequestCount: true,
         pendingSharedActionConfirmationCount: true,
         pendingUserActionRequestCount: true,
@@ -207,7 +216,10 @@ function projectSessionViewerAttentionState(params: Readonly<{
         latestReadyEventSeq: sequences.latestReadyEventSeq ?? null,
         latestFailureSeq,
         hasPrimarySessionFailure,
-        pendingBlockedCount: live ? row.pendingBlockedCount : 0,
+        // A definite activation failure blocks delivery even while its original
+        // input remains queued. The activation owner clears this fact on recovery.
+        pendingBlockedCount: live ? row.pendingBlockedCount
+            + (mapPendingActivationAuthorization(row)?.status === 'failed' ? 1 : 0) : 0,
         pendingPermissionRequestCount: live ? row.pendingPermissionRequestCount + row.pendingSharedActionConfirmationCount : 0,
         pendingUserActionRequestCount: live ? row.pendingUserActionRequestCount : 0,
         capabilities: {
