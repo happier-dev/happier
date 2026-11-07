@@ -2,12 +2,17 @@ import {
     defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
     defineProtocolUniqueArray,
+    TriageIdentifierV1ProtocolSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 
-import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
-import { TriageEntryRefV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
+import { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
+import { TriageEntryRefV1Schema, TriageTextV1ProtocolSchema, TriageEntryLocatorV1Schema,
+    TriageSourceEntryLocalRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
+import { TriageReadUnavailableV1Schema } from './diagnostics.js';
+import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
 
 export const TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1 = 'marks/read-fix-pull-requests-v1';
 export const TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_ID_V1 = 'happier.triage/marks/read-fix-pull-requests-v1';
@@ -22,15 +27,58 @@ export const TRIAGE_SET_FIX_PULL_REQUEST_ACTION_REF_V1 = Object.freeze({
     localId: TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
 });
 
+const durableDisplayText = defineProtocolString({ minLength: 1, pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 });
 const display = defineProtocolObject({
-    title: TriageTextV1ProtocolSchema,
-    scopeLabel: TriageTextV1ProtocolSchema,
+    title: durableDisplayText,
+    scopeLabel: durableDisplayText,
 }, { policy: 'closed' });
+
+const sourceContext = defineProtocolObject({
+    sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    sourceInstanceRowId: TriageIdentifierV1ProtocolSchema.optional(),
+    lastKnownLocator: TriageEntryLocatorV1Schema,
+}, { policy: 'closed' });
+
+const status = defineProtocolUnion([
+    defineProtocolLiteral('open'), defineProtocolLiteral('merged'),
+    defineProtocolLiteral('closed'), defineProtocolLiteral('unknown'),
+]);
+const sourceCandidateDisplay = defineProtocolObject({
+    title: TriageTextV1ProtocolSchema.optional(),
+    scopeLabel: TriageTextV1ProtocolSchema.optional(),
+    displayPath: TriageTextV1ProtocolSchema.optional(),
+}, { policy: 'closed' });
+
+// Resolved candidates may carry retained user choices rather than source projections.
+const candidateDisplay = defineProtocolObject({
+    title: durableDisplayText.optional(),
+    scopeLabel: durableDisplayText.optional(),
+    displayPath: durableDisplayText.optional(),
+}, { policy: 'closed' });
+
+/** Source-native associations are transient evidence, never user choices. */
+export const TriageSourceReadFixPullRequestsResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        kind: defineProtocolLiteral('complete'),
+        candidates: defineProtocolArray(defineProtocolObject({
+            localRef: TriageSourceEntryLocalRefV1Schema,
+            status,
+            display: sourceCandidateDisplay,
+            locator: TriageEntryLocatorV1Schema,
+        }, { policy: 'closed' })),
+    }, { policy: 'closed' }),
+    TriageReadUnavailableV1Schema,
+]);
+export type TriageSourceReadFixPullRequestsResultV1 = ReturnType<typeof TriageSourceReadFixPullRequestsResultV1Schema.parse>;
 
 /** V1 caller envelopes and every nested identity/display object are closed. */
 export const TriageReadFixPullRequestsInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     entryRef: TriageEntryRefV1Schema,
+    sourceContext: defineProtocolObject({
+        instance: TriageConfiguredSourceInstanceV1Schema,
+        lastKnownLocator: TriageEntryLocatorV1Schema,
+    }, { policy: 'closed' }).optional(),
 }, { policy: 'closed' });
 export type TriageReadFixPullRequestsInputV1 = ReturnType<typeof TriageReadFixPullRequestsInputV1Schema.parse>;
 
@@ -39,18 +87,11 @@ export const TriageFixPullRequestV1Schema = defineProtocolObject({
     origins: defineProtocolUniqueArray(defineProtocolUnion([
         defineProtocolLiteral('user'),
         defineProtocolLiteral('session'),
-    ]), { minItems: 1, maxItems: 2 }),
-    status: defineProtocolUnion([
-        defineProtocolLiteral('open'),
-        defineProtocolLiteral('merged'),
-        defineProtocolLiteral('closed'),
-        defineProtocolLiteral('unknown'),
-    ]),
-    display: defineProtocolObject({
-        title: TriageTextV1ProtocolSchema.optional(),
-        scopeLabel: TriageTextV1ProtocolSchema.optional(),
-        displayPath: TriageTextV1ProtocolSchema.optional(),
-    }, { policy: 'closed' }),
+        defineProtocolLiteral('native'),
+    ]), { minItems: 1, maxItems: 3 }),
+    status,
+    display: candidateDisplay,
+    sourceContext: sourceContext.optional(),
 }, { policy: 'closed' });
 export type TriageFixPullRequestV1 = ReturnType<typeof TriageFixPullRequestV1Schema.parse>;
 export type TriageFixPullRequestStatusV1 = TriageFixPullRequestV1['status'];

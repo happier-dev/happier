@@ -9,6 +9,7 @@
 // projection a source mount asserts against. Everything else reads
 // `Schema.jsonSchema`.
 export * from './bounds.js';
+export * from './resourceLinks.js';
 export { TriageSourceScopeUnitIdV1Schema, type TriageSourceScopeUnitIdV1 } from './identity.js';
 export {
     TriageSourceScopeSelectionV1Schema,
@@ -29,26 +30,27 @@ export type {
 export { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1 } from './entryRoute.js';
 export {
     triageTaskStatusCategoryV1,
-    triageTaskTransitionCapabilitiesV1,
     TriageEntryRelationsV1Schema, TriageTaskFieldV1Schema,
     TriageTaskCapabilitiesV1Schema, TriageTaskTransitionV1Schema,
+    TriageTaskTransitionRequiredFieldV1Schema,
 } from './observations.js';
-export type { TriageEntryStateV1, TriageEntryRelationsV1, TriageTaskFieldV1, TriageTaskCapabilitiesV1 } from './observations.js';
+export type { TriageEntryStateV1, TriageEntryRelationsV1, TriageTaskFieldV1, TriageTaskCapabilitiesV1, TriageTaskTransitionRequiredFieldV1 } from './observations.js';
 export {
     TriageTaskFieldsV1Schema, TriageTaskCreateFieldsV1Schema,
     TriageTaskCreateInputV1Schema, TriageTaskEditInputV1Schema, TriageTaskTransitionInputV1Schema,
     TriageTaskCreateConnectedAccountInputV1Schema, TriageTaskEditConnectedAccountInputV1Schema,
     TriageTaskTransitionConnectedAccountInputV1Schema, TriageTaskWriteResultV1Schema,
+    TriageTaskTransitionFieldValuesV1Schema,
 } from './tasks.js';
-export type { TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1 } from './tasks.js';
+export type { TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1, TriageTaskTransitionFieldValuesV1 } from './tasks.js';
 export {
-    TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
-    TriageEntryLocatorV1Schema,
-    TriageEntryRefV1JsonSchema,
     INTERNAL_TASK_SOURCE_V1,
     internalTaskLocalRefV1,
     internalTaskOwnerAccountIdV1,
     isInternalTaskReferenceV1,
+    TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
+    TriageEntryLocatorV1Schema,
+    TriageEntryRefV1JsonSchema,
     TriageEntryRefV1Schema,
     TriageSourceEntryLocalRefV1Schema,
     TriageSourceInstanceIdV1Schema,
@@ -73,7 +75,9 @@ export type { TriageBoundedTextV1 } from './text.js';
 
 export {
     describeTriageSourceFailureV1,
+    TRIAGE_SOURCE_FAILURE_COPY_V1,
     formatTriageCountV1,
+    formatTriageCompactAgeV1,
     formatTriageTimestampV1,
     projectTriageDetailFieldTextV1,
     projectTriageDetailFieldsV1,
@@ -86,6 +90,7 @@ export type {
 } from './presentation.js';
 
 export {
+    defineTriagePagedPanelPageV1,
     triagePagedPanelInitialState,
     triagePagedPanelReducer,
 } from './pagedPanel.js';
@@ -127,6 +132,7 @@ export {
     TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
     TRIAGE_SET_FIX_PULL_REQUEST_ACTION_REF_V1,
     TriageFixPullRequestV1Schema,
+    TriageSourceReadFixPullRequestsResultV1Schema,
     TriageReadFixPullRequestsInputV1Schema,
     TriageReadFixPullRequestsResultV1Schema,
     TriageSetFixPullRequestInputV1Schema,
@@ -134,6 +140,7 @@ export {
 } from './fixPullRequests.js';
 export type {
     TriageFixPullRequestV1,
+    TriageSourceReadFixPullRequestsResultV1,
     TriageFixPullRequestStatusV1,
     TriageReadFixPullRequestsInputV1,
     TriageReadFixPullRequestsResultV1,
@@ -145,11 +152,14 @@ export {
     admitTriageSourceDescriptorV1,
     TriageSourceDescriptorV1Schema,
     TriageSourceDetailTabV1Schema,
+    TriageDetailPanelScrollOwnerV1Schema,
 } from './descriptor.js';
 export type {
     TriageSourceDescriptorAdmissionV1,
     TriageSourceDescriptorV1,
     TriageSourceDetailTabV1,
+    TriageDetailPanelScrollOwnerV1,
+    TriageSourceKindGlyphV1,
 } from './descriptor.js';
 
 export {
@@ -297,6 +307,74 @@ export {
     TriageSourcesContributionPointV1,
     TriageSourcesContributionProtocolV1,
 } from './contribution.js';
+export type {
+    TriageContributionSourceDescriptorAuthoredV1, TriageContributionSourceDescriptorV1,
+    TriageContributionDetailSurfaceInputAuthoredV1, TriageContributionDetailSurfaceInputV1,
+    TriageContributionPullRequestStatusResultAuthoredV1, TriageContributionPullRequestStatusResultV1,
+    TriageContributionSourceReadFixPullRequestsResultAuthoredV1, TriageContributionSourceReadFixPullRequestsResultV1,
+    TriageContributionListScopeUnitsInputAuthoredV1, TriageContributionListScopeUnitsInputV1,
+    TriageContributionListScopeUnitsResultAuthoredV1, TriageContributionListScopeUnitsResultV1,
+    TriageContributionListScopeUnitsConnectedAccountInputAuthoredV1, TriageContributionListScopeUnitsConnectedAccountInputV1,
+    TriageContributionListScopeUnitsCredentialInputAuthoredV1, TriageContributionListScopeUnitsCredentialInputV1,
+    TriageContributionListInstancesInputAuthoredV1, TriageContributionListInstancesInputV1,
+    TriageContributionListInstancesResultAuthoredV1, TriageContributionListInstancesResultV1,
+    TriageContributionGetConnectedAccountInputAuthoredV1, TriageContributionGetConnectedAccountInputV1,
+    TriageContributionGetCredentialInputAuthoredV1, TriageContributionGetCredentialInputV1,
+    TriageContributionGetInputAuthoredV1, TriageContributionGetInputV1,
+    TriageContributionGetResultAuthoredV1, TriageContributionGetResultV1,
+    TriageContributionScanInputAuthoredV1, TriageContributionScanInputV1,
+    TriageContributionScanConnectedAccountInputAuthoredV1, TriageContributionScanConnectedAccountInputV1,
+    TriageContributionScanCredentialInputAuthoredV1, TriageContributionScanCredentialInputV1,
+    TriageContributionScanResultAuthoredV1, TriageContributionScanResultV1,
+    TriageContributionPrepareReviewWorkspaceConnectedAccountInputAuthoredV1, TriageContributionPrepareReviewWorkspaceConnectedAccountInputV1,
+    TriageContributionPrepareReviewWorkspaceCredentialInputAuthoredV1, TriageContributionPrepareReviewWorkspaceCredentialInputV1,
+    TriageContributionPrepareReviewWorkspaceInputAuthoredV1, TriageContributionPrepareReviewWorkspaceInputV1,
+    TriageContributionPrepareReviewWorkspaceResultAuthoredV1, TriageContributionPrepareReviewWorkspaceResultV1,
+    TriageContributionVerifyReviewWorkspaceInputAuthoredV1, TriageContributionVerifyReviewWorkspaceInputV1,
+    TriageContributionVerifyReviewWorkspaceConnectedAccountInputAuthoredV1, TriageContributionVerifyReviewWorkspaceConnectedAccountInputV1,
+    TriageContributionVerifyReviewWorkspaceCredentialInputAuthoredV1, TriageContributionVerifyReviewWorkspaceCredentialInputV1,
+    TriageContributionVerifyReviewWorkspaceResultAuthoredV1, TriageContributionVerifyReviewWorkspaceResultV1,
+    TriageContributionTaskCreateInputAuthoredV1, TriageContributionTaskCreateInputV1,
+    TriageContributionTaskEditInputAuthoredV1, TriageContributionTaskEditInputV1,
+    TriageContributionTaskTransitionInputAuthoredV1, TriageContributionTaskTransitionInputV1,
+    TriageContributionTaskCreateConnectedAccountInputAuthoredV1, TriageContributionTaskCreateConnectedAccountInputV1,
+    TriageContributionTaskEditConnectedAccountInputAuthoredV1, TriageContributionTaskEditConnectedAccountInputV1,
+    TriageContributionTaskTransitionConnectedAccountInputAuthoredV1, TriageContributionTaskTransitionConnectedAccountInputV1,
+    TriageContributionTaskWriteResultAuthoredV1, TriageContributionTaskWriteResultV1,
+    TriageContributionTaskCreateCredentialInputAuthoredV1, TriageContributionTaskCreateCredentialInputV1,
+    TriageContributionTaskEditCredentialInputAuthoredV1, TriageContributionTaskEditCredentialInputV1,
+    TriageContributionTaskTransitionCredentialInputAuthoredV1, TriageContributionTaskTransitionCredentialInputV1,
+    TriageContributionSourceLinkSessionInputAuthoredV1, TriageContributionSourceLinkSessionInputV1,
+    TriageContributionSourceLinkSessionResultAuthoredV1, TriageContributionSourceLinkSessionResultV1,
+    TriageContributionSourceReadSessionLinksInputAuthoredV1, TriageContributionSourceReadSessionLinksInputV1,
+    TriageContributionSourceReadSessionLinksResultAuthoredV1, TriageContributionSourceReadSessionLinksResultV1,
+    TriageContributionSourceLinkSessionConnectedAccountInputAuthoredV1, TriageContributionSourceLinkSessionConnectedAccountInputV1,
+    TriageContributionSourceReadSessionLinksConnectedAccountInputAuthoredV1, TriageContributionSourceReadSessionLinksConnectedAccountInputV1,
+    TriageContributionSourceLinkSessionCredentialInputAuthoredV1, TriageContributionSourceLinkSessionCredentialInputV1,
+    TriageContributionSourceReadSessionLinksCredentialInputAuthoredV1, TriageContributionSourceReadSessionLinksCredentialInputV1,
+} from './contribution.js';
+export { TriageFailureSubjectV1Schema, TriageSessionHandoffInputV1Schema, TriageSessionHandoffEvidenceV1Schema, TriageSessionHandoffResultV1Schema,
+    TriageConfiguredEntryExecutionStatusV1Schema } from './sessionHandoff.js';
+export type { TriageFailureSubjectV1, TriageSessionHandoffAuthoredInputV1, TriageSessionHandoffInputV1, TriageSessionHandoffEvidenceV1,
+    TriageSessionHandoffAuthoredResultV1, TriageSessionHandoffResultV1 } from './sessionHandoff.js';
+export {
+    TRIAGE_DEFAULT_FIX_ACTION_ID_V1,
+    TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1,
+    TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1,
+    TriageReadSessionHandoffChoicesInputV1Schema,
+    TriageSessionHandoffSelectionV1Schema,
+    TriageSessionHandoffChoicesV1Schema,
+} from './sessionHandoff.js';
+export type {
+    TriageReadSessionHandoffChoicesInputV1,
+    TriageSessionHandoffSelectionV1,
+    TriageSessionHandoffChoicesV1,
+} from './sessionHandoff.js';
+export { TriageActionIdV1Schema } from './identity.js';
+export { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectEntryV1, triageHealthAlertEntryV1 } from './investigationSubjects.js';
+export type { TriageInvestigationSubjectEntryV1 } from './investigationSubjects.js';
+export { TriageSourceOperationOutcomeV1Schema, readTriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
+export type { TriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export {
     SessionPullRequestStatusResourceInputV1Schema,
     SessionPullRequestStatusResourceResultV1Schema,
@@ -307,6 +385,18 @@ export type {
     SessionPullRequestStatusResourceResultV1,
     SessionPullRequestNativeStatusV1,
 } from './sessionPullRequestStatus.js';
+export {
+    TriageIssueInvestigationV1Schema, TriageIssueEventSetupInputV1Schema,
+    TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema,
+} from './issueEvents.js';
+export type { TriageIssueEventSourceConfigV1, TriageIssueTransitionV1 } from './issueEvents.js';
+export {
+    TriageReadAttentionInputV1Schema, TriageReadAttentionConnectedAccountInputV1Schema,
+    TriageReadAttentionCredentialInputV1Schema, TriageReadAttentionResultV1Schema,
+    TriagePublishAttentionInputV1Schema, TriagePublishAttentionResultV1Schema,
+    TRIAGE_PUBLISH_ATTENTION_ACTION_REF_V1,
+    type TriageReadAttentionInputV1, type TriageReadAttentionResultV1,
+} from './attention.js';
 
 export {
     TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,

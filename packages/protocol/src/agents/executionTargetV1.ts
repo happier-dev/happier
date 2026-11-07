@@ -1,8 +1,8 @@
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
-import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { asProtocolZod, projectZodProtocolSchema } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 /** One declared executable contribution; configured definitions are its instances. */
@@ -41,6 +41,7 @@ export const AgentExecutionTargetV1Schema = defineStoredReadProjection(
   () => AgentExecutionTargetV1StoredSchema,
 );
 export type AgentExecutionTargetV1 = z.infer<typeof AgentExecutionTargetV1Schema>;
+export const AgentExecutionTargetV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(AgentExecutionTargetV1Schema));
 
 /** Executable catalog choices: Custom ACP declares a container for configured definitions. */
 export function listAgentExecutionTargetsV1(

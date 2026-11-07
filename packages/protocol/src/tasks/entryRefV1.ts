@@ -1,6 +1,6 @@
-import { defineProtocolString } from '../plugins/actions/protocolComposableSchema.js';
 import {
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUtf8String,
   type ProtocolComposableSchema,
 } from '../plugins/actions/protocolComposableSchema.js';
@@ -78,10 +78,10 @@ export function isInternalTaskReferenceV1(ref: TriageEntryRefV1): boolean {
     && internalTaskOwnerAccountIdV1(ref, '') !== null;
 }
 
+/** Target-minted configured-instance identity; never an entry identity or authority grant. */
 export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 =
   '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-
 export const TriageSourceInstanceIdV1Schema = defineProtocolString({
   minLength: 36, maxLength: 36, pattern: TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
 });
+export type TriageSourceInstanceIdV1 = ReturnType<typeof TriageSourceInstanceIdV1Schema.parse>;

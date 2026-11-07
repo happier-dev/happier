@@ -10,7 +10,8 @@ export const DeploymentReceiptAcceptedResultV1Schema = lazyZodSchema(() => {
   const result = { ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema };
   return z.union([
     z.strictObject({ ...result, deploymentId: DeploymentIdentifierV1Schema,
-      deploymentRevision: DeploymentRevisionV1Schema, state: DeploymentStateV1Schema }),
+      deploymentRevision: DeploymentRevisionV1Schema, state: DeploymentStateV1Schema,
+      environmentRemoved: z.optional(z.literal(true)) }),
     z.strictObject({ ...result, kind: z.literal('pending'), actionOperationId: DeploymentIdentifierV1Schema,
       operation: z.optional(ActionOperationAddressV1Schema) }),
   ]);

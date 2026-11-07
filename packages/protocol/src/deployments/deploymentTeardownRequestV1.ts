@@ -10,5 +10,6 @@ export const DeploymentTeardownRequestInputV1Schema = lazyZodSchema(() => z.stri
   targetLinkId: z.optional(DeploymentIdentifierV1Schema),
   requestKey: z.optional(DeploymentIdentifierV1Schema),
   reason: DeploymentTeardownReasonV1Schema,
+  removeEnvironment: z.optional(z.literal(true)),
 }));
 export type DeploymentTeardownRequestInputV1 = z.infer<typeof DeploymentTeardownRequestInputV1Schema>;

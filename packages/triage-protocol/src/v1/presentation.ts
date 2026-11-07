@@ -112,6 +112,25 @@ export function formatTriageTimestampV1(
 }
 
 /**
+ * A compact, locale-owned age for a tabular Age column or a scanned rail ("18m", "2h", "3d", "10w", "2y"). The row's accessible
+ * description keeps the full relative phrase; this is only what fits.
+ */
+export function formatTriageCompactAgeV1(locale: string, atMs: number, nowMs: number): string {
+  const seconds = Math.max(0, Math.round((nowMs - atMs) / 1000));
+  const [value, unit] = seconds < 3_600
+    ? [Math.max(1, Math.round(seconds / 60)), 'minute' as const]
+    : seconds < 86_400
+      ? [Math.round(seconds / 3_600), 'hour' as const]
+      : seconds < 30 * 86_400
+        ? [Math.round(seconds / 86_400), 'day' as const]
+        // Weeks up to a year, then years: a narrow month ("3m") would read as minutes in this column.
+        : seconds < 365 * 86_400
+          ? [Math.round(seconds / (7 * 86_400)), 'week' as const]
+          : [Math.round(seconds / (365 * 86_400)), 'year' as const];
+  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value);
+}
+
+/**
  * The declared number format, applied. `compact` is a contract vocabulary, so
  * honouring it in one place is what keeps two sources from presenting the same
  * declared format differently in one list.
@@ -254,16 +273,31 @@ export function projectTriageDetailFieldsV1(
  * source's translated code-specific explanation before the localized fallback.
  * The failure itself is untouched and remains available to diagnostics.
  */
+/** Incumbent source repair copy, shared by Settings and explicit source-language Action outcomes. */
+export const TRIAGE_SOURCE_FAILURE_COPY_V1: Readonly<Record<TriageSourceFailureV1['class'], string>> = Object.freeze({
+    authentication: 'The connected account is no longer authorized. Reconnect it in Connected Accounts.',
+    permission: 'The connected account cannot see this scope. Grant it access at the provider.',
+    rateLimit: 'The provider is rate limiting this account. Try again shortly.',
+    transient: 'The provider could not be reached. Try again.',
+    unsupportedContract: 'The provider returned something this version cannot read.',
+    unknown: 'The provider could not be read.',
+});
+
 export function describeTriageSourceFailureV1(
     failure: TriageSourceFailureV1 | null,
     fallback: string,
     translate?: (key: string, fallback?: string) => string,
+    /** Explicit opt-in for a source Action without a client translator; existing localized callers stay unchanged. */
+    fallbackLocale?: 'en',
 ): string {
-    if (failure === null || translate === undefined) return fallback;
+    if (failure === null) return fallback;
     // Generic retry advice must not replace an operation's warning that a write
     // may already have taken effect. Access/contract guidance remains actionable.
-    const classified = failure.class === 'authentication' || failure.class === 'permission' || failure.class === 'unsupportedContract'
-        ? translate(`plugins.triage.sourceSettings.failure.${failure.class}`, fallback)
+    const hasAccessGuidance = failure.class === 'authentication' || failure.class === 'permission' || failure.class === 'unsupportedContract';
+    const contextual = hasAccessGuidance && fallbackLocale === 'en' ? TRIAGE_SOURCE_FAILURE_COPY_V1[failure.class] : fallback;
+    if (translate === undefined) return contextual;
+    const classified = hasAccessGuidance
+        ? translate(`plugins.triage.sourceSettings.failure.${failure.class}`, contextual)
         : fallback;
     return translate(`plugins.triage.sourceFailure.${failure.code}`, classified);
 }

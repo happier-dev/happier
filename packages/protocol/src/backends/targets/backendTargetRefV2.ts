@@ -1,5 +1,6 @@
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 
 import {
   BackendTargetKeySchema,
@@ -138,6 +139,7 @@ function isBackendTargetKeyV2(value: string): boolean {
 export const BackendTargetKeyV2Schema = lazyZodSchema(() => z
   .string().check(z.refine(isBackendTargetKeyV2, 'Invalid V2 backend target key')));
 export type BackendTargetKeyV2 = z.infer<typeof BackendTargetKeyV2Schema>;
+export const BackendTargetKeyV2ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(BackendTargetKeyV2Schema));
 
 export function buildBackendTargetKeyV2(target: BackendTargetRefV2 | AgentExecutionTargetV1): BackendTargetKeyV2 {
   // Route by the declared discriminant before admission. Probing the Agent

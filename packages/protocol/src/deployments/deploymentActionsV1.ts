@@ -330,9 +330,12 @@ export const DeploymentTeardownRefusalDetailsV1Schema = lazyZodSchema(() => z.st
 }));
 export type DeploymentTeardownRefusalDetailsV1 = z.infer<typeof DeploymentTeardownRefusalDetailsV1Schema>;
 export const DeploymentTeardownReasonV1Schema = lazyZodSchema(() => z.enum(['manual', 'previewClosed', 'move', 'decommission']));
+/** Captured at teardown admission and retained alongside its final signed proof. */
+export const DeploymentTeardownDispositionV1Schema = lazyZodSchema(() => z.object({ removeEnvironment: z.literal(true) }));
 export const DeploymentTeardownInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
   reason: DeploymentTeardownReasonV1Schema,
+  removeEnvironment: z.optional(DeploymentTeardownDispositionV1Schema.shape.removeEnvironment),
   machines: z.optional(z.array(DeploymentIdentifierV1Schema).check(z.minLength(1),
     z.refine(values => new Set(values).size === values.length, { message: 'Teardown Machines must be unique.' }))),
 }));
@@ -370,6 +373,7 @@ export type DeploymentTeardownInputV1 = z.infer<typeof DeploymentTeardownInputV1
 export type DeploymentTeardownAdmissionInputV1 = z.infer<typeof DeploymentTeardownAdmissionInputV1Schema>;
 /** Only the installation-signed settlement writer can assert owned-resource absence. */
 export const DeploymentTeardownProofV1Schema = lazyZodSchema(() => z.strictObject({
+  removeEnvironment: z.optional(DeploymentTeardownDispositionV1Schema.shape.removeEnvironment),
   targetLinkRevision: DeploymentRevisionV1Schema,
   machines: z.array(DeploymentTargetLinkMachineV1Schema).check(z.minLength(1),
     z.refine(values => new Set(values.map(value => value.machineId)).size === values.length,

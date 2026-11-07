@@ -1,5 +1,13 @@
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetKeyV2ProtocolSchema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/plugins/agents';
+import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
+import { AgentExecutionTargetV1ProtocolSchema } from '@happier-dev/protocol/agents/executionTargetV1';
+
+/** Exact executable selection; configured Agent definitions retain their identity. */
+export const AgentExecutionTargetV1Schema: ProtocolComposableSchema<AgentExecutionTargetV1> = AgentExecutionTargetV1ProtocolSchema;
+
+/** Canonical target-key admission; catalog resolution still determines availability. */
+export const AgentTargetKeyV2Schema: ProtocolComposableSchema<string> = BackendTargetKeyV2ProtocolSchema;
 
 export { resolveModelDisplayName } from '@happier-dev/protocol/models/descriptor';
 
@@ -25,6 +33,9 @@ export type {
     PluginAgentContributionV2 as AgentContribution,
     PluginAgentExecutionRunCapabilitiesV2,
     PluginAgentSessionCapabilitiesV2,
+    AgentSessionCompactionCapability,
+    AgentSessionCompactionIdleCapability,
+    PluginAgentSessionCompactionCapabilityV2,
     PluginAgentToolsCapabilityV2,
     PluginAgentSkillsCapabilityV2,
     PluginAgentToolsDeliveryV2,

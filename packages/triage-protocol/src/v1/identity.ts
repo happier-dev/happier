@@ -5,6 +5,9 @@ import {
     defineProtocolUnion,
     TriageIdentifierV1ProtocolSchema,
     TriageCollisionScopeV1ProtocolSchema,
+    TriageSourceInstanceIdV1Schema,
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
@@ -28,24 +31,17 @@ export {
     TriageEntryRefV1JsonSchema,
     TriageIdentifierV1ProtocolSchema,
     TriageCollisionScopeV1ProtocolSchema,
+    TriageSourceInstanceIdV1Schema,
+    TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
 } from '@happier-dev/plugin-sdk/protocol';
-export type { TriageEntryRefV1 } from '@happier-dev/plugin-sdk/protocol';
+export type { TriageEntryRefV1, TriageSourceInstanceIdV1 } from '@happier-dev/plugin-sdk/protocol';
 
-/** The target-minted stable configured-instance identity is a lowercase UUID. */
-export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 =
-    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-/**
- * `CONTRACT.md` §3: the target mints this stable UUID inside the private
- * configured-instance payload. It is never a source-minted routing value, an
- * entry-identity component, or a Collection tag.
- */
-export const TriageSourceInstanceIdV1Schema = defineProtocolString({
-    minLength: 36,
-    maxLength: 36,
-    pattern: TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
+/** Stable identity in the configured triage.actions catalog. */
+export const TriageActionIdV1Schema = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
-export type TriageSourceInstanceIdV1 = ReturnType<typeof TriageSourceInstanceIdV1Schema.parse>;
 
 /** @internal Relative-only bounded one-line display text. */
 export const TriageTextV1ProtocolSchema = defineTriageSingleLineStringV1(

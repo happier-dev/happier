@@ -1,5 +1,6 @@
 export type { AgentContribution } from '../agents.js';
 export type { AgentExecutionTargetV1 } from '../agents.js';
+export { AgentExecutionTargetV1Schema } from '../agents.js';
 export type { AgentDefinitionCapabilityFacts } from '../agents.js';
 export type { AgentLocalControlDeclaration } from '../agents.js';
 export type { AgentModelConfig } from '../agents.js';
@@ -32,5 +33,6 @@ export type { PluginAgentSessionCapabilitiesV2 } from '../agents.js';
 export type { PluginCustomAgentDeclaration } from '../definePlugin.js';
 export type { PluginHostOwnedAgentDeclaration } from '../definePlugin.js';
 export { buildAgentTargetKeyV2 } from '../agents.js';
+export { AgentTargetKeyV2Schema } from '../agents.js';
 export { resolveModelDisplayName } from '../agents.js';
 export { projectAgentCapabilitiesV2FromDefinition } from '../agents.js';
