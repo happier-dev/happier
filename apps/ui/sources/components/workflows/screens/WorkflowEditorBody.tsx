@@ -1510,9 +1510,11 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const readinessNode = errorCount === 0 && runBlockedReason === null
         ? null
         : issuesRevealed ? validityNodeFor() : null;
-    // Until the draft is saved, Save is the one primary: Run now would run what isn't kept yet.
+    // Save leads while there is something to keep: unsaved edits (a never-saved draft once touched reads
+    // `unsaved`) or a failed save. A pristine new draft has nothing to save yet: its status reads "Not
+    // saved yet" alone and Run now stays the one primary (07 §2.3 item 10, §3 "One primary per view").
     const saveLeads = onSave !== undefined && documentEditable
-        && (props.saveStatus === undefined || ['notSaved', 'unsaved', 'failed'].includes(props.saveStatus.kind));
+        && (props.saveStatus === undefined || ['unsaved', 'failed'].includes(props.saveStatus.kind));
     const saveButton = !saveLeads ? null : (
         <RoundButton
             testID={compactLayout ? `${testIDPrefix}-phone-save` : `${testIDPrefix}-save`}
