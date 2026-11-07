@@ -7,6 +7,11 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
+
+/** The published page that explains requester Sessions on another person's Machine (plan 42 §8). */
+const SHARED_MACHINES_HELP_URL = 'https://docs.happier.dev/accounts/session-sharing';
+const openSharedMachinesHelp = () => { void openExternalUrl(SHARED_MACHINES_HELP_URL); };
 
 export type RequesterDisclosureModel = Readonly<{
   owner: string;
@@ -16,7 +21,6 @@ export type RequesterDisclosureModel = Readonly<{
   retention?: 'run' | 'trigger';
   /** Safe names from the resolved launch purpose projection, never credentials or Account ids. */
   signInPurposes?: readonly string[];
-  onLearnMore?: () => void;
 }>;
 
 /** App-only localization and scaled-text binding. The public presenter owns all layout. */
@@ -32,7 +36,7 @@ export function RequesterDisclosureContent({ model }: Readonly<{ model: Requeste
     icon={<Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />}
     model={{ title: t('machineRequester.runsOn', { owner: model.owner, machine: model.machine }),
       description: `${signIn} ${visibility}${purposes}`,
-      ...(model.onLearnMore ? { learnMore: { label: t('machineRequester.howShared'), onPress: model.onLearnMore } } : {}) }} />;
+      learnMore: { label: t('machineRequester.howShared'), onPress: openSharedMachinesHelp } }} />;
 }
 
 const host: HappierRequesterDisclosureHost = {
