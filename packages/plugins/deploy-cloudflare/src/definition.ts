@@ -1,4 +1,5 @@
 import type { DefinePluginInput } from '@happier-dev/plugin-sdk';
+import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLOUDFLARE_ACCOUNT_ID, cloudflareConnectedAccountRuntime } from './connectedAccounts/runtime.js';
 import { CLOUDFLARE_CALLBACK_URL, CLOUDFLARE_IDENTITY_SCOPES } from './connectedAccounts/oauth.js';
@@ -40,7 +41,17 @@ const tokenConfiguration = { ...accountConfiguration, fields: [...accountConfigu
     schema: { type: 'string', pattern: '^[a-fA-F0-9]{32}$' }, required: false, secret: false },
 ] } as const;
 
-const actions = { 'target-options-read': targetOptionsRead, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
+type CloudflareActionDeclarations = typeof tunnelActions & typeof zoneActions & typeof selectionActions
+  & typeof workerActions & typeof pagesLifecycleActions & Readonly<{
+    'target-options-read': typeof targetOptionsRead;
+    'targets-inspect-v1': typeof inspect;
+    'pages-link': typeof pagesLink;
+  }>;
+
+const actions: Readonly<{
+  [TId in keyof CloudflareActionDeclarations]: PluginActionDefinition<
+    Omit<CloudflareActionDeclarations[TId], 'run' | 'observeRead'>>;
+}> = { 'target-options-read': targetOptionsRead, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
 
 const deploymentTargets = { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
