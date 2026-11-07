@@ -104,7 +104,7 @@ describe('Claude SDK turn failure diagnostics', () => {
         } finally { await execution.dispose(); }
     });
 
-    it('settles the RUN89 weekly limit assistant row before any tool or result', async () => {
+    it('settles consecutive RUN89 weekly limit assistant rows before any tool or result', async () => {
         const exec = createSdkExecFixture();
         const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
         const operations = createClaudeAgentSdkTurnOperations({
@@ -119,20 +119,23 @@ describe('Claude SDK turn failure diagnostics', () => {
         const events: AgentSessionRuntimeEvent[] = [];
         native.watch(event => events.push(event));
         try {
-            await expect(native.send({ inputIds: ['weekly-input'], input: { text: 'prompt' },
-                delivery: { kind: 'newTurn', turnId: 'weekly-turn' } })).resolves.toEqual({ status: 'admitted' });
-            await exec.emit({ type: 'assistant', uuid: 'weekly-assistant', isApiErrorMessage: true,
-                isSidechain: false, error: 'rate_limit', message: { role: 'assistant', stop_reason: 'stop_sequence',
-                    content: [{ type: 'text', text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" }] } });
-            await vi.waitFor(() => expect(events.filter(event => event.kind === 'turn-failed')).toEqual([
-                expect.objectContaining({ turnId: 'weekly-turn', diagnostic: expect.objectContaining({
-                    code: 'claude_rate_limit', details: expect.objectContaining({ source: 'agent_session_error',
-                        runtimeAuthClassification: expect.objectContaining({ kind: 'usage_limit', limitCategory: 'usage_limit',
-                            serviceId: 'happier.agent.claude/claude-subscription', source: 'structured_provider_error' }),
-                        usageLimit: expect.objectContaining({ limitCategory: 'usage_limit' }) }),
-                }) }),
-            ]));
-            expect(events.filter(event => event.kind === 'turn-complete' || event.kind === 'tool-call')).toEqual([]);
+            for (const attempt of [1, 2]) {
+                const turnId = `weekly-turn-${attempt}`;
+                await expect(native.send({ inputIds: [`weekly-input-${attempt}`], input: { text: 'prompt' },
+                    delivery: { kind: 'newTurn', turnId } })).resolves.toEqual({ status: 'admitted' });
+                await exec.processes.at(-1)!.emit({ type: 'assistant', uuid: `weekly-assistant-${attempt}`, isApiErrorMessage: true,
+                    isSidechain: false, error: 'rate_limit', message: { role: 'assistant', stop_reason: 'stop_sequence',
+                        content: [{ type: 'text', text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" }] } });
+                await vi.waitFor(() => expect(events.filter(event => event.kind === 'turn-failed' && event.turnId === turnId)).toEqual([
+                    expect.objectContaining({ turnId, diagnostic: expect.objectContaining({
+                        code: 'claude_rate_limit', details: expect.objectContaining({ source: 'agent_session_error',
+                            runtimeAuthClassification: expect.objectContaining({ kind: 'usage_limit', limitCategory: 'usage_limit',
+                                serviceId: 'happier.agent.claude/claude-subscription', source: 'structured_provider_error' }),
+                            usageLimit: expect.objectContaining({ limitCategory: 'usage_limit' }) }),
+                    }) }),
+                ]));
+                expect(events.filter(event => event.kind === 'turn-complete' || event.kind === 'tool-call')).toEqual([]);
+            }
         } finally { await native.dispose('session_closed'); }
     });
 

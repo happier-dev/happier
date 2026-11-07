@@ -2090,11 +2090,11 @@ describe('VoiceAgentManager', () => {
   it.each([
     { mode: 'stream', provider: 'unified' }, { mode: 'send', provider: 'unified' },
     { mode: 'stream', provider: 'sdk' }, { mode: 'send', provider: 'sdk' },
-  ] as const)('preserves a native usage-limit category through Voice $mode from $provider and accepts the next turn', async ({ mode, provider }) => {
-    let refused = false;
+  ] as const)('settles two consecutive native usage-limit failures through Voice $mode from $provider and accepts the next turn', async ({ mode, provider }) => {
+    let refused = 0;
     const backend = createDeterministicBackend('quota-category', { onSend(request, publish) {
-      if (!refused) {
-        refused = true;
+      if (refused < 2) {
+        refused += 1;
         publish({ kind: 'turn-failed', turnId: request.delivery.turnId, diagnostic: {
           code: provider === 'sdk' ? 'claude_rate_limit' : 'claude.usage_limit',
           severity: 'error', message: 'The subscription is exhausted.',
@@ -2119,16 +2119,18 @@ describe('VoiceAgentManager', () => {
       const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
         idleTtlSeconds: 60, initialContext: '' });
-      if (mode === 'stream') {
-        const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'First question' });
-        const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
-        expect(events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
-        expect(events.some(event => event.t === 'done' || event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
-      } else {
-        const error = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'First question' }).catch(error => error);
-        expect(readExecutionRunErrorCode(error)).toBe('usage_limit');
+      for (const userText of ['First question', 'Second question']) {
+        if (mode === 'stream') {
+          const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText });
+          const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+          expect(events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+          expect(events.some(event => event.t === 'done' || event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
+        } else {
+          const error = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText }).catch(error => error);
+          expect(readExecutionRunErrorCode(error)).toBe('usage_limit');
+        }
+        expect(manager.readCurrentRuntimeAuthority(started.voiceAgentId)?.runtimeState).toBe('idle');
       }
-      expect(manager.readCurrentRuntimeAuthority(started.voiceAgentId)?.runtimeState).toBe('idle');
       await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Next question' }))
         .resolves.toEqual({ assistantText: 'The next turn completed.' });
     } finally { await manager.dispose(); }

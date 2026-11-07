@@ -8,6 +8,13 @@ import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/r
 import { createClaudeNativeRuntime } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
 import { createEventsFixture, createPluginContextFixture, createSdkExecFixture, createSessionHooksFixture, createTerminalHostFixture } from '../../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import { createClaudeUnifiedTerminalTurnOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations';
+import { createClaudeAgentSdkTurnOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/remote/sdk/session';
+import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from '@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { ConnectedServiceTemporaryThrottleRetryScheduler } from '@/daemon/connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
+import { applyConnectedServiceRuntimeAuthFailureSourceBinding, recoverConnectedServiceRuntimeFailure } from '@/daemon/connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailure';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { resolveContinuationResumePromptMode } from '@/daemon/connectedServices/continuation/switchRecovery';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { reloadConfiguration } from '@/configuration';
 import { createNativeAgentExecutionRunHostRuntime, createNativeAgentSessionInteractionHostRuntime } from './nativeAgentExecutionRun';
@@ -19,7 +26,108 @@ import type { ExecutionRunState } from './executionRunTypes';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
-it.each([false, true])('completes a Claude terminal child through the shared Session Run owner with its native reply (hook first=%s)', async hookFirst => {
+it('settles consecutive Claude SDK quota failures through real recovery with continuation disabled', async () => {
+    const sdk = createSdkExecFixture();
+    const boundary = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
+        { exec: sdk.service });
+    const runtime = createClaudeNativeRuntime({
+        resolveSupportsEffort: async () => false, resolveSupportsSystemPromptSnapshotOff: async () => false,
+        openSession: async ({ request }) => createClaudeAgentSdkTurnOperations({
+            ctx: boundary, directory: request.cwd, happierSessionId: request.sessionId,
+            launchEnv: {}, permissionMode: 'default',
+        }),
+    });
+    const rows = new Map<string, unknown>();
+    const recoveryDecisions: Array<Readonly<{ turnId: string; status: string; reason?: string }>> = [];
+    const switchCoordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+        leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: Date.now,
+        // Group persistence and native generation application are external
+        // boundaries. A selected single profile must never touch them.
+        loadState: async () => { throw new Error('No group state exists for this profile'); },
+        commitSwitch: async () => { throw new Error('A profile cannot commit a group switch'); },
+        applyGeneration: async () => { throw new Error('A profile cannot apply a group generation'); },
+    });
+    const temporaryThrottleScheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
+        nowMs: Date.now,
+        store: { read: key => rows.get(key) ?? null, write: (key, value) => { rows.set(key, value); } },
+        // The provider quota SDK and continuation transport are boundaries;
+        // no recovery is available while this weekly quota remains exhausted.
+        readUsageLimitReadiness: async () => ({ status: 'waiting' }),
+        resume: async () => ({ status: 'terminal', lastError: 'quota_remains_exhausted' }),
+    });
+    const host = createNativeAgentSessionInteractionHostRuntime({ runtime,
+        lease: { pluginId: 'happier.agent.claude', pluginVersion: '1.0.0', agentId: 'claude', localAgentId: 'claude',
+            occurrenceId: 'claude-consecutive-quota', isCurrent: () => true },
+        options: { cwd: '/tmp/claude-consecutive-quota', runId: 'claude-consecutive-quota', scope: 'session_owned',
+            backendId: 'claude', permissionMode: 'read_only',
+            async prepareRuntimeFailureRecovery({ diagnostic, interruptedOriginId, signal }) {
+                const details = diagnostic.details;
+                const failure = sanitizeConnectedServiceRuntimeFailureClassification(details && typeof details === 'object'
+                    && !Array.isArray(details) ? details.runtimeAuthClassification : null);
+                if (!failure) throw new Error('The SDK quota failure must retain its recovery classification');
+                const serviceId = 'happier.agent.claude/claude-subscription';
+                const profileId = 'quota-profile';
+                const resumePromptMode = await resolveContinuationResumePromptMode({ serviceId,
+                    readAccountSettings: () => ({ usageLimitRecoverySettingsV1: { resumePromptMode: 'off' } }),
+                });
+                const result = await recoverConnectedServiceRuntimeFailure({
+                    scope: { kind: 'run', runId: 'claude-consecutive-quota' },
+                    selection: { kind: 'profile', serviceId, profileId },
+                    classification: applyConnectedServiceRuntimeAuthFailureSourceBinding(failure,
+                        { serviceId, profileId, groupId: null, generation: null, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }),
+                    switchCoordinator, temporaryThrottleScheduler,
+                    continuation: { interruptedOriginId, resumePromptMode, recoveryKind: failure.kind,
+                        customResumePrompt: null }, signal, isCurrent: () => !signal.aborted, nowMs: Date.now,
+                });
+                recoveryDecisions.push({ turnId: interruptedOriginId, status: result.status,
+                    ...(result.status === 'failed' ? { reason: result.reason } : {}) });
+                if (result.status !== 'failed') throw new Error('An exhausted single profile cannot continue');
+                return result;
+            },
+        },
+        sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
+        createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+    });
+    const manager = new VoiceAgentManager({ createRuntime: () => host });
+    try {
+        const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+            idleTtlSeconds: 60, initialContext: '' });
+        for (const attempt of [1, 2]) {
+            const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: `Question ${attempt}` });
+            await vi.waitFor(() => expect(sdk.processes).toHaveLength(attempt));
+            const process = sdk.processes.at(-1)!;
+            await process.emit({ type: 'system', subtype: 'init', session_id: 'native-consecutive-quota', tools: [] });
+            await process.emit({ type: 'assistant', uuid: `weekly-error-${attempt}`, session_id: 'native-consecutive-quota',
+                isApiErrorMessage: true, isSidechain: false, error: 'rate_limit',
+                message: { role: 'assistant', stop_reason: 'stop_sequence', content: [{ type: 'text',
+                    text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" }] } });
+            await vi.waitFor(async () => {
+                const read = await manager.readTurnStream({ voiceAgentId, streamId, cursor: 0, waitForEvents: false });
+                expect(read.done).toBe(true);
+                expect(read.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+            });
+            expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle');
+        }
+        expect(recoveryDecisions).toEqual([
+            expect.objectContaining({ status: 'failed', reason: 'continuation_disabled' }),
+            expect.objectContaining({ status: 'failed', reason: 'continuation_disabled' }),
+        ]);
+        expect(new Set(recoveryDecisions.map(result => result.turnId)).size).toBe(2);
+        const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Next question' });
+        await vi.waitFor(() => expect(sdk.processes).toHaveLength(3));
+        await sdk.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false,
+            session_id: 'native-consecutive-quota', result: 'The next turn completed.' });
+        await vi.waitFor(async () => expect(await manager.readTurnStream({ voiceAgentId, streamId,
+            cursor: 0, waitForEvents: false })).toMatchObject({ done: true }));
+    } finally { temporaryThrottleScheduler.dispose(); await manager.dispose(); }
+});
+
+it.each([
+    { hookFirst: false, apiError: false },
+    { hookFirst: true, apiError: false },
+    { hookFirst: false, apiError: true },
+])('settles a Claude terminal child through the shared Session Run owner ($hookFirst, API error=$apiError)', async ({ hookFirst, apiError }) => {
     const terminal = createTerminalHostFixture();
     const hooks = createSessionHooksFixture();
     const boundary = createPluginContextFixture(terminal.service, createEventsFixture().service, { sessionHooks: hooks.service });
@@ -75,7 +183,7 @@ it.each([false, true])('completes a Claude terminal child through the shared Ses
             writeActivityMarker: async () => {}, getNowMs: () => 2,
         }));
         const execution = executeBoundedBackendRun({ runId, callId: run.callId, sidechainId: run.sidechainId,
-            startedAtMs: 1, params: run, controllers, runs, sendAcp: async () => {}, parentProvider: 'claude',
+            startedAtMs: 1, params: { ...run, localInputId: 'terminal-input' }, controllers, runs, sendAcp: async () => {}, parentProvider: 'claude',
             getNowMs: () => 2, boundedTimeoutMs: null,
             finishRun: async (_id, result) => { runs.set(runId, { ...runs.get(runId)!, ...result }); },
         });
@@ -89,6 +197,24 @@ it.each([false, true])('completes a Claude terminal child through the shared Ses
         const prompt = vi.mocked(terminal.service.injectUserPrompt).mock.calls[0]![1].text;
         await hook(providerSessionId, { hook_event_name: 'UserPromptSubmit', session_id: providerSessionId, prompt });
         expect(boundary.agentRuntime.transcripts.followSource).toHaveBeenCalledWith({ providerSessionId, replay: 'fresh' });
+        if (apiError) {
+            await native.observeSourceTranscript({ providerSessionId, sourceId: 'terminal-429', row: {
+                type: 'assistant', uuid: 'terminal-429', sessionId: providerSessionId,
+                isApiErrorMessage: true, apiErrorStatus: 429, apiError: 'long_context_credits_required', error: 'rate_limit',
+                message: { role: 'assistant', content: [{ type: 'text', text: 'Usage credits are required for long context.' }] },
+            } });
+            await execution;
+            expect(runs.get(runId)).toMatchObject({
+                status: 'failed', error: { code: 'claude.usage_limit', runtimeIssueV1: {
+                    source: 'usage_limit', usageLimit: { limitCategory: 'rate_limit' },
+                } },
+                inputTurns: { last: { inputIds: ['terminal-input'], state: 'failed' } },
+            });
+            expect(messages.filter(message => message.type === 'model-output')).toEqual([
+                expect.objectContaining({ fullText: 'Usage credits are required for long context.' }),
+            ]);
+            return;
+        }
         for (const [sourceId, row, phase] of [
             ['history', { type: 'assistant', uuid: 'history', sessionId: providerSessionId,
                 message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Old reply' }] } }, 'initial_replay'],
@@ -103,6 +229,7 @@ it.each([false, true])('completes a Claude terminal child through the shared Ses
         expect(messages).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'stopped' }));
         if (hookFirst) {
             await hook(providerSessionId, { hook_event_name: 'Stop', session_id: providerSessionId, last_assistant_message: text });
+            await hook(providerSessionId, { hook_event_name: 'SessionEnd', session_id: providerSessionId, reason: 'prompt_input_exit' });
             expect(messages).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'stopped' }));
         }
         await native.observeSourceTranscript({ providerSessionId, sourceId: 'terminal-final', row: {
@@ -111,7 +238,8 @@ it.each([false, true])('completes a Claude terminal child through the shared Ses
         } });
         await hook(providerSessionId, { hook_event_name: 'Stop', session_id: providerSessionId, last_assistant_message: text });
         await execution;
-        expect(runs.get(runId)).toMatchObject({ status: 'succeeded', summary: 'C26_TERMINAL_CHILD_OK' });
+        expect(runs.get(runId)).toMatchObject({ status: 'succeeded', summary: 'C26_TERMINAL_CHILD_OK',
+            inputTurns: { last: { inputIds: ['terminal-input'], state: 'completed' } } });
         expect(ctrl.turnInFlight).toBe(false);
         expect(ctrl.turnCount).toBe(1);
         expect(messages.filter(message => message.type === 'model-output')).toEqual([
