@@ -312,7 +312,8 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: 'thenBranch',
             editTarget,
-            label: t('workflows.editor.ifTrue'),
+            // 07 S14: the map names an If's alternatives Yes / Otherwise.
+            label: t('workflows.map.yes'),
             parentNodeId: nodeId,
             observed: false,
           });
@@ -436,6 +437,43 @@ export function indexWorkflowFlowRunStates(
     else occurrences.push(state);
   }
   return byNode;
+}
+
+/**
+ * The If alternatives a Run did not take, with everything inside them (07 S14 "Not taken").
+ *
+ * Only what the Run recorded decides it: an alternative is not taken when its sibling ran something
+ * and it ran nothing, or when the If itself was skipped because its condition was false and it had
+ * no Otherwise. An If that has not been decided yet takes nothing away.
+ */
+export function listWorkflowFlowNotTakenNodeIds(
+  projection: WorkflowFlowProjection,
+  runStates: ReadonlyMap<string, readonly WorkflowFlowNodeRunState[]> | undefined,
+): ReadonlySet<string> {
+  const notTaken = new Set<string>();
+  if (runStates === undefined || runStates.size === 0) return notTaken;
+  const ran = (nodeId: string): boolean => {
+    if ((runStates.get(nodeId)?.length ?? 0) > 0) return true;
+    return projection.nodesById.get(nodeId)?.childNodeIds.some(ran) === true;
+  };
+  const markAll = (nodeId: string): void => {
+    notTaken.add(nodeId);
+    projection.nodesById.get(nodeId)?.childNodeIds.forEach(markAll);
+  };
+  for (const node of projection.nodes) {
+    if (node.kind !== 'if') continue;
+    const branches = node.childNodeIds.filter((childNodeId) => {
+      const kind = projection.nodesById.get(childNodeId)?.kind;
+      return kind === 'thenBranch' || kind === 'otherwiseBranch';
+    });
+    const taken = branches.filter(ran);
+    if (taken.length > 0) {
+      branches.filter((branch) => !taken.includes(branch)).forEach(markAll);
+    } else if (runStates.get(node.nodeId)?.some((state) => state.lifecycle === 'skipped') === true) {
+      branches.forEach(markAll);
+    }
+  }
+  return notTaken;
 }
 
 /**

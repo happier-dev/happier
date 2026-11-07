@@ -200,3 +200,38 @@ describe('WorkflowFlowView run map anatomy (lab run-A)', () => {
         expect(screen.findByTestId('flow-node-approve-state')?.props.accessibilityLabel).toBe('workflows.invocationState.completed');
     });
 });
+
+describe('WorkflowFlowView map grammar (07 S14)', () => {
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+        { kind: 'parallel', id: 'lanes', failurePolicy: 'fail_stop', branches: [
+            { id: 'docs', blocks: [step('docs')] }, { id: 'tests', blocks: [step('tests')] },
+        ] },
+        { kind: 'if', id: 'passed', when: { kind: 'compare', operator: 'eq',
+            left: { kind: 'input', name: 'passed' }, right: { kind: 'literal', value: true } },
+        then: [step('tag')], otherwise: [step('summarize')] },
+    ] } as WorkflowDefinitionV1;
+
+    it('joins side-by-side lanes, separates If alternatives with "or" and marks the path a Run did not take', async () => {
+        const projection = projectWorkflowFlow(definition);
+        const screen = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            runStates={new Map([
+                ['passed', [{ nodeId: 'passed', invocationId: 'if-1', lifecycle: 'completed' as const }]],
+                ['summarize', [{ nodeId: 'summarize', invocationId: 'sum-1', lifecycle: 'running' as const }]],
+            ])} notStartedLabel="not started" />);
+        expect(screen.findByTestId('flow-join-lanes')?.findAll((node) => node.props.children === 'workflows.map.allLanesFinish:{"count":2}').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('flow-or-passed#otherwise')).not.toBeNull();
+        expect(screen.findByTestId('flow-join-passed')).toBeNull();
+        // The Yes path did not run while Otherwise did: its caption says so and its step stays quiet.
+        expect(screen.findByTestId('flow-node-passed#then-not-taken')).not.toBeNull();
+        expect(screen.findByTestId('flow-node-tag-not-started')).toBeNull();
+        expect(screen.findByTestId('flow-node-passed#otherwise-not-taken')).toBeNull();
+    });
+
+    it('takes nothing away before the If is decided', async () => {
+        const projection = projectWorkflowFlow(definition);
+        const screen = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            runStates={new Map([['docs', [{ nodeId: 'docs', invocationId: 'd-1', lifecycle: 'running' as const }]]])} notStartedLabel="not started" />);
+        expect(screen.findByTestId('flow-node-passed#then-not-taken')).toBeNull();
+        expect(screen.findByTestId('flow-node-tag-not-started')).not.toBeNull();
+    });
+});
