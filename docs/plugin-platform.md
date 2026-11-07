@@ -690,9 +690,10 @@ The same `confirmationWhen` declaration accepts
 completing or reopening a review. That scoped value also accepts an input
 predicate for input-dependent UI consequences. It applies only with
 host-stamped present-user authority on the UI surface; other requesters retain
-the danger/confirmation default. Omission retains that default everywhere.
-Local writes can overwrite data, so `writesLocal` alone is never an exemption;
-destructive and outward operations should retain review. Explicit user Ask
+their surface default. On CLI, `writesLocal` defaults to Direct unless an
+applicable `cli`, `default`, or flat input predicate declares confirmation.
+Destructive and outward operations, and confidential reads with confirmation
+metadata, retain Ask. Explicit user Ask
 still wins, and a waiver changes confirmation without granting human authority.
 
 The scoped form's optional `default` input predicate preserves conditional

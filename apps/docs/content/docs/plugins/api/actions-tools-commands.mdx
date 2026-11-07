@@ -66,11 +66,14 @@ In current 0.3 development source, declare
 `confirmationWhen: { presentUserUi: false }` for a reversible operation that
 people invoke in your UI, such as completing or reopening an item. The scoped
 value also accepts an input predicate when the consequence depends on the input.
-Keep accurate `dangerLevel` and `confirmation` wording: Agent, MCP, CLI, API,
+Keep accurate `dangerLevel` and `confirmation` wording: Agent, MCP, API,
 Voice and automation routed through UI retain their normal defaults. A flat
 input predicate in `confirmationWhen` instead controls the default on every
-surface. Local writes can overwrite data, so `writesLocal` alone does not make
-an operation direct; destructive and outward operations should retain review.
+surface. CLI `writesLocal` Actions default to Direct unless an applicable
+`cli`, `default`, or flat input predicate declares confirmation. Use
+`confirmationWhen: { presentUserUi: false, cli: true }` when a local operation
+has a consequence that still needs CLI review. Destructive and outward
+operations, and confidential reads with confirmation metadata, retain Ask.
 The person's explicit Ask setting takes precedence. Approval waivers change
 prompts, not the caller's execution authority.
 

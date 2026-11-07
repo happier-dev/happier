@@ -44,6 +44,24 @@ describe('PluginActionConfirmationV2Schema', () => {
     }).success).toBe(false);
   });
 
+  it('defaults CLI local edits to Direct while retaining declared consequences and explicit Ask', () => {
+    const policy = { dangerLevel: 'writesLocal' as const, confirmation: { title: 'Edit value?' } };
+    for (const declaration of [policy, { ...policy, confirmationWhen: { presentUserUi: false } }]) {
+      expect(pluginActionRequiresPresentUserIntent(declaration, 'cli', {}, 'account_automation')).toBe(false);
+      expect(pluginActionRequiresPresentUserIntent({ ...declaration, approvalRequiredByActionSettings: true }, 'cli')).toBe(true);
+      for (const surface of ['agent', 'mcp', 'api', 'ui', 'voice']) {
+        expect(pluginActionRequiresPresentUserIntent(declaration, surface)).toBe(true);
+      }
+    }
+    expect(pluginActionRequiresPresentUserIntent({ ...policy,
+      confirmationWhen: { presentUserUi: false, cli: true } }, 'cli')).toBe(true);
+    for (const dangerLevel of ['safe', 'writesRemote', 'externalSideEffect', 'destructive'] as const) {
+      // Safe Actions can carry confirmation for confidential reads; effect
+      // classification alone must not waive that disclosure decision.
+      expect(pluginActionRequiresPresentUserIntent({ ...policy, dangerLevel }, 'cli')).toBe(true);
+    }
+  });
+
   it('keeps reversible own-UI confirmation separate from danger, settings and other requesters', () => {
     const action = PluginActionContributionV2Schema.parse({
       id: 'set-complete', title: 'Set completion', execution: { target: 'daemon' },
@@ -54,7 +72,8 @@ describe('PluginActionConfirmationV2Schema', () => {
     expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(false);
     expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'account_automation')).toBe(true);
     expect(pluginActionRequiresPresentUserIntent(action, 'ui')).toBe(true);
-    for (const surface of ['agent', 'mcp', 'cli', 'api', 'voice', '']) {
+    expect(pluginActionRequiresPresentUserIntent(action, 'cli')).toBe(false);
+    for (const surface of ['agent', 'mcp', 'api', 'voice', '']) {
       expect(pluginActionRequiresPresentUserIntent(action, surface)).toBe(true);
     }
     expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true }, 'ui', undefined, 'present_user')).toBe(true);

@@ -649,6 +649,14 @@ export function pluginActionDeclarationRequiresConfirmationForInput(
       && !evaluateInputPredicate(predicate, input))) return false;
   }
 
+  // CLI local edits default to Direct; an applicable declaration or saved Ask
+  // still requires review. Other surfaces retain their existing defaults.
+  if (invocationSurface === 'cli' && policy.dangerLevel === 'writesLocal'
+    && (condition === undefined || ('presentUserUi' in condition
+      && condition.cli === undefined && condition.default === undefined))) {
+    return false;
+  }
+
   return policy.dangerLevel !== 'safe' || policy.confirmation !== undefined;
 }
 

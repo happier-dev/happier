@@ -699,7 +699,8 @@ function createChannelsPlugin() {
         description: 'Replaces a conversation connection’s provider setup and transport.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
-        dangerLevel: 'writesLocal',
+        // Replaces credentials and transport and can leave a history gap.
+        dangerLevel: 'destructive',
         confirmation: {
           title: 'Transfer conversation connection?',
           body: 'This replaces the saved provider setup and transport while retaining exact old-stop custody.',
@@ -767,7 +768,7 @@ function createChannelsPlugin() {
         description: 'Disables and removes a conversation connection after transport cleanup.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
-        dangerLevel: 'writesLocal',
+        dangerLevel: 'destructive',
         confirmation: {
           title: 'Delete conversation connection?',
           body: 'This disables the connection and waits for exact transport-stop proof before cleanup.',
@@ -890,7 +891,7 @@ function createChannelsPlugin() {
         description: 'Disables a conversation binding while retained delivery custody finishes safely.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
-        dangerLevel: 'writesLocal',
+        dangerLevel: 'destructive',
         confirmation: {
           title: 'Delete conversation binding?',
           body: 'This immediately disables new binding effects while retained ingress and delivery custody finish safely.',

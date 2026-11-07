@@ -150,8 +150,11 @@ describe('Channels core manifest', () => {
         expect(action?.dangerLevel, id).toBe('safe');
         expect(action?.confirmation, id).toBeUndefined();
       } else {
-        expect(action?.dangerLevel, id).toBe(id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.conversationStart
-          || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetupRemediate ? 'writesRemote' : 'writesLocal');
+        expect(action?.dangerLevel, id).toBe(id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete
+          || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingDelete
+          || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer ? 'destructive'
+          : id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.conversationStart
+            || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionSetupRemediate ? 'writesRemote' : 'writesLocal');
         expect(action?.confirmation, id).toMatchObject({
           title: expect.any(String), body: expect.any(String), confirmLabel: expect.any(String),
         });

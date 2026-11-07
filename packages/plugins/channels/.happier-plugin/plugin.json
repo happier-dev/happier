@@ -16233,7 +16233,7 @@
           "confirmLabel": "Transfer connection",
           "title": "Transfer conversation connection?"
         },
-        "dangerLevel": "writesLocal",
+        "dangerLevel": "destructive",
         "description": "Replaces a conversation connection’s provider setup and transport.",
         "execution": {
           "target": "daemon"
@@ -18564,7 +18564,7 @@
           "confirmLabel": "Delete connection",
           "title": "Delete conversation connection?"
         },
-        "dangerLevel": "writesLocal",
+        "dangerLevel": "destructive",
         "description": "Disables and removes a conversation connection after transport cleanup.",
         "execution": {
           "target": "daemon"
@@ -27085,7 +27085,7 @@
           "confirmLabel": "Delete binding",
           "title": "Delete conversation binding?"
         },
-        "dangerLevel": "writesLocal",
+        "dangerLevel": "destructive",
         "description": "Disables a conversation binding while retained delivery custody finishes safely.",
         "execution": {
           "target": "daemon"

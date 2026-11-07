@@ -1361,13 +1361,15 @@ surface default uses Protocol's `pluginActionRequiresPresentUserIntent`, the sam
 owner as the daemon gate; shared Actions policy then applies explicit requirements
 and waivers. **Default** clears the surface override, **Allowed** waives it, and
 reset restores the manifest default. Non-safe Actions require confirmation on
-UI, Agent, MCP, CLI and API by default. `confirmationWhen` is the sole portable
+UI, Agent, MCP and API by default. CLI local writes default to Direct unless an
+applicable `cli`, `default`, or flat input predicate declares confirmation;
+destructive and outward operations retain Ask, as do confidential reads with
+confirmation metadata. `confirmationWhen` is the sole portable
 declaration of conditional confirmation; its canonical owner is shared by
 discovery, Settings and invocation. A flat input predicate applies on every
 surface; `{ presentUserUi: false }` skips the default only for the host-proved
 present user's UI operation, retaining automation defaults. The scoped value
-also accepts an input predicate. `writesLocal` alone does not assert that an
-operation is reversible. Explicit Ask and surface waivers remain user policy;
+also accepts an input predicate. Explicit Ask and surface waivers remain user policy;
 conditional defaults do not grant human authority. Plugin/background defaults
 remain unchanged.
 The scoped form also accepts `default: <input predicate>` for the other
