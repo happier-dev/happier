@@ -86,12 +86,16 @@ function createCell<T>(initial: T) {
 
 export type WorkflowLibraryDefinition = WorkflowDefinitionListResultV1['definitions'][number];
 
+// A deletion acknowledgement is brief feedback, including when the editor deletes before landing here.
+const DELETION_RECEIPT_VISIBLE_MS = 6_000;
+
 type DefinitionsState = ReadStatus & Readonly<{
     definitions: readonly WorkflowLibraryDefinition[];
     pluginWorkflows: readonly WorkflowPluginSourceV1[];
     nextCursor: string | null;
     loadedPages: number;
     deletedDefinitionId: string | null;
+    deletedDefinitionTitle: string | null;
 }>;
 
 const INITIAL_DEFINITIONS: DefinitionsState = Object.freeze({
@@ -101,6 +105,7 @@ const INITIAL_DEFINITIONS: DefinitionsState = Object.freeze({
     nextCursor: null,
     loadedPages: 0,
     deletedDefinitionId: null,
+    deletedDefinitionTitle: null,
 });
 
 function affectsWorkflowDefinitions(event: HomeAccountChangeEvent, lifetime: ServerAccountScopeLifetime): boolean {
@@ -120,6 +125,20 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
     let definitionReaderCount = 0;
     let unsubscribeDefinitionChange: (() => void) | null = null;
     let deletionRetirement: Readonly<{ dispose(): void }> | null = null;
+    let deletionExpiry: ReturnType<typeof setTimeout> | null = null;
+
+    function disposeDeletionReceipt(): void {
+        deletionRetirement?.dispose(); deletionRetirement = null;
+        if (deletionExpiry !== null) clearTimeout(deletionExpiry);
+        deletionExpiry = null;
+    }
+
+    function dismissDeletion(definitionId: string): void {
+        const current = definitionsCell.get();
+        if (current.deletedDefinitionId !== definitionId) return;
+        disposeDeletionReceipt();
+        definitionsCell.set({ ...current, deletedDefinitionId: null, deletedDefinitionTitle: null });
+    }
     // What a closed library missed. The wake observer outlives its readers, so a reopen keeps the
     // last-good rows and reads only when this lifetime never completed a list, a coarse wake
     // arrived, or named rows (or Machine plugin sources) changed while nothing showed them.
@@ -141,15 +160,12 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
                     const cached = definitionsCell.get();
                     const current = cached.scopeKey === scopeKey ? cached : { ...INITIAL_DEFINITIONS, scopeKey };
+                    disposeDeletionReceipt();
                     definitionsCell.set({ ...current, deletedDefinitionId,
+                        deletedDefinitionTitle: current.definitions.find(row => row.definitionId === deletedDefinitionId)?.metadata?.title ?? null,
                         definitions: current.definitions.filter(row => !event.deletedArtifactIds?.includes(row.definitionId)) });
-                    deletionRetirement?.dispose();
-                    deletionRetirement = lifetime.onRetire(() => {
-                        const latest = definitionsCell.get();
-                        if (latest.scopeKey === scopeKey && latest.deletedDefinitionId !== null) {
-                            definitionsCell.set({ ...latest, deletedDefinitionId: null });
-                        }
-                    });
+                    deletionRetirement = lifetime.onRetire(() => dismissDeletion(deletedDefinitionId));
+                    deletionExpiry = setTimeout(() => dismissDeletion(deletedDefinitionId), DELETION_RECEIPT_VISIBLE_MS);
                 }
                 // A deletion receipt supplies landing feedback. Its feed row,
                 // rather than this local acknowledgement, owns query refresh.
@@ -238,7 +254,7 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
             if (addressed && definitionReaderCount === 0) {
                 followedLifetime = null;
                 unsubscribeDefinitionChange?.(); unsubscribeDefinitionChange = null;
-                deletionRetirement?.dispose(); deletionRetirement = null;
+                disposeDeletionReceipt();
             }
             // The retained read cache still consumes acknowledged local deletions
             // while an editor is open; only mounted readers demand a refetch.
@@ -338,6 +354,7 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                     nextCursor: page.nextCursor ?? null,
                     loadedPages,
                     deletedDefinitionId: current.deletedDefinitionId,
+                    deletedDefinitionTitle: current.deletedDefinitionTitle,
                 };
                 definitionsCell.set(sameStrictJsonValue(current, next) ? current : next);
                 followedLifetime = lifetime;
@@ -495,15 +512,10 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
         demand: demandDefinitions,
         retry: () => { definitionsInFlight?.controller.abort(); void refreshDefinitions(); },
         loadMore: () => { void loadMoreDefinitions(); },
-        dismissDeletion(definitionId: string) {
-            const current = definitionsCell.get();
-            if (current.deletedDefinitionId !== definitionId) return;
-            definitionsCell.set({ ...current, deletedDefinitionId: null });
-            deletionRetirement?.dispose(); deletionRetirement = null;
-        },
+        dismissDeletion,
         reset() {
             unsubscribeDefinitionChange?.(); unsubscribeDefinitionChange = null;
-            deletionRetirement?.dispose(); deletionRetirement = null;
+            disposeDeletionReceipt();
             definitionsInFlight?.controller.abort();
             definitionsCell.set(INITIAL_DEFINITIONS); definitionsInFlight = null;
             followedLifetime = null; closedChangedIds.clear(); closedPluginSources = false;
@@ -534,6 +546,7 @@ export type WorkflowDefinitionLibrary = Readonly<{
     definitions: readonly WorkflowLibraryDefinition[];
     pluginWorkflows: readonly WorkflowPluginSourceV1[];
     deletedDefinitionId: string | null;
+    deletedDefinitionTitle: string | null;
     hasMore: boolean;
     loadingMore: boolean;
     loadMoreFailed: boolean;
@@ -541,7 +554,7 @@ export type WorkflowDefinitionLibrary = Readonly<{
     loadMore: () => void;
 }>;
 
-/** The landing view owns how long its local acknowledgement remains visible. */
+/** Leaving the landing view can dismiss its acknowledgement before the reader expires it. */
 export function dismissWorkflowLibraryDeletionReceipt(definitionId: string): void {
     activeDefinitionLibrary.dismissDeletion(definitionId);
 }
@@ -555,6 +568,7 @@ const INACTIVE_DEFINITION_LIBRARY: WorkflowDefinitionLibrary = Object.freeze({
     definitions: INITIAL_DEFINITIONS.definitions, pluginWorkflows: INITIAL_DEFINITIONS.pluginWorkflows,
     hasMore: false, loadingMore: false, loadMoreFailed: false,
     deletedDefinitionId: null,
+    deletedDefinitionTitle: null,
     retry: retryDefinitions, loadMore: requestMoreDefinitions,
 });
 
@@ -586,6 +600,7 @@ export function useWorkflowDefinitionLibrary(options?: Readonly<{
         definitions: owned ? state.definitions : INITIAL_DEFINITIONS.definitions,
         pluginWorkflows: owned ? state.pluginWorkflows : INITIAL_DEFINITIONS.pluginWorkflows,
         deletedDefinitionId: owned ? state.deletedDefinitionId : null,
+        deletedDefinitionTitle: owned ? state.deletedDefinitionTitle : null,
         hasMore: owned && state.nextCursor !== null,
         loadingMore: owned && state.loadingMore,
         loadMoreFailed: owned && state.loadMoreFailed,

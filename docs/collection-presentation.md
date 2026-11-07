@@ -194,7 +194,8 @@ control and built-in `CollectionSpaceTitle`. The built-in adapter retains its
 icons, shortcuts and domain editing Actions; a read-only lens needs only an
 `onSelect` callback. `HappierCollectionSpacesStrip` owns the strip itself (its scroller, keeping
 the selected tab in view, and the add control's place); core's `CollectionSpacesStrip` and the public
-`CollectionSavedViewsStrip` both draw it. The host supplies the leaves a portable package cannot own
+`CollectionSavedViewsStrip` both draw it. With fewer than two views it draws no switcher or add row;
+the title menu retains view creation. The host supplies the leaves a portable package cannot own
 through the presentation host's `collectionSpacesStrip`: the sliding tab bar, the edge mask, drag,
 digit shortcuts and swipe. A hosted-web realm has no such host and draws the public page tabs without
 them. Plugin drags carry a `plugin:<id>/saved-views` item through the same `EntityFlatReorder`, and

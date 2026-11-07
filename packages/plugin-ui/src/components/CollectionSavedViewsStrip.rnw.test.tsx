@@ -34,6 +34,25 @@ function mount(element: ReactElement, host?: Partial<NonNullable<PluginUiPresent
 }
 
 describe('public CollectionSavedViewsStrip', () => {
+  it('hides a lone view and its add row, then restores switching when another view arrives', () => {
+    const onSelect = vi.fn();
+    const onAdd = vi.fn();
+    const view = mount(<CollectionSavedViewsStrip scope="account-a" items={VIEWS.slice(0, 1)} selectedId="mine"
+      labels={LABELS} onSelect={onSelect} onAdd={onAdd} />);
+    try {
+      expect(view.container.querySelector('[role="tablist"]')).toBeNull();
+      expect(view.container.querySelector('[aria-label="New view"]')).toBeNull();
+    } finally { view.unmount(); }
+    const multiple = mount(<CollectionSavedViewsStrip scope="account-a" items={VIEWS.slice(0, 2)} selectedId="mine"
+      labels={LABELS} onSelect={onSelect} onAdd={onAdd} />);
+    try {
+      expect(multiple.container.querySelectorAll('[role="tab"]')).toHaveLength(2);
+      act(() => { (multiple.container.querySelectorAll('[role="tab"]')[1] as HTMLElement).click(); });
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith('team');
+      expect(multiple.container.querySelector('[aria-label="New view"]')).not.toBeNull();
+    } finally { multiple.unmount(); }
+  });
+
   it('draws a named glyph tab per view on the hosted-web page strip, selects one and offers add', () => {
     const onSelect = vi.fn();
     const onAdd = vi.fn();

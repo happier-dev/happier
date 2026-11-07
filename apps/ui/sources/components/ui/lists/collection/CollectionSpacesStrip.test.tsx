@@ -22,6 +22,14 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
 import { CollectionSpacesStrip } from './CollectionSpacesStrip';
 
 describe('CollectionSpacesStrip', () => {
+    it('omits switching and add controls when only the default view exists', async () => {
+        const screen = await renderScreen(<CollectionSpacesStrip testIDPrefix="single-space" accessibilityLabel="Spaces"
+            items={[{ id: 'all', name: 'All workflows', icon: { kind: 'icon', name: 'list' } }]}
+            selectedId="all" onSelect={() => {}} addLabel="New space" onAdd={() => {}} />);
+        expect(screen.findHostByTestId('single-space')).toBeNull();
+        expect(screen.findHostByTestId('single-space-add')).toBeNull();
+    });
+
     // The + sits between the list title above and the group labels below: its hit area leaves the strip's 4 px
     // insets to their own reach, and splits the 2 px gap to the last space tab, so no two hit areas overlap.
     it('keeps the new-space hit area out of the title above it and the tab beside it', async () => {
@@ -30,7 +38,10 @@ describe('CollectionSpacesStrip', () => {
                 <CollectionSpacesStrip
                     testIDPrefix="spaces"
                     accessibilityLabel="Spaces"
-                    items={[{ id: 'a', name: 'Mine', icon: { kind: 'icon', name: 'list' } }]}
+                    items={[
+                        { id: 'a', name: 'Mine', icon: { kind: 'icon', name: 'list' } },
+                        { id: 'b', name: 'Release', icon: { kind: 'icon', name: 'list' } },
+                    ]}
                     selectedId="a"
                     onSelect={() => {}}
                     addLabel="New space"

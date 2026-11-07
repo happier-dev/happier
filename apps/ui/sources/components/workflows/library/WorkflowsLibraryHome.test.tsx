@@ -645,7 +645,7 @@ describe('workflow library page anatomy', () => {
             expect(row('10000000-0000-4000-8000-000000000001').props.busy).toBe(false);
         }
     });
-    it('keeps a deleting workflow busy until acknowledgement, then presents a deletion receipt', async () => {
+    it('keeps a deleting workflow busy until acknowledgement, then names its temporary deletion receipt', async () => {
         const deleted = new Set<string>();
         const ids = ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002'];
         let settleDelete!: (value: unknown) => void;
@@ -704,6 +704,12 @@ describe('workflow library page anatomy', () => {
         });
         expect(screen.findHostByTestId('workflows-home:deleted')).not.toBeNull();
         expect(nativeAlert).toHaveBeenCalledTimes(2);
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
+            .toBe('Saved workflow');
+        // Both deletions used the real Action/HTTP path. Let the reader's acknowledgement expire
+        // without dismissing it from the test or leaving the page.
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:deleted')).toBeNull(), { timeout: 10_000 });
     });
     it('shows one loading status rather than selectable placeholder workflows before the library is known', async () => {
         execute.mockImplementation(() => new Promise(() => {}));

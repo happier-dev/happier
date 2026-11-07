@@ -234,7 +234,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             )}
         />}
         {deleted ? <View testID="workflows-home:deleted-focus">
-            <SurfaceStateCard testID="workflows-home:deleted" size="line" kind="success" title={t('common.deleted')} accessibilitySemantics="status" />
+            <SurfaceStateCard testID="workflows-home:deleted" size="line" kind="success" title={t('common.deleted')}
+                reason={library.deletedDefinitionTitle ?? t('navigation.automation')} accessibilitySemantics="status" />
         </View> : null}
         {/* The space header (R9, R8-7): the same title chevron, filter, strip and condition tokens as the column, over one draft. */}
         {/* A phone keeps the strip on the line of the title it belongs to; the search takes its own line below. */}

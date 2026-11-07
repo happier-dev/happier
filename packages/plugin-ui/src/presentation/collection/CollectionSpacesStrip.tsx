@@ -162,6 +162,8 @@ export const HappierCollectionSpacesStrip = memo(function HappierCollectionSpace
     onTabLayout: handleTabLayout,
     ...(wrapTab === undefined ? {} : { wrapTab }),
   }), [accessibilityLabel, handleTabLayout, items, onSelect, renderTabs, selectedId, testIDPrefix, wrapTab]);
+  // The title already names the sole view; creation remains available in its title menu.
+  if (items.length < 2) return null;
   return (
     <View testID={props.testIDPrefix} style={stripStyle}>
       {mask.wrapScroller(

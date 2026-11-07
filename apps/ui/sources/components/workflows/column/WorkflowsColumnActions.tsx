@@ -74,6 +74,8 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                 open={moreOpen}
                 onOpenChange={setMoreOpen}
                 items={moreItems}
+                rowKind="item"
+                itemRowProps={CREATION_MENU_ROW_PROPS}
                 onSelect={(id) => {
                     setMoreOpen(false);
                     if (id === 'trigger') { setNewTriggerOpen(true); return; }
@@ -102,6 +104,8 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                     open={addOpen}
                     onOpenChange={setAddOpen}
                     items={addItems}
+                    rowKind="item"
+                    itemRowProps={CREATION_MENU_ROW_PROPS}
                     onSelect={(id) => {
                         setAddOpen(false);
                         if (id === 'trigger') { setNewTriggerOpen(true); return; }
@@ -140,6 +144,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
  * band's own padding: the title block starts right after it and paints over anything further.
  */
 const BAND_EDGES = { leading: 0, trailing: 0, bottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop } as const;
+const CREATION_MENU_ROW_PROPS = { subtitleLines: 2 } as const;
 
 const styles = StyleSheet.create(() => ({
     row: {
