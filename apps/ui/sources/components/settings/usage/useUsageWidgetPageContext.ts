@@ -8,6 +8,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommandDefinitions } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { USAGE_PERIODS, getUsagePeriodDefinition, type UsagePeriod } from '@/sync/api/account/usagePeriods';
 import { t } from '@/text';
+import type { UsageHistoryModel } from './useUsageHistory';
+import { describeUsageHistoryRead } from './widgets/usageBodyKit';
 import { applyUsageWidgetPageScope, describeUsageWidgetSlotValue, readUsageWidgetPageContext, readUsageWidgetPageScope, readUsageWidgetQueryOverrides, resolveUsageWidgetPageInitialQuery,
     resolveUsageWidgetPeriod, type UsageWidgetPageInitialFilters, type UsageWidgetPageScope, type UsageWidgetQueryOverrides } from './usageWidgetPageContext';
 
@@ -118,7 +120,11 @@ export type UsageWidgetPagePublicationInput = Readonly<{
     retryRead?: () => void | Promise<unknown>;
     retryLayouts?: () => Promise<unknown>;
     filterCommands?: readonly Readonly<{ field: string; id: string; title: string; invoke(): boolean | Promise<boolean> }>[];
+    /** The shown wide window's history read (`useUsageHistory`); its Read now and Cancel are page commands. */
+    history?: UsageHistoryModel | null;
 }>;
+
+export type UsagePageHistoryFact = Readonly<{ text: string; label: string; accessibilityLabel: string; failed: boolean; onPress(): void }>;
 
 function pageCommandKey(kind: string, ...ids: string[]): string {
     return JSON.stringify([kind, ...ids]);
@@ -132,6 +138,8 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     selectFilter(field: string, id: string): Promise<boolean>;
     retryRead(): Promise<boolean>;
     retryLayouts(): Promise<boolean>;
+    /** The history read's one fact and control for the page header; null once every Session was read. */
+    history: UsagePageHistoryFact | null;
 }> {
     const { page } = input;
     const descendantCommands = useCurrentUiContextComposedCommands();
@@ -152,6 +160,17 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
         return await current.selectLayout(layoutId);
     }, [canChange]);
 
+    const historyRead = describeUsageHistoryRead(input.history?.state ?? null);
+    const historyTitle = historyRead ? t(historyRead.operation === 'cancel' ? 'usage.board.page.historyCancelCommand' : 'usage.board.page.historyReadCommand') : null;
+    const runHistory = React.useCallback((operation: 'read' | 'cancel'): boolean => {
+        const history = latest.current.history;
+        if (!canChange() || !history) return false;
+        // The read lasts as long as the window's history needs. Its progress and settlement are the
+        // history state the page shows, so the command returns once started instead of holding its caller.
+        void (operation === 'cancel' ? history.cancel() : history.readNow()).catch(() => {});
+        return true;
+    }, [canChange]);
+
     const definitions = useCurrentUiContextLocalCommandDefinitions([
         ...USAGE_PERIODS.map(period => ({ key: pageCommandKey('period', period),
             title: t(getUsagePeriodDefinition(period).translationKey), invoke: () => page.setPeriod(period) })),
@@ -161,6 +180,8 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
         ...(input.layouts ?? []).map(layout => ({ key: pageCommandKey('layout', layout.id), title: layout.name, invoke: () => applyLayout(layout.id) })),
         ...(input.retryRead ? [{ key: pageCommandKey('retry', 'read'), title: t('usage.board.page.retryRead'),
             invoke: async () => { await input.retryRead!(); return true; } }] : []),
+        ...(historyRead && historyTitle ? [{ key: pageCommandKey('history', historyRead.operation), title: historyTitle,
+            invoke: () => runHistory(historyRead.operation) }] : []),
         ...(input.retryLayouts ? [{ key: pageCommandKey('retry', 'layouts'), title: `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`,
             invoke: async () => { await input.retryLayouts!(); return true; } }] : []),
     ], canChange);
@@ -190,5 +211,11 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const selectFilter = React.useCallback((field: string, id: string) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command), [invoke]);
     const retryRead = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'read'))?.command), [invoke]);
     const retryLayouts = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'layouts'))?.command), [invoke]);
-    return { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts };
+    const historyOperation = historyRead?.operation;
+    const history = React.useMemo((): UsagePageHistoryFact | null => historyRead && historyTitle && historyOperation ? {
+        text: historyRead.text, label: historyRead.label, accessibilityLabel: historyTitle, failed: historyRead.failed,
+        // The header's control runs the published command, never a second path to the Action.
+        onPress: () => { void invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('history', historyOperation))?.command); },
+    } : null, [historyRead?.text, historyRead?.label, historyRead?.failed, historyTitle, historyOperation, invoke]);
+    return { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts, history };
 }

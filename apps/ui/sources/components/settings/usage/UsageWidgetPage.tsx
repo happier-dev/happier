@@ -36,7 +36,6 @@ import {
 import { useCorePageWidgetAreaLayoutBar } from '@/components/widgets/area/useCorePageWidgetAreaLayoutBar';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { resolveAvailableCostModes } from '@/sync/api/account/usageAnalytics';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { t } from '@/text';
 import { UsageFilterBar } from './UsageFilterBar';
@@ -56,7 +55,6 @@ import {
 } from './useUsageWidgetPageContext';
 import type {
   UsageWidgetPageInitialFilters,
-  UsageWidgetPageScope,
   UsageWidgetQueryOverrides,
 } from './usageWidgetPageContext';
 import { setUsageWidgetMetric } from './usageWidgetActions';
@@ -66,7 +64,10 @@ import {
   useUsageWidgetPageRetry,
   useUsageWidgetBatchSelection,
   useUsageWidgetBatchInventorySlice,
+  useUsageWidgetBatchCostBasisOptions,
+  useUsageWidgetBatchHistory,
 } from './widgets/usageWidgetBatch';
+import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
 import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
@@ -338,7 +339,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     },
     [metricApproval.requestApproval, metricLifetime, props.port, ready, usageWidgets],
   );
-  const costBasisOptions = facts.costBasisOptions;
+  const costBasisOptions = useUsageWidgetBatchCostBasisOptions();
   // Cost bases are named by the first usage read; until it answers (or fails) the toolbar holds the chip's room.
   // The toolbar's second row is held from first paint too: until the layout answers, the widgets it follows are unknown.
   const layoutLoading = layout.state.status === 'loading';
@@ -355,7 +356,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   }))), [scopeFilters]);
   const pageReadRetry = useUsageWidgetPageRetry();
   const homeUnavailable = useActiveHomeUnavailable();
-  const { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts } = usePublishUsageWidgetPageContext({
+  const historyRead = useUsageWidgetBatchHistory();
+  const { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts, history } = usePublishUsageWidgetPageContext({
     page,
     authority: props.authority,
     layoutId: selectedLayoutId,
@@ -365,6 +367,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     selectLayout: selectAreaLayout,
     retryRead: facts.failed && pageReadRetry ? pageReadRetry : undefined,
     retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
+    history: historyRead,
   });
   // The bar precedes publication because that publication consumes its acknowledged inventory.
   React.useLayoutEffect(() => { publishedLayoutSelection.current = selectLayout; }, [selectLayout]);
@@ -403,7 +406,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   // The selected document and the named-view inventory settle independently.
   return (
     <>
-      <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
+      <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
       <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
       <WidgetAreaLayoutBar
@@ -459,7 +462,6 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
 function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilterFallback: boolean) {
   const accounting = slices.find(slice => slice.accounting)?.accounting;
   const latest = accounting ? readUsagePageAsOfMs(slices) : null;
-  const costBasisOptions: readonly UsageWidgetPageScope['costBasis'][] = accounting ? resolveAvailableCostModes(accounting.totals.cost) : [];
   return {
     // Until unfiltered inventory answers, keep the existing displayed-result choices.
     filterFallback: needsFilterFallback ? slices : null,
@@ -471,7 +473,6 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       observedAt: latest === null ? null : formatUsageObservedAt(latest),
       machines: accounting?.breakdowns?.machine?.length ?? null,
       agents: accounting?.breakdowns?.agent?.length ?? null,
-      costBasisOptions,
       costBasisPending: !accounting && slices.every(slice => readUsageCoverageGaps(slice, ['accounting'])
         .every(gap => gap.status === 'pending' || gap.status === 'not_loaded')),
       coverageIncomplete: slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
@@ -491,11 +492,13 @@ function UsagePageHeader(
   props: Readonly<{
     facts: ReturnType<typeof readUsagePageFacts>['facts'];
     retry: (() => void) | null;
+    /** Sessions a wide window has not read yet, with Read now (or a running read with Cancel). */
+    history?: UsagePageHistoryFact | null;
     /** A session's own usage: the page is about that session, so it opens with its name (`surf-SES`). */
     sessionId?: string;
   }>,
 ) {
-  const { retry } = props;
+  const { retry, history } = props;
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const facts = React.useMemo((): PageHeaderMetaFact[] => {
     // Shared read progress, failure and partial coverage are said once for the page.
@@ -506,7 +509,11 @@ function UsagePageHeader(
       ...(failed && retry ? [{ key: 'retry', text: t('common.retry'), onPress: retry,
         accessibilityLabel: t('usage.board.page.retryRead'), testID: 'usage-page.header.retry' }] : []),
       ...(newerServer ? [{ key: 'newerServer', text: newerServer, testID: 'usage-page.header.newerServer' }] : []),
-      ...(partial ? [{ key: 'partial', text: partial, testID: 'usage-page.header.partial' }] : []),
+      // Sessions not read yet are why the shown activity is partial: their count and Read now say it once.
+      ...(history ? [{ key: 'history', text: history.text, ...(history.failed ? { icon: 'warning' as const } : {}), testID: 'usage-page.header.history' },
+        { key: 'historyAction', text: history.label, onPress: history.onPress,
+          accessibilityLabel: history.accessibilityLabel, testID: 'usage-page.header.historyAction' }]
+        : partial ? [{ key: 'partial', text: partial, testID: 'usage-page.header.partial' }] : []),
       ...(pending ? [{ key: 'reading', text: pending }] : []),
     ];
     return [
@@ -539,7 +546,7 @@ function UsagePageHeader(
           ]
         : []),
     ];
-  }, [props.facts, retry]);
+  }, [props.facts, retry, history]);
   // The header insets its own text to the page column; the page's views, filters and cards share that
   // edge, so the header bleeds back by the same step instead of indenting twice (lab d2top, QA-V F23).
   return (

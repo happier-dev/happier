@@ -27,6 +27,8 @@ import { UsageBreakdownsWidget } from './widgets/UsageBreakdownsWidget';
 import { UsageDailyWidget } from './widgets/UsageDailyWidget';
 import { UsageProjectionsWidget } from './widgets/UsageProjectionsWidget';
 import type { UsageWidgetBodyModel } from './useUsageWidgetResource';
+import type { UsageHistoryModel } from './useUsageHistory';
+import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -38,16 +40,20 @@ let reader: CurrentUiContextReader | null = null;
 let unregister: (() => void) | undefined;
 const NO_COST_BASES = [] as const;
 let showExtraFilter = false;
+let historyModel: UsageHistoryModel | null = null;
+let historyFact: ReturnType<typeof usePublishUsageWidgetPageContext>['history'] = null;
 function Publication(props: Readonly<{ retireOnSelection?: boolean }>) {
     const authority = captureActiveServerAccountScopeLifetime();
     const page = useUsageWidgetPageContext({ authority });
     const [selected, setSelected] = React.useState('overview');
-    usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: NO_COST_BASES,
+    const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: NO_COST_BASES,
         active: !props.retireOnSelection || selected === 'overview', layoutId: selected,
         layouts: [{ id: 'costs', name: 'Costs' }, { id: 'work', name: 'Work' }],
         selectLayout: async layoutId => { setSelected(layoutId); await Promise.resolve(); return true; },
         filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex', invoke: () => page.setScope({ agents: ['codex'] }) },
-            ...(showExtraFilter ? [{ field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => page.setScope({ agents: ['claude'] }) }] : [])] });
+            ...(showExtraFilter ? [{ field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => page.setScope({ agents: ['claude'] }) }] : [])],
+        history: historyModel });
+    historyFact = published.history;
     reader = useOptionalCurrentUiContextReader();
     React.useEffect(() => {
         if (!reader) return;
@@ -83,7 +89,7 @@ async function mount(children: React.ReactNode, retireOnSelection = false) {
     return { screen, retire: () => screen.update(tree(null)) };
 }
 afterEach(async () => {
-    showExtraFilter = false;
+    showExtraFilter = false; historyModel = null; historyFact = null;
     standardCleanup(); unregister?.(); unregister = undefined; reader = null;
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
 });
@@ -215,4 +221,51 @@ it('uses the same mounted projection-window intent for agent, picker and small m
     await retire();
     expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: retired.id },
         context: { surface: 'agent' } })).toMatchObject({ ok: false });
+});
+
+it('binds unread Sessions to one Read now fact and page command, cancels the running read and settles when read', async () => {
+    const calls: string[] = [];
+    const model = (status: NonNullable<UsageHistoryModel['state']>['status'], progress: Partial<NonNullable<UsageHistoryModel['state']>['progress']>): UsageHistoryModel => {
+        const state = { status, progress: { selected: 1300, notRead: 0, completed: 0, failed: 0, ...progress } };
+        return { state, notRead: state.progress.notRead,
+            readNow: async () => { calls.push('read'); return { ok: true, result: state }; },
+            cancel: async () => { calls.push('cancel'); return { ok: true, result: state }; } };
+    };
+    const historyCommand = () => reader!.readCurrentUiContext()!.commands.filter(command =>
+        command.title === t('usage.board.page.historyReadCommand') || command.title === t('usage.board.page.historyCancelCommand'));
+    historyModel = model('idle', { notRead: 1240 });
+    const { retire: rerender } = await mount(null);
+    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyNotRead', { count: formatExactCount(1240) }), label: t('usage.board.page.historyReadNow') });
+    expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyReadCommand')]);
+    await invoke(historyCommand()[0]!.id);
+    expect(calls).toEqual(['read']);
+
+    historyModel = model('reading', { notRead: 1120, completed: 120 });
+    await rerender();
+    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyReading', { done: formatExactCount(120), total: formatExactCount(1240) }), label: t('common.cancel') });
+    expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyCancelCommand')]);
+    await act(async () => { historyFact!.onPress(); });
+    await flushHookEffects({ cycles: 4 });
+    expect(calls).toEqual(['read', 'cancel']);
+
+    // A cancelled read keeps what it converted; the rest are still not read.
+    historyModel = model('cancelled', { notRead: 1120, completed: 120 });
+    await rerender();
+    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyNotRead', { count: formatExactCount(1120) }), label: t('usage.board.page.historyReadNow') });
+
+    // A few failures among many unread Sessions still offer Read now; failures alone offer Retry.
+    historyModel = model('partial', { notRead: 1120, completed: 120, failed: 2 });
+    await rerender();
+    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyNotRead', { count: formatExactCount(1120) }), failed: false });
+    historyModel = model('partial', { notRead: 3, completed: 1237, failed: 3 });
+    await rerender();
+    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyFailed', { count: formatExactCount(3) }), label: t('common.retry'), failed: true });
+    await act(async () => { historyFact!.onPress(); });
+    await flushHookEffects({ cycles: 4 });
+    expect(calls).toEqual(['read', 'cancel', 'read']);
+
+    historyModel = model('complete', { completed: 1240 });
+    await rerender();
+    expect(historyFact).toBeNull();
+    expect(historyCommand()).toEqual([]);
 });

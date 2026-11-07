@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { PluginUiThemeV1 } from '@happier-dev/plugin-sdk/ui';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageHistoryReadState, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import type {
   UsageQueryResultSlice,
@@ -15,7 +15,7 @@ import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { USAGE_METER_METRICS } from '@/components/settings/connectedServices/usage/UsageMeterRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { HAPPIER_FRESHNESS_LINE_METRICS, HappierListOverflowFooter, HappierSkeletonBlock, leadHappierListRows } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FRESHNESS_LINE_METRICS, HappierListOverflowFooter, HappierSkeletonBlock, USAGE_SUMMARY_STAT_BASIS_PX, leadHappierListRows } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
@@ -31,6 +31,7 @@ import { type UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAn
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { formatUsageCalendarPeriod, formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
+import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/domains/usage/usageLabels';
 import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
 import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
@@ -357,7 +358,7 @@ export function UsageBodyReading(props: Readonly<{
         </View>
         <View style={readingStyles.summaryStats}>
           {[0, 1, 2].map((index) => (
-            <View key={index} style={index === 0 ? readingStyles.summaryStatLead : readingStyles.summaryStat}>
+            <View key={index} style={readingStyles.summaryStat}>
               <SkeletonLine color={color} width="40%" height={10} radius={4} reducedMotion={reducedMotion} slotHeight={14} />
               <SkeletonLine color={color} width="62%" height={22} radius={6} reducedMotion={reducedMotion} slotHeight={28} />
               <View>
@@ -422,8 +423,7 @@ const readingStyles = StyleSheet.create(() => ({
   summaryHero: { gap: 2 },
   // The same wrap as the figures themselves (UsagePeriodSummaryWidget), so a narrow card holds two rows too.
   summaryStats: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 16 },
-  summaryStat: { flexGrow: 1, flexBasis: 100, minWidth: 0, gap: 2 },
-  summaryStatLead: { flexGrow: 2, flexBasis: 168, minWidth: 0, gap: 2 },
+  summaryStat: { flexGrow: 1, flexBasis: USAGE_SUMMARY_STAT_BASIS_PX, minWidth: 0, gap: 2 },
   // The Capacity body's gap, and the cells row's settled height (measured on Home: figure 70, cells 104, pool line 18).
   capacity: { gap: 18 },
   capacityHero: { gap: 4 },
@@ -661,6 +661,30 @@ export function usageCoverageSummary(slice: UsageQueryResultSlice, sources: read
 export function usagePartialHistoryLabel(): string {
   const text = t('usage.board.page.factIncomplete');
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * What a wide window's history read says, once, in place of the partial-history fact it explains: the Sessions
+ * not read yet with Read now, a running read's progress with Cancel, or the Sessions it couldn't read with Retry.
+ * Nothing once every Session was read. `operation` is the history Action operation its control runs.
+ */
+export function describeUsageHistoryRead(state: UsageHistoryReadState | null): Readonly<{
+  text: string;
+  label: string;
+  operation: 'read' | 'cancel';
+  /** The read settled with Sessions it couldn't read and nothing else left: said as a failure. */
+  failed: boolean;
+}> | null {
+  if (!state) return null;
+  const { notRead, completed, failed } = state.progress;
+  if (state.status === 'reading')
+    return { text: t('usage.board.page.historyReading', { done: formatExactCount(completed), total: formatExactCount(completed + notRead) }), label: t('common.cancel'), operation: 'cancel', failed: false };
+  // Sessions that failed stay unread; a few failures among many unread Sessions still read as not read yet.
+  if (state.status === 'partial' && failed > 0 && failed >= notRead)
+    return { text: t('usage.board.page.historyFailed', { count: formatExactCount(failed) }), label: t('common.retry'), operation: 'read', failed: true };
+  if (notRead > 0)
+    return { text: t('usage.board.page.historyNotRead', { count: formatExactCount(notRead) }), label: t('usage.board.page.historyReadNow'), operation: 'read', failed: false };
+  return null;
 }
 
 /**

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext, type WidgetFrameDemand } from '@/components/widgets/frame/widgetFrameDemand';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
@@ -14,15 +15,18 @@ import {
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { useAuth } from '@/auth/context/AuthContext';
 import { decodeUsageQueryResource } from '@/sync/api/account/usageQueryResource';
+import { resolveAvailableCostModes } from '@/sync/api/account/usageAnalytics';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { UsageWidgetQueryPlan } from '../usageWidgetQueries';
+import { useUsageHistory, type UsageHistoryModel } from '../useUsageHistory';
 import {
   resolveUsageWidgetPageInitialQuery,
   type UsageWidgetQueryOverrides,
 } from '../usageWidgetPageContext';
 import {
   useUsageWidgetBodyModel,
+  useUsageWidgetQueryModel,
   useUsageWidgetResource,
   useUsageWidgetResourceSubscription,
   type UsageWidgetBodyModel,
@@ -80,7 +84,8 @@ type UsageWidgetBatch = Readonly<{
   clauses: UsageWidgetQueryOverrides;
   register(id: string, registration: Registration): () => void;
   resource: UsageWidgetResource;
-  inventoryKey: string | null;
+  inventorySlice: UsageQueryResultSlice | undefined;
+  costBasisOptions: readonly UsageQuery['costBasis'][];
 }>;
 
 const UsageWidgetBatchContext = React.createContext<UsageWidgetBatch | null>(
@@ -210,9 +215,12 @@ export function UsageWidgetBatchProvider(
     retainPendingDemand: true,
     plan,
   });
+  const inventoryRows = React.useMemo(() => inventoryQuery ? [{ query: inventoryQuery, key: getUsageQueryKey(inventoryQuery) }] : [], [inventoryQuery]);
+  const inventorySlice = useUsageWidgetQueryModel(resource, 'inventory', inventoryRows, hasAccounting).slice ?? undefined;
+  const costBasisOptions = useUsageWidgetCostBasisOptions(resource);
   const value = React.useMemo(
-    () => ({ clauses: props.clauses, register, resource, inventoryKey: inventoryQuery ? getUsageQueryKey(inventoryQuery) : null }),
-    [props.clauses, inventoryQuery, register, resource],
+    () => ({ clauses: props.clauses, register, resource, inventorySlice, costBasisOptions }),
+    [props.clauses, inventorySlice, costBasisOptions, register, resource],
   );
   return (
     <UsageWidgetBatchContext.Provider value={value}>
@@ -359,10 +367,10 @@ const EMPTY_RESULTS: readonly UsageQueryResultSlice[] = Object.freeze([]);
  * Resource entry the widgets read and adds no request of its own; outside a page it is empty.
  */
 function useDecodedUsageWidgetBatchSelection<T>(select: (slices: readonly UsageQueryResultSlice[]) => T,
-    equal: (left: T, right: T) => boolean, demand = false): T {
+    equal: (left: T, right: T) => boolean): T {
     const batch = React.useContext(UsageWidgetBatchContext);
     const entry = batch?.resource.entry ?? null;
-    const subscribe = useUsageWidgetResourceSubscription(entry, demand);
+    const subscribe = useUsageWidgetResourceSubscription(entry, false);
     const lifetime = batch?.resource.lifetime;
     const getSnapshot = React.useMemo(() => {
         let previous: { value: T } | undefined;
@@ -399,12 +407,52 @@ export function useUsageWidgetBatchSlices(): readonly UsageQueryResultSlice[] {
     return useUsageWidgetBatchSelection(selectSlices, sameSlices);
 }
 
+/**
+ * The shown page's one history read: a displayed query that reads Sessions' activity (accounting and Session
+ * evidence), preferring one that also reads transcripts, so Read now converts what every view omits.
+ */
+export function useUsageWidgetBatchHistory(): UsageHistoryModel {
+    const auth = useAuth();
+    const plan = React.useContext(UsageWidgetBatchContext)?.resource.plan;
+    const query = React.useMemo(() => {
+        if (!plan) return null;
+        const rows = [...plan.widgets.values()].flatMap(row => row.query && row.key && row.query.includeAccounting && row.query.includeSessionEvidence
+            ? [{ query: row.query, key: row.key }] : [])
+            .sort((a, b) => Number(b.query.includeTranscriptEvidence) - Number(a.query.includeTranscriptEvidence) || a.key.localeCompare(b.key));
+        return rows[0] ? { query: rows[0].query, authority: plan.scope } : null;
+    }, [plan]);
+    return useUsageHistory({ credentials: auth.credentials, query });
+}
+
 /** Unnarrowed choices share the page's canonical request, lifetime, decode and Resource owner. */
 export function useUsageWidgetBatchInventorySlice(): UsageQueryResultSlice | undefined {
-    const batch = React.useContext(UsageWidgetBatchContext);
-    const inventoryKey = batch?.inventoryKey;
-    const select = React.useCallback((slices: readonly UsageQueryResultSlice[]) => slices.find(slice => slice.key === inventoryKey), [inventoryKey]);
-    return useDecodedUsageWidgetBatchSelection(select, Object.is, true);
+    return React.useContext(UsageWidgetBatchContext)?.inventorySlice;
+}
+
+const NO_COST_BASES: readonly UsageQuery['costBasis'][] = Object.freeze([]);
+const hasAccounting = (slice: UsageQueryResultSlice) => slice.accounting !== undefined;
+
+/** Choices follow the displayed accounting query; period acquisition does not withdraw them. */
+export function useUsageWidgetBatchCostBasisOptions(): readonly UsageQuery['costBasis'][] {
+    return React.useContext(UsageWidgetBatchContext)?.costBasisOptions ?? NO_COST_BASES;
+}
+
+function useUsageWidgetCostBasisOptions(resource: UsageWidgetResource): readonly UsageQuery['costBasis'][] {
+    const plan = resource.plan;
+    const rows = React.useMemo(() => {
+        const displayed = new Map([...plan.widgets.values()].flatMap(widget => widget.key && widget.query
+            ? [[widget.key, { key: widget.key, query: widget.query }] as const] : []));
+        if (displayed.size === 0) return [];
+        const queries = plan.input?.queries ?? normalizeUsageQueryBatchInput({ queries: [...displayed.values()].map(widget => widget.query) }).queries;
+        return queries.flatMap(query => {
+            if (query.includeAccounting === false) return [];
+            const widget = displayed.get(getUsageQueryKey(query));
+            return widget ? [widget] : [];
+        });
+    }, [plan]);
+    const cost = useUsageWidgetQueryModel(resource, 'cost-basis', rows, hasAccounting).slice?.accounting?.totals.cost;
+    const stableOptions = useShallow((options: readonly UsageQuery['costBasis'][]) => options);
+    return stableOptions(cost ? resolveAvailableCostModes(cost) : NO_COST_BASES);
 }
 
 /**
