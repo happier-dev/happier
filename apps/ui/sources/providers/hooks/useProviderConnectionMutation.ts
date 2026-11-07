@@ -249,15 +249,17 @@ export function useProviderConnectionMutation(input: Readonly<{
                     });
                     return result;
                 }
-                // The Account writer has already published the acknowledged row.
-                // Machine/runtime presentation revalidation has its own recovery.
-                fireAndForget(scope.refresh(requiresMachine ? 'machine' : 'account'), {
-                    onError: caught => {
-                        if (!isCurrentScope()) return;
-                        const refreshError = providerErrorFromRpcFailure(caught, errorContext);
-                        setFailure({ ...failureScope, key, error: refreshError, retry: () => scope.refresh(requiresMachine ? 'machine' : 'account') });
-                    },
-                });
+                // Account receipts already publish the committed catalog and revision.
+                // Machine mutations also change runtime/discovery facts owned by the reader.
+                if (requiresMachine) {
+                    fireAndForget(scope.refresh('machine'), {
+                        onError: caught => {
+                            if (!isCurrentScope()) return;
+                            const refreshError = providerErrorFromRpcFailure(caught, errorContext);
+                            setFailure({ ...failureScope, key, error: refreshError, retry: () => scope.refresh('machine') });
+                        },
+                    });
+                }
                 return result;
             } finally {
                 if (inFlightByRequestKey.current.get(requestKey) === operation) {

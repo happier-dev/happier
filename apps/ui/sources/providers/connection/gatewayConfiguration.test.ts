@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createProviderConnectionViewFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { buildProviderGatewayConfigurationMutation, buildProviderGatewaySlotMutation, chooseProviderGatewayContributionV1, readProviderGatewayContributionPurposes } from './gatewayConfiguration';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 

@@ -1,18 +1,20 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
     createProviderConnectionsDescribeFixture,
     createProviderSettingsHarness,
     createProviderSettingsAccountHarness,
     installProviderSettingsRpcBoundary,
+    installBundledProviderDeclarationsRpcBoundary,
     installProviderConnectionsCatalogHttpBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
-import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
@@ -22,7 +24,6 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { getActiveUnsavedChangesGuard, runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
@@ -132,6 +133,12 @@ vi.mock('@react-navigation/native', async () => {
 
 
 type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+async function expectGatewayDraftReady(screen: RenderedScreen) {
+    await vi.waitFor(() => expect(screen.findByTestId('settings-provider-authoring-connect')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.findByTestId('settings-provider-authoring-connect')?.props.loading).not.toBe(true));
+    expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled, screen.getTextContent()).toBe(false);
+}
 
 /** The editor header's Test action with its result line, read as one control. */
 function findDraftTestRow(screen: RenderedScreen) {
@@ -420,6 +427,91 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(routerReplace).toHaveBeenCalledWith('/(app)/settings/providers');
     });
 
+    it.each(['discard', 'create'] as const)('P8 gateway draft checklist · %s uses the shared authoring owner without a Machine', async intent => {
+        await account.publishMachines(account.serverId, []);
+        await account.selectMachine(account.serverId, null);
+        const secretReadsBefore = account.home.requestsFor('/v1/account/saved-secrets/resources/materials').length;
+        const pool = { kind: 'group' as const, service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'work-pool' };
+        const onCreated = vi.fn();
+        const onDiscard = vi.fn();
+        const { ConnectedServiceGatewayPage } = await import('../connectedServices/ConnectedServiceGatewayPage');
+        const screen = await renderScreen(<ConnectedServiceGatewayPage
+            contributionKey="happier.provider.cliproxyapi/cliproxyapi" displayName="Work gateway"
+            slot={{ purpose: 'openai-upstream', target: pool }}
+            onCreated={onCreated} onDiscard={onDiscard}
+        />);
+        await expectGatewayDraftReady(screen);
+        await React.act(async () => { await flushHookEffects({ cycles: 2, turns: 2 }); });
+        expect(account.home.requestsFor('/v1/account/saved-secrets/resources/materials')).toHaveLength(secretReadsBefore);
+        expect(stored.writes).toBe(0);
+        expect(stored.catalog.connections).toEqual([]);
+
+        if (intent === 'discard') {
+            await screen.pressByTestIdAsync('settings-provider-authoring-cancel');
+            expect(onDiscard).toHaveBeenCalledOnce();
+            expect(onCreated).not.toHaveBeenCalled();
+            expect(stored.writes).toBe(0);
+        } else {
+            await screen.pressByTestIdAsync('settings-provider-authoring-connect');
+            await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
+            const saved = stored.catalog.connections[0]!;
+            expect(saved).toMatchObject({ displayName: 'Work gateway', deployment: { kind: 'managedLocal' },
+                purposeBindingDefaults: { 'openai-upstream': pool } });
+            await waitForHomeGovernance(() => expect(onCreated).toHaveBeenCalledWith(saved.id));
+            expect(onDiscard).not.toHaveBeenCalled();
+        }
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        expect(probeProviderDraft).not.toHaveBeenCalled();
+    });
+
+    it('opens Gateway Connect for the addressed Home while another Home is active', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        await account.publishMachines(foreignServerId, [createMachineFixture({
+            ...machine, id: 'machine-b', activeAt: Date.now(),
+        })]);
+        await account.selectMachine(foreignServerId, 'machine-b');
+        const { ConnectedServiceGatewayPage } = await import('../connectedServices/ConnectedServiceGatewayPage');
+        const screen = await renderScreen(<ConnectedServiceGatewayPage
+            contributionKey="happier.provider.cliproxyapi/cliproxyapi" displayName="Other Home gateway"
+        />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-gateway-slot:openai-upstream:connect')).toBeTruthy());
+        await screen.pressByTestIdAsync('provider-gateway-slot:openai-upstream:connect');
+        const modal = modalShow.mock.calls.at(-1)?.[0] as {
+            props?: { request?: unknown }; onRequestClose?: () => void;
+        } | undefined;
+        expect(modal?.props?.request).toMatchObject({
+            scope: { serverId: resolveServerProfileScopeIdForIdentifier(foreignServerId), accountId: 'account-foreign' },
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        });
+        modal?.onRequestClose?.();
+        expect(routerPush).not.toHaveBeenCalled();
+        expect(stored.writes).toBe(0);
+    });
+
+    it('P8 gateway placement checklist · saves an offline Runs on choice as Account configuration without starting it', async () => {
+        await account.publishMachines(account.serverId, []);
+        await account.selectMachine(account.serverId, null);
+        const onCreated = vi.fn();
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen
+            contributionKey="happier.provider.cliproxyapi/cliproxyapi" displayName="Offline hub gateway"
+            managedDeployment={{ kind: 'managedLocal', gatewayPlacement: { kind: 'machine', machineId: 'offline-hub' }, purposeBindingDefaults: {} }}
+            onCreated={onCreated} onDiscard={() => {}}
+        />);
+        await expectGatewayDraftReady(screen);
+        expect(stored.writes).toBe(0);
+        await screen.pressByTestIdAsync('settings-provider-authoring-connect');
+        await waitForHomeGovernance(() => expect(stored.catalog.connections).toHaveLength(1));
+        const saved = stored.catalog.connections[0]!;
+        expect(saved).toMatchObject({ deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'machine', machineId: 'offline-hub' } });
+        await waitForHomeGovernance(() => expect(onCreated).toHaveBeenCalledWith(saved.id));
+        expect(stored.writes).toBe(1);
+        expect(run).not.toHaveBeenCalled();
+        expect(probeProviderDraft).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+    });
+
     it('opens the projected API-key destination without mutating the Provider draft', async () => {
         state.credential = { required: true, keyUrl: 'https://keys.example.test' };
         describeProviderConnections.mockResolvedValueOnce({
@@ -483,10 +575,10 @@ describe('ProviderConnectionAuthoringScreen', () => {
         );
         await flushHookEffects();
 
+        await waitForHomeGovernance(() => expect(findComposite(screen, 'settings-provider-authoring-api-key.choose', 'disabled')?.props.disabled).toBe(true));
         const credentialRow = screen.findAllByType(Item).find(
             (item) => item.props.testID === 'settings-provider-authoring-api-key',
         );
-        await waitForHomeGovernance(() => expect(findComposite(screen, 'settings-provider-authoring-api-key.choose', 'disabled')?.props.disabled).toBe(true));
         expect(credentialRow?.props.onPress).toBeUndefined();
         expect(credentialRow?.props.subtitle).toBe('settingsProviders.local.accountScopeMismatchDescription');
         const connect = screen.findByTestId('settings-provider-authoring-connect');
@@ -789,6 +881,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
             await account.publishFeatures(account.serverId, features);
             await flushHookEffects();
         });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-provider-authoring-connect')).not.toBeNull());
         expect(providerHarness.state.requests.map(request => request.method)).toContain(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE);
         expect(screen.findByTestId('settings-provider-authoring-connect')).not.toBeNull();
     });
@@ -875,6 +968,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
 
         state.provenance = 'first_party';
         const bundled = await renderScreen(<ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />);
+        await waitForHomeGovernance(() => expect(bundled.findByTestId('settings-provider-authoring-experimental')).toBeNull());
         expect(bundled.findByTestId('settings-provider-authoring-experimental')).toBeNull();
     });
 
@@ -1036,6 +1130,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled).toBe(true);
         expect(run).not.toHaveBeenCalled();
 
+        describeProviderConnections.mockClear();
         await React.act(async () => {
             screen.findAllByType(Item)
                 .find((item) => item.props.title === 'http://127.0.0.1:22434/v1')
@@ -1050,6 +1145,9 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(rows.find((item) => item.props.title === 'settingsProviders.authoring.destinationScope')).toBeUndefined();
         expect(rows.find((item) => item.props.title === 'openai-chat')).toBeUndefined();
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled).toBe(false));
+        expect(describeProviderConnections).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({ selectedCandidateId: 'discovery-candidate:v1:second' }),
+        }));
         await screen.pressByTestIdAsync('settings-provider-authoring-connect');
         await waitForHomeGovernance(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({
             action: 'createContribution',
@@ -1063,7 +1161,59 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(probeProviderDraft).not.toHaveBeenCalled();
     });
 
+    it('reviews a configured endpoint without requiring overrides for unused protocol families', async () => {
+        state.endpointTemplates = [
+            { id: 'chat', protocol: 'openai-chat' },
+            { id: 'anthropic', protocol: 'anthropic' },
+        ];
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen contributionKey={state.contributionKey} />);
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenCalled());
+        describeProviderConnections.mockClear();
+
+        await React.act(async () => {
+            screen.findAllByType(FieldTextInput).find(field =>
+                field.props.testID === 'settings-provider-authoring-endpoint-anthropic')
+                ?.props.onChangeText('https://messages.example.test');
+            await flushHookEffects();
+        });
+
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({ endpointOverrides: [
+                { endpointTemplateId: 'anthropic', baseUrl: 'https://messages.example.test/' },
+            ] }),
+        })));
+        expect(probeProviderDraft).not.toHaveBeenCalled();
+    });
+
+    it('carries a header-only draft into authoritative review without pinning an address', async () => {
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen contributionKey={state.contributionKey} />);
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenCalled());
+        describeProviderConnections.mockClear();
+        // The existing view's data callback is consumed by the shared public editor at composition.
+        const view = screen.findAll(node => typeof node.props.onEndpointChange === 'function')[0];
+        await React.act(async () => {
+            view?.props.onEndpointPublicHeadersChange?.('chat', { 'x-request-policy': 'deliberate' });
+            await flushHookEffects();
+        });
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenLastCalledWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({ endpointOverrides: [
+                { endpointTemplateId: 'chat', publicHeaders: { 'x-request-policy': 'deliberate' } },
+            ] }),
+        })));
+        await React.act(async () => {
+            view?.props.onEndpointPublicHeadersChange?.('chat', null);
+            await flushHookEffects();
+        });
+        await waitForHomeGovernance(() => expect(describeProviderConnections).toHaveBeenLastCalledWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({ endpointOverrides: [] }),
+        })));
+        expect(probeProviderDraft).not.toHaveBeenCalled();
+    });
+
     it('reviews and persists explicit remote endpoints on the same contribution identity', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
         state.contributionKey = 'happier.provider.cliproxyapi/cliproxyapi';
         state.providerName = 'CLIProxyAPI';
         state.endpointTemplates = [
@@ -1145,7 +1295,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
 
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-provider-authoring-connect')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('settings-provider-authoring-connect');
-        await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
+        await waitForHomeGovernance(() => expect(stored.writes, screen.getTextContent()).toBe(1));
         expect(stored.catalog.connections).toEqual([expect.objectContaining({
             source: { kind: 'contribution', contributionKey: state.contributionKey },
             endpointOverrides: [...endpointOverrides].sort((left, right) => left.endpointTemplateId.localeCompare(right.endpointTemplateId)),
@@ -1454,6 +1604,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         });
         const save = screen.findByTestId('settings-provider-authoring-save');
         await React.act(async () => { await save?.props.onPress?.(); });
+        await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
         expect(stored.writes).toBe(1);
         const connection = stored.catalog.connections[0]!;
         expect(connection.source.kind).toBe('custom');
@@ -1461,6 +1612,31 @@ describe('ProviderConnectionAuthoringScreen', () => {
             expect.objectContaining({ id: 'first/model' }), expect.objectContaining({ id: 'second/model' }),
         ]);
         expect(run).not.toHaveBeenCalled();
+    });
+
+    it('declares the chosen reasoning levels on every initial manual model in the create mutation', async () => {
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
+        const fields = screen.findAllByType(FieldTextInput);
+        await React.act(async () => {
+            fields.find((field) => field.props.accessibilityLabel === 'settingsProviders.authoring.name')?.props.onChangeText('Anthropic bridge');
+            fields.find((field) => field.props.accessibilityLabel === 'settingsProviders.authoring.baseUrl')?.props.onChangeText('https://gateway.example/anthropic');
+            fields.find((field) => field.props.accessibilityLabel === 'settingsProviders.models.addFieldLabel')?.props.onChangeText('first/model\nsecond/model');
+            screen.findAllByType(Item)
+                .find((item) => item.props.title === 'settingsProviders.authoring.requiresApiKey')
+                ?.props.rightElement.props.onValueChange(false);
+        });
+        await screen.pressByTestIdAsync('provider-manual-model-effort.xhigh');
+        await screen.pressByTestIdAsync('provider-manual-model-effort.medium');
+        const save = screen.findByTestId('settings-provider-authoring-save');
+        await React.act(async () => { await save?.props.onPress?.(); });
+        await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
+        expect(stored.writes).toBe(1);
+        const connection = stored.catalog.connections[0]!;
+        expect(stored.catalog.manualModelsByConnectionId[connection.id]).toEqual([
+            expect.objectContaining({ id: 'first/model', reasoningEffortLevels: ['medium', 'xhigh'] }),
+            expect.objectContaining({ id: 'second/model', reasoningEffortLevels: ['medium', 'xhigh'] }),
+        ]);
     });
 
     it.each(['name', 'url', 'models'] as const)('validates custom %s before binding the selected key', async invalid => {
@@ -1514,6 +1690,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
             await screen.findByTestId('settings-provider-authoring-save')?.props.onPress?.();
         });
 
+        await waitForHomeGovernance(() => expect(screen.findAllByType(ProviderErrorItems.type)).toHaveLength(1));
         expect(screen.findByType(ProviderErrorItems.type).props.error)
             .toMatchObject({ code: 'provider_rpc_mutation_outcome_unknown' });
         expect(screen.findByType(ProviderErrorItems.type).props.retry).toBeUndefined();
@@ -1585,6 +1762,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         await React.act(async () => { enable?.props.rightElement.props.onValueChange(false); });
         const save = screen.findByTestId('settings-provider-authoring-save');
         await React.act(async () => { await save?.props.onPress?.(); });
+        await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
         expect(stored.writes).toBe(1);
         expect(stored.catalog.connections[0]!.source.kind).toBe('custom');
         expect(stored.catalog.accountGrants).toEqual([]);

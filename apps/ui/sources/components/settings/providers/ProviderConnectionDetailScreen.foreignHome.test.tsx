@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { NavigationContext, useNavigation } from '@react-navigation/native';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import {
     DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
@@ -30,7 +30,8 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
-beforeAll(async () => { await loadSyncSingletonForTests(); });
+// Cold graph compilation is collection setup, outside the behavioral hook deadline.
+await loadSyncSingletonForTests();
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
 function NavigationBoundary(props: React.PropsWithChildren) {
@@ -109,6 +110,8 @@ describe('Provider Detail addressed Account custody', () => {
         } else {
             const expectedName = change === 'Home selection' ? 'Peer Account A name' : 'Peer Account B name';
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(expectedName));
+            // The separate Models page reads the newly addressed Account independently of Detail.
+            await waitForHomeGovernance(() => expect(field('provider-manual-model-ids')?.props.value).toBe(''));
             await React.act(async () => {
                 field('provider-connection-name')!.props.onBlur?.();
                 await flushHookEffects({ cycles: 2, turns: 3 });

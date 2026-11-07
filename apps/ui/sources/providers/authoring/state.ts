@@ -1,6 +1,7 @@
 import { CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1, defaultCustomProviderCatalogParserV1, normalizeCustomProviderAdvancedTemplateV1, normalizeCustomProviderTemplateV1, type CustomProviderCredentialStyleV1, type CustomProviderSimpleFormV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
 import { isBundledProviderCatalogParserV1, type BundledProviderCatalogParserV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
 import type { CustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/customTemplateV1';
+import type { ProviderReasoningEffortLevelV1 } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type CustomProviderPreset = CustomProviderSimpleFormV1['protocol'];
@@ -29,6 +30,8 @@ export type CustomProviderDraft = Readonly<{
     advanced: boolean;
     endpoints: readonly CustomProviderAdvancedEndpointDraft[];
     manualModelsText: string;
+    /** Tiers every model in `manualModelsText` declares; none declares none. */
+    manualReasoningEffortLevels: readonly ProviderReasoningEffortLevelV1[];
 }>;
 
 /**
@@ -87,6 +90,7 @@ export function createCustomProviderDraft(protocol: CustomProviderPreset): Custo
         advanced: false,
         endpoints: CUSTOM_PROTOCOLS.map((candidate) => endpointDraft(candidate, candidate === protocol)),
         manualModelsText: '',
+        manualReasoningEffortLevels: [],
     };
 }
 

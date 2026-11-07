@@ -18,14 +18,14 @@ function resolveProvidersChildRoute(pathname: string): string {
 const ProviderCollectionPaneClaimContext = React.createContext<((claimed: boolean) => void) | null>(null);
 
 /**
- * The collection's landing says it shows a whole-page state (the invitation to add a first
+ * The collection home says it shows a whole-page state (the invitation to add a first
  * provider, or what must happen first), so the page owns the pane: no rail column beside it to
- * repeat the state or to clip it. Released when the landing leaves or lands on a provider.
+ * repeat the state or to clip it. A populated home and explicit details retain the rail.
  */
-export function useClaimProviderCollectionPane(claimed: boolean): void {
+export function useClaimProviderCollectionPane(claimed: boolean | null): void {
     const claim = React.useContext(ProviderCollectionPaneClaimContext);
     React.useEffect(() => {
-        if (!claim) return;
+        if (!claim || claimed === null) return;
         claim(claimed);
         return () => claim(false);
     }, [claim, claimed]);

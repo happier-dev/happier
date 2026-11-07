@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { TextInput } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { CustomProviderAdvancedFields } from '@/components/settings/providers/CustomProviderAdvancedFields';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -16,7 +16,8 @@ import { updateCustomProviderDraftAdvanced, type CustomProviderDraft } from '@/p
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { t } from '@/text';
 import { ProviderErrorItems } from '../ProviderErrorItems';
-import { ProviderFieldRow } from './ProviderFieldRow';
+import { ProviderFieldRow, ProviderOptionalTag } from './ProviderFieldRow';
+import { ProviderReasoningEffortChips } from '../ProviderReasoningEffortField';
 import { ProviderKeyEntryItem } from './ProviderKeyEntryItem';
 import { ProviderProbeResult } from '../ProviderPageParts';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -308,6 +309,23 @@ export function CustomProviderAuthoringView(props: Readonly<{
                         monospace
                         error={model.manualModelsError}
                         onChangeText={actions.onManualModelsChange}
+                    />
+                ) : null}
+                {!model.editing ? (
+                    <Item
+                        title={t('settingsProviders.models.reasoningEffort')}
+                        titleAccessory={<ProviderOptionalTag />}
+                        subtitle={t('settingsProviders.models.reasoningEffortDescription')}
+                        subtitleLines={0}
+                        accessoryLayout="stacked"
+                        showChevron={false}
+                        rightElement={(
+                            <ProviderReasoningEffortChips
+                                testID="provider-manual-model-effort"
+                                levels={draft.manualReasoningEffortLevels}
+                                onChange={(manualReasoningEffortLevels) => actions.onDraftChange((current) => ({ ...current, manualReasoningEffortLevels }))}
+                            />
+                        )}
                     />
                 ) : null}
             </ItemGroup>

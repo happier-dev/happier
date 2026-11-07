@@ -1,11 +1,11 @@
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DaemonProviderConnectionMutationResponseV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
-import { createProviderConnectionViewFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createProviderConnectionsDescribeFixture, createProviderConnectionViewFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -22,6 +22,7 @@ let otherServerId = '';
 const { useProviderConnectionMutation } = await import('./useProviderConnectionMutation');
 const { useProviderEndpointConfiguration } = await import('./useProviderEndpointConfiguration');
 const { useProviderActionClient } = await import('@/providers/actions/useProviderActionClient');
+const { useProviderConnections } = await import('./useProviderConnections');
 const resolveTarget = () => ({ machineId: 'machine-a', serverId });
 function deferred() {
     let resolve!: () => void;
@@ -207,7 +208,7 @@ describe('useProviderConnectionMutation', () => {
             expect(duplicate).toBe(first);
             expect(hook.getCurrent().isPending('delete:pc_a')).toBe(true);
         } finally { await act(async () => { gate.resolve(); await Promise.all([first, duplicate]); }); }
-        expect(refresh).toHaveBeenCalledOnce();
+        expect(refresh).not.toHaveBeenCalled();
         expect(account.readCatalogRow()?.revision).toBe(2);
         expect(hook.getCurrent().isPending('delete:pc_a')).toBe(false);
     });
@@ -235,7 +236,7 @@ describe('useProviderConnectionMutation', () => {
             await waitForHomeGovernance(() => expect(account.catalogMutations).toHaveLength(1));
             expect(current).toBe(first);
         } finally { await act(async () => { gate.resolve(); await Promise.all([first, current]); }); }
-        expect(refresh).toHaveBeenCalledOnce();
+        expect(refresh).not.toHaveBeenCalled();
     });
 
     it('refuses a modal-delayed Machine enable after selection moves to another machine', async () => {
@@ -367,7 +368,7 @@ describe('useProviderConnectionMutation', () => {
             expect(observed).toEqual([[true, true], [true, true], [true, true], [false, true], [false, false]]);
         } finally { await act(async () => { gates.forEach(gate => gate.resolve()); await Promise.all(executions); }); }
         expect(refreshA).not.toHaveBeenCalled();
-        expect(refreshB).toHaveBeenCalledWith('account');
+        expect(refreshB).not.toHaveBeenCalled();
         expect(account.catalogMutations).toHaveLength(4);
         expect(account.readCatalogRow()?.revision).toBe(2);
         expect(persistedCatalog().connections.map(row => row.id)).toEqual(['pc_a', 'pc_first', 'pc_second', 'pc_other']);
@@ -391,7 +392,7 @@ describe('useProviderConnectionMutation', () => {
         expect(hook.getCurrent().retry).toBeUndefined();
     });
 
-    it('preserves acknowledged Account create, update and delete when only their follow-up read fails', async () => {
+    it('preserves acknowledged Account create, update and delete without attempting their optional follow-up read', async () => {
         const refresh = vi.fn(async () => { throw new Error('catalog refresh unavailable'); });
         const hook = await renderMutation({ resolveTarget, serverId, refresh });
         const requests = [
@@ -403,18 +404,15 @@ describe('useProviderConnectionMutation', () => {
             let result: unknown;
             await act(async () => { result = await hook.getCurrent().run(request); });
             expect(result).toMatchObject({ status: 'success', action: request.action });
-            expect(hook.getCurrent().error?.code).toBe('agent_error');
-            expect(hook.getCurrent().retry).toBeTypeOf('function');
-            const writesBeforeRetry = account.catalogMutations.length;
-            await act(async () => { await expect(hook.getCurrent().retry?.()).rejects.toThrow('catalog refresh unavailable'); });
-            expect(account.catalogMutations).toHaveLength(writesBeforeRetry);
+            expect(hook.getCurrent().error).toBeNull();
+            expect(hook.getCurrent().retry).toBeUndefined();
             if (request.action === 'createCustom') expect(persistedCatalog().connections.find(row => row.id === 'pc_created')?.revision).toBe(0);
             if (request.action === 'update') expect(persistedCatalog().connections.find(row => row.id === 'pc_created'))
                 .toMatchObject({ displayName: 'Updated', revision: 1 });
         }
         expect(persistedCatalog().connections.some(row => row.id === 'pc_created')).toBe(false);
         expect(account.readCatalogRow()?.revision).toBe(4);
-        expect(refresh).toHaveBeenCalledTimes(6);
+        expect(refresh).not.toHaveBeenCalled();
         expect(providerHarness.state.requests).toEqual([]);
     });
 
@@ -455,7 +453,7 @@ describe('useProviderConnectionMutation', () => {
             expect(hook.getCurrent().isPending('delete:pc_a')).toBe(true);
         } finally { await act(async () => { gate.resolve(); result = await execution; }); }
         expect(result).toMatchObject({ status: 'success', action: 'delete' });
-        expect(refresh).toHaveBeenCalledOnce();
+        expect(refresh).not.toHaveBeenCalled();
         expect(persistedCatalog().connections.some(row => row.id === 'pc_a')).toBe(false);
         expect(providerHarness.state.requests).toEqual([]);
         const accountOnly = await renderMutation({ resolveTarget: () => null, serverId, refresh });
@@ -464,19 +462,44 @@ describe('useProviderConnectionMutation', () => {
         expect(providerHarness.state.requests).toEqual([]);
     });
 
-    it('settles an acknowledged Account mutation while its presentation refresh remains pending', async () => {
-        const refreshGate = deferred();
-        const refresh = vi.fn(() => refreshGate.promise);
-        const hook = await renderMutation({ resolveTarget, serverId, refresh });
+    it('settles an ACK while a Machine describe is held and uses that revision for the next edit', async () => {
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async () =>
+            createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({ connectionId: 'pc_a' })] }));
+        const hook = await renderHook(() => {
+            const query = useProviderConnections({ enabled: true, machineId: 'machine-a', serverId, connectionId: 'pc_a' });
+            const refresh = React.useCallback(async () => { await query.refresh(); }, [query.refresh]);
+            return { query, mutation: useProviderConnectionMutation({ resolveTarget, serverId, refresh }) };
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().query.data?.connections[0]?.runtime.checkedAt).toBe(1));
+        const pendingReads: Array<(value: ReturnType<typeof createProviderConnectionsDescribeFixture>) => void> = [];
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
+            () => new Promise(resolve => { pendingReads.push(resolve); }));
+        let heldRead!: Promise<unknown>;
         let execution!: Promise<unknown>;
+        let settled = false;
         try {
-            await act(async () => { execution = hook.getCurrent().run({ action: 'delete', connectionId: 'pc_a' }); });
-            await waitForHomeGovernance(() => expect(refresh).toHaveBeenCalledOnce());
-            await act(async () => { await expect(execution).resolves.toMatchObject({ status: 'success', action: 'delete' }); });
-            expect(hook.getCurrent().isPending('delete:pc_a')).toBe(false);
-            expect(persistedCatalog().connections.some(row => row.id === 'pc_a')).toBe(false);
-        } finally { await act(async () => { refreshGate.resolve(); }); }
-        expect(providerHarness.state.requests).toEqual([]);
+            await act(async () => { heldRead = hook.getCurrent().query.refresh(); });
+            await waitForHomeGovernance(() => expect(pendingReads).toHaveLength(1));
+            await act(async () => { execution = hook.getCurrent().mutation.run({ action: 'update', connectionId: 'pc_a',
+                expectedRevision: 1, displayName: 'First edit', displayNameMode: 'custom' })
+                .finally(() => { settled = true; }); });
+            await waitForHomeGovernance(() => expect(settled).toBe(true));
+            expect(hook.getCurrent().mutation.isPending('update:pc_a')).toBe(false);
+            expect(hook.getCurrent().query.data?.connections[0]).toMatchObject({ revision: 2, displayName: 'First edit' });
+            await act(async () => { await hook.getCurrent().mutation.run({ action: 'update', connectionId: 'pc_a',
+                expectedRevision: hook.getCurrent().query.data!.connections[0]!.revision,
+                displayName: 'Second edit', displayNameMode: 'custom' }); });
+            expect(account.catalogMutations.map(input => input.expectedRevision)).toEqual([1, 2]);
+            expect(persistedCatalog().connections.find(row => row.id === 'pc_a'))
+                .toMatchObject({ revision: 3, displayName: 'Second edit' });
+            expect(pendingReads).toHaveLength(1);
+        } finally {
+            await act(async () => {
+                pendingReads.forEach(resolve => resolve(createProviderConnectionsDescribeFixture({ connections: [] })));
+                await Promise.all([heldRead, execution]);
+            });
+        }
+        await expect(execution).resolves.toMatchObject({ status: 'success', action: 'update' });
     });
 
 });

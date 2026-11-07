@@ -9,6 +9,11 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+/** The quiet "Optional" beside a row title when the field may stay empty. */
+export function ProviderOptionalTag(): React.ReactElement {
+    return <Text style={styles.optional}>{t('common.optional')}</Text>;
+}
+
 /**
  * A provider form field as a page row: the label (and what it is for) on the left, the field on the
  * right, beneath the label on narrow widths; multi-line fields always sit beneath it.
@@ -35,7 +40,7 @@ export const ProviderFieldRow = React.memo(React.forwardRef<TextInput, Readonly<
     return (
         <Item
             title={props.title}
-            titleAccessory={props.optional ? <Text style={styles.optional}>{t('common.optional')}</Text> : undefined}
+            titleAccessory={props.optional ? <ProviderOptionalTag /> : undefined}
             subtitle={props.description}
             subtitleLines={0}
             accessoryLayout={props.multiline ? 'stacked' : 'adaptive'}

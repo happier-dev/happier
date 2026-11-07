@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 
 import { Item } from '@/components/ui/lists/Item';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';

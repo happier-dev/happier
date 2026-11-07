@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema, ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
@@ -226,9 +227,8 @@ function presentedTitles(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 async function reviewUnknownCatalogWrite(screen: RenderedScreen) {
-    await act(async () => {
-        await vi.waitFor(() => expect(screen.findByTestId('provider-error:provider_rpc_mutation_outcome_unknown')).not.toBeNull());
-    });
+    await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('provider-error:provider_rpc_mutation_outcome_unknown')).not.toBeNull());
     expect(alert).not.toHaveBeenCalled();
     expect(stored.writes).toBe(1);
     expect(catalogMutations()).toHaveLength(1);
@@ -736,9 +736,9 @@ describe('ProviderConnectionModelsSection', () => {
         await act(async () => {
             screen.findByType(ProviderModelManager).props.onResetVisibility?.();
         });
-        await act(async () => {
-            await vi.waitFor(() => expect(sectionState(screen).error).toMatchObject({ code: 'provider_connection_changed' }));
-        });
+        await waitForHomeGovernance(() => expect(sectionState(screen).error).toMatchObject({
+            code: 'provider_connection_changed', connectionId: 'pc_a',
+        }));
         expect(screen.findByTestId('provider-error:provider_connection_changed')).not.toBeNull();
 
         expect(alert).not.toHaveBeenCalled();
@@ -752,7 +752,7 @@ describe('ProviderConnectionModelsSection', () => {
 
     it('shows initial transport failure and preserves stale rows when a later refresh fails', async () => {
         state.models = [];
-        state.error = createProviderErrorV1('provider_endpoint_unavailable', {
+        state.error = createProviderErrorV1('provider_endpoint_unreachable', {
             connectionId: 'pc_a',
             machineId: 'machine-a',
         });
@@ -768,11 +768,11 @@ describe('ProviderConnectionModelsSection', () => {
         state.models = [{ id: 'stale-a', name: 'Stale A', source: 'manual', stale: true, loadState: 'unknown', visibility: 'visible' }];
         state.error = null;
         const staleFailure = await renderScreen(<ModelsSectionHost connectionId="pc_a" />);
-        state.error = createProviderErrorV1('provider_endpoint_unavailable', {
+        state.error = createProviderErrorV1('provider_endpoint_unreachable', {
             connectionId: 'pc_a', machineId: 'machine-a',
         });
         await staleFailure.pressByTestIdAsync('provider-model-catalog-refresh');
-        await waitForHomeGovernance(() => expect(staleFailure.findByTestId('provider-error:provider_endpoint_unavailable')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(staleFailure.findByTestId('provider-error:provider_endpoint_unreachable')).not.toBeNull());
         expect(renderedModelRowCount(staleFailure)).toBe(1);
         expect(staleFailure.findByType(ProviderModelManager).props.groups[0].rows).toHaveLength(1);
         expect(presentedTitles(staleFailure))

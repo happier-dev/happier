@@ -61,6 +61,8 @@ export function buildProviderGatewaySlotMutation(input: Readonly<{
 }
 
 export type ProviderGatewayContribution = ProviderGatewayContributionV1;
+export type ProviderGatewayDraftConfiguration = Extract<NonNullable<ProviderActionInputByIdV1['providers.connections.create_contribution']['deployment']>, { kind: 'managedLocal' }>
+    & Pick<ProviderActionInputByIdV1['providers.connections.create_contribution'], 'gatewayPlacement' | 'claudeHelperModels'>;
 
 /** The caller supplies its admitted declarations; Account-only callers use bundled identity. */
 export function readProviderGatewayContributionPurposes(contributionKey: string,
@@ -77,14 +79,19 @@ export async function createProviderGateway(input: Readonly<{
     run: ReturnType<typeof useProviderConnectionMutation>['run'];
     contribution: ProviderGatewayContribution;
     connectionId: string;
-    displayName: string;
-    slot: Readonly<{ purpose: string; target: QualifiedConnectedAccountPurposeBindingTargetV1 }> | null;
+    displayName: string | null;
+    machineId?: string | null;
+    configuration: ProviderGatewayDraftConfiguration;
     key: string;
 }>): Promise<ProviderConnectionV1['id'] | null> {
+    const configuration = input.configuration;
     const created = await input.run({ action: 'createContribution', connectionId: input.connectionId,
+        ...(input.machineId ? { machineId: input.machineId } : {}),
         contributionKey: input.contribution.contributionKey, displayName: input.displayName,
-        savedSecretId: null, enable: true, deployment: { kind: 'managedLocal',
-            purposeBindingDefaults: input.slot ? { [input.slot.purpose]: input.slot.target } : {} } }, input.key);
+        savedSecretId: null, enable: true, deployment: { kind: 'managedLocal', purposeBindingDefaults: configuration.purposeBindingDefaults },
+        ...(configuration.gatewayPlacement !== undefined ? { gatewayPlacement: configuration.gatewayPlacement } : {}),
+        ...(configuration.claudeHelperModels !== undefined ? { claudeHelperModels: configuration.claudeHelperModels } : {}),
+    }, input.key);
     if (created?.status !== 'success' || !('connection' in created)) return null;
     return created.connection.connectionId;
 }

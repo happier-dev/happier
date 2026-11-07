@@ -130,6 +130,7 @@ describe('Provider mutation deferred approval', () => {
                 await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
                 const artifactId = harness.artifacts(serverId).list()[0]!.id;
                 const href = `/inbox/approvals/${artifactId}?serverId=${encodeURIComponent(serverId)}`;
+                await waitForHomeGovernance(() => expect(hook.getCurrent().pendingApproval).toEqual({ artifactId, href }));
                 expect(hook.getCurrent().pendingApproval).toEqual({ artifactId, href });
                 const entries = observed.maps.get(artifactId);
                 expect(entries?.get(artifactId)).toBe(href);
@@ -158,7 +159,7 @@ describe('Provider mutation deferred approval', () => {
             enabled: true, machineId: null, serverId, resolveCurrentTarget }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().initialLoading).toBe(false));
         await act(async () => { hook.getCurrent().onManualModelTextChange('manual-review-model'); });
-        await act(async () => { hook.getCurrent().onAddManualModels(); });
+        await act(async () => { hook.getCurrent().onSaveManualEditor(); });
         await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
         const artifactId = harness.artifacts(serverId).list()[0]!.id;
         // This public page projection must retain the client/continuation's exact Review destination.

@@ -6,7 +6,7 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 type ProviderExternalLinkKind = 'providerWebsite' | 'getApiKey';
 

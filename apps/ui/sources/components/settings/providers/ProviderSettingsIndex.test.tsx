@@ -16,6 +16,9 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { buildCustomProviderTemplate, createCustomProviderDraft } from '@/providers/authoring/state';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { Text } from '@/components/ui/text/Text';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 
@@ -41,13 +44,18 @@ const providerRpc = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerRpc);
 const account = createProviderSettingsAccountHarness();
 const { ProviderSettingsIndex } = await import('./ProviderSettingsIndex');
+const { ProviderCollectionPane } = await import('./ProviderSettingsLayout');
+const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
+let currentAccountId = '';
 let releaseRead: (() => void) | null = null;
 let restoreCredentialRead: (() => void) | null = null;
 
 describe('ProviderSettingsIndex', () => {
     beforeEach(async () => {
         providerRpc.reset();
-        const { serverId } = await account.restore({ serverIdentityId: 'srv_provider_index' });
+        const { serverId, accountId } = await account.restore({ serverIdentityId: 'srv_provider_index' });
+        currentAccountId = accountId;
         await account.publishMachines(serverId, []);
     });
     afterEach(async () => {
@@ -66,10 +74,45 @@ describe('ProviderSettingsIndex', () => {
         expect(screen.findByTestId('settings-providers-screen')).not.toBeNull();
     });
 
-    it('keeps the normal landing for a setting outside the Providers collection', async () => {
+    it('keeps the root home reachable for a setting outside the Providers collection', async () => {
         route.params = { setting: 'appearance.density' };
         const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
-        expect(screen.findByTestId('settings-providers-screen')).toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('settings-providers-screen')).not.toBeNull());
+        expect(screen.findAllByType('Redirect')).toHaveLength(0);
+    });
+
+    it('keeps one presented filter owner when a populated root reveals a setting and returns home', async () => {
+        route.params = { setting: 'providers.custom' };
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{ v: 1, id: 'pc_a', source: { kind: 'custom', template: buildCustomProviderTemplate({
+                ...createCustomProviderDraft('openai-chat'), name: 'Acme', baseUrl: 'https://models.example.test/v1', requiresApiKey: false,
+            }) }, role: 'named', displayName: 'Acme', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1 }],
+        });
+        account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            body: { status: 'present', revision: 1, content: { t: 'plain', v: catalog } },
+        });
+        const tree = () => <ProviderCollectionPane>{claimed => <>
+            <Text testID={claimed ? 'provider-pane.owned' : 'provider-pane.shared'}>pane</Text>
+            {claimed ? null : <ProviderConnectionsSettingsScreen variant="rail" />}
+            <ProviderSettingsIndex />
+        </>}</ProviderCollectionPane>;
+        const screen = await renderInCollectionLayout(tree(), 'split');
+        await vi.waitFor(() => expect(screen.findHostByTestId('settings-provider-connection:pc_a')).not.toBeNull());
+        expect(screen.findHostByTestId('provider-pane.owned')).not.toBeNull();
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            scopeAction: ({ actionId, input, context }) => invokeScopeAction(actionId, input, context),
+        }));
+        const get = () => executor.execute('settings.column.filter.get', {
+            column: 'providers', serverId: account.serverId, accountId: currentAccountId,
+        }, { surface: 'agent', serverId: account.serverId, runtimeAccountId: currentAccountId });
+        expect(await get()).toMatchObject({ ok: true, result: { column: 'providers', searchQuery: '', matchedCount: 1 } });
+        await screen.unmount();
+        route.params = {};
+        const home = await renderInCollectionLayout(tree(), 'split');
+        await vi.waitFor(() => expect(home.getTextContent()).toContain('Acme'));
+        expect(home.findHostByTestId('provider-pane.shared')).not.toBeNull();
+        expect(await get()).toMatchObject({ ok: true, result: { column: 'providers', searchQuery: '', matchedCount: 1 } });
+        expect(providerRpc.state.requests).toHaveLength(0);
     });
 
     it('shows Account configuration while a selected machine becomes ready, then shows its Provider projection', async () => {
@@ -137,17 +180,27 @@ describe('ProviderSettingsIndex', () => {
         account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
             respondAfter: pending.promise, body: { status: 'present', revision: 1, content: { t: 'plain', v: catalog } },
         });
-        const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
+        const screen = await renderInCollectionLayout(
+            <ProviderCollectionPane>{claimed => <>
+                <Text testID={claimed ? 'provider-pane.owned' : 'provider-pane.shared'}>pane</Text>
+                <ProviderSettingsIndex />
+            </>}</ProviderCollectionPane>, 'split');
         expect(screen.findByTestId('settings-providers-loading')).not.toBeNull();
+        expect(screen.findHostByTestId('provider-pane.shared')).not.toBeNull();
         expect(screen.findByTestId('settings-providers-invitation')).toBeNull();
         await act(async () => { pending.resolve(); });
         await vi.waitFor(() => expect(screen.findByTestId('settings-providers-loading')).toBeNull());
         if (result === 'populated') {
-            expect(screen.findAllByType('Redirect')[0]?.props.href).toContain('pc_a');
+            expect(screen.findHostByTestId('provider-pane.shared')).not.toBeNull();
+            expect(screen.findAllByType('Redirect')).toHaveLength(0);
+            expect(screen.findByTestId('settings-providers-home')).not.toBeNull();
+            expect(screen.findHostByTestId('settings-provider-connection:pc_a')).not.toBeNull();
             expect(screen.findByTestId('settings-providers-invitation')).toBeNull();
         } else if (result === 'empty') {
+            expect(screen.findHostByTestId('provider-pane.owned')).not.toBeNull();
             expect(screen.findByTestId('settings-providers-invitation')).not.toBeNull();
         } else {
+            expect(screen.findHostByTestId('provider-pane.owned')).not.toBeNull();
             expect(screen.findByTestId('settings-providers-invitation')).toBeNull();
             const retry = screen.root.findAll(node => typeof node.props.testID === 'string'
                 && node.props.testID.startsWith('provider-error-action:') && typeof node.props.onPress === 'function')[0];

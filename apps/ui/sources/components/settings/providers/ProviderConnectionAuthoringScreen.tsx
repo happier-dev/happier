@@ -9,8 +9,10 @@ import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/provid
 import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { parseProviderIpAddress } from '@happier-dev/protocol/providers/safety/locality';
 import { parseProviderManualModelInput } from '@happier-dev/protocol/providers/manualModelInput';
-import type { ProviderEndpointOverrideV1 } from '@happier-dev/protocol/providers/connections/v1';
 import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc';
+import { chooseProviderGatewayContributionV1, readProviderGatewayContributionPurposesV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
+import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { createProviderGateway, type ProviderGatewayDraftConfiguration } from '@/providers/connection/gatewayConfiguration';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
@@ -30,12 +32,13 @@ import {
 import {
     useRetireProviderStateOnAccountChange,
 } from '@/providers/hooks/accountLifetimeRetirement';
-import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
+import { useProviderSettingsTarget, type ProviderSettingsMachineRowV1 } from '@/providers/hooks/targetMachine';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { useProviderConnections, type ProviderConnectionRefreshScope } from '@/providers/hooks/useProviderConnections';
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
-import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { useAllMachines } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useProviderCatalogForServer } from '@/sync/store/useProviderCatalog';
 import { t } from '@/text';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
@@ -43,6 +46,9 @@ import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } fro
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { BuiltInProviderAuthoringView } from './authoring/BuiltInProviderAuthoringView';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { useProviderEndpointDraft } from './authoring/useProviderEndpointDraft';
 import { CustomProviderAuthoringView } from './authoring/CustomProviderAuthoringView';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { MachineAdministrationContextBar } from '@/components/settings/machines/MachineAdministrationContextBar';
@@ -52,8 +58,13 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { ProviderFieldRow } from './authoring/ProviderFieldRow';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 const PRESETS: readonly CustomProviderPreset[] = ['openai-responses', 'openai-chat', 'anthropic'];
+const EMPTY_ENDPOINT_TEMPLATES = [] as const;
+
+/** Form values; placement/helper settings become top-level fields of the existing Create Action. */
+export type ProviderManagedGatewayDraft = ProviderGatewayDraftConfiguration;
 
 /**
  * The pristine-vs-edited form fingerprint behind the unsaved-changes guard.
@@ -67,6 +78,8 @@ function buildAuthoringStateKey(input: Readonly<{
     selectedCandidateId: string | null;
     contributionDisplayName: string | null;
     contributionEndpointValues: Readonly<Record<string, string>>;
+    contributionEndpointPublicHeaders?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    managedDeployment?: ProviderManagedGatewayDraft | null;
 }>): string {
     return JSON.stringify({
         draft: input.draft,
@@ -75,6 +88,8 @@ function buildAuthoringStateKey(input: Readonly<{
         selectedCandidateId: input.selectedCandidateId,
         contributionDisplayName: input.contributionDisplayName,
         contributionEndpointValues: input.contributionEndpointValues,
+        contributionEndpointPublicHeaders: input.contributionEndpointPublicHeaders ?? {},
+        ...(input.managedDeployment ? { managedDeployment: input.managedDeployment } : {}),
     });
 }
 
@@ -140,15 +155,34 @@ type ProviderCustomConnectionEdit = Readonly<{
     initialDraft: CustomProviderDraft;
 }>;
 
+export type ProviderConnectionAuthoringScreenProps = Readonly<{
+    candidateId?: string;
+    displayName?: string;
+    edit?: ProviderCustomConnectionEdit;
+    /** Collection callers settle the same acknowledged create without a Providers jump. */
+    onCreated?: (connectionId: string) => void;
+    onDiscard?: () => void;
+    /** The existing authoring owner holds this buffer; collection composition supplies its fields. */
+    renderManagedDeployment?: (input: Readonly<{
+        scope: AccountSettingsScope | null;
+        deployment: ProviderManagedGatewayDraft;
+        declarations: NonNullable<ReturnType<typeof readProviderGatewayContributionPurposesV1>>;
+        machines: readonly ProviderSettingsMachineRowV1[];
+        onChange: (deployment: ProviderManagedGatewayDraft) => void;
+        disabled: boolean;
+    }>) => React.ReactNode;
+}> & (Readonly<{ contributionKey?: string; managedDeployment?: never }>
+    | Readonly<{ contributionKey: string; managedDeployment: ProviderManagedGatewayDraft }>);
+
 export const ProviderConnectionAuthoringScreen = React.memo(function ProviderConnectionAuthoringScreen(
-    props: Readonly<{ contributionKey?: string; candidateId?: string; displayName?: string; edit?: ProviderCustomConnectionEdit }>,
+    props: ProviderConnectionAuthoringScreenProps,
 ) {
     const router = useRouter();
     const navigation = useNavigation();
     const { theme } = useUnistyles();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
-    const machines = useAllMachines();
-    const savedSecretCatalog = useSavedSecretCatalog();
+    // Managed gateway drafts author slots/placement, never Saved Secret credentials.
+    const savedSecretCatalog = useSavedSecretCatalog(props.managedDeployment ? { scope: null } : undefined);
     const providerTarget = useProviderSettingsTarget();
     const {
         machineId,
@@ -157,9 +191,14 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         accountServerId: serverId,
         accountAddressAvailable,
     } = providerTarget;
+    // The page names the target machine only; select its name so live resource publications cannot re-render the form.
+    const targetMachineName = useAllMachines(React.useCallback((machines: readonly Machine[]) => {
+        const targetMachine = machines.find((machine) => machine.id === machineId);
+        return targetMachine ? getMachineSentenceName(targetMachine) : null;
+    }, [machineId]));
     // Route seeds belong to the selected target, whose identity exists before
     // its credential/presence resolution can admit machine execution.
-    const candidateMachineId = providerTarget.selection.selectedTarget?.machineId ?? null;
+    const candidateMachineId = props.managedDeployment ? null : providerTarget.selection.selectedTarget?.machineId ?? null;
     const { describeProviderConnections, probeProviderDraft, accountScope: { resolution } } = useProviderActionClient(serverId, accountAddressAvailable ? undefined : null);
     const addressedScope = accountAddressAvailable && resolution.kind === 'bound' ? resolution.scope : null;
     const focused = useIsFocused();
@@ -194,8 +233,10 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const [localError, setLocalError] = React.useState<string | null>(null);
     const [manualModelsError, setManualModelsError] = React.useState<string | null>(null);
     const [selectedCandidateId, setSelectedCandidateId] = React.useState<string | null>(props.candidateId ?? null);
-    const [contributionEndpointValues, setContributionEndpointValues] = React.useState<Readonly<Record<string, string>>>({});
     const [contributionDisplayName, setContributionDisplayName] = React.useState<string | null>(props.displayName ?? null);
+    const initialManagedDeployment = React.useRef<ProviderManagedGatewayDraft | null>(props.managedDeployment ?? null);
+    const [managedDeployment, setManagedDeployment] = React.useState(initialManagedDeployment.current);
+    const managed = managedDeployment !== null;
     const [authoringPreview, setAuthoringPreview] = React.useState<DaemonProviderContributionAuthoringPreviewV1 | null>(null);
     const [authoringPreviewLoading, setAuthoringPreviewLoading] = React.useState(false);
     const [authoringPreviewError, setAuthoringPreviewError] = React.useState<ProviderErrorV1 | null>(null);
@@ -220,14 +261,28 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         ? query.data?.available.find((item) =>
             areProviderContributionKeysEqualV1(item.contributionKey, requestedContributionKey))
         : undefined;
-    const contributionEndpointTemplates = contribution?.endpointTemplates ?? [];
-    const contributionEndpointOverrides = React.useMemo<ProviderEndpointOverrideV1[]>(() =>
-        contributionEndpointTemplates.flatMap((endpoint) => {
-            const baseUrl = contributionEndpointValues[endpoint.id]?.trim() ?? '';
-            return baseUrl ? [{ endpointTemplateId: endpoint.id, baseUrl }] : [];
-        }), [contributionEndpointTemplates, contributionEndpointValues]);
-    const contributionEndpointsComplete = contributionEndpointOverrides.length === 0
-        || contributionEndpointOverrides.length === contributionEndpointTemplates.length;
+    const configuredContribution = requestedContributionKey && managed
+        ? query.data?.connections.find(row => row.contributionKey
+            && areProviderContributionKeysEqualV1(row.contributionKey, requestedContributionKey))
+        : undefined;
+    const managedChoice = React.useMemo(() => managed && requestedContributionKey
+        ? chooseProviderGatewayContributionV1(readAccountProviderDeclarations(query.declarationContext), { contributionKey: requestedContributionKey })
+        : null, [managed, query.declarationContext, requestedContributionKey]);
+    // `available` deliberately excludes configured contributions. An untouched interrupted row
+    // still has an admitted declaration and must reach the existing atomic repair/Create owner.
+    const managedReady = managedChoice?.status === 'selected' && Boolean(query.data) && !query.loading && !query.error;
+    const managedPurposes = React.useMemo(() => managed && requestedContributionKey
+        ? readProviderGatewayContributionPurposesV1(requestedContributionKey, readAccountProviderDeclarations(query.declarationContext)) ?? []
+        : [], [managed, query.declarationContext, requestedContributionKey]);
+    const contributionEndpointTemplates = contribution?.endpointTemplates ?? EMPTY_ENDPOINT_TEMPLATES;
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
+    const contributionPluginId = props.contributionKey
+        ? parseProviderContributionIdentityV1(props.contributionKey)?.identity.pluginId ?? props.contributionKey
+        : '';
+    const endpointDraft = useProviderEndpointDraft(contributionEndpointTemplates);
+    const contributionEndpointValues = endpointDraft.values;
+    const contributionEndpointPublicHeaders = endpointDraft.publicHeaders;
+    const contributionEndpointOverrides = endpointDraft.overrides;
     const contributionEndpointOverridesKey = JSON.stringify(contributionEndpointOverrides);
     const draftRequiresApiKey = draft.advanced
         ? draft.endpoints.some((endpoint) => endpoint.enabled && endpoint.requiresApiKey)
@@ -259,7 +314,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const authoringStateKey = buildAuthoringStateKey({
         draft, secretId: effectiveSecretId, enableAfterSaving,
         selectedCandidateId, contributionDisplayName,
-        contributionEndpointValues,
+        contributionEndpointValues, contributionEndpointPublicHeaders,
+        managedDeployment,
     });
     const probeObservationKey = JSON.stringify({
         machineId,
@@ -296,6 +352,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             selectedCandidateId: resetCandidateContext.candidateId,
             contributionDisplayName: resetCandidateContext.displayName,
             contributionEndpointValues: {},
+            managedDeployment: initialManagedDeployment.current,
         });
         setDraft(freshDraft);
         setSecretId(null);
@@ -311,7 +368,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         setInvalidField(null);
         setSelectedCandidateId(resetCandidateContext.candidateId);
         setContributionDisplayName(resetCandidateContext.displayName);
-        setContributionEndpointValues({});
+        setManagedDeployment(initialManagedDeployment.current);
+        endpointDraft.reset();
         setAuthoringPreview(null);
         setAuthoringPreviewLoading(false);
         setAuthoringPreviewError(null);
@@ -327,11 +385,14 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         // The reset form is pristine again, so the guard must not claim
         // unsaved Account A work on Account B's behalf.
         initialAuthoringStateKeyRef.current = resetStateKey;
-    }, [candidateMachineId, mutation.clearError, props.edit, serverId]);
+    }, [candidateMachineId, endpointDraft.reset, mutation.clearError, props.edit, serverId]);
     const discardAccountScopedAuthoringState = React.useCallback(() => {
         // Discovery defaults came from the retiring Account, even when its
         // successor restores the same server and machine identifiers.
         candidateContextRef.current = { machineId: candidateMachineId, serverId, candidateId: null, displayName: null };
+        // Serves and Runs on were selected under the retiring Account. The new
+        // Account may author a gateway, but never inherits those targets.
+        if (initialManagedDeployment.current) initialManagedDeployment.current = { kind: 'managedLocal', purposeBindingDefaults: {} };
         discardAuthoringDraft();
     }, [candidateMachineId, discardAuthoringDraft, serverId]);
     // One incumbent lifetime owns both synchronous form retirement and every
@@ -362,12 +423,15 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 draft, secretId: effectiveSecretId, enableAfterSaving,
                 selectedCandidateId: null, contributionDisplayName: null,
                 contributionEndpointValues,
+                contributionEndpointPublicHeaders,
+                managedDeployment,
             });
         }
         setSelectedCandidateId(null);
         setContributionDisplayName(null);
-    }, [candidateMachineId, contributionEndpointValues, draft, effectiveSecretId, enableAfterSaving, serverId]);
+    }, [candidateMachineId, contributionEndpointPublicHeaders, contributionEndpointValues, draft, effectiveSecretId, enableAfterSaving, managedDeployment, serverId]);
 
+    // Preview identity depends on default versus named role; save reads the current name text.
     React.useEffect(() => {
         const generation = authoringPreviewGenerationRef.current + 1;
         authoringPreviewGenerationRef.current = generation;
@@ -375,7 +439,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             setAuthoringPreviewLoading(false);
             return;
         }
-        if (!accountStillCurrent() || !enabled || !props.contributionKey) {
+        if (!accountStillCurrent() || !enabled || !props.contributionKey || managed) {
             setAuthoringPreview(null);
             setAuthoringPreviewError(null);
             setAuthoringPreviewLoading(false);
@@ -383,10 +447,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         }
         setAuthoringPreview(null);
         setAuthoringPreviewError(null);
-        if (!contributionEndpointsComplete) {
-            setAuthoringPreviewLoading(false);
-            return;
-        }
         setAuthoringPreviewLoading(true);
         const controller = new AbortController();
         void describeProviderConnections({
@@ -422,7 +482,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             authoringPreviewGenerationRef.current += 1;
             controller.abort();
         };
-    }, [accountLifetime, accountStillCurrent, describeProviderConnections, authoringPreviewRefreshNonce, connectionId, contributionDisplayName === null, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, focused, machineId, props.contributionKey, selectedCandidateId, serverId]);
+    }, [accountLifetime, accountStillCurrent, describeProviderConnections, authoringPreviewRefreshNonce, connectionId, contributionDisplayName === null, contributionEndpointOverridesKey, enabled, focused, machineId, managed, props.contributionKey, selectedCandidateId, serverId]);
     const retryAuthoringPreview = React.useCallback(async (): Promise<void> => {
         if (!accountStillCurrent()) return;
         setAuthoringPreviewRefreshNonce((current) => current + 1);
@@ -448,12 +508,12 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         setLocalError(null);
         setManualModelsError(null);
         setInvalidField(null);
-        const previewCredential = authoringPreview?.credential ?? contribution?.credential ?? null;
+        const previewCredential = managed ? null : authoringPreview?.credential ?? contribution?.credential ?? null;
         const contributionSecretId = effectiveSecretId;
         const manualModels = parseProviderManualModelInput(draft.manualModelsText);
         let template: ReturnType<typeof buildCustomProviderTemplate> | null = null;
         if (props.contributionKey) {
-            if (authoringPreview?.status !== 'resolved') return false;
+            if (managed ? !managedReady : authoringPreview?.status !== 'resolved') return false;
             if (previewCredential?.required && !contributionSecretId) {
                 setLocalError('provider_secret_missing');
                 return false;
@@ -502,40 +562,52 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 router.replace(providerConnectionDetailRoute(connectionId) as never);
                 return true;
             }
-            const request = props.contributionKey ? (() => {
-                if (authoringPreview?.status !== 'resolved') return null;
-                return {
-                    action: 'createContribution' as const,
-                    ...(machineId ? { machineId } : {}), connectionId, contributionKey: props.contributionKey,
-                    // One step (PA1): a provider someone just connected is simply on.
-                    displayName: contributionDisplayName, savedSecretId: contributionSecretId, enable: true,
-                    authoringReview: {
-                        candidateId: authoringPreview.candidateId,
-                        fingerprint: authoringPreview.fingerprint,
-                        revision: authoringPreview.revision,
-                        endpointOverrides: contributionEndpointOverrides,
-                    },
+            let savedConnectionId: string | null;
+            if (managedDeployment && managedChoice?.status === 'selected') {
+                savedConnectionId = await createProviderGateway({ run: mutation.run, contribution: managedChoice.contribution,
+                    connectionId, machineId, displayName: contributionDisplayName, configuration: managedDeployment, key: 'save' });
+            } else {
+                const request = props.contributionKey ? (() => {
+                    if (authoringPreview?.status !== 'resolved') return null;
+                    return {
+                        action: 'createContribution' as const,
+                        ...(machineId ? { machineId } : {}), connectionId, contributionKey: props.contributionKey,
+                        // One step (PA1): a provider someone just connected is simply on.
+                        displayName: contributionDisplayName, savedSecretId: contributionSecretId, enable: true,
+                        authoringReview: {
+                            candidateId: authoringPreview.candidateId,
+                            fingerprint: authoringPreview.fingerprint,
+                            revision: authoringPreview.revision,
+                            endpointOverrides: contributionEndpointOverrides,
+                        },
+                    };
+                })() : {
+                    action: 'createCustom' as const,
+                    ...(machineId ? { machineId } : {}), connectionId, template: template!,
+                    manualModels: manualModels.accepted.map((id) => ({
+                        id,
+                        ...(draft.manualReasoningEffortLevels.length > 0
+                            ? { reasoningEffortLevels: [...draft.manualReasoningEffortLevels] } : {}),
+                    })),
+                    savedSecretId: draftRequiresApiKey ? contributionSecretId : null, enable: enableAfterSaving,
                 };
-            })() : {
-                action: 'createCustom' as const,
-                ...(machineId ? { machineId } : {}), connectionId, template: template!,
-                manualModels: manualModels.accepted.map((id) => ({ id })),
-                savedSecretId: draftRequiresApiKey ? contributionSecretId : null, enable: enableAfterSaving,
-            };
-            if (!request) return false;
-            const result = await mutation.run(request, 'save');
-            if (accountStillCurrent() && !signal.aborted && result?.status === 'success' && 'connection' in result) {
+                if (!request) return false;
+                const result = await mutation.run(request, 'save');
+                savedConnectionId = result?.status === 'success' && 'connection' in result ? result.connection.connectionId : null;
+            }
+            if (accountStillCurrent() && !signal.aborted && savedConnectionId) {
                 isDirtyRef.current = false;
                 ignoreUnsavedGuardRef.current = true;
                 // A catalog provider opens on its detail, which may close the setup with one note.
-                router.replace(`${providerConnectionDetailRoute(result.connection.connectionId)}${props.contributionKey ? '?connected=1' : ''}` as never);
+                if (props.onCreated) props.onCreated(savedConnectionId);
+                else router.replace(`${providerConnectionDetailRoute(savedConnectionId)}${props.contributionKey ? '?connected=1' : ''}` as never);
                 return true;
             }
         } catch {
             if (accountStillCurrent() && !signal.aborted) setLocalError('provider_connection_invalid');
         }
         return false;
-    }, [accountStillCurrent, authoringPreview, connectionId, contribution?.credential, contribution?.name, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, mutation, props.contributionKey, props.edit, router]);
+    }, [accountStillCurrent, authoringPreview, connectionId, contribution?.credential, contribution?.name, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, managed, managedChoice, managedDeployment, managedReady, mutation, props.contributionKey, props.edit, props.onCreated, router]);
     const save = React.useCallback((): Promise<boolean> => {
         if (!accountStillCurrent()) return Promise.resolve(false);
         if (saveOperation.current?.promise) return saveOperation.current.promise;
@@ -657,10 +729,14 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         { id: 'custom-header-bearer', title: t('settingsProviders.authoring.credentialStyle.customHeaderBearer') },
     ], []);
     const leaveDraft = React.useCallback(() => {
+        if (!accountStillCurrent()) return;
         discardAuthoringDraft();
-        const result = runGuardedNavigation(() => router.replace('/(app)/settings/providers' as never));
+        const result = runGuardedNavigation(() => {
+            if (props.onDiscard) props.onDiscard();
+            else router.replace('/(app)/settings/providers' as never);
+        });
         if (result !== true) fireAndForget(result, { tag: 'ProviderConnectionAuthoringScreen.discard' });
-    }, [discardAuthoringDraft, router]);
+    }, [accountStillCurrent, discardAuthoringDraft, props.onDiscard, router]);
     // While Connect or Save waits for its approval the page says so and reopens that approval; the
     // request's continuation then lands on the saved provider.
     const pendingApprovalHref = mutation.pendingApproval?.href;
@@ -712,8 +788,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             ? retryAuthoringPreview
             : undefined;
     const localEndpoint = localEndpointHint(draft);
-    const targetMachine = machines.find((machine) => machine.id === machineId);
-    const currentMachineName = targetMachine ? getMachineSentenceName(targetMachine) : machineId ?? '';
+    const currentMachineName = targetMachineName ?? machineId ?? '';
 
     // The catalog entry is still arriving: reserve the page rather than draw a generic form.
     if (props.contributionKey && !contribution && !query.data && !query.error) {
@@ -725,7 +800,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     }
 
     if (props.contributionKey) {
-        const previewCredential = authoringPreview?.credential ?? contribution?.credential ?? null;
+        const previewCredential = managed ? null : authoringPreview?.credential ?? contribution?.credential ?? null;
         return (
             <BuiltInProviderAuthoringView
                 nameField={(
@@ -742,17 +817,27 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                         }}
                     />
                 )}
+                gatewayDraft={managedDeployment ? {
+                    ready: managedReady,
+                    fields: props.renderManagedDeployment?.({ scope: addressedScope, deployment: managedDeployment,
+                        declarations: managedPurposes, machines: providerTarget.machineRows,
+                        disabled: saveInProgress || !managedReady, onChange: next => {
+                            if (accountStillCurrent()) setManagedDeployment(next);
+                        } }),
+                } : undefined}
                 machineId={machineId}
                 currentMachineName={currentMachineName}
-                providerName={contribution?.name ?? null}
-                icon={contribution?.icon ?? null}
+                providerName={contribution?.name ?? configuredContribution?.providerName ?? null}
+                icon={contribution?.icon ?? configuredContribution?.icon ?? null}
                 contributionKey={props.contributionKey}
-                provenance={contribution?.provenance ?? null}
+                provenance={contribution?.provenance ?? (configuredContribution?.provenance === 'custom'
+                    ? null : configuredContribution?.provenance ?? null)}
 
                 keyUrl={contribution?.credential?.keyUrl}
                 previewCredential={previewCredential}
-                endpointTemplates={contributionEndpointTemplates}
+                endpointTemplates={managed ? [] : contributionEndpointTemplates}
                 endpointValues={contributionEndpointValues}
+                endpointPublicHeaders={contributionEndpointPublicHeaders}
                 secretSelected={selectedSecretObservation?.status === 'present'}
                 selectedSecretName={selectedSecretObservation?.status === 'present' ? selectedSecretObservation.name : null}
                 savedSecretSelectionEnabled={selectedTargetServerMatchesActiveAccount}
@@ -769,10 +854,13 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 onEndpointChange={(endpointTemplateId, baseUrl) => {
                     if (!accountStillCurrent()) return;
                     setSelectedCandidateId(null);
-                    setContributionEndpointValues((current) => ({
-                        ...current,
-                        [endpointTemplateId]: baseUrl,
-                    }));
+                    endpointDraft.setBaseUrl(endpointTemplateId, baseUrl);
+                }}
+                localizeText={(value) => localizePluginText(contributionPluginId, value)}
+                onEndpointPublicHeadersChange={(endpointTemplateId, publicHeaders) => {
+                    if (!accountStillCurrent()) return;
+                    setSelectedCandidateId(null);
+                    endpointDraft.setPublicHeaders(endpointTemplateId, publicHeaders);
                 }}
                 onSave={() => { void save(); }}
 

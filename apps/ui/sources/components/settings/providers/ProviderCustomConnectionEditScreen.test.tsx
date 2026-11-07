@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import {
     DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
     PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,

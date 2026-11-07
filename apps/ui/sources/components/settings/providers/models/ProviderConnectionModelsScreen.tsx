@@ -29,6 +29,8 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
     connectionId: string;
     /** Open with the manual-model editor open. */
     startAdding?: boolean;
+    /** Open with this model's generation settings editor open (the editor's AI suggestions link here). */
+    startEditingGenerationOf?: string;
 }>) {
     const router = useRouter();
     const navigation = useNavigation();
@@ -48,6 +50,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         serverId,
         resolveCurrentTarget,
         startAdding: props.startAdding,
+        startEditingGenerationOf: props.startEditingGenerationOf,
     });
 
     // A typed manual-model draft is unsaved work: leaving asks first, as on every other editor.

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -42,8 +43,9 @@ describe('ProviderGatewaySections (lab rgateway GW1/GW2)', () => {
         const onChangeSlot = vi.fn();
         const screen = await render({ onConnectService, onChangeSlot });
 
-        await screen.pressByTestIdAsync('provider-gateway-slot:openai-upstream:connect');
-        expect(onConnectService).toHaveBeenCalledWith('happier.agent.codex/openai-codex');
+        const trigger = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 24, height: 24 }) };
+        await act(async () => { screen.findByTestId('provider-gateway-slot:openai-upstream:connect')!.props.onPress({ currentTarget: trigger }); });
+        expect(onConnectService).toHaveBeenCalledWith('happier.agent.codex/openai-codex', { kind: 'view', ref: { current: trigger } });
         expect(onChangeSlot).not.toHaveBeenCalled();
     });
 

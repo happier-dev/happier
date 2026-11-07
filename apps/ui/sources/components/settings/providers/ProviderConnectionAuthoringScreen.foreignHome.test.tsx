@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { NavigationContext, useNavigation } from '@react-navigation/native';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
     PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
@@ -21,7 +21,8 @@ vi.mock('@react-navigation/native', async () => {
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
-beforeAll(async () => { await loadSyncSingletonForTests(); });
+// Cold graph compilation is collection setup, outside the behavioral hook deadline.
+await loadSyncSingletonForTests();
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
 function NavigationBoundary(props: React.PropsWithChildren) {

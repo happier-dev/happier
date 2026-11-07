@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ReactTestInstance } from 'react-test-renderer';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { act, type ReactTestInstance } from 'react-test-renderer';
+import { Item } from '@/components/ui/lists/Item';
+import { Item as PublicItem, TextField as PublicTextField } from '@happier-dev/plugin-ui';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import {
@@ -297,5 +299,47 @@ describe('BuiltInProviderAuthoringView', () => {
         expect(machine.findByTestId('settings-provider-authoring-destination-scope')).toBeNull();
         expect(machine.findByTestId('settings-provider-authoring-resolved-endpoint:chat')).toBeNull();
         expect(machine.getTextContent()).not.toContain('settingsProvidersCollection.addAccountScopeHint');
+    });
+    it('opens endpoints a provider requires, drafts their public headers over its defaults and is honest about the second key', async () => {
+        const onHeaders = vi.fn();
+        const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
+        const screen = await renderScreen(
+            <BuiltInProviderAuthoringView
+                machineId={null} currentMachineName="" providerName="Gateway" icon={null} provenance="first_party"
+                previewCredential={{ required: true, authorityDescription: 'The token can use every gateway in the account.',
+                    additionalCredentials: [{ slotId: 'upstreamKey', label: 'Upstream API key', required: true }] }}
+                endpointTemplates={[
+                    { id: 'messages', protocol: 'anthropic', requiresEndpointOverride: true,
+                        publicHeaders: { 'x-collect-log': 'false' }, publicHeaderHints: { 'x-collect-log': 'False keeps logs off.' } },
+                    { id: 'responses', protocol: 'openai-responses', requiresEndpointOverride: true },
+                ]}
+                endpointValues={{}}
+                endpointPublicHeaders={{ messages: { 'x-collect-log': 'true' } }}
+                secretSelected={false} savedSecretSelectionEnabled
+                preview={null} previewLoading={false} savePending={false} error={null}
+                secondaryTextColor="#777" warningColor="#b70"
+                onPickSecret={vi.fn()} onChooseCandidate={vi.fn()} onEndpointChange={vi.fn()}
+                onEndpointPublicHeadersChange={onHeaders}
+                onSave={vi.fn()} onDiscard={vi.fn()}
+            />,
+        );
+        // Endpoints the provider cannot supply are asked for at once, each listed separately.
+        expect(screen.findByTestId('settings-provider-authoring-endpoint-messages')).toBeTruthy();
+        expect(screen.findByTestId('settings-provider-authoring-endpoint-responses')).toBeTruthy();
+        // The token's reach is said beside the key; the second key is named, not faked as entered here.
+        const items = screen.findAllByType(Item);
+        expect(items.find((item) => item.props.testID === 'settings-provider-authoring-key-authority')?.props.subtitle)
+            .toBe('The token can use every gateway in the account.');
+        expect(items.find((item) => item.props.testID === 'settings-provider-authoring-additional-key:upstreamKey')?.props)
+            .toMatchObject({ title: 'Upstream API key', subtitle: 'settingsProvidersCollection.companionKeyAfterConnect' });
+        // The draft's own header shows as changed; typing the provider's value back drops the draft.
+        const log = screen.findAllByType(PublicTextField)
+            .find((row) => row.props.testID === 'settings-provider-authoring-endpoint-messages.header.x-collect-log');
+        expect(log?.props.value).toBe('true');
+        expect(screen.findAllByType(PublicItem)
+            .find((row) => row.props.testID === 'settings-provider-authoring-endpoint-messages.header.x-collect-log.row')?.props.subtitle)
+            .toContain('settingsProvidersCollection.headersChanged');
+        await act(async () => { log?.props.onCommit('false'); });
+        expect(onHeaders).toHaveBeenLastCalledWith('messages', null);
     });
 });

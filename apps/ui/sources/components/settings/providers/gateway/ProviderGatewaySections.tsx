@@ -22,9 +22,11 @@ import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/conn
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -89,7 +91,7 @@ export type ProviderGatewaySectionsProps = Readonly<{
     purpose: string,
     target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
   ) => void;
-  onConnectService: (serviceKey: string) => void;
+  onConnectService: (serviceKey: string, anchor?: PopoverAnchor) => void;
   placement: ProviderGatewayPlacementV1 | undefined;
   machines: readonly ProviderGatewayMachine[];
   reachability: ProviderGatewayHubReachability;
@@ -104,7 +106,7 @@ export type ProviderGatewaySectionsProps = Readonly<{
   /** The captured Account catalog is not writable or the selected target belongs to another Account. */
   disabled: boolean;
   disabledReason?: string;
-  /** "Show in model picker" and the Models link, owned by the page. */
+  /** "Show in model picker" and the Models link, owned by the page; a draft has none and shows no section. */
   pickerRows: React.ReactNode;
   /** The Name field, owned by the page. */
   nameRow: React.ReactNode;
@@ -383,8 +385,6 @@ export const ProviderGatewaySections = React.memo(
                 {...state.headerProps}
                 title={t('settingsProvidersCollection.gateway.whatToKnow')}
                 detail={t('settingsProviders.compatibility.experimental')}
-                rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-                showChevron={false}
               />
             )}
           >
@@ -482,7 +482,7 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
               'settingsProvidersCollection.gateway.slotConnect',
               { service: title },
             )}
-            onPress={() => props.onConnect(serviceKey)}
+            onPress={(event) => props.onConnect(serviceKey, resolvePressTriggerAnchor(event))}
           />
         }
         rightElementOutsidePressable
