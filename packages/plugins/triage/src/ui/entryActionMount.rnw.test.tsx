@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
+import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
 import type {
     PluginUiSessionServerStartDraftV1,
     PluginUiTargetedContributionContributorV1,
@@ -498,7 +499,8 @@ let draftSeeds: unknown[] = [];
 /** Seeds handed to the host-owned New Session authoring surface. */
 let newSessionSeeds: unknown[] = [];
 
-async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ available: boolean }> = false, chooseDraft?: (signal: AbortSignal) => Promise<PluginUiSessionServerStartDraftV1 | null>): Promise<PluginUiTestkit> {
+async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ available: boolean }> = false, chooseDraft?: (signal: AbortSignal) => Promise<PluginUiSessionServerStartDraftV1 | null>,
+    page?: Readonly<{ launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; opens?: PluginUiTestkitOpenSurfaceInput[] }>): Promise<PluginUiTestkit> {
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -506,6 +508,7 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
             identity: { instanceId: 'fixture-instance-176', mountNonce: 'fixture-mount-176' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: renderShellSurface,
+            ...(page?.launchInput === undefined ? {} : { launchInput: page.launchInput }),
             surfaceContext: createSurfaceContextFixture({
                 targetedContributions: {
                     target: TARGET_IDENTITY,
@@ -595,6 +598,7 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
                     newSessionSeeds.push(request);
                 },
                 replacePageLocation: ({ subPath }) => subPath,
+                ...(page?.opens === undefined ? {} : { openSurface: (input: PluginUiTestkitOpenSurfaceInput) => { page.opens!.push(input); } }),
             },
         });
     });
@@ -649,6 +653,51 @@ afterEach(async () => {
 });
 
 const PREPARATION_UNSUPPORTED_COPY = 'This source cannot prepare a review workspace, so actions that need one cannot start here.';
+
+describe('Edit action… opens the one actions editor through the Triage page', () => {
+    const FIX_ONLY = [{ actionId: 'fix', label: 'Fix', enabled: true, appliesTo: ['pullRequest'], profileId: null,
+        workspaceMode: 'reference_only', target: { kind: 'agent', promptInvocationId: null,
+            seededFallbackInstruction: 'Fix this entry.', delivery: 'compose' } }];
+    // The page every surface opens the editor on: core pages, the Triage list and its detail, and the standalone detail.
+    const EDITOR = { view: { pluginId: 'happier.triage', localId: 'triage' }, input: { v: 1, kind: 'actionEditor', actionId: 'fix' } };
+
+    it('from the mounted detail opens the editor on the pressed record, not a page-local copy', async () => {
+        const harness = createHarness({});
+        harness.setActions(FIX_ONLY);
+        const opens: PluginUiTestkitOpenSurfaceInput[] = [];
+        const shell = await mountShell(harness, false, undefined, { opens });
+        await openTheRow(shell);
+        await pressAction(shell, 'Fix options');
+        await pressMenuItem(shell, 'Edit action…');
+        expect(opens).toEqual([expect.objectContaining(EDITOR)]);
+    }, 60_000);
+
+    it('from the standalone detail of a resolved resource', async () => {
+        const harness = createHarness({});
+        harness.setActions(FIX_ONLY);
+        // The resource resolution Action answers this entry; every other read stays the harness's real owner path.
+        const resolving: Harness = { ...harness, executeAction: async (request) => testkitTriageActionId(request.action) === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1
+            ? { kind: 'resolved', entryRef: ENTRY_REF, sourceInstance: { source: ENTRY_REF.source, sourceInstanceId: INSTANCE },
+                locator: testkitLocator() }
+            : await harness.executeAction(request) };
+        const opens: PluginUiTestkitOpenSurfaceInput[] = [];
+        const shell = await mountShell(resolving, false, undefined, { opens,
+            launchInput: { resource: { kind: 'pullRequest', url: 'https://github.com/example/repository/pull/17' } } });
+        await settle();
+        await pressAction(shell, 'Fix options');
+        await pressMenuItem(shell, 'Edit action…');
+        expect(opens).toEqual([expect.objectContaining(EDITOR)]);
+    }, 60_000);
+
+    it('lands the Triage page on that record when it is opened with the editor launch', async () => {
+        const harness = createHarness({});
+        harness.setActions(FIX_ONLY);
+        const shell = await mountShell(harness, false, undefined, { launchInput: { v: 1, kind: 'actionEditor', actionId: 'fix' } });
+        await settle();
+        await expect(shell.getByRole('button', { name: 'Save' })).resolves.toBeDefined();
+        expect(Array.from(document.querySelectorAll<HTMLInputElement>('input')).map(input => input.value)).toContain('Fix');
+    }, 60_000);
+});
 
 describe('the entry action controls on the mounted detail header', () => {
     // Walk through without a reachable linked Session opens the prefilled composer (owner ruling 16:50Z), so the

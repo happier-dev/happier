@@ -379,6 +379,9 @@ export { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectActionSubject
 export type { TriageInvestigationSubjectEntryV1 } from './investigationSubjects.js';
 export { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1, DEPLOYMENT_FIX_DEPLOY_ACTION_ID_V1, DEPLOYMENT_SET_UP_ACTION_ID_V1 } from './subjectActions.js';
 export type { TriageSubjectActionDeclarationV1 } from './subjectActions.js';
+export { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_APP_PAGE_DESTINATION_V1, TriageActionEditorLaunchInputV1Schema,
+    buildTriageActionEditorLaunchInputV1 } from './actionEditorLaunch.js';
+export type { TriageActionEditorLaunchInputV1 } from './actionEditorLaunch.js';
 export { TriageSourceOperationOutcomeV1Schema, readTriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export type { TriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export {

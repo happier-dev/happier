@@ -6,7 +6,8 @@ import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.j
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-import { formatTriageTimestampV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { formatTriageTimestampV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageActionEditorLaunchInputV1 } from '@happier-dev/triage-protocol/v1';
+import { openTriageActionEditorV1 } from '../actions/openActionEditor.js';
 import {
   Banner,
   Button,
@@ -344,6 +345,8 @@ export type TriageListShellProps = Readonly<{
    * ordinary open, which is every launch this page is not the destination of.
    */
   launch?: TriageEntryDetailLaunchInputV1;
+  /** An opener asked this page to open the actions editor (Edit action… anywhere), on one record or on the catalog. */
+  actionEditor?: TriageActionEditorLaunchInputV1;
   /** The existing host navigation owner's one-shot explicit-open provenance. */
   pageLaunch?: RenderContext['launch'];
 }>;
@@ -429,9 +432,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    */
   const configuredActions = useTriageActions();
   const configuredSources = useTriageConfiguredSources();
-  // Open with no action (⋯ Configure actions) or on one action (an entry's "Edit action…").
+  // The editor opens only from its launch, so Configure actions, an entry's Edit action…, the standalone detail and
+  // core pages all reach this one editor the same way: by opening this page with it (`openTriageActionEditorV1`).
   const [editingActions, setEditingActions] = React.useState<false | Readonly<{ actionId?: string }>>(false);
-  const editAction = React.useCallback((actionId: string) => { setEditingActions({ actionId }); }, []);
+  React.useEffect(() => {
+    const opened = props.actionEditor;
+    if (opened !== undefined) setEditingActions(opened.actionId === undefined ? {} : { actionId: opened.actionId });
+  }, [props.actionEditor]);
+  const pageLocation = props.subPath;
+  const editAction = React.useCallback((actionId?: string) => {
+    openTriageActionEditorV1(hostApi, { ...(actionId === undefined ? {} : { actionId }), subPath: pageLocation ?? '' });
+  }, [hostApi, pageLocation]);
   const [creatingTask, setCreatingTask] = React.useState(props.createDraft !== undefined);
   const [localTaskDraft, setLocalTaskDraft] = React.useState<ReturnType<typeof stageTriageTaskDraft>>(null);
   React.useEffect(() => {
@@ -2266,7 +2277,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         ],
         onSelect: (id) => {
           if (id === 'organize-list') setOrganizing(true);
-          else if (id === 'configure-actions') setEditingActions({});
+          else if (id === 'configure-actions') editAction();
           else if (id === 'manage-sources') setEditingSources(true);
         },
       }}

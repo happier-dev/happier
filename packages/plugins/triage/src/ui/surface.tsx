@@ -5,6 +5,7 @@ import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { parseTriageEntryDetailLaunchInput } from '../composer/entryDetailLaunchInput.js';
 import { TriageListShell } from './shell/root.js';
 import { PluginUiResourceIntentV1Schema } from '@happier-dev/plugin-sdk/protocol';
+import { TriageActionEditorLaunchInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { TriageResourceSurface } from './resourceSurface.js';
 import { readTriageResourceIntent } from './contributions.js';
 
@@ -69,6 +70,12 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
     return parsed.status === 'valid' ? parsed.input : undefined;
   }, [context.launchInput]);
 
+  /** Held by the launch value's identity, like the entry launch: each Edit action… is one delivered open. */
+  const actionEditor = React.useMemo(() => {
+    const parsed = TriageActionEditorLaunchInputV1Schema.safeParse(context.launchInput);
+    return parsed.success ? parsed.data : undefined;
+  }, [context.launchInput]);
+
   if (resource !== null) return <TriageResourceSurface resource={resource} />;
 
   // Forward the host location and one-shot staged-open provenance alongside
@@ -81,6 +88,7 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
       {...(context.subPath === undefined ? {} : { subPath: context.subPath })}
       {...(context.launch === undefined ? {} : { pageLaunch: context.launch })}
       {...(launch === undefined ? {} : { launch })}
+      {...(actionEditor === undefined ? {} : { actionEditor })}
     />
   );
 }

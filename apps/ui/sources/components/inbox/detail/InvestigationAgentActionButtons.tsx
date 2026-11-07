@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { AgentActionButton, Row } from '@happier-dev/plugin-ui/components';
+import { buildTriageActionEditorLaunchInputV1, TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { t } from '@/text';
 import type { InvestigationAgentAction } from './healthNoticeInvestigation';
 
@@ -11,7 +13,8 @@ export type InvestigationAgentActionButtonModel = Readonly<Omit<InvestigationAge
 /**
  * A failure page's configured agent actions as the shared split control (owner ruling 2026-11-07, "Agent actions:
  * one shared flow"): each face launches its record in the record's own mode, the chevron offers the other launch.
- * Edit action… is omitted: the catalog editor lives in Triage and is not reachable from a core page.
+ * Edit action… opens the one actions editor, Triage's page, on that record through the host's destination navigation,
+ * the same open every Triage surface uses.
  */
 export function InvestigationAgentActionButtons(props: Readonly<{
   actions: readonly InvestigationAgentActionButtonModel[];
@@ -19,6 +22,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   compact: boolean;
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
 }>): React.ReactElement | null {
+  const navigation = usePluginSurfaceDestinationNavigationBinding();
   if (props.actions.length === 0) return null;
   const buttons = props.actions.map((action) => (
     <AgentActionButton
@@ -28,6 +32,10 @@ export function InvestigationAgentActionButtons(props: Readonly<{
       launchMode={action.launchMode}
       {...(action.startable ? {} : { startUnavailableReason: t('ui.pluginUi.agentActionStartNeedsTask') })}
       onLaunch={(mode) => { props.onLaunch(mode, action.actionId); }}
+      {...(navigation === null ? {} : { onEdit: () => {
+        void navigation.openSurface({ destination: TRIAGE_APP_PAGE_DESTINATION_V1,
+          input: buildTriageActionEditorLaunchInputV1(action.actionId), subPath: '' });
+      } })}
       disabled={props.pending}
       compact={props.compact}
     />

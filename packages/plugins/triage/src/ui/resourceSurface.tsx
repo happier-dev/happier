@@ -19,6 +19,7 @@ import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, 
 import { useTriageCurrentUiContextPublication } from './currentContextPublication.js';
 import { projectTriageEntryDisplay } from './window/entryDisplay.js';
 import { TRIAGE_DETAIL_PAGE_KIND_V1 } from './detail/body.js';
+import { openTriageActionEditorV1 } from './actions/openActionEditor.js';
 
 const EMPTY_LANES: readonly TriageListLaneV1[] = Object.freeze([]);
 
@@ -113,6 +114,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   const execute = React.useCallback((operation: TriageMountedUiOperationV1) => {
     executeTriageMountedUiAction(host, mountId, operation, text);
   }, [host, mountId, text]);
+  const editAction = React.useCallback((actionId: string) => { openTriageActionEditorV1(host, { actionId }); }, [host]);
   const currentContext = React.useMemo<PluginUiContextEnrichmentV1>(() => {
     const command = (title: string, operation: TriageMountedUiOperationV1): CurrentUiCommandDeclarationV1 => ({
       title, command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation } },
@@ -152,7 +154,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
       sessionSelection={{ value: sessionId, onChange: id => execute({ kind: 'selectLinkedSession', sessionId: id }),
         onAvailableSessionsChange: reportSessions, onLoadMore: () => execute({ kind: 'loadMore', section: 'linkedSessions' }) }}
       lanes={EMPTY_LANES} rows={[row]} connectionLabel={null} target={resolveTriageActionTargetV1({ selection })}
-      actions={actions} originComposer={null} pin={{ row: projectTriageWindowRow(row, indexTriagePinsByEntry(pins.pins), { text }),
+      actions={actions} onEditAction={editAction} originComposer={null} pin={{ row: projectTriageWindowRow(row, indexTriagePinsByEntry(pins.pins), { text }),
         handlers: { busyKey: pins.busyKey, unavailableReason: pins.unavailableReason, onSetPinned: pins.setPinned } }} />
   </Stack>;
 }

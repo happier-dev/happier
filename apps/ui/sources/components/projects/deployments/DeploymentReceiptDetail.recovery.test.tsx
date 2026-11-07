@@ -15,17 +15,43 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 const router = await vi.hoisted(async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock());
 vi.mock('expo-router', () => router.module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+// Triage is not installed on this Home harness, so its contributed Actions are the realm boundary: the
+// configured-action catalog answers the person's records and the configured run records what a press starts.
+// Every other Action keeps the real front door.
+const triage = vi.hoisted(() => ({ runs: [] as unknown[] }));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const selection = (configuredActionId: string) => ({ configuredActionId,
+    sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
+  return { ...actual, createFrontDoorActionExecute: (...args: Parameters<typeof actual.createFrontDoorActionExecute>) => {
+    const real = actual.createFrontDoorActionExecute(...args);
+    const execute = (async (actionId, input, context) => {
+      const action = (input as { action?: { pluginId?: string; localId?: string } } | undefined)?.action;
+      if (actionId !== 'action.invoke' || action?.pluginId !== 'happier.triage') return real(actionId, input, context);
+      if (action.localId === 'actions/read-v1') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [
+        { label: 'Investigate', selection: selection('investigate'), launchMode: 'start', startable: true },
+        { label: 'Fix this deploy', selection: selection('deployments.fix-deploy'), launchMode: 'review', startable: true, forSubject: true },
+      ] } };
+      if (action.localId !== 'sessions/run-configured-v1') return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
+      triage.runs.push((input as { input?: unknown }).input);
+      return { ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
+    }) as typeof real;
+    return Object.assign(execute, { prepare: real.prepare, confirmed: real.confirmed });
+  } };
+});
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
 // The app shell's one Account investigation owner, which every failure page borrows.
 const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
 const { createDeploymentActions } = await import('./deploymentActions');
+const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+const { PluginSurfaceDestinationNavigationBindingProvider } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
 await import('@/sync/ops/actions/defaultActionExecutor');
 const snapshotId = 'c'.repeat(64);
 
 describe('failed deployment migration recovery', () => {
-  beforeEach(() => homes.reset());
+  beforeEach(() => { homes.reset(); triage.runs.length = 0; });
   afterEach(standardCleanup);
 
   it.each([
@@ -33,8 +59,8 @@ describe('failed deployment migration recovery', () => {
     { policy: 'ask', capture: true, choice: 'restore' },
     { policy: 'ask', capture: true, choice: 'code' },
     { policy: 'ask', capture: true, choice: 'cancel' },
-    { policy: 'restoreBackupAndRollbackCode', capture: false, choice: 'unavailable' },
     { policy: 'rollbackCodeOnly', capture: true, choice: 'code' },
+    { policy: 'restoreBackupAndRollbackCode', capture: false, choice: 'unavailable' },
   ] as const)('$policy, capture=$capture, choice=$choice reaches the public rollback with the chosen recovery', async ({ policy, capture, choice }) => {
     const homeId = `srv_${'a'.repeat(32)}`;
     const serverId = await homes.addHome({ name: 'Recovery', serverUrl: 'https://migration-recovery.test',
@@ -84,6 +110,18 @@ describe('failed deployment migration recovery', () => {
     } });
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const account = await captureLazyActionAccountContext(serverId);
+    // Agent actions belong to the active Account: the one investigation owner reads the person's records only for its
+    // own receipts. This Home harness has no active Account, so the no-recovery case (no rollback runs) applies one.
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const previousScope = storage.getState().profileScope;
+    const previousRuntime = runtime.getAppliedActiveServerSnapshot();
+    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+    if (choice === 'unavailable') {
+      storage.setState({ profileScope: { serverId, accountId: scope.accountId } });
+      runtime.publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://migration-recovery.test',
+        generation: previousRuntime.generation }, true);
+    }
     try {
       for (const [row, kind, document] of [
         [detail.environment, 'deployment-environment.v1', detail.content],
@@ -112,28 +150,48 @@ describe('failed deployment migration recovery', () => {
         try { const result = await actions.rollback(...args); finished(result); return result; }
         catch (error) { finished(error); throw error; }
       };
-      const screen = await renderScreen(<AccountNoticeInvestigationBoundary><DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+      // The host's destination navigation is this page's route boundary: Edit action… must reach the one editor there.
+      const editorOpens: unknown[] = [];
+      const navigation = { targetKind: 'app' as const, registerOwner: () => () => {},
+        openSurface: (request: unknown) => { editorOpens.push(request); return { ok: true as const }; } };
+      const screen = await renderScreen(<PluginSurfaceDestinationNavigationBindingProvider binding={navigation}><AccountNoticeInvestigationBoundary><DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
         deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
         accountId={scope.accountId} serverId={serverId} readLogs={null} onBack={() => {}} rollback={rollback}
-        cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} /></AccountNoticeInvestigationBoundary>);
+        cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} /></AccountNoticeInvestigationBoundary></PluginSurfaceDestinationNavigationBindingProvider>);
       const actionId = 'project-deployments.receipt.outcome.failed.action';
       await act(async () => { await waitForTestEvent(screen.subscribe,
         () => screen.findByTestId('project-deployments.receipt.outcome.failed'), value => value !== null); });
+      const offered = () => screen.findAllByType(AgentActionButton);
       if (choice === 'unavailable') {
+        // The receipt offers the person's own records for it, one shared agent-action control each, in their words
+        // and launch modes.
+        await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 2); });
+        expect(offered().map(button => [button.props.title, button.props.launchMode]))
+          .toEqual([['Investigate', 'start'], ['Fix this deploy', 'review']]);
         await act(async () => { await controller.refreshDemanded(); });
-        // With no recovery to offer, finding out why is the failed receipt's one way forward (D5). This Home has
-        // no configured Triage, so the shared owner's typed refusal is shown rather than nothing happening.
-        await screen.pressByTestIdAsync(actionId);
+        // With no recovery to offer, the agent actions are the failed receipt's way forward (D5). A press starts the
+        // record it names through the configured run, with this exact receipt as the item and the mode chosen.
+        const fix = offered().find(button => button.props.title === 'Fix this deploy');
+        await act(async () => { fix?.props.onLaunch(fix.props.launchMode); });
+        await act(async () => { await waitForTestEvent(screen.subscribe, () => triage.runs.length, count => count === 1); });
+        const subject = { kind: 'deploymentReceipt', serverId, environmentId: detail.environment.id, deploymentId: receipt.deployment.id };
+        expect(triage.runs).toEqual([expect.objectContaining({ handoff: expect.objectContaining({
+          configuredActionId: 'deployments.fix-deploy', delivery: 'compose',
+          context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }] }) })]);
         expect(observed).toBeUndefined();
-        await act(async () => { await waitForTestEvent(screen.subscribe,
-          () => screen.findByTestId('project-deployments.receipt.investigate.unavailable'), value => value !== null); });
+        // Edit action… opens the ONE actions editor (Triage's page) on the record pressed, never a page-local copy.
+        await act(async () => { fix?.props.onEdit?.(); });
+        expect(editorOpens).toEqual([{ destination: { pluginId: 'happier.triage', localId: 'triage' },
+          input: { v: 1, kind: 'actionEditor', actionId: 'deployments.fix-deploy' }, subPath: '' }]);
         return;
       }
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.alert).mockClear();
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(actionId), value => value !== null); });
-      // Recovery leads; Investigate stays beside it.
-      expect(screen.findByTestId('project-deployments.receipt.outcome.failed.secondaryAction')).not.toBeNull();
+      // Recovery leads; the agent action stays beside it (without an Account catalog, the default Investigate stands
+      // in), and nothing has started an agent.
+      expect(offered().map(button => button.props.title)).toEqual(['Investigate']);
+      expect(triage.runs).toEqual([]);
       await screen.pressByTestIdAsync(actionId);
       if (policy === 'ask') {
         expect(observed).toBeUndefined();
@@ -155,6 +213,12 @@ describe('failed deployment migration recovery', () => {
         if (choice === 'code') expect(observed).not.toHaveProperty('restoreBackupId');
         expect(homes.requestsFor('/v1/actions/deployments.rollback')).toHaveLength(1);
       }
-    } finally { await act(async () => { controller.retire(); account.dispose(); }); }
+    } finally {
+      await act(async () => { controller.retire(); account.dispose(); });
+      if (choice === 'unavailable') {
+        storage.setState({ profileScope: previousScope });
+        runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+      }
+    }
   });
 });
