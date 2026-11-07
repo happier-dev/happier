@@ -135,9 +135,9 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             ? readSessionListRowForServerId(state.sessionListRowsByServerId, input.lifetime.scope.serverId, id) : null;
     };
     const version = (session: Pick<Session, 'seq' | 'updatedAt' | 'metadataVersion' | 'agentStateVersion'
-        | 'metadataLayoutVersion' | 'encryptionMode' | 'encryptedContentAvailability' | 'access'> | null | undefined) => [
+        | 'metadataLayoutVersion' | 'encryptionMode' | 'encryptedContentAvailability' | 'access' | 'active'> | null | undefined) => [
         session?.seq, session?.updatedAt, session?.metadataVersion, session?.agentStateVersion,
-        session?.metadataLayoutVersion, session?.encryptionMode, session?.encryptedContentAvailability, session?.access,
+        session?.metadataLayoutVersion, session?.encryptionMode, session?.encryptedContentAvailability, session?.access, session?.active,
     ];
     const readBasis = (id: string, state = readRegisteredStorageState()) => {
         const session = readSessionState(id, state);
@@ -207,6 +207,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             // finite read must leave its replacement requiring fresh evidence.
             entry.needsAdmission ||= readBasis(sessionId) !== basis.storage;
             entry.needsAdmission ||= value?.workFactsPersisted === false;
+            entry.needsAdmission ||= readTranscript && value?.completeMessageCoverage === false;
             if (value) entry.value = value;
             if (value?.workFactsPersisted && value.completeMessageCoverage && !entry.needsAdmission) {
                 // One converted Session also completes its already-admitted summaries.
@@ -222,8 +223,8 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                     for (const listener of sibling.listeners) listener(value);
                 }
             }
-            // Successful partial pages remain reusable; failed or wholly
-            // unopened pages remain retryable at the same Session version.
+            // Partial evidence remains visible, but its next transcript demand
+            // needs fresh admission even at the same Session version.
             if ((!value || readTranscript && !value.messageEvidence && !value.completeMessageCoverage)
                 && group.get(key) === entry) group.delete(key);
             return value;

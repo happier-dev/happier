@@ -1,10 +1,11 @@
+import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -13,6 +14,16 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { useUsageHistory } from '@/components/settings/usage/useUsageHistory';
 import { createUiClientActionReverseHandler } from './clientActionReverseDispatch';
 import { buildUiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { usePublishUsageWidgetPageContext, useUsageWidgetPageContext } from '@/components/settings/usage/useUsageWidgetPageContext';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { t } from '@/text';
 
 // HTTP serves the Account; Socket.IO cannot connect to this constructed Home.
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -22,6 +33,102 @@ let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
 
 describe('Usage history through the shared Account Action', () => {
+  it('retains an admitted page-command history read when Retry retires into Cancel', async () => {
+    const held = createDeferred<void>();
+    const signals: (AbortSignal | null | undefined)[] = [];
+    let requests = 0;
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-command-lifetime.test', accountId: 'account-a' }],
+      route: async request => {
+        if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        if (++requests === 1) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        signals.push(request.signal);
+        await held.promise;
+        return Response.json({ requests: input.requests.map(row => ({ query: row.query, sessionIds: [] })), results: [] });
+      } });
+    const focused = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(focused.serverUrl))!;
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeTranscriptEvidence: true });
+    let model: ReturnType<typeof useUsageHistory> | undefined;
+    const mounted: { reader: ReturnType<typeof useOptionalCurrentUiContextReader> } = { reader: null };
+    function Page() {
+      const authority = React.useMemo(() => captureActiveServerAccountScopeLifetime(), []);
+      const page = useUsageWidgetPageContext({ authority });
+      model = useUsageHistory({ credentials, query: { query, authority: { serverId: focused.id, accountId: 'account-a' } } });
+      usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], history: model });
+      mounted.reader = useOptionalCurrentUiContextReader();
+      return null;
+    }
+    const screen = await renderMountedCurrentUiContext(React.createElement(Page));
+    try {
+      await act(async () => { await model!.readNow(); });
+      expect(model!.state?.status).toBe('partial');
+      const historyRetry = mounted.reader!.readCurrentUiContext()!.commands.find(command =>
+        command.title === t('usage.board.page.historyReadCommand'));
+      expect(historyRetry).toBeDefined();
+      await act(async () => {
+        expect(await executeCurrentUiContextAction({ actionId: ACTION_ID_FAMILIES_V1.current_ui_context[1],
+          input: { commandId: historyRetry!.id }, context: { surface: 'agent', authority: 'account_automation' } })).toMatchObject({ ok: true });
+      });
+      await expect.poll(() => signals.length).toBe(1);
+      expect(model!.state?.status).toBe('reading');
+      expect(mounted.reader!.resolveCurrentUiCommand(historyRetry!.id)).toBeNull();
+      expect(signals[0]?.aborted).toBe(false);
+      await act(async () => { held.resolve(); });
+      await expect.poll(() => model!.state?.status).toBe('complete');
+    } finally { held.resolve(); await screen.unmount(); }
+  });
+  it.each(['complete', 'hidden', 'unmounted'] as const)('keeps Read now across a Usage view transition until %s', async ending => {
+    const held = createDeferred<void>();
+    const signals: (AbortSignal | null | undefined)[] = [];
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-view-lifetime.test', accountId: 'account-a' }],
+      route: async request => {
+        if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        signals.push(request.signal);
+        await held.promise;
+        return Response.json({ requests: input.requests.map(row => ({ query: row.query, sessionIds: [] })), results: [] });
+      } });
+    const focused = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(focused.serverUrl))!;
+    const authority = { serverId: focused.id, accountId: 'account-a' };
+    const coach = normalizeUsageQuery({ period: { relative: '90days' }, includeTranscriptEvidence: true });
+    const work = normalizeUsageQuery({ period: { relative: '90days' }, includeTranscriptEvidence: false });
+    let model: ReturnType<typeof useUsageHistory> | undefined;
+    function PageRead(props: { query: typeof coach | null }) {
+      model = useUsageHistory({ credentials, query: props.query ? { authority, query: props.query } : null });
+      return null;
+    }
+    const page = (query: typeof coach | null, presented = true) => React.createElement(PluginSurfaceFocusEligibilityProvider,
+      { active: presented, presentationActive: presented, children: React.createElement(PageRead, { query }) });
+    const screen = await renderScreen(page(coach));
+    let pending: ReturnType<ReturnType<typeof useUsageHistory>['readNow']> | undefined;
+    let unmounted = false;
+    try {
+      await act(async () => { pending = model!.readNow(); });
+      await expect.poll(() => signals.length).toBe(1);
+      // The batch has no selected query while the next view's bodies register.
+      await screen.update(page(null));
+      await screen.update(page(work));
+      await flushHookEffects({ cycles: 10 });
+      expect(signals[0]?.aborted, 'changing visible Usage bodies retains the admitted page read').toBe(false);
+      expect(signals).toHaveLength(1);
+      if (ending === 'hidden') await screen.update(page(work, false));
+      if (ending === 'unmounted') { await screen.unmount(); unmounted = true; }
+      if (ending !== 'complete') expect(signals[0]?.aborted, 'leaving Usage releases the read').toBe(true);
+      await act(async () => { held.resolve(); await pending; });
+      if (ending === 'complete') expect(await pending).toMatchObject({ ok: true, result: { status: 'complete' } });
+    } finally { held.resolve(); await pending; if (!unmounted) await screen.unmount(); }
+  });
+
   it('keeps a focused restricted Action read on its admitted request transport', async () => {
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-restricted.test', accountId: 'account-a' }],
       route: request => {
@@ -145,6 +252,17 @@ describe('Usage history through the shared Account Action', () => {
       await expect(executor.execute('usage.history.read', { query }, { ...caller, signal: preaborted.signal }))
         .rejects.toMatchObject({ name: 'AbortError' });
       expect(dataReads(), 'a locally cancelled request is never admitted').toHaveLength(0);
+      const { storage } = await import('@/sync/domains/state/storage');
+      const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+      const settings = storage.getState().settings;
+      storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1, actions: { [USAGE_HISTORY_ACTION_IDS.read]: { disabledSurfaces: ['agent'] } },
+      }) } });
+      try {
+        expect(await hook.getCurrent().readNow({ surface: 'agent', authority: 'account_automation' }))
+          .toMatchObject({ ok: false });
+        expect(dataReads(), 'an agent command cannot acquire history using present-user authority').toHaveLength(0);
+      } finally { storage.setState({ settings }); }
       let result: Awaited<ReturnType<typeof executor.execute>> | undefined;
       await act(async () => { result = await hook.getCurrent().readNow(); });
       expect(result).toMatchObject({ ok: true, result: { status: 'complete', progress } });

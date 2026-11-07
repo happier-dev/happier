@@ -820,6 +820,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   usageSourceDismiss?: Parameters<typeof createUiUsageSourceActionPort>[1];
   /** A mounted recap preview may provide the same client rasterization boundary. */
   usageRecapRender?: Parameters<typeof createUiUsageActionPorts>[1];
+  /** Existing Resource acquisition; the Action still owns input, policy and approval. */
+  usageQueryRead?: import('@happier-dev/protocol/actions/executor/usageActions').UsageActionPorts['query'];
+  connectedServiceQuotaReadOptions?: Parameters<typeof createUiConnectedServiceAction>[1];
   projectWorkerAction?: NonNullable<ActionExecutorDeps['projectWorkerAction']>;
   /** Local keyholding-host delivery; never enters Action input, approval or result. */
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
@@ -1103,7 +1106,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     readPluginRoles: signal => readUiPluginRoleSources(accountContext, signal),
   }) : null;
 
-  const connectedServiceAction = accountContext ? createUiConnectedServiceAction(accountContext) : undefined;
+  const connectedServiceAction = accountContext ? createUiConnectedServiceAction(accountContext, opts?.connectedServiceQuotaReadOptions) : undefined;
   const approvalArtifacts = createApprovalArtifactAccess({
     read: artifactId => accountContext ? accountContext.fetchArtifact(artifactId, { fresh: true })
       : sync.fetchArtifactWithBody(artifactId, { fresh: true }),
@@ -1152,7 +1155,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return written;
     } finally { settlement?.dispose(); }
   };
-  const usageActions = accountContext ? createUiUsageActionPorts(accountContext, opts?.usageRecapRender) : undefined;
+  const usageActions = accountContext ? { ...createUiUsageActionPorts(accountContext, opts?.usageRecapRender),
+    ...(opts?.usageQueryRead ? { query: opts.usageQueryRead } : {}) } : undefined;
   const scmActionExecute = opts?.scmActionExecute ?? createUiScmAction(accountContext, { onDispatched: opts?.onScmDispatched });
   const publicProfileHome = opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction;
   let deps: ActionExecutorDeps = {

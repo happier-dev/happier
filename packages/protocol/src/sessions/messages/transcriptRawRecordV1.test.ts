@@ -12,6 +12,15 @@ import {
 } from './transcriptRawRecordV1.js';
 
 describe('TranscriptRawRecordV1Schema', () => {
+  it.each(['hot_apply', 'restart_resume', 'spawn_next_turn', 'manual'] as const)('reads persisted account-switch mode %s', mode => {
+    const record = { role: 'agent', content: { type: 'event', id: 'account-switch', data: {
+      type: 'connected-service-account-switch', serviceId: 'openai-codex', groupId: null,
+      fromProfileId: null, toProfileId: 'profile', reason: 'manual', mode,
+    } } };
+    expect(TranscriptRawRecordV1Schema.parse(record)).toMatchObject({ content: { data: { mode } } });
+    expect(TranscriptRawRecordV1Schema.safeParse({ ...record, content: { ...record.content,
+      data: { ...record.content.data, mode: 'unsupported-mode' } } }).success).toBe(false);
+  });
   it('reads custom metadata through the Session-core Mini transcript factory', () => {
     // Session-core composes the Mini transcript factory with its own metadata schema.
     const schema = createTranscriptRawRecordV1Schema(miniZod, {

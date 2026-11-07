@@ -76,7 +76,12 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
             if (reply.raw.destroyed) { reply.hijack(); return; }
             const evidenceIds = new Set(selected.flatMap(row => row.query.includeSessionEvidence ? row.sessionIds : []));
             const turns = await readSessionTurnsBatch({ userId: request.userId, authentication,
-                sessionIds: ids.filter(id => records.get(id)?.ok && evidenceIds.has(id)) });
+                sessionIds: ids.filter(id => {
+                    const record = records.get(id);
+                    // Saved facts contain their derived intervals. The client owns encrypted
+                    // fact currentness and requests the existing summary projection if needed.
+                    return record?.ok && !record.record && evidenceIds.has(id);
+                }) });
             const results: UsageSessionEvidenceResponse['results'] = ids.map(sessionId => {
                 const record = records.get(sessionId);
                 if (!record) return { sessionId, detail: unavailable(undefined) };

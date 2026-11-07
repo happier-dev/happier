@@ -15,13 +15,13 @@ import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normali
 
 type OpeningContext = Parameters<typeof resolveScopedSessionEncryption>[0]['context'];
 
-/** Opens only the Session's small fact envelope, using its already-admitted key tuple. */
+/** Opens the admitted fact envelope; null requests the ordinary summary projection. */
 export async function openUsageCompactInput(input: Readonly<{
     context: UsageQueryAccountContext; opening: OpeningContext;
     row: UsageSessionEvidenceResponse['results'][number]; isCurrent(): boolean;
-}>): Promise<SessionInputEvidence> {
+}>): Promise<SessionInputEvidence | null> {
     const compact = input.row.workFacts;
-    if (!compact || compact.session.id !== input.row.sessionId || input.row.turns?.status !== 200) {
+    if (!compact || compact.session.id !== input.row.sessionId) {
         throw new SessionPartsInvalidResponseError();
     }
     const identity = compact.session;
@@ -35,10 +35,11 @@ export async function openUsageCompactInput(input: Readonly<{
             code: `usage_work_facts_${opened.status}`,
         });
         const parsed = UsageSessionWorkFactsV1Schema.safeParse(opened.value);
-        if (!parsed.success) throw Object.assign(new Error('Usage Session fact is invalid'), { code: 'usage_work_facts_invalid' });
+        if (!parsed.success) return null;
         fact = parsed.data;
     }
     const current = readCurrentUsageSessionWorkFactsV1({ ...identity, usageWorkFactsV1: fact });
+    if (!current && input.row.turns?.status !== 200) return null;
     const session: UsageSessionInput = {
         ...current?.session, id: identity.id, serverId: input.context.accountLifetime.scope.serverId,
         seq: identity.seq, createdAt: identity.createdAt, updatedAt: identity.updatedAt, active: identity.active,
@@ -47,7 +48,8 @@ export async function openUsageCompactInput(input: Readonly<{
         encryptedContentAvailability: 'ready', access: normalizeSessionAccessProjection({ effectiveAccess: identity.access }) ?? undefined,
         metadata: current?.session?.metadata ?? null, agentState: null,
         ownerMetadata: current?.session?.ownerMetadata ?? null, agentTarget: current?.session?.agentTarget ?? null,
-        sessionTurns: input.row.turns.body, ...(current ? { usageWorkFactsV1: current } : {}),
+        ...(input.row.turns?.status === 200 ? { sessionTurns: input.row.turns.body } : {}),
+        ...(current ? { usageWorkFactsV1: current } : {}),
     };
     return { session, callerDataKeyEnvelope: identity.dataEncryptionKey,
         detail: projectSessionUsageWorkEvidence(session), completeMessageCoverage: current !== null,

@@ -25,7 +25,14 @@ export const PluginExecutionOriginActionInputSchemas = {
 // All envelopes and nested authority-bearing references are closed. These
 // Local preferences carry only a Home-qualified Machine. Contextual addresses name only
 // the answering client's incumbent opaque mounted-command record.
+const unavailableReason = lazyZodSchema(() => z.strictObject({
+  code: z.enum(['account_scope_unavailable', 'current_ui_context_unavailable', 'contextual_target_unavailable']),
+  phase: z.literal('selection'),
+  retryable: z.literal(false),
+}));
 const unavailable = lazyZodSchema(() => z.strictObject({ status: z.literal('unavailable') }));
+const listUnavailable = lazyZodSchema(() => z.strictObject({ status: z.literal('unavailable'), reason: unavailableReason }));
+export type PluginExecutionOriginUnavailableResult = z.infer<typeof listUnavailable>;
 const mutation = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal('applied') }),
   unavailable,
@@ -43,7 +50,7 @@ const selection = lazyZodSchema(() => z.strictObject({
 }));
 export type PluginExecutionOriginContextualSelection = z.infer<typeof selection>;
 export const PluginExecutionOriginActionOutputSchemas = {
-  'plugins.execution_origin.list': lazyZodSchema(() => z.union([unavailable,
+  'plugins.execution_origin.list': lazyZodSchema(() => z.union([listUnavailable,
     selection,
     z.strictObject({ status: z.literal('available'), answeringClientId: z.optional(z.string().check(z.minLength(1))),
       answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))), contextualTargets: z.array(z.strictObject({ commandId: z.string().check(z.minLength(1)),

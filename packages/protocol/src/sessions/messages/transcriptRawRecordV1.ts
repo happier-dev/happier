@@ -705,7 +705,7 @@ const AgentEventSchema = lazyZodSchema(() => z.pipe(z.discriminatedUnion('type',
       fromProfileLabel: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
       toProfileLabel: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
       reason: z.string(),
-      mode: z.optional(z.enum(['hot_apply', 'restart_resume', 'manual'])),
+      mode: z.optional(z.enum(['hot_apply', 'restart_resume', 'spawn_next_turn', 'manual'])),
       effectiveRemainingPct: z.optional(z.nullable(z.number())),
     }),
   z.looseObject({

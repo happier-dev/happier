@@ -1,5 +1,7 @@
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -242,6 +244,8 @@ export type UsageQueryAccountContext = Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     request: ServerFetch;
     readTransport?: CapturedServerReadTransport;
+    /** The finite acquisition's admitted caller, captured before any asynchronous work. */
+    callerContext?: ActionExecutorContext;
 }>;
 
 function requireCurrent(context: UsageQueryAccountContext, signal?: AbortSignal): void {
@@ -304,12 +308,20 @@ async function withUiConnectedServiceReader<T>(context: UsageQueryAccountContext
         if (!areServerAccountScopesEqual(account.accountLifetime.scope, context.accountLifetime.scope)) {
             throw Object.assign(new Error('Quota Account authority retired'), { code: 'stale_surface' });
         }
-        const action = createUiConnectedServiceAction(account, { ...quotaReadOptions,
-            projectionDocuments: accountStores.get(resolveUsageOwnerLifetime(context))?.projectionDocuments });
+        const readOptions = { ...quotaReadOptions,
+            projectionDocuments: accountStores.get(resolveUsageOwnerLifetime(context))?.projectionDocuments };
+        const action = createUiConnectedServiceAction(account, readOptions);
+        const execute = context.callerContext
+            ? createFrontDoorActionExecute(undefined, { connectedServiceQuotaReadOptions: readOptions }) : undefined;
         const invoke = async (actionId: 'connectedServices.quota.get' | 'connectedServices.pools.selection.get',
             input: ConnectedServiceQuotaGetInputV1 | ConnectedServicePoolSelectionGetRequestV1) => {
             requireCurrent(context, signal); account.assertCurrent();
-            const result = await action({ actionId, input,
+            const result = execute ? await (async () => {
+                const outcome = await execute(actionId, input, { ...context.callerContext,
+                    serverId: context.accountLifetime.scope.serverId, expectedAccountId: context.accountLifetime.scope.accountId, signal });
+                requireActionSuccess(outcome);
+                return outcome.result;
+            })() : await action({ actionId, input,
                 context: { surface: 'ui', authority: 'present_user' }, signal });
             requireCurrent(context, signal); account.assertCurrent();
             if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -531,7 +543,7 @@ async function readSessionInputPhase(ids: readonly string[], readTranscript: boo
 }
 
 function canReuseSessionMessageEvidence(retained: SessionInputEvidence | undefined, admitted: SessionInputEvidence) {
-    return retained?.messageEvidence && retained.session.seq === admitted.session.seq
+    return retained?.completeMessageCoverage === true && retained.messageEvidence && retained.session.seq === admitted.session.seq
         && retained.session.encryptionMode === admitted.session.encryptionMode
         && retained.callerDataKeyEnvelope === admitted.callerDataKeyEnvelope;
 }
@@ -555,6 +567,14 @@ type SelectionInputs = Readonly<{ inputs: ReadonlyMap<string, { value: SessionIn
 function readsUnconvertedTranscriptsOnOpen(query: UsageQuery): boolean {
     const relative = query.period.relative;
     return relative !== '90days' && relative !== 'all';
+}
+
+/** Explicit history reads convert finalized, readable Sessions; live gaps stay unchecked. */
+function canReadUnconvertedSessionHistory(value: SessionInputEvidence): boolean {
+    return value.session.active !== true
+        && value.session.access?.capabilities.readTranscript !== false
+        && isSessionContentReadable(readSessionContentAvailability(value.session))
+        && (!value.completeMessageCoverage || value.workFactsPersisted === false);
 }
 
 async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: UsageQuery,
@@ -606,7 +626,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             };
             const admitRow = (row: UsageSessionEvidenceResponse['results'][number]) => {
                 if (!expected?.delete(row.sessionId) || !row.detail && !row.workFacts
-                    || row.workFacts && (row.workFacts.session.id !== row.sessionId || !row.turns)
+                    || row.workFacts && row.workFacts.session.id !== row.sessionId
                     || row.detail?.status === 200 && (row.detail.body.session.id !== row.sessionId || !row.turns)
                     || row.turns?.status === 200 && row.turns.body.sessionId !== row.sessionId) throw new SessionPartsInvalidResponseError();
             };
@@ -623,16 +643,23 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     for (const row of pending) await consumeResult!(row);
                     pending.length = 0;
                 };
+                const consumeChunk = async (text: string) => {
+                    // A later invalid record can share a network chunk with
+                    // already-admitted rows. Save those subjects before failing
+                    // the unfinished remainder of this physical stream.
+                    try { write(text); }
+                    catch (error) { await consumePending(); throw error; }
+                    await consumePending();
+                };
                 const reader = typeof response.body?.getReader === 'function' ? response.body.getReader() : undefined;
-                if (!reader) { write(await response.text()); await consumePending(); }
+                if (!reader) await consumeChunk(await response.text());
                 else {
                     const text = new TextDecoder();
                     try {
                         while (true) {
                             const chunk = await reader.read();
                             requireCurrent(context, phaseSignal);
-                            write(text.decode(chunk.value, { stream: !chunk.done }));
-                            await consumePending();
+                            await consumeChunk(text.decode(chunk.value, { stream: !chunk.done }));
                             if (chunk.done) break;
                         }
                     } finally {
@@ -672,9 +699,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             import('@/sync/api/session/sessionDetailAccessProjection'), readAccountCurrentnessSource(),
         ]);
         const inputs = new Map<string, { value: SessionInputEvidence } | { error: unknown }>();
+        const summaryIds: string[] = [];
         let authority: Awaited<ReturnType<typeof captureServerRequestAuthorityForServerAccountScope>> | undefined;
         try {
-            const body = await readProjected(query, sessionIds, ownerSignal, async row => {
+            const openRow = async (row: UsageSessionEvidenceResponse['results'][number]) => {
                 // An empty discovered cohort has no Session content to open.
                 // Capture the finite opening authority once, only for actual rows.
                 authority ??= await captureServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope,
@@ -683,7 +711,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     try {
                         const value = await openUsageCompactInput({ context, opening: authority.context, row,
                             isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent() });
-                        inputs.set(row.sessionId, { value });
+                        if (value) inputs.set(row.sessionId, { value });
+                        else summaryIds.push(row.sessionId);
                     } catch (error) { inputs.set(row.sessionId, { error }); }
                     return;
                 }
@@ -700,7 +729,11 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     inputs.set(row.sessionId, { value: { session, callerDataKeyEnvelope: result.snapshot.callerDataKeyEnvelope,
                         detail: projectSessionUsageWorkEvidence(session), completeMessageCoverage: false } });
                 } catch (error) { inputs.set(row.sessionId, { error }); }
-            }, candidateSessionIds, true);
+            };
+            const body = await readProjected(query, sessionIds, ownerSignal, openRow, candidateSessionIds, true);
+            // Only the client can establish encrypted fact currentness. Reuse the
+            // ordinary summary projection for stale or malformed saved records.
+            if (summaryIds.length) await readProjected(query, summaryIds, ownerSignal, openRow);
             return { body, inputs };
         } finally { await authority?.release(); }
     };
@@ -842,19 +875,41 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                                 viewerRole: session.access?.role ?? 'recipient',
                                 isCurrent: () => { assertCurrent(); return accountCurrentnessSource.isCurrent(); },
                             } });
-                        const decryptedMessages = encryption ? await encryption.decryptMessages(page.messages, { signal }) : null;
-                        const messages = await Promise.all(page.messages.map((message, index) => readStoredSessionMessage({ message,
-                            sessionEncryptionMode: 'e2ee',
-                            ...(encryption ? { decryptMessage: async () => decryptedMessages?.[index] ?? null } : {}),
-                        })));
-                        const readableMessages = messages.filter((message): message is NonNullable<typeof message> => message !== null && message.content !== null);
-                        // An empty raw page was observed; a wholly unopened nonempty
-                        // page supplies no private input evidence, not a zero count.
-                        completeMessageCoverage = page.hasMore === false && readableMessages.length === page.messages.length;
-                        if (page.messages.length === 0 || readableMessages.length > 0) {
-                            detail = projectSessionUsageWorkEvidence(session, readableMessages, { messagesComplete: completeMessageCoverage });
-                            messageEvidence = { acceptedInputs: detail.acceptedInputs, phaseEvents: detail.phaseEvents, coach: detail.coach,
-                                collaboration: detail.collaboration };
+                        let allPagesOpened = true;
+                        let beforeSeq: number | undefined;
+                        while (true) {
+                            const decryptedMessages = encryption ? await encryption.decryptMessages(page.messages, { signal }) : null;
+                            const messages = await Promise.all(page.messages.map((message, index) => readStoredSessionMessage({ message,
+                                sessionEncryptionMode: 'e2ee',
+                                ...(encryption ? { decryptMessage: async () => decryptedMessages?.[index] ?? null } : {}),
+                            })));
+                            const readableMessages = messages.filter((message): message is NonNullable<typeof message> => message !== null && message.content !== null);
+                            allPagesOpened &&= readableMessages.length === page.messages.length;
+                            completeMessageCoverage = page.hasMore === false && allPagesOpened;
+                            // Fold only small witnesses across pages. Decrypted
+                            // prose/tool bodies do not become the accumulated input.
+                            if (page.messages.length === 0 || readableMessages.length > 0) {
+                                detail = projectSessionUsageWorkEvidence(session, readableMessages,
+                                    { messagesComplete: completeMessageCoverage, messageEvidence });
+                                messageEvidence = { acceptedInputs: detail.acceptedInputs, phaseEvents: detail.phaseEvents, coach: detail.coach,
+                                    collaboration: detail.collaboration };
+                            }
+                            if (page.hasMore !== true) break;
+                            const nextBeforeSeq = page.nextBeforeSeq;
+                            if (nextBeforeSeq == null || page.messages.length === 0
+                                || beforeSeq !== undefined && nextBeforeSeq >= beforeSeq) throw new SessionPartsInvalidResponseError();
+                            beforeSeq = nextBeforeSeq;
+                            page = await fetchSessionMessagesPage({ sessionId, scope: 'all', roles: ['user', 'agent', 'event'], beforeSeq, signal,
+                                requestJson: async (path, pageSignal) => {
+                                    requireCurrent(context, pageSignal);
+                                    const response = await authority.request(path, { signal: pageSignal });
+                                    const body: unknown = await response.json();
+                                    if (!response.ok) {
+                                        const requirement = OperationUpdateRequiredV1Schema.safeParse(body);
+                                        throw new SessionPartsHttpError(response.status, body, requirement.success ? requirement.data : undefined);
+                                    }
+                                    return body;
+                                } });
                         }
                     }
                     }
@@ -905,7 +960,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             admitted: sessions.filter(session => session.access?.capabilities.readTranscript !== false
                 && isSessionContentReadable(readSessionContentAvailability(session))).length,
             notRead: [...selected.values()].filter(value => value && (!value.completeMessageCoverage || value.workFactsPersisted === false)).length };
-        history?.coverage(sessionCoverage.selected, sessionCoverage.notRead);
+        history?.coverage(sessionCoverage.selected,
+            [...selected.values()].filter(value => value && canReadUnconvertedSessionHistory(value)).length);
         return { query, asOfMs: Date.now(), sessions, sessionCoverage, detail,
             ...(updateRequired ? { errorCode: 'update_required', updateRequired }
                 : projectedReadFailure ? { errorCode: 'usage_session_evidence_read_failed' } : {}) };
@@ -947,6 +1003,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         // identical completion turns one refresh into N full-corpus passes.
         if (changed || settled.size === selectedIds.length) publish();
     };
+    const needsTranscript = (value: SessionInputEvidence | null | undefined) => readTranscript && value && !value.completeMessageCoverage
+        && (history?.readUnconverted !== true || canReadUnconvertedSessionHistory(value));
     const summaries = await readSessionInputPhase(selectedIds, false, readSession, recordReadFailure, async (requests, ownerSignal) => {
         try {
             const discovery = discovered.get(getUsageQueryKey(query));
@@ -990,10 +1048,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 else request.resolve(null);
             }
         }
-    }, (id, value) => onValue(id, value, !readTranscript || !value || value.completeMessageCoverage), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), signal);
+    }, (id, value) => onValue(id, value, !needsTranscript(value)), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), signal);
     // Private facts follow the same Usage window and admitted population.
     // Held private evidence never holds interval publication.
-    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => summaries.get(id) && !summaries.get(id)!.completeMessageCoverage), true, readSession, recordReadFailure, async (requests, ownerSignal) => {
+    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => needsTranscript(summaries.get(id))), true, readSession, recordReadFailure, async (requests, ownerSignal) => {
         const messageIds = requests.filter(request => {
                 const admitted = summaries.get(request.sessionId)!;
                 return admitted.session.access?.capabilities.readTranscript !== false
@@ -1371,33 +1429,59 @@ type UsageQueryReadDemand = Readonly<{
 }>;
 
 /** Activity comes from this watch's admitted demand, independently of retained allowance facts. */
-export type UsageQueryResourceEntry = PluginUiResourceEntry & Readonly<{ isAllowanceReadPending(): boolean }>;
+export type UsageQueryResourceEntry = Omit<PluginUiResourceEntry, 'refresh'> & Readonly<{
+    refresh(options?: Readonly<{ supersede?: boolean; callerContext?: ActionExecutorContext }>): ReturnType<PluginUiResourceEntry['refresh']>;
+    /** Only the canonical Usage Action port calls this after admission. */
+    acquire(callerContext: ActionExecutorContext): ReturnType<PluginUiResourceEntry['refresh']>;
+    isAllowanceReadPending(): boolean;
+}>;
 type UsageQueryResourceStore = Omit<PluginUiResourceStore, 'getEntry'> & Readonly<{
-    getEntry(reference: Parameters<PluginUiResourceStore['getEntry']>[0]): UsageQueryResourceEntry;
+    getEntry(reference: Parameters<PluginUiResourceStore['getEntry']>[0], callerContext?: ActionExecutorContext): UsageQueryResourceEntry;
 }>;
 
 /** Explicit recovery replaces this entry's read; ordinary push wakes stay coalesced. */
 function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
+    withCaller: <T>(callerContext: ActionExecutorContext | undefined, admitted: boolean, acquire: () => T) => T,
     requestFresh: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => void,
     isAllowanceReadPending: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean): UsageQueryResourceStore {
     return Object.freeze<UsageQueryResourceStore>({
         ...store,
-        getEntry(reference) {
+        getEntry(reference, callerContext) {
             const entry = store.getEntry(reference);
-            const refresh: PluginUiResourceEntry['refresh'] = options => {
+            let initialCaller = callerContext;
+            const subscribe: UsageQueryResourceEntry['subscribe'] = (listener, live) => {
+                const caller = initialCaller;
+                initialCaller = undefined;
+                return withCaller(caller, false, () => entry.subscribe(listener, live));
+            };
+            const refresh: UsageQueryResourceEntry['refresh'] = options => {
+                initialCaller = undefined;
                 // Ordinary acquisition joins admitted facts and still settles on
                 // failure or retirement. Manual Refresh asks for a new answer.
-                if (options?.supersede === false) return entry.refresh(options);
-                requestFresh(reference);
-                return entry.refresh({ supersede: true });
+                return withCaller(options?.callerContext, false, () => {
+                    if (options?.supersede === false) return entry.refresh(options);
+                    requestFresh(reference);
+                    return entry.refresh({ supersede: true });
+                });
             };
             return Object.freeze<UsageQueryResourceEntry>({
                 ...entry,
+                subscribe,
                 refresh,
+                acquire(context) {
+                    initialCaller = undefined;
+                    return withCaller(context, true, () => entry.refresh({ supersede: false }));
+                },
                 isAllowanceReadPending: () => entry.getSnapshot().pending !== 'idle' && isAllowanceReadPending(reference),
                 select(projection, selector) {
                     const selection = entry.select(projection, selector);
-                    return Object.freeze({ ...selection, refresh: async () => { await refresh(); } });
+                    return Object.freeze({ ...selection,
+                        subscribe(listener: () => void, live: boolean) {
+                            const caller = initialCaller;
+                            initialCaller = undefined;
+                            return withCaller(caller, false, () => selection.subscribe(listener, live));
+                        },
+                        refresh: async () => { await refresh(); } });
                 },
             });
         },
@@ -1536,8 +1620,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     requireCurrent(context);
     const lifetime = resolveUsageOwnerLifetime(context);
     // Retained Account work never borrows a finished Action's request/signal closure.
-    const sharedContext = lifetime === context.accountLifetime ? context : createUsageQueryAccountContext(context.credentials, lifetime);
-    if (!sharedContext) throw Object.assign(new Error('Usage Account authority retired'), { code: 'stale_surface' });
+    const ownerContext = lifetime === context.accountLifetime ? context : createUsageQueryAccountContext(context.credentials, lifetime);
+    if (!ownerContext) throw Object.assign(new Error('Usage Account authority retired'), { code: 'stale_surface' });
+    const { callerContext: _callerContext, ...sharedContext } = ownerContext;
     const existing = accountStores.get(lifetime);
     if (existing) return existing.store;
     const evidenceAbort = new AbortController();
@@ -1614,6 +1699,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         }
         return pluginUiResourceReferenceKey(reference, null);
     };
+    // subscribe/refresh synchronously starts readResource. Only that start
+    // captures this operation's caller; joining admitted work leaves no origin.
+    let acquisitionCaller: Readonly<{ context: ActionExecutorContext; admitted: boolean }> | undefined;
     // Read and watch consume the same Account admission. The watch can name
     // its retained digest so establishment converges after its mandatory read,
     // without scheduling a second read of those same admitted inputs.
@@ -1746,6 +1834,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         store: withExplicitAllowanceRefresh(createPluginUiResourceStore({ accountLifetime: lifetime, client: {
             resourceKey,
             async readResource(reference, options) {
+                const caller = acquisitionCaller;
+                acquisitionCaller = undefined;
+                const readContext = caller ? { ...sharedContext, callerContext: caller.context } : sharedContext;
                 if (typeof reference === 'string' || !('hostRead' in reference)) {
                     throw Object.assign(new Error('Unsupported host read'), { code: 'unsupported_method' });
                 }
@@ -1917,10 +2008,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     return await contentFor(reproject(options?.signal));
                 }
                 try {
-                    // This is the typed producer used by progressive admission,
-                    // not an external Action response. Dispatching it through
-                    // the Action again clones all admitted facts at completion.
-                    result = await readUiUsageQueryBatch(sharedContext, { queries }, options?.signal, previous,
+                    // Keep the progressive typed producer. A direct command
+                    // enters Action admission once and consumes these same facts.
+                    const read = async () => await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
                         {
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
                             onProgress: project => {
@@ -1930,6 +2020,19 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                                 return progressContent ?? undefined;
                             },
                         });
+                    if (caller && !caller.admitted) {
+                        let admittedResult: UsageQueryBatchResult | undefined;
+                        const execute = createFrontDoorActionExecute(undefined, { usageQueryRead: async () => {
+                            admittedResult = await read();
+                            return admittedResult;
+                        } });
+                        const outcome = await execute('usage.query', { queries }, { ...caller.context,
+                            serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+                            signal: options?.signal });
+                        requireActionSuccess(outcome);
+                        if (!admittedResult) throw new HappyError('Usage query did not run', false, { code: 'usage_query_result_invalid' });
+                        result = admittedResult;
+                    } else result = await read();
                 } catch (error) {
                     // Material refusal withdraws this private read context; a
                     // transport outage still retains the admitted projection.
@@ -2069,7 +2172,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 options?.signal?.addEventListener('abort', dispose, { once: true });
                 return { dispose, ...(admission?.reusable && admission.content ? { admittedDigest: admission.content.digest } : {}) };
             },
-        } }), reference => {
+        } }), (context, admitted, acquire) => {
+            acquisitionCaller = context ? { context, admitted } : undefined;
+            try { return acquire(); } finally { acquisitionCaller = undefined; }
+        }, reference => {
             if (typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query') {
                 const queries = normalizeUsageQueryBatchInput(reference.input).queries.filter(query => query.includeAccounting
                     && (query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence));

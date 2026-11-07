@@ -69,7 +69,7 @@ describe('Usage compact work-facts evidence', () => {
         });
     });
 
-    it('reads a selected cohort as compact encrypted actor records and turns without Session bodies or transcripts', async () => {
+    it('reads saved compact facts without duplicate turns, Session bodies or transcripts', async () => {
         const owner = await account();
         const subjects = await Promise.all(Array.from({ length: 12 }, () => session(owner.id)));
         await db.sessionDataKeyEnvelope.create({ data: { sessionId: subjects[0].id, recipientAccountId: owner.id,
@@ -79,10 +79,12 @@ describe('Usage compact work-facts evidence', () => {
             startedAt: 100, terminalAt: 200, updatedAt: 200 } });
         let recordReads = 0;
         let messageReads = 0;
+        let turnReads = 0;
         const sessionSelections: unknown[] = [];
         const stop = observeSqliteRequests({ before(request) {
             if (request.model === 'SessionSystemRecord' && request.action.startsWith('find')) recordReads++;
             if (request.model === 'SessionMessage') messageReads++;
+            if (request.model === 'SessionTurn') turnReads++;
             if (request.model === 'Session' && request.action.startsWith('find')) sessionSelections.push(request.args);
         } });
         try { await withAuthenticatedTestApp(registerAccountUsageRoutes, async app => {
@@ -96,12 +98,14 @@ describe('Usage compact work-facts evidence', () => {
             expect(rows[0]).toMatchObject({ sessionId: subjects[0].id, workFacts: {
                 session: { id: subjects[0].id, seq: 3, encryptionMode: 'e2ee', dataEncryptionKey: 'AQID', viewerRole: 'owner' },
                 content: { t: 'encrypted', c: 'sealed-0' },
-            }, turns: { status: 200, body: { turns: [{ turnId: 'busy' }] } } });
+            } });
+            expect(rows.every((row: object) => !('turns' in row))).toBe(true);
             expect(rows.every((row: object) => !('detail' in row) && !('messages' in row))).toBe(true);
             expect(rows[0].workFacts.session.access.capabilities.submitAgentInput).toBe(true);
             expect(response.body).not.toContain('private-');
             expect(recordReads, 'Cohort facts must use a set read, not one record query per Session').toBe(1);
             expect(messageReads).toBe(0);
+            expect(turnReads).toBe(0);
             expect(sessionSelections.length).toBeLessThan(subjects.length);
             for (const args of sessionSelections) {
                 const select = args && typeof args === 'object' && 'select' in args ? args.select : undefined;
@@ -158,7 +162,7 @@ describe('Usage compact work-facts evidence', () => {
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json().results[0]).toMatchObject({ workFacts: { session: {
                 id: subject.id, encryptionMode: 'plain', dataEncryptionKey: null, viewerRole: 'owner',
-            }, content: null } });
+            }, content: null }, turns: { status: 200, body: { sessionId: subject.id, turns: [] } } });
         });
     });
 });

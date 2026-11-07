@@ -9,7 +9,7 @@ import type { AccountHomeContinuationInputV1 } from '@happier-dev/protocol/actio
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import type { PluginExecutionOriginContextualSelection } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
+import type { PluginExecutionOriginContextualSelection, PluginExecutionOriginUnavailableResult } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
 import type { VoiceDictationActionResult, VoiceDictationOperation } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -22,6 +22,7 @@ import type {
     CurrentUiCommandDescriptorV1,
     CurrentUiContextSnapshotV1,
     PluginUiResolvedSemanticCommandV1,
+    PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 export type CurrentUiNavigation = CurrentUiContextSnapshotV1['navigation'];
@@ -39,7 +40,7 @@ export type CurrentUiContextHostCommand = Readonly<{
         account: ServerAccountScopeLifetime;
         isCurrent(): boolean;
     }>;
-    invoke(input: Readonly<{ signal: AbortSignal }>): CurrentUiContextVoiceInvocationOutcome | Promise<CurrentUiContextVoiceInvocationOutcome>;
+    invoke(input: Readonly<{ signal: AbortSignal; input?: PluginUiJsonValueV1; context: ActionExecutorContext }>): CurrentUiContextVoiceInvocationOutcome | Promise<CurrentUiContextVoiceInvocationOutcome>;
 }>;
 
 /** A mounted outward effect is executed only by its typed human-decided Action. */
@@ -65,7 +66,7 @@ export type CurrentUiContextPluginExecutionOriginCommand = Readonly<{
     pluginId: string;
     account: ServerAccountScopeLifetime;
     target: Readonly<{ serverIdentityId: string; machineId: string }>;
-    read(): PluginExecutionOriginContextualSelection | Readonly<{ status: 'unavailable' }>;
+    read(): PluginExecutionOriginContextualSelection | PluginExecutionOriginUnavailableResult;
     apply(origin: PluginMachineExecutionOriginV1 | null): Readonly<{ status: 'applied' | 'unavailable' }>;
 }>;
 
@@ -93,6 +94,8 @@ export type CurrentUiContextMountedEnrichment = Readonly<{
         title: string;
         description?: string;
         command: CurrentUiContextMountedCommand;
+        /** Foreground overlay membership is supplied by the Modal presentation owner, never serialized. */
+        foreground?: Readonly<{ modalId: string | null }>;
     }>[];
 }>;
 

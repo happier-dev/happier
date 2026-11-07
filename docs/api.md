@@ -1280,6 +1280,9 @@ the canonical window/access selection to those candidates.
 
 With `readWorkFacts: true`, successful rows contain `workFacts: {session, content}`
 and optional turns, without `detail`, full Session metadata or transcript reads.
+Rows with stored fact content omit redundant turns. The client checks fact
+currentness after opening the envelope and acquires ordinary summary evidence
+when that fact cannot supply the current Session's intervals.
 The small Session projection carries identity, sequence, timestamps, activity,
 metadata/state/layout versions, persisted encryption mode, the viewer's key
 envelope, viewer role and effective access. `content` is the actor Account's host
@@ -1307,7 +1310,15 @@ Clients may request `application/x-ndjson`: the first line contains only
 `{requests:[...]}` and each subsequent line is one Session result. Both compact
 and default reads retain this transport and the ordinary JSON response. Streaming
 avoids one combined E2EE-history JSON string; the default path retains its
-whole-document encrypted acquisition cost.
+whole-document encrypted acquisition cost. The E2EE message result is the ordinary
+first message page, not complete history: the client follows each Session's
+`nextBeforeSeq` until `hasMore` is false, folding private witnesses between pages
+and saving each completed Session independently. Later stream failures preserve
+completed subjects; another Read now retries unfinished subjects. Active Sessions
+remain unchecked evidence but are not offered for durable historical conversion
+until they become inactive.
+An admitted UI Read now belongs to the presented Usage page and captured Account:
+switching Usage views retains it; hiding or leaving Usage releases it.
 
 Optional `underSessionId` bounds snapshot-only demand to the current readable
 managed subtree. Every requested ID must be admitted both at capture and before
