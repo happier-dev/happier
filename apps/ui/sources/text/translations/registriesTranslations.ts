@@ -25,6 +25,7 @@ const compact = (count: number, decimal = '.'): string =>
     : String(count);
 
 export type RegistriesTranslation = Readonly<{
+  status: Readonly<{ updatedEarlier: string }>;
   select: Readonly<{
     label: string;
     all: string;
@@ -100,6 +101,7 @@ export type RegistriesTranslation = Readonly<{
     fromItRow: (params: Readonly<{ ref: string }>) => string;
     fromItRowNoRef: string;
     remove: string;
+    removeConfirm: string;
     removeNote: (params: Kind) => string;
     removeFailed: string;
     updateFailed: string;
@@ -117,6 +119,7 @@ export type RegistriesTranslation = Readonly<{
 }>;
 
 const en: RegistriesTranslation = {
+  status: { updatedEarlier: "Updated earlier" },
   select: {
     label: 'Registry',
     all: 'All registries',
@@ -150,7 +153,7 @@ const en: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `A place to browse ${kindNoun(kind, true)} from. Happier only reads it; nothing in it runs.`,
     link: 'Link',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Checking the link…',
     found: ({ kind, count }) =>
       `${compact(count)} ${kindNoun(kind, count !== 1)}`,
@@ -209,6 +212,7 @@ const en: RegistriesTranslation = {
     fromItRow: ({ ref }) => `Pinned to ${ref} · removing the registry keeps it`,
     fromItRowNoRef: 'Removing the registry keeps it',
     remove: 'Remove registry',
+    removeConfirm: "This removes the registry from Browse. Anything you added from it stays installed or in your library. You can add the registry again later.",
     removeNote: ({ kind }) =>
       `${kindNoun(kind, true).replace(/^./, (c) => c.toUpperCase())} you added from it stay in your library.`,
     removeFailed: 'Couldn’t remove this registry. Try again.',
@@ -487,6 +491,7 @@ const caNouns = pairNouns({
 });
 
 const ca: RegistriesTranslation = {
+  status: { updatedEarlier: "Actualitzat anteriorment" },
   select: {
     label: 'Registre',
     all: 'Tots els registres',
@@ -521,7 +526,7 @@ const ca: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Un lloc des d’on explorar ${caNouns.plural(kind)}. Happier només el llegeix; res del que conté s’executa.`,
     link: 'Enllaç',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Comprovant l’enllaç…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${caNouns.counted(kind, count)}`,
@@ -580,6 +585,7 @@ const ca: RegistriesTranslation = {
     fromItRow: ({ ref }) => `Fixat a ${ref} · si elimines el registre, es manté`,
     fromItRowNoRef: 'Si elimines el registre, es manté',
     remove: 'Elimina el registre',
+    removeConfirm: "Això elimina el registre d’Explora. Tot el que hi hagis afegit continua instal·lat o a la biblioteca. Pots tornar a afegir el registre més endavant.",
     removeNote: () => 'El que n’has afegit es queda a la teva biblioteca.',
     removeFailed: 'No s’ha pogut eliminar aquest registre. Torna-ho a provar.',
     updateFailed: 'No s’ha pogut desar el canvi. Torna-ho a provar.',
@@ -712,6 +718,7 @@ const deNouns = pairNouns({
 });
 
 const de: RegistriesTranslation = {
+  status: { updatedEarlier: "Zuvor aktualisiert" },
   select: {
     label: 'Registry',
     all: 'Alle Registries',
@@ -746,7 +753,7 @@ const de: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Ein Ort, an dem du ${deNouns.plural(kind)} entdecken kannst. Happier liest ihn nur; nichts darin wird ausgeführt.`,
     link: 'Link',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Link wird geprüft…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${deNouns.counted(kind, count)}`,
@@ -810,6 +817,7 @@ const de: RegistriesTranslation = {
       `Angeheftet an ${ref} · bleibt erhalten, wenn du die Registry entfernst`,
     fromItRowNoRef: 'Bleibt erhalten, wenn du die Registry entfernst',
     remove: 'Registry entfernen',
+    removeConfirm: "Die Registry wird aus Durchsuchen entfernt. Alles, was du daraus hinzugefügt hast, bleibt installiert oder in deiner Bibliothek. Du kannst die Registry später wieder hinzufügen.",
     removeNote: ({ kind }) =>
       `${cap(deNouns.plural(kind))}, die du daraus hinzugefügt hast, bleiben in deiner Bibliothek.`,
     removeFailed:
@@ -946,6 +954,7 @@ const esNouns = pairNouns({
 });
 
 const es: RegistriesTranslation = {
+  status: { updatedEarlier: "Actualizado anteriormente" },
   select: {
     label: 'Registro',
     all: 'Todos los registros',
@@ -980,7 +989,7 @@ const es: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Un lugar desde el que explorar ${esNouns.plural(kind)}. Happier solo lo lee; nada de lo que contiene se ejecuta.`,
     link: 'Enlace',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Comprobando el enlace…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${esNouns.counted(kind, count)}`,
@@ -1040,6 +1049,7 @@ const es: RegistriesTranslation = {
       `Fijado a ${ref} · si quitas el registro, se conserva`,
     fromItRowNoRef: 'Si quitas el registro, se conserva',
     remove: 'Quitar registro',
+    removeConfirm: "Esto elimina el registro de Explorar. Todo lo que hayas añadido desde él permanece instalado o en tu biblioteca. Puedes volver a añadir el registro más adelante.",
     removeNote: () => 'Lo que añadiste desde él se queda en tu biblioteca.',
     removeFailed: 'No se pudo quitar este registro. Vuelve a intentarlo.',
     updateFailed: 'No se pudo guardar el cambio. Vuelve a intentarlo.',
@@ -1175,6 +1185,7 @@ const frNouns = pairNouns(
 );
 
 const fr: RegistriesTranslation = {
+  status: { updatedEarlier: "Mis à jour précédemment" },
   select: {
     label: 'Registre',
     all: 'Tous les registres',
@@ -1209,7 +1220,7 @@ const fr: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Un endroit où parcourir des ${frNouns.plural(kind)}. Happier ne fait que le lire ; rien de ce qu’il contient ne s’exécute.`,
     link: 'Lien',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Vérification du lien…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${frNouns.counted(kind, count)}`,
@@ -1270,6 +1281,7 @@ const fr: RegistriesTranslation = {
       `Épinglé sur ${ref} · reste en place si vous supprimez le registre`,
     fromItRowNoRef: 'Reste en place si vous supprimez le registre',
     remove: 'Supprimer le registre',
+    removeConfirm: "Le registre sera retiré de Parcourir. Tout ce que vous y avez ajouté reste installé ou dans votre bibliothèque. Vous pourrez ajouter à nouveau le registre plus tard.",
     removeNote: ({ kind }) =>
       `Les ${frNouns.plural(kind)} que vous en avez ajoutés restent dans votre bibliothèque.`,
     removeFailed: 'Impossible de supprimer ce registre. Réessayez.',
@@ -1403,6 +1415,7 @@ const itNouns = pairNouns({
 });
 
 const it: RegistriesTranslation = {
+  status: { updatedEarlier: "Aggiornato in precedenza" },
   select: {
     label: 'Registro',
     all: 'Tutti i registri',
@@ -1436,7 +1449,7 @@ const it: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Un posto da cui esplorare ${itNouns.plural(kind)}. Happier lo legge soltanto; nulla di ciò che contiene viene eseguito.`,
     link: 'Link',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Controllo del link…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${itNouns.counted(kind, count)}`,
@@ -1494,6 +1507,7 @@ const it: RegistriesTranslation = {
       `Bloccato su ${ref} · resta anche se rimuovi il registro`,
     fromItRowNoRef: 'Resta anche se rimuovi il registro',
     remove: 'Rimuovi registro',
+    removeConfirm: "Il registro viene rimosso da Esplora. Tutto ciò che hai aggiunto da questo registro resta installato o nella tua libreria. Puoi aggiungere di nuovo il registro in seguito.",
     removeNote: () =>
       'Ciò che hai aggiunto da questo registro resta nella tua libreria.',
     removeFailed: 'Impossibile rimuovere questo registro. Riprova.',
@@ -1627,6 +1641,7 @@ const jaNouns = bareNouns({
 });
 
 const ja: RegistriesTranslation = {
+  status: { updatedEarlier: "以前の更新内容" },
   select: {
     label: 'レジストリ',
     all: 'すべてのレジストリ',
@@ -1661,7 +1676,7 @@ const ja: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `${jaNouns.plural(kind)}を探す元になる場所です。Happier は読み取るだけで、中身は何も実行しません。`,
     link: 'リンク',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'リンクを確認中…',
     found: ({ kind, count }) =>
       `${compact(count)} 件の${jaNouns.counted(kind, count)}`,
@@ -1721,6 +1736,7 @@ const ja: RegistriesTranslation = {
     fromItRow: ({ ref }) => `${ref} に固定 · レジストリを削除しても残ります`,
     fromItRowNoRef: 'レジストリを削除しても残ります',
     remove: 'レジストリを削除',
+    removeConfirm: "このレジストリを「探す」から削除します。ここから追加したものはインストール済みのまま、またはライブラリに残ります。レジストリは後で再度追加できます。",
     removeNote: ({ kind }) =>
       `このレジストリから追加した${jaNouns.plural(kind)}は、ライブラリに残ります。`,
     removeFailed: 'このレジストリを削除できませんでした。もう一度お試しください。',
@@ -1876,6 +1892,7 @@ const plNouns = slavicNouns(
 );
 
 const pl: RegistriesTranslation = {
+  status: { updatedEarlier: "Zaktualizowano wcześniej" },
   select: {
     label: 'Rejestr',
     all: 'Wszystkie rejestry',
@@ -1910,7 +1927,7 @@ const pl: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Miejsce, z którego w Przeglądaj pochodzą ${plNouns.plural(kind)}. Happier tylko je czyta; nic z jego zawartości się nie uruchamia.`,
     link: 'Link',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Sprawdzanie linku…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${plNouns.counted(kind, count)}`,
@@ -1969,6 +1986,7 @@ const pl: RegistriesTranslation = {
       `Przypięte do ${ref} · zostaje po usunięciu rejestru`,
     fromItRowNoRef: 'Zostaje po usunięciu rejestru',
     remove: 'Usuń rejestr',
+    removeConfirm: "Rejestr zostanie usunięty z Przeglądaj. Wszystko, co z niego dodano, pozostanie zainstalowane lub w bibliotece. Rejestr możesz dodać ponownie później.",
     removeNote: ({ kind }) =>
       `${cap(plNouns.plural(kind))} z tego rejestru zostają w Twojej bibliotece.`,
     removeFailed: 'Nie udało się usunąć tego rejestru. Spróbuj ponownie.',
@@ -2107,6 +2125,7 @@ const ptNouns = pairNouns({
 });
 
 const pt: RegistriesTranslation = {
+  status: { updatedEarlier: "Atualizado anteriormente" },
   select: {
     label: 'Registro',
     all: 'Todos os registros',
@@ -2141,7 +2160,7 @@ const pt: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Um lugar de onde explorar ${ptNouns.plural(kind)}. O Happier só o lê; nada do que ele contém é executado.`,
     link: 'Link',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Verificando o link…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${ptNouns.counted(kind, count)}`,
@@ -2201,6 +2220,7 @@ const pt: RegistriesTranslation = {
       `Fixado em ${ref} · continua se você remover o registro`,
     fromItRowNoRef: 'Continua se você remover o registro',
     remove: 'Remover registro',
+    removeConfirm: "Isto remove o registro de Explorar. Tudo o que adicionou a partir dele continua instalado ou na sua biblioteca. Pode adicionar o registro novamente mais tarde.",
     removeNote: () => 'O que você adicionou dele fica na sua biblioteca.',
     removeFailed: 'Não foi possível remover este registro. Tente de novo.',
     updateFailed: 'Não foi possível salvar a alteração. Tente de novo.',
@@ -2360,6 +2380,7 @@ const ruNouns = slavicNouns(
 );
 
 const ru: RegistriesTranslation = {
+  status: { updatedEarlier: "Обновлено ранее" },
   select: {
     label: 'Реестр',
     all: 'Все реестры',
@@ -2394,7 +2415,7 @@ const ru: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `Место, откуда в «Обзоре» берутся ${ruNouns.plural(kind)}. Happier только читает его; ничего из содержимого не запускается.`,
     link: 'Ссылка',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: 'Проверяем ссылку…',
     found: ({ kind, count }) =>
       `${compact(count, ',')} ${ruNouns.counted(kind, count)}`,
@@ -2455,6 +2476,7 @@ const ru: RegistriesTranslation = {
       `Закреплено на ${ref} · останется, если удалить реестр`,
     fromItRowNoRef: 'Останется, если удалить реестр',
     remove: 'Удалить реестр',
+    removeConfirm: "Реестр будет удалён из раздела обзора. Всё, что вы добавили из него, останется установленным или в библиотеке. Позже реестр можно добавить снова.",
     removeNote: ({ kind }) =>
       `${cap(ruNouns.plural(kind))}, добавленные из него, останутся в вашей библиотеке.`,
     removeFailed: 'Не удалось удалить реестр. Повторите попытку.',
@@ -2607,6 +2629,7 @@ const zhHansNouns = bareNouns({
 });
 
 const zhHans: RegistriesTranslation = {
+  status: { updatedEarlier: "此前已更新" },
   select: {
     label: '注册表',
     all: '所有注册表',
@@ -2641,7 +2664,7 @@ const zhHans: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `可从中浏览${zhHansNouns.plural(kind)}的地方。Happier 只读取它，其中的内容不会运行。`,
     link: '链接',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: '正在检查链接…',
     found: ({ kind, count }) =>
       `${compact(count)} 个${zhHansNouns.counted(kind, count)}`,
@@ -2698,6 +2721,7 @@ const zhHans: RegistriesTranslation = {
     fromItRow: ({ ref }) => `固定到 ${ref} · 移除注册表后仍保留`,
     fromItRowNoRef: '移除注册表后仍保留',
     remove: '移除注册表',
+    removeConfirm: "这会将注册表从浏览中移除。从中添加的内容仍保持安装或保留在你的库中。你可以稍后重新添加此注册表。",
     removeNote: ({ kind }) =>
       `你从中添加的${zhHansNouns.plural(kind)}会留在资料库中。`,
     removeFailed: '无法移除此注册表。请重试。',
@@ -2821,6 +2845,7 @@ const zhHantNouns = bareNouns({
 });
 
 const zhHant: RegistriesTranslation = {
+  status: { updatedEarlier: "先前已更新" },
   select: {
     label: '註冊表',
     all: '所有註冊表',
@@ -2855,7 +2880,7 @@ const zhHant: RegistriesTranslation = {
     purpose: ({ kind }) =>
       `可從中瀏覽${zhHantNouns.plural(kind)}的地方。Happier 只會讀取它，其中的內容不會執行。`,
     link: '連結',
-    linkPlaceholder: 'https://github.com/owner/repository',
+    linkPlaceholder: 'https://registry.example.com/catalog.json',
     checking: '正在檢查連結…',
     found: ({ kind, count }) =>
       `${compact(count)} 個${zhHantNouns.counted(kind, count)}`,
@@ -2912,6 +2937,7 @@ const zhHant: RegistriesTranslation = {
     fromItRow: ({ ref }) => `固定在 ${ref} · 移除註冊表後仍保留`,
     fromItRowNoRef: '移除註冊表後仍保留',
     remove: '移除註冊表',
+    removeConfirm: "這會將登錄檔從瀏覽中移除。從中新增的內容仍保持安裝或保留在你的程式庫中。你可以稍後重新新增此登錄檔。",
     removeNote: ({ kind }) =>
       `你從中新增的${zhHantNouns.plural(kind)}會留在資料庫中。`,
     removeFailed: '無法移除此註冊表。請重試。',

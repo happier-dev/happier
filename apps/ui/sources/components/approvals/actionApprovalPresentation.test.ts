@@ -11,6 +11,13 @@ import { readActionApprovalReview } from './actionApprovalReview';
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it.each(['en', 'fr'] as const)('presents registry removal consequences and its specific verb in %s', async language => {
+        await preloadTranslations(language);
+        setPreferredLanguageFromSettings(language);
+        const result = presentActionApproval({ actionId: 'registries.sources.delete', actionArgs: { sourceId: 'registry' } });
+        expect(result).toMatchObject({ confirmLabel: t('capabilities.registries.detail.remove'),
+            summary: t('capabilities.registries.detail.removeConfirm') });
+    });
     it('leaves the installation question to its review facts without repeating the title in a summary', () => {
         const spec = getActionSpec('machines.managed.bootstrap.respond');
         const actionArgs = spec.inputSchema.parse({ serverId: 'profile', homeId: 'home', managedId: 'managed',

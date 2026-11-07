@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '@/text';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryKindV1, type RegistryListPageV1 } from '@happier-dev/protocol/registries';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useRegistryActionRead } from './useRegistryActionRead';
@@ -54,18 +55,31 @@ export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: read
     const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof parse> | null) => {
         const previousPages = pagesFor(previous);
         const parsed = parse(value, previousPages, previous?.curation);
-        // A fresh first page supersedes a failed following page even if its unchanged
-        // payload retains identity. Healthy pagination survives an ordinary reopen.
-        if (more?.first === previous && more.pages.some(page => page.status.state !== 'ok')) setMore(null);
         if (!previousPages) return parsed;
         const bySource = new Map(previousPages.map(page => [page.sourceId, page]));
-        return { ...parsed, pages: parsed.pages.map(page => {
+        const refreshed = { ...parsed, pages: parsed.pages.map(page => {
             const prior = bySource.get(page.sourceId);
             if (!prior || page.status.state === 'ok' || page.status.state === 'invalid_source') return page;
             // An outage is not an empty catalog. Retain only this exact read's
             // source items, while the failure remains visible and cannot page.
             return { ...page, items: prior.items, nextCursor: null };
         }) };
+        if (previous && more?.first === previous) {
+            // The read owner retains equal first-page values. Rebind pagination to
+            // that same value, preserving healthy sources independently of failures.
+            const first = sameStrictJsonValue(previous, refreshed) ? previous : refreshed;
+            const firstBySource = new Map(previous.pages.map(page => [page.sourceId, page]));
+            setMore({ first, pages: refreshed.pages.map(page => {
+                const prior = bySource.get(page.sourceId);
+                if (page.status.state !== 'ok' || prior?.status.state !== 'ok' || page.nextCursor === null) return page;
+                const firstIds = new Set(firstBySource.get(page.sourceId)?.items.map(item => item.itemId));
+                const items = new Map(page.items.map(item => [item.itemId, item]));
+                for (const item of prior.items) if (!firstIds.has(item.itemId) && !items.has(item.itemId)) items.set(item.itemId, item);
+                return { ...page, items: [...items.values()], nextCursor: prior.nextCursor };
+            }) });
+            return first;
+        }
+        return refreshed;
     }, revision, enabled, { sourceIds: input.sourceIds, failures: value => pagesFor(value) ?? EMPTY_PAGES });
     const pages = pagesFor(read.value) ?? EMPTY_PAGES;
     // Loading/error publications do not change catalog content. Keep this
@@ -94,10 +108,11 @@ export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: read
         } finally { paging.current = false; }
     }, [input.kind, JSON.stringify(input.sourceIds), input.query, input.contributionFamily, pages, read.execution.execute, read.execution.isCurrent, read.value]);
     const curation = read.value?.curation ?? EMPTY_CURATION;
-    return React.useMemo(() => ({ items, pages, curation, loading: read.loading, stale: read.stale,
+    return React.useMemo(() => ({ items, pages, curation, hasValue: read.value !== null, loading: read.loading, stale: read.stale,
         sourceRevision: revision,
         error: read.error, status: read.status, nextPage, hasNextPage: pages.some(page => page.nextCursor !== null), refresh: read.refresh,
         sourceFailures: pages.flatMap(page => page.status.state === 'ok' ? [] : [{ sourceId: page.sourceId,
-            status: page.status, message: describeRegistrySourceStatus(page.status), onRetry: read.refresh }]),
-    }), [items, pages, curation, revision, read.loading, read.stale, read.error, read.status, nextPage, read.refresh]);
+            status: page.status, message: [page.items.length > 0 || page.discovery
+                ? t('capabilities.registries.status.updatedEarlier') : null, describeRegistrySourceStatus(page.status)].filter(Boolean).join(' · '), onRetry: read.refresh }]),
+    }), [items, pages, curation, revision, read.value, read.loading, read.stale, read.error, read.status, nextPage, read.refresh]);
 }

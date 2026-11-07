@@ -160,7 +160,7 @@ const press = async (screen: Awaited<ReturnType<typeof renderScreen>>, testID: s
 };
 
 let fixtureSequence = 0;
-async function renderDiscoverWithOneJob(options?: { view: string; focused: boolean; visible: boolean; distinctJobChoices?: boolean; curatedUnavailable?: boolean }, withFailures = false, allHealthy = false) {
+async function renderDiscoverWithOneJob(options?: { view: string; focused: boolean; visible: boolean; distinctJobChoices?: boolean; curatedUnavailable?: boolean; unusedApp?: boolean }, withFailures = false, allHealthy = false) {
   // A skill choice from another admitted Registry: the curated catalog only points at it.
   const reference = {
     type: 'registryItem' as const,
@@ -174,7 +174,10 @@ async function renderDiscoverWithOneJob(options?: { view: string; focused: boole
     entries: [],
     diagnostics: [],
     discovery: {
-      items: [{ id: 'review-skill', title: 'Review skill', reference }],
+      items: [{ id: 'review-skill', title: 'Review skill', reference },
+        ...(options?.unusedApp ? [{ id: 'unused-app', title: 'Unused app', reference: {
+          type: 'registryItem' as const, kind: 'app' as const, sourceId: 'builtin:compose-catalog', itemId: 'unused-app',
+        } }] : [])],
       categories: [{ id: 'reviews', title: 'Reviews', items: ['review-skill'] }],
       jobs: [
         {
@@ -247,6 +250,15 @@ async function renderDiscoverWithOneJob(options?: { view: string; focused: boole
   if (options) await waitForHomeGovernance(() => expect(sourcesReady).toBe(true));
   return { screen, reference, tree, catalogReads, itemReads, failureProbe };
 }
+
+it.each(['jobs', 'job', 'category'])('acquires only the displayed choices on the %s page', async view => {
+  const { screen, itemReads } = await renderDiscoverWithOneJob({ view, focused: true, visible: true, unusedApp: true });
+  await waitForHomeGovernance(() => expect(screen.findAllByTestId(view === 'jobs' ? 'store.jobs.list' : view === 'job'
+    ? 'store.job.groups' : 'store.category.items').length).toBeGreaterThan(0));
+  await flushHookEffects();
+  expect(itemReads.filter(url => url.includes('coollabsio') || url.includes('coolify'))).toEqual([]);
+  if (view === 'jobs') expect(itemReads).toEqual([]);
+});
 
 it.each(['discover', 'jobs', 'job', 'category'])('withdraws %s acquisition for retained hidden and blurred pages', async view => {
   const { screen, tree, catalogReads, itemReads } = await renderDiscoverWithOneJob({ view, focused: true, visible: false });
@@ -376,6 +388,7 @@ it('hands native MCP Text edits through a lazy pane-to-page transition without U
   expect(registryReads).toHaveLength(0);
   await screen.update(tree(true));
   await waitForHomeGovernance(() => expect(screen.findByTestId('mcp.add.env.row.0')).not.toBeNull());
+  expect(screen.findByTestId('store.kind.mcpServer.detailPane.header.title')?.props.children).toBe('Regional tool');
   await measureEnv();
   await act(async () => { screen.findAll(node => node.props?.testID === 'mcp.add.env.row.0.type' && typeof node.props.onSelect === 'function')[0]!.props.onSelect('literal'); });
   const field = 'mcp.add.env.row.0.value';

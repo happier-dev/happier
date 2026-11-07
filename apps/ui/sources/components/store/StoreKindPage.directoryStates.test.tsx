@@ -4,7 +4,6 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-vi.mock('@/components/ui/lists/collection/CoreCollectionScope', () => ({ CoreCollectionScope: (props: { children: React.ReactNode }) => props.children }));
 
 const { Directory } = await import('./StoreKindPage');
 const { EmptyState } = await import('@/components/ui/empty/EmptyState');

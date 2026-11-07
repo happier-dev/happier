@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { RegistryActionIdV1, RegistrySourceStatusV1 } from '@happier-dev/protocol/registries';
+import { REGISTRY_ITEMS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/registries/registryActionIdsV1';
 import { readRegistryFailureStatus, type RegistryFailureStatus } from './describeRegistrySourceStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -59,8 +60,10 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
         // Healthy reads keep their memo; outages do not start an automatic retry loop.
         if (previous.scopeKey === scopeKey && previous.inputKey === inputKey && Object.is(previous.revision, revision)) {
             const retryable = (status: RegistrySourceStatusV1 | null) => status?.state === 'needs_machine' || status?.state === 'unreachable';
-            force ||= retryable(previous.status) || Boolean(recoveryOptions.current?.failures?.(previous.value)
-                .some(page => retryable(page.status)));
+            // Listing pages own recovery independently. A failed source retries on
+            // reopen without forcing every healthy sibling to fetch again.
+            force ||= actionId !== REGISTRY_ITEMS_LIST_ACTION_ID_V1 && (retryable(previous.status)
+                || Boolean(recoveryOptions.current?.failures?.(previous.value).some(page => retryable(page.status))));
         }
         if (force && actionId === 'registries.items.read' && scope) invalidateUiRegistryItemMemoV1(scope, args);
         if (force && actionId === 'registries.updates.check' && scope) invalidateUiRegistryUpdateMemoV1(scope, args);

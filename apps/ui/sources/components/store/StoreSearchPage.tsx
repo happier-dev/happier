@@ -58,6 +58,7 @@ import { useMcpAdded, useSkillAdded, useAgentAdded } from './catalog/storeAdded'
 import { StoreDirectory, type StoreSearchState } from './StoreSearch';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { StoreListingPaneHost, useOpenStoreListing } from './StoreListing';
+import { StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
 
 /** Search reads in this order: the kinds people add most first, Plugins last (lab `h:search`). */
 const KIND_ORDER = STORE_KIND_ORDER;
@@ -87,7 +88,6 @@ export function StoreSearchPage(
   );
   return (
     <SoftwareTargetsDraftProvider>
-    <StoreListingPaneHost title={t('capabilities.store.discover.title')} testID="store.search">
       <StoreDiscover demand={demand} project={null}>
         {({ curation, complete }) => (
           <SearchWithCuration
@@ -99,7 +99,6 @@ export function StoreSearchPage(
           />
         )}
       </StoreDiscover>
-    </StoreListingPaneHost>
     </SoftwareTargetsDraftProvider>
   );
 }
@@ -129,10 +128,24 @@ const SearchWithCuration = React.memo(function SearchWithCuration(
       unavailable={<StoreDirectoryUnavailable view="search" />}
       {...(kindStated ? { statedFields: STATED_KIND } : {})}
     >
-      {(state) => <SearchResults state={state} presented={props.presented} softwareTarget={props.softwareTarget} />}
+      {(state) => <SearchListing state={state} presented={props.presented} softwareTarget={props.softwareTarget} />}
     </StoreDirectory>
   );
 });
+
+function SearchListing(props: Readonly<{ state: StoreSearchState; presented: boolean; softwareTarget: StoreSoftwareTarget | null }>): React.ReactElement {
+  const identities = React.useMemo(() => [
+    ...props.state.rows.filter((row): row is RegistryCatalogItemSummary => 'kind' in row && 'itemId' in row),
+    ...(props.state.lists.plugin?.items.flatMap(entry => entry.itemId ? [{ kind: 'plugin' as const,
+      sourceId: entry.sourceId, itemId: entry.itemId, title: entry.title,
+      ...(entry.version ? { version: entry.version } : {}) }] : []) ?? []),
+  ], [props.state.rows, props.state.lists.plugin?.items]);
+  return <StoreRegistryIdentityProvider items={identities}>
+    <StoreListingPaneHost title={t('capabilities.store.discover.title')} testID="store.search">
+      <SearchResults {...props} />
+    </StoreListingPaneHost>
+  </StoreRegistryIdentityProvider>;
+}
 
 function useGo(
   tag: string,

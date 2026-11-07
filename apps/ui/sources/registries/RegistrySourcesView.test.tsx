@@ -4,11 +4,12 @@ import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { IModal } from '@/modal';
 import type { ConnectSheetKeyRequest, ConnectSheetKeyResult } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
+import { DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, deriveMarketplaceSourceId, MarketplaceIndexSourceSnapshotV1Schema } from '@happier-dev/protocol/marketplace';
 import { HAPPIER_PICKS_SOURCE_ID, readRegistrySourcesRecordV1 } from '@happier-dev/protocol/registries';
+import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
-const modal = vi.hoisted(() => ({ show: vi.fn<IModal['show']>(() => 'picker'), confirm: vi.fn(async () => true) }));
+const modal = vi.hoisted(() => ({ show: vi.fn<IModal['show']>(() => 'picker'), confirm: vi.fn<IModal['confirm']>(async () => true) }));
 function readRegistryTokenPickerProps(): Readonly<{ request: ConnectSheetKeyRequest; onResult(result: ConnectSheetKeyResult): void }> {
     const props = modal.show.mock.calls.at(-1)?.[0].props;
     if (!props || typeof props !== 'object' || !('request' in props) || !('onResult' in props)
@@ -38,6 +39,58 @@ const { CapabilityDetailHeader } = await import('@/components/capabilities/detai
 const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 
 describe('RegistrySourcesView through real registry Actions', () => {
+    it('keeps a newly added registry selected while the route and source list settle', async () => {
+        const url = 'https://registry.acme.test/catalog.json';
+        const existingUrl = 'https://registry.acme.test/existing.json';
+        const { home } = await createRegistrySourcesUiHome('added-selection', {
+            source: { id: deriveMarketplaceSourceId(existingUrl), url: existingUrl, title: 'Existing plugins',
+                format: 'happier-catalog', kinds: ['plugin'], enabled: true, addedAt: 1 },
+            external: async candidate => candidate === url
+            ? Response.json(MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { id: 'acme', title: 'Acme plugins', kind: 'curated', sourceUrl: url },
+                freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [] })) : null });
+        const onStale = vi.fn();
+        function RoutedSources() {
+            const [value, onChange] = React.useState<string | null>('registry:new');
+            return <RegistrySourcesView kind="plugin" testID="registries" selection={{ value, onChange,
+                onStale: () => { onStale(); onChange(null); }, navigationBackClosesDetail: true }} />;
+        }
+        const screen = await renderScreen(<RoutedSources />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:link')).not.toBeNull());
+        vi.useFakeTimers();
+        try {
+            await React.act(async () => { screen.changeTextByTestId('registries:add:link', url); });
+            await React.act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        } finally { vi.useRealTimers(); }
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('registries:add:submit');
+        await waitForHomeGovernance(() => expect(readRegistrySourcesRecordV1(home.read().record.value).sources.some(source => source.url === url)).toBe(true));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:detail:name')?.props.value).toBe('Acme plugins'));
+        expect(onStale).not.toHaveBeenCalled();
+    });
+
+    it.each(['allowed', 'ask'] as const)('removes a registry after one in-place confirmation and keeps it when declined under %s policy', async policy => {
+        const { home, sourceId } = await createRegistrySourcesUiHome(`remove-confirmation-${policy}`);
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applySettingsLocal({ actionsSettingsV1: setActionApprovalOverride({
+            settings: storage.getState().settings.actionsSettingsV1, actionId: 'registries.sources.delete',
+            surface: 'ui', approvalRequired: policy === 'ask',
+        }) });
+        const screen = await renderScreen(<RegistrySourcesView kind="skill" testID="registries" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:detail:remove')?.props.disabled).toBe(false));
+        modal.confirm.mockClear();
+        modal.confirm.mockResolvedValueOnce(false);
+        await screen.pressByTestIdAsync('registries:detail:remove');
+        await waitForHomeGovernance(() => expect(modal.confirm).toHaveBeenCalledTimes(1));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:detail:remove')?.props.disabled).toBe(false));
+        expect(readRegistrySourcesRecordV1(home.read().record.value).sources.some(source => source.id === sourceId)).toBe(true);
+        expect(modal.confirm).toHaveBeenCalledTimes(1);
+        modal.confirm.mockClear();
+        await screen.pressByTestIdAsync('registries:detail:remove');
+        await waitForHomeGovernance(() => expect(readRegistrySourcesRecordV1(home.read().record.value).sources).toEqual([]));
+        expect(modal.confirm).toHaveBeenCalledTimes(1);
+        expect(modal.confirm.mock.calls[0]?.[2]).toMatchObject({ confirmText: 'capabilities.registries.detail.remove' });
+    });
+
     it.each([
         { kind: 'plugin', link: 'https://unknown-format.test/source.json' },
         { kind: 'plugin', link: 'https://github.com/fixture/skills' },

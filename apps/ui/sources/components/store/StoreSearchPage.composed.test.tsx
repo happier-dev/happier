@@ -24,6 +24,70 @@ const { StoreKindPage, Directory } = await import('./StoreKindPage');
 const { StoreDirectory: StoreQueryDirectory } = await import('./StoreSearch');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
+it.each(['populated', 'empty', 'failed'] as const)('holds the initial Apps layout until curation settles %s', async outcome => {
+    const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
+    const { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
+    const serverUrl = `https://store-apps-layout-${outcome}.test`;
+    const sourceUrl = `https://store-apps-curation-${outcome}.test/catalog.json`;
+    const sourceId = deriveMarketplaceSourceId(sourceUrl);
+    const appSourceId = 'builtin:dokploy-templates';
+    let releaseCuration!: () => void;
+    const pending = new Promise<void>(resolve => { releaseCuration = resolve; });
+    let appReads = 0;
+    let curationReads = 0;
+    const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({
+        source: { id: sourceId, title: 'Curated apps', kind: 'user', sourceUrl },
+        freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
+        discovery: { items: outcome === 'populated' ? [{ id: 'uptime', title: 'Uptime Kuma', reference: {
+            type: 'registryItem', kind: 'app', sourceId: appSourceId, itemId: 'uptime-kuma',
+        } }] : [], categories: outcome === 'populated' ? [{ id: 'monitoring', title: 'Monitoring', items: ['uptime'] }] : [], jobs: [] },
+    });
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+        key: 'registry-sources', value: { v: 2,
+            disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.filter(source => source.id !== appSourceId).map(source => source.id),
+            sources: [{ id: sourceId, title: 'Curated apps', url: sourceUrl, format: 'happier-catalog',
+                kinds: ['plugin'], enabled: true, addedAt: 1 }],
+        },
+    }, 'updated', { handleExternalRequest: async url => {
+        if (url === sourceUrl) {
+            curationReads += 1;
+            await pending;
+            return outcome === 'failed' ? new Response(null, { status: 503 }) : Response.json(catalog);
+        }
+        if (url === 'https://templates.dokploy.com/meta.json') {
+            appReads += 1;
+            return Response.json([{ id: 'uptime-kuma', name: 'Uptime Kuma', tags: ['monitoring'] },
+                { id: 'wordpress', name: 'WordPress', tags: ['blog'] }]);
+        }
+        return new Response(null, { status: 503 });
+    } });
+    onTestFinished(async () => { releaseCuration(); await standardCleanup(); await fixture.dispose(); });
+    const screen = await renderScreen(<DestinationInstanceHost tabId="apps-layout"
+        ref={{ kind: 'plugins', params: { view: 'kind', kind: 'app' } }} pathname="/plugins" focused visible
+        navigation={{ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }}>
+        <AppPaneProvider><StoreKindPage kind="app" presented /></AppPaneProvider>
+    </DestinationInstanceHost>);
+    // Both real reads run concurrently; a fast catalog must not become a temporary first section.
+    await waitForHomeGovernance(() => expect(appReads).toBeGreaterThan(0));
+    await waitForHomeGovernance(() => expect(curationReads).toBeGreaterThan(0));
+    const { useRegistryItems } = await import('@/registries/useRegistryItems');
+    // The section must stay held after the actual catalog has settled, not merely before its request starts.
+    const { renderHook } = await import('@/dev/testkit');
+    const loaded = await renderHook(() => useRegistryItems({ kind: 'app', query: '' }));
+    await waitForHomeGovernance(() => expect(loaded.getCurrent().items).toHaveLength(2));
+    expect(appReads).toBe(1);
+    expect(screen.findAllByType(Directory)).toHaveLength(0);
+    expect(screen.findAllByTestId('store.kind.app.loading').length).toBeGreaterThan(0);
+    await act(async () => { releaseCuration(); });
+    await waitForHomeGovernance(() => expect(screen.findAllByType(Directory)).toHaveLength(1));
+    const directory = screen.findAllByType(Directory)[0]!;
+    expect(directory.props.rows).toHaveLength(2);
+    expect(directory.props.groups.map((group: { key: string }) => group.key)).toEqual(outcome === 'populated'
+        ? [`category:${JSON.stringify([sourceId, 'monitoring'])}`, `source:${appSourceId}`]
+        : [`source:${appSourceId}`]);
+    expect(appReads).toBe(1);
+});
+
 it('keeps a cold failed Skills read distinct from empty and retries the existing owner', async () => {
     await setup('skill-failed-state');
     const retry = vi.fn();

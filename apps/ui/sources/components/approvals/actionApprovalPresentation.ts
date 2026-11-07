@@ -1,5 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import { describeApprovalActionFields, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle } from '@/text/actionTitles';
@@ -81,6 +81,7 @@ export function readActionApprovalConfirmLabel(actionId: string): string | null 
     const parsed = ActionIdSchema.safeParse(actionId);
     if (!parsed.success) return null;
     if (parsed.data === 'scm.diffSummary.result.clear') return t('walkthroughSettings.clear');
+    if (parsed.data === REGISTRY_SOURCE_DELETE_ACTION_ID_V1) return t('capabilities.registries.detail.remove');
     const verb = getActionSpec(parsed.data).confirmVerb;
     return verb === undefined ? null : resolveActionConfirmVerb(verb);
 }
@@ -97,6 +98,14 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
             .find(row => row.kind === 'value' && row.path === 'name') : undefined;
     const subject = createdMachineName?.kind === 'value' ? createdMachineName.value : input.subject;
     const confirmLabel = readActionApprovalConfirmLabel(spec.id) ?? resolveActionConfirmVerb(undefined);
+    if (spec.id === REGISTRY_SOURCE_DELETE_ACTION_ID_V1) {
+        return {
+            title: t('actionPresentation.title', { actionId: spec.id,
+                source: t('capabilities.registries.detail.remove'), subject }),
+            summary: t('capabilities.registries.detail.removeConfirm'),
+            confirmLabel,
+        };
+    }
     if (spec.id === 'scm.diffSummary.result.clear' && spec.inputSchema.safeParse(input.actionArgs).success) {
         return {
             title: t('walkthroughSettings.clearTitle'),

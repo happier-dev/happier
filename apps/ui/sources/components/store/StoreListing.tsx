@@ -43,6 +43,7 @@ import {
 import { StoreSoftwareRouteListing } from './StoreSoftwarePage';
 import { StoreKindSurface } from './StoreKindSurface';
 import { releaseMcpAddDraftContinuation } from '@/components/settings/mcpServers/add/mcpAddDraftState';
+import { useStoreRegistryIdentity } from './catalog/StoreRegistryIdentity';
 
 type Presentation = 'pane' | 'page';
 
@@ -89,7 +90,7 @@ export function useStoreListingSelection(): StoreListingReference | null {
  */
 export function StoreListingPaneHost(
   props: Readonly<{
-    /** The page's name: the pane says where it was opened from, never the item's name twice. */
+    /** The directory's identity; the selected pane uses its own item identity. */
     title: string;
     testID: string;
     children: React.ReactNode;
@@ -103,6 +104,8 @@ export function StoreListingPaneHost(
     openStoreAsPage,
   } = usePluginsOpenItem(continuationId);
   const key = storeOpenItem ? referenceKey(storeOpenItem) : null;
+  const identity = useStoreRegistryIdentity(storeOpenItem?.type === 'storeKind' ? null : storeOpenItem);
+  const listingTitle = identity?.title ?? (storeOpenItem?.type === 'registryItem' ? storeOpenItem.itemId : props.title);
   const besidePage = useDetailsPaneAvailable();
   // A selection that arrives where no pane fits (a phone opening a pane link, a window narrowed past the pane) is shown
   // the phone's way: the listing pushed as its own page with Back, never the desktop pane drawn over the whole screen.
@@ -123,7 +126,7 @@ export function StoreListingPaneHost(
     if (!besidePage || (!storeOpenItem && !storeSelectionUnavailable)) return null;
     return {
       header: {
-        title: props.title,
+        title: listingTitle,
         actions: storeOpenItem ? (
           <CorePluginUiPresentationScope>
             <DetailsPaneOpenAsPageButton
@@ -167,6 +170,7 @@ export function StoreListingPaneHost(
     openStoreAsPage,
     props.testID,
     props.title,
+    listingTitle,
     continuationId,
     storeSelectionUnavailable,
   ]);

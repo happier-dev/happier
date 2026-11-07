@@ -22,6 +22,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
@@ -33,6 +34,7 @@ import { useStoreDirectoryState } from '@/components/settings/plugins/model/useP
 import { useMcpAdded, useSkillAdded, useAgentAdded, useProviderAdded } from './catalog/storeAdded';
 import { useStoreOpenReference } from './catalog/useStoreOpenReference';
 import { StoreItemMark } from './catalog/StoreItemMark';
+import { StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
 import { StoreListingPaneHost, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
 import type { StoreListingReference } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import {
@@ -90,22 +92,25 @@ export function StoreKindPage(
 ): React.ReactNode {
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
   return <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
-    <KindQuery {...props} demand={demand} curation={curation.curation} curationComplete={complete} />
+    <KindQuery {...props} demand={demand} curation={curation.curation} curationComplete={complete}
+      curationPending={curation.loading && !curation.hasValue} />
   }</StoreDiscover>;
 }
 
 /** Reads only the admitted pages and their completeness: other curation publications leave the page still. */
 const KindQuery = React.memo(function KindQuery(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean;
-  demand: Readonly<{ presented: boolean }>; curation: RegistryCuration['curation']; curationComplete: boolean }>) {
+  demand: Readonly<{ presented: boolean }>; curation: RegistryCuration['curation']; curationComplete: boolean; curationPending: boolean }>) {
   const fields = useStoreFilterFields(props.curation, props.presented);
   return <StoreQueryDirectory kind={props.kind} demand={props.demand} fields={fields}
     curation={props.curation} curationComplete={props.curationComplete}
     unavailable={<StoreDirectoryUnavailable view="kind" kind={props.kind} />}>
-    {state => <KindResults kind={props.kind} presented={props.presented} state={state} curation={props.curation} />}
+    {state => <KindResults kind={props.kind} presented={props.presented} state={state} curation={props.curation}
+      curationPending={props.curationPending} />}
   </StoreQueryDirectory>;
 });
 
-function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean; state: StoreSearchState; curation: RegistryCuration['curation'] }>) {
+function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean; state: StoreSearchState;
+  curation: RegistryCuration['curation']; curationPending: boolean }>) {
   const { state } = props;
   const { filter } = state;
   const source = filter.filters.source;
@@ -115,8 +120,10 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     return id ? { ...rest, source: { include: [id], exclude: [] } } : rest;
   }), [filter.setFilters]);
   const visible = React.useMemo(() => new Set(state.rows), [state.rows]);
+  const registryItems = React.useMemo(() => state.rows.filter((row): row is RegistryCatalogItemSummary => 'kind' in row && 'itemId' in row), [state.rows]);
   const browsing = !state.query.trim() && Object.keys(filter.filters).length === 0;
   const frame = (body: React.ReactNode) => (
+    <StoreRegistryIdentityProvider items={registryItems}>
     <StoreKindFrame
       kind={props.kind}
       query={state.query}
@@ -128,6 +135,11 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     >
       {body}
     </StoreKindFrame>
+    </StoreRegistryIdentityProvider>
+  );
+  // The same curation supplies every section's order. Hold only its first read; a refresh keeps the admitted layout.
+  if (props.curationPending && props.kind !== 'provider') return frame(
+    <SkeletonRows testID={`store.kind.${props.kind}.loading`} rows={5} accessibilityLabel={t('common.loading')} />,
   );
   switch (props.kind) {
     case 'browserExtension':

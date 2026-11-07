@@ -129,7 +129,9 @@ export function RegistrySourcesViewWithSources(
   );
   const phone = useDeviceType() === 'phone';
   const routed = props.selection?.value ?? undefined;
-  const settled = sources.hasValue || props.enabled !== false && !sources.loading;
+  // Retained rows describe the previous list while a mutation's revision is resolving.
+  // Only the settled list can say that a newly selected source no longer exists.
+  const settled = !sources.loading && (sources.hasValue || props.enabled !== false);
   const routedIsKnown = routed === NEW_KEY || sources.sources.some((source) => source.id === routed);
   const staleRoute = props.selection !== undefined && routed !== undefined && settled && !routedIsKnown;
   const choice = props.selection ? (staleRoute ? undefined : routed) : localChoice;
@@ -457,7 +459,8 @@ function RegistrySourceDetail(
       .then(() => props.onRemoved())
       .catch((failure: unknown) => {
         // A declined confirmation is the person's answer, not a failure.
-        if ((failure as { code?: string } | null)?.code === 'approval_denied')
+        const code = (failure as { code?: string } | null)?.code;
+        if (code === 'approval_denied' || code === 'approval_canceled')
           return;
         setError(t('capabilities.registries.detail.removeFailed'));
       })

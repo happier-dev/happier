@@ -19,6 +19,8 @@ export function StoreDiscover(props: Readonly<{
     project: QualifiedProjectKeyV1 | null;
     children: (state: Readonly<{ curation: RegistryCuration;
         suggestions: readonly RegistryProjectSuggestion[];
+        /** The read owner's presentation decision also owns demand for the displayed choices' summaries. */
+        presented: boolean;
         /** Every admitted catalog read settled without a failure: the one completeness decision Store pages read. */
         complete: boolean }>) => React.ReactNode;
 }>): React.ReactNode {
@@ -40,5 +42,5 @@ export function StoreDiscover(props: Readonly<{
         project, refs, workspaceRefResolutionContextV1()));
     React.useEffect(() => { retained.current = suggestions; });
     const complete = !curation.loading && !curation.error && curation.sourceFailures.length === 0;
-    return props.children({ curation, suggestions, complete });
+    return props.children({ curation, suggestions, complete, presented });
 }

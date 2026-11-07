@@ -8,8 +8,7 @@ import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralShar
 import { t } from '@/text';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useRegistryItem } from '@/registries/useRegistryItem';
-import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
+import { useStoreRegistryIdentity } from '../catalog/StoreRegistryIdentity';
 
 import { directoryKeyOf } from '../StoreKindPage';
 import { useStoreListingSelection } from '../StoreListing';
@@ -36,15 +35,12 @@ export function storeKindWord(kind: StoreDiscoverKind): string {
     }
 }
 
-/** Resolve a registry choice exactly as its listing does; the read owns layout presentation eligibility,
- * and StoreItemMark owns the artwork/fallback selection. */
+/** Consume the page's admitted summary; a mark never acquires an item's install payload. */
 export function StoreDiscoverItemMark(props: Readonly<{ item: StoreDiscoverItem; size?: number }>): React.ReactElement {
     const reference = props.item.reference;
-    const registry = reference.type === 'registryItem' ? reference : null;
-    const selected = useRegistryItem({ kind: registry?.kind ?? 'plugin', sourceId: registry?.sourceId ?? '',
-        itemId: registry?.itemId ?? '', ...(registry?.version ? { version: registry.version } : {}) }, registry !== null);
-    const facts = selected.item
-        ? { kind: props.item.kind, title: selected.item.summary.title, brand: admitRegistrySummaryMark(selected.item.summary).brandMark }
+    const selected = useStoreRegistryIdentity(reference);
+    const facts = selected
+        ? { kind: props.item.kind, title: selected.title, brand: selected.brandMark }
         : storeMarkFactsOfReference(props.item.kind, props.item.title, reference);
     return <StoreItemMark facts={facts}
         size={props.size ?? ROW_MARK_PX} />;

@@ -23,12 +23,13 @@ export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly strin
     // Presentation owns acquisition, not the admitted facts already held by a retained page.
     const admitted = sourceIds.length > 0 && !catalog.stale;
     const pages = React.useMemo(() => admitted ? catalog.pages : [], [admitted, catalog.pages]);
-    return React.useMemo(() => ({ ...catalog, pages, curation: admitted ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
+    const hasValue = sources.hasValue && (sourceIds.length === 0 || admitted && catalog.hasValue);
+    return React.useMemo(() => ({ ...catalog, pages, hasValue, curation: admitted ? catalog.curation : EMPTY_CURATION, sources: sources.sources,
         error: sources.error ?? catalog.error,
         status: sources.error ? sources.failureStatus : catalog.status,
         loading: presented && (sources.loading || sourceIds.length > 0 && catalog.loading),
         refresh: async () => { await sources.refresh(); await catalog.refresh(); },
-    }), [catalog, pages, admitted, presented, sources.sources, sources.loading, sources.error, sources.failureStatus, sources.refresh, sourceIds.length]);
+    }), [catalog, pages, hasValue, admitted, presented, sources.sources, sources.loading, sources.error, sources.failureStatus, sources.refresh, sourceIds.length]);
 }
 export type RegistryCuration = ReturnType<typeof useRegistryCuration>;
 

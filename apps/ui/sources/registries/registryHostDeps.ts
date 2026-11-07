@@ -7,6 +7,7 @@ import { readPromptLibraryCatalogRecordV1, updatePromptLibraryRegistrySourcesV1,
     type PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { REGISTRY_ITEMS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/registries/registryActionIdsV1';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiRegistryHttpV1 } from './registryHttpV1';
 import { projectPluginRegistrySources } from './pluginRegistrySources';
@@ -108,7 +109,8 @@ function memoFor(account: Pick<LazyActionAccountContext, 'serverId' | 'accountId
 }
 
 function registryReadKey(actionId: RegistryActionIdV1, input: RegistryActionInput, machineId?: string) {
-    const key = JSON.stringify([actionId, Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'refresh'))]);
+    const key = JSON.stringify([actionId, Object.fromEntries(Object.entries(input)
+        .filter(([key, value]) => key !== 'refresh' && !(key === 'query' && value === '')))]);
     return machineId === undefined ? key : `${key}:${JSON.stringify(machineId)}`;
 }
 
@@ -251,10 +253,40 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
         },
     });
     const executeAdmitted = async (actionId: RegistryActionIdV1, admitted: RegistryActionInput): Promise<RegistryActionOutput> => {
-        const read = actionId === 'registries.items.read' || actionId === 'registries.items.list';
+        if (actionId === REGISTRY_ITEMS_LIST_ACTION_ID_V1) {
+            const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(admitted);
+            const sources = (await readSources()).filter(source => source.enabled && source.kinds.includes(args.kind)
+                && (args.sourceIds === undefined || args.sourceIds.includes(source.id)));
+            const results = await Promise.all(sources.map(async source => {
+                // Views and shelves consume the same source page. A failed sibling
+                // must not invalidate healthy rows or spend their upstream budget.
+                const input = { ...args, sourceIds: [source.id] };
+                const key = registryReadKey(actionId, input, context.externalActionTarget?.kind === 'machine'
+                    ? context.externalActionTarget.machineId : undefined);
+                const revision = registrySourceRevision([source]);
+                const held = memo.values.get(key);
+                const cached = held?.revision === revision && 'pages' in held.value ? held.value : null;
+                const reusable = cached?.pages.every(page => page.status.state === 'ok' || page.status.state === 'rate_limited'
+                    && (page.status.retryAt === undefined || page.status.retryAt > Date.now()));
+                if (cached && !args.refresh && reusable) return cached;
+                const next = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await host.execute(actionId, input));
+                const previous = new Map(cached?.pages.map(page => [page.sourceId, page]));
+                const value = { pages: next.pages.map(page => {
+                    const prior = previous.get(page.sourceId);
+                    return prior && page.status.state !== 'ok' && page.status.state !== 'invalid_source'
+                        ? { ...page, items: prior.items, ...(prior.discovery ? { discovery: prior.discovery } : {}), nextCursor: null }
+                        : page;
+                }) };
+                if (!args.cursor && !args.query) memo.values.set(key, { revision, value });
+                return value;
+            }));
+            account.assertCurrent(); context.signal?.throwIfAborted();
+            return { pages: results.flatMap(result => result.pages) };
+        }
+        const read = actionId === 'registries.items.read';
         const args = admitted as Record<string, unknown>;
         const appCheck = actionId === 'registries.updates.check' && 'environments' in admitted;
-        const cacheable = appCheck || read && (actionId === 'registries.items.read' || !args.cursor && !args.query);
+        const cacheable = appCheck || read;
         const sourceIds = 'sourceId' in admitted ? [admitted.sourceId] : 'sourceIds' in admitted ? admitted.sourceIds : undefined;
         const revision = cacheable ? registrySourceRevision(await readSources(), sourceIds) : '';
         const machineId = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId
@@ -268,8 +300,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
         }
         const parsed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await host.execute(actionId, admitted));
         if (cacheable
-            && (!appCheck || 'results' in parsed && parsed.results.every(item => item.upstream.state !== 'unchecked'))
-            && (actionId !== 'registries.items.list' || 'pages' in parsed && parsed.pages.every(page => page.status.state === 'ok'))) {
+            && (!appCheck || 'results' in parsed && parsed.results.every(item => item.upstream.state !== 'unchecked'))) {
             memo.values.set(key, { revision, value: parsed });
         }
         // A received source-row mutation ACK survives caller cancellation. Only a

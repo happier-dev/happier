@@ -1,4 +1,5 @@
 import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
+export { REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '../registries/registryActionIdsV1.js';
 import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';

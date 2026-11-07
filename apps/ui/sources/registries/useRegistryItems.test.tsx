@@ -6,7 +6,8 @@ import { HAPPIER_PICKS_SOURCE_ID, registryMarketplaceSourceV1, type RegistrySour
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
 import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
+import { createRegistryNpmPackageFixture, createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
+import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/marketplace';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
 const platform = vi.hoisted(() => ({ value: 'web', width: 1440 }));
@@ -83,6 +84,107 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
+    it('spends one compose listing fetch per Store open, reuses it across views, and spends nothing on idle', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        onTestFinished(() => vi.useRealTimers());
+        const requests: string[] = [];
+        const commit = 'a'.repeat(40);
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://store-compose-budget.test', {
+            key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+        }, 'updated', { handleExternalRequest: async url => {
+            requests.push(url);
+            if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return new Response(null, { status: 503 });
+            if (url.startsWith('https://api.github.com/repos/coollabsio/coolify/commits/')) return Response.json({ sha: commit });
+            if (url.includes('/templates/service-templates.json')) return Response.json({ redis: { name: 'Redis', slogan: 'A cache', logo: 'https://example.test/redis.svg' } });
+            return null;
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const open = (sourceIds: string[]) => renderHook(() => useRegistryItems({ kind: 'app', sourceIds }));
+        const first = await open([HAPPIER_PICKS_SOURCE_ID, 'builtin:compose-catalog']);
+        await waitForHomeGovernance(() => expect(first.getCurrent().loading).toBe(false));
+        expect(first.getCurrent().items.map(item => item.title)).toEqual(['Redis']);
+        const listingFetches = () => requests.filter(url => url.includes('/templates/service-templates.json')).length;
+        expect(listingFetches()).toBe(1);
+        await first.unmount();
+        const second = await open(['builtin:compose-catalog']);
+        await waitForHomeGovernance(() => expect(second.getCurrent().loading).toBe(false));
+        expect(second.getCurrent().items.map(item => item.title)).toEqual(['Redis']);
+        expect(listingFetches()).toBe(1);
+        const settled = requests.length;
+        await flushHookEffects();
+        await second.rerender();
+        await flushHookEffects();
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(requests).toHaveLength(settled);
+        // An explicit person-initiated refresh remains a real freshness boundary.
+        await act(async () => { await second.getCurrent().refresh(); });
+        expect(listingFetches()).toBe(2);
+    });
+    it.each([
+        ['mcpServer', false], ['mcpServer', true], ['plugin', false], ['plugin', true],
+    ] as const)('retains loaded %s pages and their cursor on reopen (curated unavailable: %s)', async (kind, unavailable) => {
+        const sourceId = kind === 'mcpServer' ? 'builtin:mcp-registry' : COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1;
+        const requests: string[] = [];
+        const curated = createRegistryPluginCatalogFixture({ sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, kind: 'curated', entries: [] });
+        const packages = ['first', 'second', 'third'].map(name => createRegistryNpmPackageFixture({
+            packageName: `@retained/${name}`, pluginId: `retained.${name}`, title: name, version: '1.0.0',
+        }));
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://retained-${kind}-${unavailable}.test`, {
+            key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+        }, 'updated', { handleExternalRequest: async url => {
+            requests.push(url);
+            if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return unavailable
+                ? new Response(null, { status: 503 }) : Response.json(curated);
+            const parsed = new URL(url);
+            if (kind === 'mcpServer' && parsed.pathname === '/v0.1/servers') {
+                const index = Number(parsed.searchParams.get('cursor') ?? '0');
+                // Official v0.1 HTTP shape consumed by the real MCP format adapter.
+                return Response.json({ servers: [{ server: { name: `retained/server${index}`, description: 'Retained server', version: '1.0.0' } }],
+                    metadata: { count: 1, ...(index < 2 ? { nextCursor: String(index + 1) } : {}) } });
+            }
+            if (kind === 'plugin' && parsed.pathname === '/-/v1/search') {
+                const item = packages[Number(parsed.searchParams.get('from') ?? '0')]!;
+                return Response.json({ total: packages.length, objects: [{ package: {
+                    name: item.name, version: item.version, publisher: { username: 'retained' },
+                } }] });
+            }
+            const item = packages.find(item => decodeURIComponent(parsed.pathname.slice(1)) === item.name);
+            return item ? Response.json({ name: item.name, versions: { [item.version]: item }, 'dist-tags': { latest: item.version } }) : null;
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook((enabled: boolean) => useRegistryItems({ kind, sourceIds: [HAPPIER_PICKS_SOURCE_ID, sourceId] }, enabled),
+            { initialProps: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        const ids = kind === 'mcpServer' ? ['retained/server0', 'retained/server1', 'retained/server2'] : packages.map(item => item.name);
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(ids.slice(0, 1));
+        await act(async () => { await hook.getCurrent().nextPage(); });
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(ids.slice(0, 2));
+        const beforeHide = requests.length;
+        await hook.rerender(false);
+        await flushHookEffects();
+        expect(requests).toHaveLength(beforeHide);
+        await hook.rerender(true);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(ids.slice(0, 2));
+        expect(hook.getCurrent().pages.find(page => page.sourceId === sourceId)?.nextCursor).toBe('2');
+        expect(hook.getCurrent().sourceFailures.map(page => page.sourceId)).toEqual(unavailable ? [HAPPIER_PICKS_SOURCE_ID] : []);
+        // Reopening an unavailable curated source must not spend the healthy
+        // registry's upstream budget again.
+        expect(requests.filter(url => url !== DEFAULT_CURATED_MARKETPLACE_SOURCE_URL)).toHaveLength(
+            requests.slice(0, beforeHide).filter(url => url !== DEFAULT_CURATED_MARKETPLACE_SOURCE_URL).length);
+        // Explicit revalidation also preserves healthy continuation, even when the first read gets a new fetchedAt.
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(ids.slice(0, 2));
+        expect(hook.getCurrent().pages.find(page => page.sourceId === sourceId)?.nextCursor).toBe('2');
+        const beforeNext = requests.length;
+        await act(async () => { await hook.getCurrent().nextPage(); });
+        expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(ids);
+        expect(hook.getCurrent().hasNextPage).toBe(false);
+        const listRequests = requests.slice(beforeNext).filter(url => new URL(url).pathname ===
+            (kind === 'mcpServer' ? '/v0.1/servers' : '/-/v1/search'));
+        expect(listRequests).toHaveLength(1);
+        expect(new URL(listRequests[0]!).searchParams.get(kind === 'mcpServer' ? 'cursor' : 'from')).toBe('2');
+    });
     it('selects Bot-template packages before paging and leaves selected package bodies cold', async () => {
         const { fixture, sourceId } = await setupHome('bot-template-selector', [
             { pluginId: 'garden.bot', title: 'Garden', botTemplates: [{ id: 'gardener', path: './templates/garden.json' }] },
@@ -782,11 +884,16 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         expect(hook.getCurrent().pages[0]?.status).toEqual({ state: 'rate_limited' });
         expect(hook.getCurrent().items).toEqual(known);
         expect(hook.getCurrent().sourceFailures).toEqual([expect.objectContaining({ sourceId, onRetry: expect.any(Function) })]);
+        await hook.unmount();
+        const reopened = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }));
+        await waitForHomeGovernance(() => expect(reopened.getCurrent().loading).toBe(false));
+        expect(reopened.getCurrent().items).toEqual(known);
+        expect(reopened.getCurrent().pages[0]?.status).toEqual({ state: 'rate_limited' });
         setRateLimited(false);
-        await act(async () => { await hook.getCurrent().sourceFailures[0]!.onRetry(); });
-        expect(hook.getCurrent().pages[0]?.status.state).toBe('ok');
-        expect(hook.getCurrent().sourceFailures).toEqual([]);
-        expect(hook.getCurrent().items).toEqual(known);
+        await act(async () => { await reopened.getCurrent().sourceFailures[0]!.onRetry(); });
+        expect(reopened.getCurrent().pages[0]?.status.state).toBe('ok');
+        expect(reopened.getCurrent().sourceFailures).toEqual([]);
+        expect(reopened.getCurrent().items).toEqual(known);
     });
     it('retains the same Account/query result with the failed refresh status, but never merges it into a different query', async () => {
         const { fixture, hook, sourceId, lastKnown } = await setup('query');

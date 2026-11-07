@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
@@ -23,6 +23,10 @@ await Promise.all([import('@/auth/storage/tokenStorage'), import('@/sync/domains
     import('@/sync/runtime/orchestration/appliedActiveServerRuntime')]);
 const { StoreListingController } = await import('./StoreListingController');
 const { StoreDiscoverItemMark } = await import('./discover/StoreDirectorySection');
+const { StoreDiscover } = await import('./StoreDiscover');
+const { StoreDiscoverRegistryIdentityScope } = await import('./catalog/StoreDiscoverRegistryIdentityScope');
+const { StoreRegistryIdentityProvider } = await import('./catalog/StoreRegistryIdentity');
+const { useRegistryItems } = await import('@/registries/useRegistryItems');
 const { StoreItemMark } = await import('./catalog/StoreItemMark');
 const { useRegistryItem } = await import('@/registries/useRegistryItem');
 const { admitRegistrySummaryMark } = await import('@/registries/registryBrandMark');
@@ -33,6 +37,54 @@ const { DestinationInstanceContext } = await import('@/components/appShell/works
 type ListingState = import('./StoreListingController').StoreListingState;
 
 beforeEach(() => { dialogs.show.mockClear(); dialogs.confirm.mockClear(); });
+
+function DiscoverMarkFromListing(props: React.ComponentProps<typeof StoreDiscoverItemMark>) {
+    const reference = props.item.reference;
+    const list = useRegistryItems({ kind: reference.type === 'registryItem' ? reference.kind : 'plugin',
+        sourceIds: reference.type === 'registryItem' ? [reference.sourceId] : [] }, reference.type === 'registryItem');
+    return <StoreRegistryIdentityProvider items={list.items}><StoreDiscoverItemMark {...props} /></StoreRegistryIdentityProvider>;
+}
+
+it('D7 draws curated app marks from one source listing without acquiring app payloads', async () => {
+    const commit = 'b'.repeat(40);
+    const sourceId = 'builtin:compose-catalog';
+    const choices = [{ itemId: 'uptime-kuma', title: 'Uptime Kuma', logo: 'svgs/uptime-kuma.svg' },
+        { itemId: 'healthchecks', title: 'Healthchecks', logo: 'svgs/healthchecks.svg' }];
+    const payloadReads: string[] = [];
+    let indexReads = 0;
+    const { answer, sourceId: curatedSource, sourceUrl } = await setup('curated-list-marks', 'plugin', async url => {
+        if (url === 'https://api.github.com/repos/coollabsio/coolify/commits/HEAD') return Response.json({ sha: commit });
+        if (url.endsWith('/templates/service-templates.json')) {
+            indexReads += 1;
+            return Response.json(Object.fromEntries(choices.map(choice => [choice.itemId, { name: choice.title, logo: choice.logo }])));
+        }
+        if (url.endsWith('.yaml') || url.endsWith('.yml')) {
+            payloadReads.push(url);
+            return new Response(null, { status: 429 });
+        }
+        return null;
+    });
+    const { MarketplaceIndexSourceSnapshotV1Schema } = await import('@happier-dev/protocol/marketplace');
+    const items = choices.map(choice => ({ id: choice.itemId, title: choice.title,
+        reference: { type: 'registryItem' as const, kind: 'app' as const, sourceId, itemId: choice.itemId } }));
+    answer('/catalog.json', { body: MarketplaceIndexSourceSnapshotV1Schema.parse({
+        source: { id: curatedSource, title: 'Picks', kind: 'curated', sourceUrl },
+        freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
+        discovery: { items, categories: [], jobs: [] },
+    }) });
+    const screen = await renderScreen(<StoreDiscover demand={{ presented: true }} project={null}>
+        {({ presented }) => <StoreDiscoverRegistryIdentityScope items={items} presented={presented}>
+            {items.map(item => <StoreDiscoverItemMark key={item.id} item={{ ...item, key: item.id,
+                sourceId: curatedSource, kind: 'app', description: null }} />)}
+        </StoreDiscoverRegistryIdentityScope>}
+    </StoreDiscover>);
+    await waitForHomeGovernance(() => expect(indexReads).toBeGreaterThan(0));
+    await flushHookEffects();
+    expect(payloadReads).toEqual([]);
+    expect(indexReads).toBe(1);
+    expect(screen.findAllByType(HappierBrandMark).map(mark => mark.props.brand.light)).toEqual(
+        choices.map(choice => ({ uri: `https://raw.githubusercontent.com/coollabsio/coolify/${commit}/public/${choice.logo}` })));
+});
 
 async function setup(suffix: string, kind: 'browserExtension' | 'mcpServer' | 'plugin' | 'app',
     handleExternalRequest?: (url: string, init?: RequestInit) => Promise<Response | null>) {
@@ -126,7 +178,7 @@ it('R8/H5 uses the same catalog identity fallback in Store, Settings and Discove
             brand: admitRegistrySummaryMark(listing.item.summary).brandMark }} size={26} /> : null;
     }
     const screen = await renderScreen(<><ListingMark /><PluginMark title="Some Plugin" pluginId="some.plugin" />
-        <StoreDiscoverItemMark item={{ key: 'some.plugin', id: 'some.plugin', sourceId, reference,
+        <DiscoverMarkFromListing item={{ key: 'some.plugin', id: 'some.plugin', sourceId, reference,
             kind: 'plugin', title: 'Old name', description: null }} /></>);
     await waitForHomeGovernance(() => expect(listing?.item, JSON.stringify(listing)).toMatchObject({ summary: { title: 'Some Plugin' } }));
     const marks = screen.findAllByType(HappierBrandMark);
@@ -142,6 +194,10 @@ it('H5 resolves Discover artwork through the same selected catalog and mark owne
         name: 'example', title: 'Example', description: 'Example server', version: '1.0',
         icons: [{ src: 'https://artwork.test/example.png' }], remotes: [{ type: 'streamable-http', url: 'https://example.test/mcp' }],
     } } });
+    answer('/catalog.json/v0.1/servers?limit=100&version=latest', { body: { servers: [{ server: {
+        name: 'example', title: 'Example', description: 'Example server', version: '1.0',
+        icons: [{ src: 'https://artwork.test/example.png' }], remotes: [{ type: 'streamable-http', url: 'https://example.test/mcp' }],
+    } }], metadata: { count: 1 } } });
     let listing: ReturnType<typeof useRegistryItem> | undefined;
     function ListingMark() {
         const { type: _type, ...pointer } = reference;
@@ -150,7 +206,7 @@ it('H5 resolves Discover artwork through the same selected catalog and mark owne
         return selected.item ? <StoreItemMark facts={{ kind: 'mcpServer', title: selected.item.summary.title,
             brand: admitRegistrySummaryMark(selected.item.summary).brandMark }} size={26} /> : null;
     }
-    const screen = await renderScreen(<><ListingMark /><StoreDiscoverItemMark item={{ key: 'example', id: 'example', sourceId,
+    const screen = await renderScreen(<><ListingMark /><DiscoverMarkFromListing item={{ key: 'example', id: 'example', sourceId,
         reference, kind: 'mcpServer', title: 'Example', description: null }} /></>);
     await waitForHomeGovernance(() => expect(listing?.item, JSON.stringify(listing)).toMatchObject({ summary: { iconUrl: 'https://artwork.test/example.png' } }));
     await waitForHomeGovernance(() => expect(screen.findAllByType(HappierBrandMark)).toHaveLength(2));
@@ -192,7 +248,7 @@ it.each([
             <DestinationInstanceContext.Provider value={{ tabId: 'store', ref: { kind: 'store', params: {} },
                 pathname: '/plugins', focused: true, visible: true, isFocused: () => true,
                 navigation: { push: () => {}, replace: () => {}, back: () => {} } }}>
-                <StoreDiscoverItemMark item={{ key: itemId, id: itemId, sourceId,
+                <DiscoverMarkFromListing item={{ key: itemId, id: itemId, sourceId,
                     reference, kind: 'app', title, description: null }} />
             </DestinationInstanceContext.Provider>
         </NavigationContext.Provider></>);

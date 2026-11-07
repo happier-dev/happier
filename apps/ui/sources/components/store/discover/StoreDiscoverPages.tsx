@@ -12,6 +12,7 @@ import {
 } from '@/components/capabilities/add/RegistryShelf';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useStoreOpenReference } from '../catalog/useStoreOpenReference';
+import { StoreDiscoverRegistryIdentityScope } from '../catalog/StoreDiscoverRegistryIdentityScope';
 import { StoreListingPaneHost, useOpenStoreListing } from '../StoreListing';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -65,6 +66,7 @@ import {
 
 type NavigationHref = Parameters<ReturnType<typeof useRouter>['push']>[0];
 const PRESENTED = { presented: true } as const;
+const NO_IDENTITY_ITEMS: readonly StoreDiscoverItem[] = [];
 
 /** The authored job glyph ids, read into the product's one icon family; an unknown id keeps a neutral glyph. */
 const JOB_GLYPHS: Readonly<Record<string, IconName>> = {
@@ -276,14 +278,17 @@ function DiscoverHeader(
 
 /** A Discover page's frame: the page in its column with the listing pane beside it (the kind pages' host). */
 function DiscoverFrame(
-  props: Readonly<{ title: string; testID: string; children: React.ReactNode }>,
+  props: Readonly<{ title: string; testID: string; children: React.ReactNode;
+    identityItems?: readonly StoreDiscoverItem[]; presented?: boolean }>,
 ) {
   return (
-    <StoreListingPaneHost title={props.title} testID={props.testID}>
-      <ItemList pageColumn="wide" testID={props.testID}>
-        <PageContentColumn>{props.children}</PageContentColumn>
-      </ItemList>
-    </StoreListingPaneHost>
+    <StoreDiscoverRegistryIdentityScope items={props.identityItems ?? NO_IDENTITY_ITEMS} presented={props.presented ?? false}>
+      <StoreListingPaneHost title={props.title} testID={props.testID}>
+        <ItemList pageColumn="wide" testID={props.testID}>
+          <PageContentColumn>{props.children}</PageContentColumn>
+        </ItemList>
+      </StoreListingPaneHost>
+    </StoreDiscoverRegistryIdentityScope>
   );
 }
 
@@ -450,7 +455,7 @@ function DiscoverLoading(props: Readonly<{ testID: string }>) {
  */
 export const StoreDiscoverPage = React.memo(function StoreDiscoverPage(props: Readonly<{ project: QualifiedProjectKeyV1 | null }>) {
   return <StoreDiscover demand={PRESENTED} project={props.project}>
-    {({ curation, suggestions }) => <StoreDiscoverView curation={curation} suggestions={suggestions} />}
+    {({ curation, suggestions, presented }) => <StoreDiscoverView curation={curation} suggestions={suggestions} presented={presented} />}
   </StoreDiscover>;
 });
 
@@ -458,11 +463,20 @@ export const StoreDiscoverPage = React.memo(function StoreDiscoverPage(props: Re
 export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Readonly<{
   curation: RegistryCuration;
   suggestions: Parameters<Parameters<typeof StoreDiscover>[0]['children']>[0]['suggestions'];
+  /** Live acquisition comes from StoreDiscover; the tour's static preview has no read demand. */
+  presented?: boolean;
 }>) {
   const nav = useStoreNavigation();
   const columnVisible = useAppShellColumn().columnVisible;
+  const page = React.useMemo(() => projectStoreDiscover(props.curation.curation, props.suggestions),
+    [props.curation.curation, props.suggestions]);
+  const identityItems = React.useMemo(() => [
+    ...(page.featured ? [page.featured.item] : []), ...page.suggestions,
+    ...page.sections.flatMap(section => section.items),
+  ], [page]);
   return (
-    <DiscoverFrame title={t('capabilities.store.discover.title')} testID="store.discover">
+    <DiscoverFrame title={t('capabilities.store.discover.title')} testID="store.discover"
+      identityItems={identityItems} presented={props.presented}>
         {/* A phone's navigation bar already says Store (lab sp:home): the page opens on its search. */}
         {columnVisible ? (
           <DiscoverHeader
@@ -474,7 +488,7 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
         <DiscoverSearch onSubmit={nav.search} short={!columnVisible} />
         {/* A phone has no Store column: Installed, Updates and the kinds are pinned under the search. */}
         {columnVisible ? null : <PhoneInstalledRow onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />}
-        <DiscoverBody curation={props.curation} suggestions={props.suggestions} nav={nav} />
+        <DiscoverBody curation={props.curation} page={page} nav={nav} />
     </DiscoverFrame>
   );
 });
@@ -483,17 +497,11 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
 const DiscoverBody = React.memo(function DiscoverBody(
   props: Readonly<{
     curation: RegistryCuration;
-    suggestions: Parameters<
-      Parameters<typeof StoreDiscover>[0]['children']
-    >[0]['suggestions'];
+    page: StoreDiscoverProjection;
     nav: ReturnType<typeof useStoreNavigation>;
   }>,
 ) {
-  const { curation, nav } = props;
-  const page = React.useMemo(
-    () => projectStoreDiscover(curation.curation, props.suggestions),
-    [curation.curation, props.suggestions],
-  );
+  const { curation, nav, page } = props;
   const held =
     page.featured !== null || page.suggestions.length > 0 || page.jobs.length > 0 || page.sections.length > 0;
   const openJob = React.useCallback(
@@ -670,7 +678,7 @@ export const StoreJobPage = React.memo(function StoreJobPage(
   const nav = useStoreNavigation();
   return (
     <StoreDiscover demand={PRESENTED} project={null}>
-      {({ curation }) => {
+      {({ curation, presented }) => {
         const job = findStoreDiscoverJob(curation.curation, props.jobId, props.catalogSourceId);
         if (!job || job.ways === 0) {
           const frame = (children: React.ReactNode) => (
@@ -703,7 +711,8 @@ export const StoreJobPage = React.memo(function StoreJobPage(
           );
         }
         return (
-          <DiscoverFrame title={job.title} testID="store.job">
+          <DiscoverFrame title={job.title} testID="store.job"
+            identityItems={job.groups.flatMap(group => group.items)} presented={presented}>
             <DiscoverHeader
               testID="store.job.header"
               title={job.title}
@@ -739,7 +748,7 @@ export const StoreCategoryPage = React.memo(function StoreCategoryPage(
   const nav = useStoreNavigation();
   return (
     <StoreDiscover demand={PRESENTED} project={null}>
-      {({ curation }) => {
+      {({ curation, presented }) => {
         const category = findStoreDiscoverCategory(
           curation.curation,
           props.categoryId,
@@ -776,7 +785,8 @@ export const StoreCategoryPage = React.memo(function StoreCategoryPage(
           );
         }
         return (
-          <DiscoverFrame title={category.title ?? t('capabilities.store.discover.title')} testID="store.category">
+          <DiscoverFrame title={category.title ?? t('capabilities.store.discover.title')} testID="store.category"
+            identityItems={category.items} presented={presented}>
             <DiscoverHeader
               testID="store.category.header"
               title={category.title ?? ''}
