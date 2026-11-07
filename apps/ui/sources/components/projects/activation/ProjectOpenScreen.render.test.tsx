@@ -171,6 +171,20 @@ describe('Project Open rendered choices', () => {
         await act(async () => { content!.props.onSelect('git_worktree'); });
         expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction: { contentPolicy: { selection: 'git_worktree', extraIncludePatterns: ['.env.local'] } } });
     });
+    it('says an unclassified Open failure honestly, with what failed behind Details instead of the Action id', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        await seedOpenDraft(draftId);
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await act(async () => { writeProjectOpenDraft({ scope: { serverId: 'home', accountId: 'account' }, draftId,
+            patch: { result: { kind: 'refused', code: 'project_open_unavailable',
+                failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: null, httpStatus: null } } } }); });
+        const banner = screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'projects.open.refused');
+        expect(banner?.props.title).toBe(t('projects.open.failed'));
+        expect(banner?.props.description).toBe(t('projects.open.failedHint'));
+        expect(banner?.props.details).toEqual(['project_open_unavailable', 'Error']);
+    });
     it('explains an unverified Home or Machine target and retains the Open draft', async () => {
         const draftId = '00000000-0000-4000-8000-000000000081';
         const seeded = await seedOpenDraft(draftId);

@@ -820,7 +820,8 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                     : t('projects.open.githubRateLimited')}
                 description={result.remediation?.action === 'connect_github' ? t('projects.open.githubConnectHint') : undefined}
                 details={[result.code]} />;
-            return <AttentionBanner testID="projects.open.refused" tone="danger" {...projectOpenRefusalPresentation(result.code, props.gitRef)} details={[result.code]} />;
+            return <AttentionBanner testID="projects.open.refused" tone="danger"
+                {...projectOpenRefusalPresentation(result.code, props.gitRef, result.remediation, null, result.failureCause)} />;
     }
 }
 
