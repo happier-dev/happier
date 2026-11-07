@@ -54,7 +54,7 @@ import { ApprovalPreviewCard } from './ApprovalPreviewCard';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { ApprovalVisualPreview } from './ApprovalVisualPreview';
 import { HandoffTargetConsequencesCard, describeHandoffTargetApproval } from './HandoffTargetConsequencesCard';
-import { ComputerActionApprovalCard, readComputerActLabel } from './ComputerActionApprovalCard';
+import { ComputerActionApprovalCard, readComputerActLine } from './ComputerActionApprovalCard';
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
 import { CapabilityEnableDetailsDecisions } from '@/components/sessions/capabilities/CapabilityEnableApproval';
 import { ResourceProposalBody } from './resourceProposal/ResourceProposalBody';
@@ -63,6 +63,7 @@ import { useResourceProposalCheck } from './resourceProposal/useResourceProposal
 import { ConfidentialSecretApproval } from './ConfidentialSecretApproval';
 import { readConfidentialFillSettlement } from './confidentialSecretApprovalModel';
 import { useActionApprovalReview, readApprovalCannotRunReason } from './actionApprovalReview';
+import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
 import { useComputerApprovalChoice } from './useComputerApprovalChoice';
 import { useEnvironmentBindingApprovalChoice } from './useEnvironmentBindingApprovalChoice';
 import { openComputerTargetPickerForSession } from '@/components/computer/openComputerTargetPickerForSession';
@@ -102,6 +103,8 @@ export type ApprovalReviewInput = Readonly<{
   completionFocusTo?: string;
   /** Where "Back" goes when the request cannot be shown: the host closes its pane (the Inbox's detail); a route goes back. */
   onBack?: () => void;
+  /** The existing decision owner accepted this answer, before its Artifact projection catches up. */
+  onDecisionRecorded?: (decision: 'approve' | 'reject' | 'cancel') => void;
 }>;
 
 /**
@@ -140,7 +143,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const recordedDecision = recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.decision : null;
   const setRecordedDecision = React.useCallback((decision: 'approve' | 'reject' | 'cancel') => {
     setRecordedAnswer({ artifactId: props.artifactId, decision });
-  }, [props.artifactId]);
+    props.onDecisionRecorded?.(decision);
+  }, [props.artifactId, props.onDecisionRecorded]);
   const decisionInFlightRef = React.useRef(false);
 
   const matchedBody = React.useMemo(() => artifact && typeof artifact.body === 'string'
@@ -175,6 +179,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   });
   const reviewedBindingRequest = bindingChoice.reviewRequest;
   const review = useActionApprovalReview(parsed?.kind === 'built_in' ? reviewedBindingRequest ?? parsed.request : null);
+  const docEditProposal = review?.docEditProposal;
   const approveAdmission = review?.admission ?? (parsed?.kind === 'target' && parsed.request.status === 'open'
     ? resolveApprovalRequestApproveAdmission(parsed.request) : null);
   const actionFields = React.useMemo(() => approveAdmission?.presentation
@@ -556,7 +561,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // One Technical details disclosure per page: the failure's code joins the arguments' own lines when
   // the Details card is shown, and otherwise sits with the failure.
   const failureCodeInDetails = Boolean(executionFailure?.code && shownActionFields && shownActionFields.rows.length > 0
-    && !confidentialAction && !proposal && !projectCommand && !deploymentReview);
+    && !confidentialAction && !proposal && !projectCommand && !deploymentReview && !computerAction && !docEditProposal);
   // Only human-facing facts belong in page chrome. Target requests retain their
   // Action name in summary; qualified ids and source custody are routing evidence.
   const headerFacts: PageHeaderMetaFact[] = [];
@@ -581,7 +586,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       title={t('detailPages.approval.requestTitle')}
       description={t('detailPages.approval.requestDescription')}
     >
-      {parsed.kind === 'built_in' && previewSummary && !deploymentDecision ? (
+      {/* A family presenter (deploy, Computer) says what is asked; the Action's generic summary would lead with agent-facing text. */}
+      {parsed.kind === 'built_in' && previewSummary && !deploymentDecision && !computerAction ? (
         <SectionContentRow testID="approvals.preview">
           <ApprovalPreviewCard preview={parsed.request.preview} request={parsed.request} serverId={approvalServerId} />
         </SectionContentRow>
@@ -700,6 +706,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
             <SectionContentRow>
               <ComputerActionApprovalCard
                 presentation={computerAction}
+                titled
+                serverId={approvalServerId}
                 onChooseTarget={chooseComputerTarget}
                 media={<ComputerApprovalCapture presentation={computerAction} serverId={approvalServerId} testID="approvals.computer-action-crop" />}
               />
@@ -728,9 +736,15 @@ export function useApprovalReview(props: ApprovalReviewInput) {
               <ProjectCommandApprovalFacts presentation={projectCommand} testID="approvals.project-command" />
             </SectionContentRow>
           </ItemGroup>
+        ) : docEditProposal ? (
+          <ItemGroup title={t('approvals.details')}>
+            <SectionContentRow>
+              <ArtifactEditProposalReview proposal={docEditProposal} testID="approvals.doc-edit-proposal" />
+            </SectionContentRow>
+          </ItemGroup>
         ) : deploymentReview ? null
-          // An open Computer ask's card already says what, where and what it sends; its operands are not a second list.
-          : computerAction && parsed.request.status === 'open' ? null
+          // A Computer ask's card already says what, where and what it sends, open or settled; its operands are not a second list.
+          : computerAction ? null
           : shownActionFields && !confidentialAction ? (
           <ActionApprovalFieldsCard presentation={shownActionFields} request={parsed?.kind === 'built_in' ? parsed.request : undefined} anatomy="page" serverId={approvalServerId}
             homeIdentity={approvalHomeKnown ? undefined : approvalOriginHomeId || undefined}
@@ -822,7 +836,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   return {
     kind: 'ready' as const,
     // A Computer ask is titled by its host-stamped act, never by the agent's own summary (lab computer CSp).
-    title: projectCommandTitle ?? deploymentDecision?.title ?? (computerAction ? readComputerActLabel(computerAction) : null)
+    title: projectCommandTitle ?? deploymentDecision?.title ?? (computerAction ? readComputerActLine(computerAction) : null)
       ?? (requestTitle.title || t('approvals.untitled')),
     description: (parsed.request.status === 'open' ? deploymentDecision?.description : undefined) ?? (parsed.kind === 'target' && parsed.request.detail
       ? parsed.request.detail

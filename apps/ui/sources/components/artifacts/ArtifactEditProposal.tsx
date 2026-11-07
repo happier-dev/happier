@@ -178,6 +178,8 @@ export function ArtifactEditProposal(
     namesProposer?: boolean;
     /** The Doc's body paints this suggestion in place (lab K1-A): while it is current the card leaves the diff to it. */
     diffInBody?: boolean;
+    /** A later suggestion in its thread replaced this one: it no longer asks its author to redo it. */
+    superseded?: boolean;
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
@@ -324,7 +326,7 @@ export function ArtifactEditProposal(
   const compare = React.useCallback(() => openHistory(base.bodyVersion), [base.bodyVersion, openHistory]);
   const proposer = props.proposer ?? null;
   const proposedByViewer = proposer !== null && 'accountId' in proposer.mention && proposer.mention.accountId === props.viewerAccountId;
-  const askable = proposalRef !== null && proposer !== null && !proposedByViewer;
+  const askable = proposalRef !== null && proposer !== null && !proposedByViewer && props.superseded !== true;
   // Ask to redo prepares an addressed reply in this thread; the person still reads and sends it.
   const askToRedo = React.useCallback(() => {
     if (!proposalRef || !proposer) return;
@@ -496,6 +498,22 @@ export type ProposalAuthor = Readonly<{
   label: string;
   mention: Readonly<{ accountId: string }> | Readonly<{ sessionId: string }>;
 }>;
+
+/** Review the immutable suggestion before posting it; the approval owns Post / Deny. */
+export function ArtifactEditProposalReview(props: Readonly<{ proposal: DocEditProposalV1; testID: string }>): React.ReactElement {
+  const { theme } = useUnistyles();
+  return <HappierDocEditProposal
+    testID={props.testID}
+    before={props.proposal.before}
+    after={props.proposal.after}
+    labels={{ before: t('artifacts.browser.proposal.before'), after: t('artifacts.browser.proposal.after') }}
+    decision={{ state: 'open', title: t('artifacts.browser.proposal.title'),
+      basedOn: t('artifacts.browser.proposal.basedOn', { n: props.proposal.baseRevision.bodyVersion }),
+      reason: props.proposal.reason, footer: { kind: 'decide' } }}
+    Text={ProposalText} Mark={ProposalMark} Button={ProposalButton} Diff={ProposalDiff} Spinner={ProposalSpinner}
+    space={theme.space}
+  />;
+}
 
 const MARK: Readonly<Record<HappierDocEditProposalMark, IconName>> = {
   proposal: 'pencil-simple', reason: 'arrow-elbow-down-right', current: 'check', accepted: 'check', declined: 'x',

@@ -17,6 +17,7 @@ import { readApprovalFileSource } from './approvalFileSource';
 import { readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { readActionApprovalConfirmLabel } from './actionApprovalPresentation';
 import { readPluginInstallApprovalChange } from './pluginInstallApprovalFacts';
+import { DocEditProposeInputV1Schema, type DocEditProposeInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 
 /** Review reads protocol admission, executor availability and the retained setup fact used at decision time. */
 export type ActionApprovalReviewAdmission = ReturnType<typeof resolveApprovalRequestApproveAdmission>
@@ -39,6 +40,7 @@ export type ActionApprovalReview = Readonly<{
     confidentialInputs: ReturnType<typeof readConfidentialActionInputsApproval>;
     capabilityEnable: ReturnType<typeof readCapabilityEnableApproval>;
     promptDocUpdate: ReturnType<typeof readPromptDocUpdateApproval>;
+    docEditProposal: DocEditProposeInputV1 | null;
     resourceProposal: ReturnType<typeof readResourceProposalApproval>;
     visualPreview: ReturnType<typeof resolveApprovalVisualPreview>;
     simple: boolean;
@@ -88,6 +90,8 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     const confidentialInputs = readConfidentialActionInputsApproval(request);
     const capabilityEnable = readCapabilityEnableApproval(request);
     const promptDocUpdate = readPromptDocUpdateApproval(request);
+    const proposedEdit = request.actionId === 'doc.edit.propose' ? DocEditProposeInputV1Schema.safeParse(request.actionArgs) : null;
+    const docEditProposal = proposedEdit?.success ? proposedEdit.data : null;
     const resourceProposal = readResourceProposalApproval(request);
     const visualPreview = resolveApprovalVisualPreview(request);
     const actionId = ActionIdSchema.safeParse(request.actionId);
@@ -95,7 +99,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     // Specialized review owns its picker, private entry, refreshed resource selection or visual.
     // A compact row cannot substitute an unchanged decision for one of those interactions.
     const requiresReview = confidentialAction || confidentialInputs !== null || isComputerApprovalAction(request.actionId)
-        || capabilityEnable !== null || promptDocUpdate !== null || resourceProposal !== null
+        || capabilityEnable !== null || promptDocUpdate !== null || docEditProposal !== null || resourceProposal !== null
         || visualPreview !== null || request.handoffTargetReplacementApproval !== undefined
         || Boolean(spec?.approvalNarrowing || spec?.approvalInputCustody === 'live_only'
             || spec?.approvalResultCustody === 'live_only')
@@ -106,7 +110,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
         || readDeploymentReviewApproval(request) !== null;
     const simple = request.v === 2 && request.status === 'open' && admission?.status === 'available'
         && spec !== null && spec.inputSchema.safeParse(request.actionArgs).success && !requiresReview;
-    return { admission, confidentialAction, confidential, confidentialInputs, capabilityEnable, promptDocUpdate, resourceProposal,
+    return { admission, confidentialAction, confidential, confidentialInputs, capabilityEnable, promptDocUpdate, docEditProposal, resourceProposal,
         visualPreview, simple, workspaceFileSource: readApprovalFileSource(request),
         approveVerb: spec?.id === 'plugins.install' && readPluginInstallApprovalChange(request.preview) === 'update'
             ? t('common.update') : spec ? readActionApprovalConfirmLabel(spec.id) : null,

@@ -7,6 +7,7 @@ export { applyComputerSelection, describeComputerActionApproval, type ComputerAc
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 const CONSEQUENCE_KEY = {
@@ -14,11 +15,22 @@ const CONSEQUENCE_KEY = {
     use: 'computerUse.approval.useConsequence',
 } as const satisfies Record<ComputerActionApproval['access'], Parameters<typeof t>[0]>;
 
-/** The window title or display label as the owner names it (a missing title is said, not left blank). */
+/** The window title as the owner names it (a missing title is said); a display reads as the screen, never its display id. */
 export function readComputerTargetLabel(target: NonNullable<ComputerActionApproval['target']>): string {
-    const title = target.title.trim();
-    if (title) return title;
-    return target.kind === 'window' ? t('computerUse.picker.untitledWindow') : t('computerUse.approval.screen');
+    if (target.kind === 'display') return t('computerUse.approval.screen');
+    return target.title.trim() || t('computerUse.picker.untitledWindow');
+}
+
+/** Acts that land somewhere in the shared target, so their one line says where ("Click in Safari?"). */
+const ACTS_IN_TARGET: ReadonlySet<ComputerActionApproval['act']> = new Set(['click', 'type', 'press', 'move', 'drag', 'wheel']);
+
+/** The one act line a Computer ask is asked by: the approval page's title and the inline card's heading. */
+export function readComputerActLine(presentation: ComputerActionApproval): string {
+    const act = readComputerActLabel(presentation);
+    if (!presentation.target || !ACTS_IN_TARGET.has(presentation.act)) return act;
+    return presentation.target.kind === 'display'
+        ? t('computerUse.approval.actOnScreen', { act })
+        : t('computerUse.approval.actIn', { act, target: readComputerTargetLabel(presentation.target) });
 }
 
 /** What the person is asked to let happen ("Click", "Share Safari"); the approval page titles itself with it. */
@@ -45,6 +57,10 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
     onChooseTarget?: () => void;
     /** The agent's name, for its suggestion line. */
     agentName?: string;
+    /** The Home the Machine belongs to, so the Machine reads by its name owner's label. */
+    serverId?: string | null;
+    /** The host already asks the act line as its own title (the approval page); the card starts at where. */
+    titled?: boolean;
     /** The host surface's insets (the chat card aligns it to its text column). */
     style?: StyleProp<ViewStyle>;
     testID?: string;
@@ -52,15 +68,18 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
     const { presentation } = props;
     const testID = props.testID ?? 'approvals.computer-action';
     const agentName = props.agentName ?? t('browserPresence.agentFallbackName');
-    const where = presentation.target
-        ? t('computerUse.approval.targetOn', { target: readComputerTargetLabel(presentation.target), machine: presentation.machineName })
-        : presentation.requiresTargetSelection
-            ? t('computerUse.approval.chooseFirst')
-            : t('computerUse.approval.windowOn', { machine: presentation.machineName });
+    const machine = useServerScopedMachineLabel(props.serverId, presentation.machineId) ?? presentation.machineName;
+    const where = presentation.target?.kind === 'display'
+        ? t('computerUse.approval.screenOf', { machine })
+        : presentation.target
+            ? t('computerUse.approval.targetOn', { target: readComputerTargetLabel(presentation.target), machine })
+            : presentation.requiresTargetSelection
+                ? t('computerUse.approval.chooseFirst')
+                : t('computerUse.approval.windowOn', { machine });
     return (
         <View style={[styles.card, props.style]} testID={testID}>
             <View style={styles.what}>
-                <Text style={styles.act}>{readComputerActLabel(presentation)}</Text>
+                {props.titled ? null : <Text style={styles.act}>{readComputerActLine(presentation)}</Text>}
                 <Text style={styles.where}>{where}</Text>
             </View>
             {presentation.suggestion && presentation.requiresTargetSelection ? (

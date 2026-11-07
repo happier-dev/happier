@@ -24,11 +24,12 @@ import { createLockedEncryptedSessionByIdResponseFixture, createSessionFixture }
 import { renderScreen as renderUiScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup, createRootLayoutFeaturesResponse, createDeferred } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
-import { createUiApprovalRequest } from '@/dev/testkit/harness/approvalInbox';
+import { createAgentApprovalRequest } from '@/dev/testkit/harness/approvalInbox';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -266,44 +267,39 @@ async function createBuiltInApprovalArtifact(
     serverId?: string;
     executedResult?: unknown;
     sourceSessionId?: string;
-    explicitRequest?: true;
     externalActionTarget?: ActionExecutorContext['externalActionTarget'];
   }>,
 ) {
   await prepareApprovalFixture();
-  await homes.requireUiApproval(account.serverId, input.actionId);
-  let producedId: string;
-  if (input.explicitRequest) {
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-    const outcome = await createDefaultActionExecutor().execute('approval.request.create', {
-      actionId: input.actionId, actionArgs: input.actionArgs, summary: input.summary, createdBy: { surface: 'system' },
-    }, { surface: 'ui', serverId: account.serverId, actionRequestId: 'request-built-in-1' });
-    if (!outcome.ok || !outcome.result || typeof outcome.result !== 'object'
-      || !('artifactId' in outcome.result) || typeof outcome.result.artifactId !== 'string') {
-      throw new Error('Expected the public explicit approval request producer to store its proposal');
-    }
-    producedId = outcome.result.artifactId;
-  } else if (input.sourceSessionId) {
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+  let sourceContext: Pick<ActionExecutorContext, 'defaultSessionId' | 'defaultSessionMachineId'> = {};
+  if (input.sourceSessionId) {
     const { readDisplayMachineIdForSession } = await import('@/sync/ops/sessionMachineTarget');
     const sourceSession = storage.getState().sessions[input.sourceSessionId];
     if (!sourceSession) throw new Error('The source Session must be published before requesting approval');
     const machineId = readDisplayMachineIdForSession({ serverId: account.serverId,
       sessionId: sourceSession.id, metadata: sourceSession.metadata });
-    const outcome = await createDefaultActionExecutor().execute(input.actionId, input.actionArgs, {
-      surface: 'ui', serverId: account.serverId, actionRequestId: 'request-built-in-1',
-      defaultSessionId: sourceSession.id, ...(machineId ? { defaultSessionMachineId: machineId } : {}),
-    });
-    const { ActionApprovalRequestCreatedResultSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
-    if (!outcome.ok) throw new Error(`Source Session approval failed: ${outcome.errorCode}`);
-    producedId = ActionApprovalRequestCreatedResultSchema.parse(outcome.result).artifactId;
-  } else {
-    producedId = await createUiApprovalRequest({ serverId: account.serverId,
-      actionId: input.actionId, actionInput: input.actionArgs, actionRequestId: 'request-built-in-1',
-      ...(input.externalActionTarget ? { externalActionTarget: input.externalActionTarget } : {}) });
+    sourceContext = { defaultSessionId: sourceSession.id,
+      ...(machineId ? { defaultSessionMachineId: machineId } : {}) };
   }
+  if (input.actionId === 'computer.input') {
+    await answerExternalActionAccountForHome(homes, account.serverId, {
+      actionId: 'computer.target.get', machineId: 'machine-2', installationId: 'computer-installation', tokenEpoch: 1,
+      execute: (_input, context) => {
+        expect(context.invocation).toMatchObject({ surface: 'agent', authority: 'account_automation',
+          caller: { kind: 'session', sessionId: 'session-1' }, defaultSessionId: 'session-1' });
+        return { consentGranted: false, sourceId: 'computer:1',
+          selectedTarget: { kind: 'window', displayId: ':77', pid: 123, windowId: 456 },
+          approvalDisplay: { machineDisplayName: 'Workstation one', requiresTargetSelection: false,
+            target: { kind: 'window', title: 'Sign in to Lumen' } } };
+      },
+    });
+  }
+  const producedId = await createAgentApprovalRequest({ serverId: account.serverId,
+    actionId: input.actionId, actionInput: input.actionArgs, actionRequestId: 'request-built-in-1',
+    ...sourceContext,
+    ...(input.externalActionTarget ? { externalActionTarget: input.externalActionTarget } : {}) });
   const producedBody = homes.artifacts(account.serverId).readPlainBody(producedId);
-  if (!producedBody) throw new Error('Expected the current UI approval producer to store its request');
+  if (!producedBody) throw new Error('Expected the agent approval producer to store its request');
   const produced = ApprovalRequestV2Schema.parse(JSON.parse(producedBody));
   const request = ApprovalRequestV2Schema.parse({
     ...produced,
@@ -332,16 +328,10 @@ async function createBuiltInApprovalArtifact(
 }
 
 async function createCurrentApprovalArtifact(serverId = 'server-approval', options: Readonly<{ placedOnMachine?: true }> = {}) {
-  const created = await createBuiltInApprovalArtifact({ actionId: 'session.user_action.answer',
+  return await createBuiltInApprovalArtifact({ actionId: 'session.user_action.answer',
     actionArgs: defaultApprovalArtifactBody.actionArgs, summary: defaultApprovalArtifactBody.summary,
-    preview: defaultApprovalArtifactBody.preview, serverId });
-  if (!options.placedOnMachine) return created;
-  // A request raised in a Session records that Session's Machine; without one it can never run, the decide
-  // handler refuses Approve, and every review surface withholds it and says why (owner ruling C3). Tests that
-  // approve or expect Approve available place it on the Session's Machine.
-  const produced = ApprovalRequestV2Schema.parse(JSON.parse(created.body));
-  const request = { ...produced, executionOriginV1: { ...produced.executionOriginV1, machineId: 'machine-approval' } };
-  return { ...created, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    preview: defaultApprovalArtifactBody.preview, serverId,
+    ...(options.placedOnMachine ? { sourceSessionId: 'session-1' } : {}) });
 }
 
 async function createSignedRequesterApprovalOrigin(
@@ -837,6 +827,7 @@ installApprovalCommonModuleMocks({
   modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
+      renderCustomModals: true,
       spies: {
         confirm: vi.fn(async () => modalConfirmResult),
         alert: vi.fn(),
@@ -854,16 +845,7 @@ const rpcRequests = installSessionActionRpcBoundary((request, context) => {
     return { kind: 'found', operation: retainedSetupOperation };
   }
   if (request.method.endsWith(`:${RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE}`)) {
-    const computer = request.params as { sessionId: string; actionId: string };
-    if (computer.sessionId !== 'session-1' || computer.actionId !== 'computer.target.get') {
-      throw new Error('Unexpected computer owner request in the approval fixture');
-    }
-    return { protocolVersion: 1, result: {
-      consentGranted: false, sourceId: 'computer:1',
-      selectedTarget: { kind: 'window', displayId: ':77', pid: 123, windowId: 456 },
-      approvalDisplay: { machineDisplayName: 'Workstation one', requiresTargetSelection: false,
-        target: { kind: 'window', title: 'Sign in to Lumen' } },
-    } };
+    throw new Error('Agent proposal target reads must not use the present-user Computer RPC');
   }
   if (request.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`)) {
     if (remoteArtifact) commitRemoteArtifact(remoteArtifact);
@@ -1057,8 +1039,9 @@ async function renderScreen(element: React.ReactElement) {
     beforeArtifactUpdate = null;
   }
   const props = element.props as { serverId?: string; artifactId?: string };
-  const screen = await renderUiScreen(React.isValidElement<{ serverId?: string }>(element) && props.serverId && homeIds[props.serverId]
-    ? React.cloneElement(element, { serverId: homeIds[props.serverId] }) : element);
+  const { ModalProvider } = await import('@/modal');
+  const screen = await renderUiScreen(<ModalProvider>{React.isValidElement<{ serverId?: string }>(element) && props.serverId && homeIds[props.serverId]
+    ? React.cloneElement(element, { serverId: homeIds[props.serverId] }) : element}</ModalProvider>);
   if (props.artifactId) await vi.waitFor(() => expect(screen.getTextContent().length).toBeGreaterThan(0));
   return screen;
 }
@@ -1099,7 +1082,7 @@ describe('ApprovalDetailScreen', () => {
       set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime',
         source: { kind: 'secret', ref: 'person_selects' } }], remove: [] };
     currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.bindings.set', actionArgs,
-      summary: 'Choose the application credential', explicitRequest: true });
+      summary: 'Choose the application credential' });
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.show).mockClear();
     const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="artifact-1" />);
@@ -1117,6 +1100,24 @@ describe('ApprovalDetailScreen', () => {
     expect(artifactWrites()).toEqual([]);
     expect(clientExecutionEffects()).toEqual([]);
     expect(homes.requestsFor('/v1/deployments/environments/environment/bindings')).toEqual([]);
+  });
+
+  it('reviews a document suggestion as its before and after instead of raw operands', async () => {
+    await prepareApprovalFixture();
+    const revision = { headerVersion: 1, bodyVersion: 1 };
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'doc.edit.propose', summary: 'Propose a document edit',
+      actionArgs: {
+        target: { ref: { kind: 'doc', artifactId: 'doc-private', serverId: account.serverId }, revision,
+          range: { start: 0, end: 8 }, quote: 'Old text' },
+        baseRevision: revision, before: 'Old text', after: 'Revised passage', reason: 'Clarify the opening hours',
+        discussionRef: { serverId: account.serverId, discussionId: 'thread-private' }, localId: 'suggestion-private',
+      } });
+    const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="artifact-1" />);
+    await vi.waitFor(() => expect(screen.findByTestId('approvals.doc-edit-proposal.diff')).not.toBeNull());
+    expect(readRenderedText(screen)).toContain('Clarify the opening hours');
+    expect(readRenderedText(screen)).toContain('Revised passage');
+    expect(readRenderedText(screen)).not.toContain('suggestion-private');
+    expect(screen.findByTestId('approvals.approve')).not.toBeNull();
   });
 
   it('names the owning Machine and Clear consequences on the shared Require approval page', async () => {
@@ -1680,7 +1681,7 @@ describe('ApprovalDetailScreen', () => {
 
     await screen.pressByTestIdAsync('approvals.approve');
     expect(clientExecutionEffects()).toHaveLength(0);
-    expect(artifactWrites()).toHaveLength(1);
+    expect(artifactWrites()).toHaveLength(2);
     const { artifactId, header, body } = decodedArtifactWrite();
     expect(artifactId).toBe('target-artifact-1');
     expect(header).toMatchObject({
@@ -1694,6 +1695,13 @@ describe('ApprovalDetailScreen', () => {
       subjectFingerprint: 'b'.repeat(64),
       decision: { kind: 'approve' },
     });
+    // This retained live-only proposal has no surviving invocation to publish it.
+    expect(decodedArtifactWrite(1).body).toMatchObject({ status: 'failed', execution: {
+      ok: false, effectAttempted: false, errorCode: 'approval_stale',
+      details: { reason: 'live_invocation_unavailable' },
+    } });
+    expect(readRenderedText(screen)).toContain('approvals.status.failed');
+    expect(screen.findByTestId('approvals.approve')).toBeNull();
   });
 
   it('shows the real Triage credential identity and approves its complete admitted input', async () => {
@@ -2236,12 +2244,12 @@ describe('ApprovalDetailScreen', () => {
     await screen.pressByTestIdAsync('approvals.approve');
 
     expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
-    expect(artifactWrites()).toHaveLength(2);
+    expect(artifactWrites()).toHaveLength(1);
     expect(decodedArtifactWrite().body).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
     expect(decodedArtifactWrite().body.execution).toBeUndefined();
-    expect(decodedArtifactWrite(1).body).toMatchObject({ status: 'outcome_unknown', execution: {
-      ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown',
-    } });
+    // Home refused dispatch before an effect began; it cannot invent an execution receipt.
+    expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody('daemon-approval-1')!))
+      .toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
     expect(rpcRequests).toEqual([]);
   });
 
@@ -2352,7 +2360,11 @@ describe('ApprovalDetailScreen', () => {
     await screen.pressByTestIdAsync('approvals.approve');
 
     expect(artifactReads('target-artifact-1').length).toBeGreaterThan(1);
-    expect(storage.getState().artifacts['target-artifact-1']).toMatchObject(authoritative);
+    const receipt = storage.getState().artifacts['target-artifact-1'];
+    expect(JSON.parse(receipt!.body!)).toMatchObject({ ...JSON.parse(authoritative.body), status: 'failed', updatedAtMs: expect.any(Number),
+      execution: { ok: false, effectAttempted: false, errorCode: 'approval_stale',
+        details: { reason: 'live_invocation_unavailable' } } });
+    expect(screen.findByTestId('approvals.approve')).toBeNull();
     expect(clientExecutionEffects()).toHaveLength(0);
   });
 
@@ -2510,6 +2522,10 @@ describe('ApprovalDetailScreen', () => {
       <ApprovalDetailScreen artifactId="artifact-1" />,
     );
     expect(screen.findByTestId('approvals.computer-action')).not.toBeNull();
+    expect(ApprovalRequestV2Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1).toMatchObject({
+      actionId: 'computer.input', authority: 'account_automation', surface: 'agent',
+      caller: { kind: 'session', sessionId: 'session-1' },
+    });
     const text = readRenderedText(screen);
     expect(text).toContain('computerUse.approval.act.type');
     expect(text).toContain('ana@lumen.dev');
@@ -2539,9 +2555,39 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
     expect(screen.findByTestId('approvals.computer-action')).not.toBeNull();
     const header = screen.tree.root.findAll((node) => node.props?.testID === 'approvals.header' && node.props?.title !== undefined);
-    expect(header[0]!.props.title).toBe('computerUse.approval.act.click');
+    // One act line: the page asks "Click in {target}?" and the card does not repeat it.
+    expect(header[0]!.props.title).toBe('computerUse.approval.actIn');
+    expect(readRenderedText(screen)).not.toContain('computerUse.approval.act.click');
     // The card already says what, where and the consequence; the raw operands are not a second list.
     expect(screen.findByTestId('approvals.fields-table')).toBeNull();
+    // Nor does the Action's agent-facing description lead the request.
+    expect(screen.findByTestId('approvals.preview')).toBeNull();
+  });
+
+  it('keeps a settled Computer ask to its card, without a second facts list of raw operands', async () => {
+    // Keep the actual Computer producer's origin bound to this settled request.
+    const artifact = await createBuiltInApprovalArtifact({ actionId: 'computer.input', sourceSessionId: 'session-1',
+      actionArgs: { machineId: 'machine-2', captureId: 'capture_1', operation: { kind: 'click', x: 640, y: 400 } }, summary: 'Click' });
+    const open = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+    const settled = ApprovalRequestV2Schema.parse({ ...open,
+      // The stored summary is the Action's agent-facing description (the executor's fallback).
+      preview: { summary: 'Send click input against a current capture. Delivery alone does not prove the effect.', computerApprovalDisplay: {
+        machineDisplayName: 'Workstation one', requiresTargetSelection: false,
+        target: { kind: 'display', title: 'primary' },
+      } },
+      status: 'rejected', updatedAtMs: 3, decision: { kind: 'reject', decidedAtMs: 2 } });
+    currentArtifact = { ...artifact, body: JSON.stringify(settled), header: buildApprovalRequestArtifactHeaderV1(settled) };
+    const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="artifact-1" />);
+    expect(screen.findByTestId('approvals.computer-action')).not.toBeNull();
+    expect(screen.findByTestId('approvals.fields-table')).toBeNull();
+    expect(screen.findByTestId('approvals.preview')).toBeNull();
+    const text = readRenderedText(screen);
+    expect(text).not.toContain('capture_1');
+    expect(text).not.toContain('640');
+    // A display reads as the screen, never its display id.
+    expect(text).not.toContain('primary');
+    const header = screen.tree.root.findAll((node) => node.props?.testID === 'approvals.header' && node.props?.title !== undefined);
+    expect(header[0]!.props.title).toBe('computerUse.approval.actOnScreen');
   });
 
   it('names both endpoints and uses a consequence-specific decision for an ordinary non-empty replacement', async () => {
@@ -3121,12 +3167,11 @@ describe('ApprovalDetailScreen', () => {
       <ApprovalDetailScreen artifactId="artifact-1" />,
     );
 
-    await waitForHomeGovernance(() => expect(readRenderedText(screen)).toContain('detailPages.approval.requesterYou'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
     expect(readRenderedText(screen)).not.toContain('Private cached title');
     expect(readRenderedText(screen)).not.toContain('secret-project');
-    // The fixture's request is the person's own (UI origin): the locked Session is context, never the requester.
-    expect(readRenderedText(screen)).toContain('detailPages.approval.requesterYou');
-    expect(readRenderedText(screen)).not.toContain('detailPages.approval.sessionOnHome');
+    // The agent's proposal remains decidable when the Session's encrypted content is locked.
+    expect(JSON.parse(currentArtifact.body).executionOriginV1.surface).toBe('agent');
     expect(screen.findByTestId('approvals.approve')?.props.disabled).toBe(
       false,
     );
@@ -3135,7 +3180,16 @@ describe('ApprovalDetailScreen', () => {
   });
 
   it('withholds Approve and says why when no Machine is recorded to run the request, keeping Reject', async () => {
-    currentArtifact = await createCurrentApprovalArtifact('server-approval');
+    const artifact = await createCurrentApprovalArtifact('server-approval');
+    const produced = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+    // A retained unplaced proposal predates the current producer's Machine placement.
+    // Model that stored-read boundary with the canonical origin builder, never by breaking a signed origin.
+    const request = ApprovalRequestV2Schema.parse({ ...produced, executionOriginV1: buildApprovalExecutionOriginV1({
+      actionId: produced.actionId, input: produced.actionArgs, targetSessionId: 'session-1',
+      context: { surface: 'agent', authority: 'account_automation', serverId: account.serverId,
+        actionRequestId: 'retained-unplaced-request' },
+    }) });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
     expect(JSON.parse(currentArtifact.body).executionOriginV1.machineId).toBeUndefined();
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
@@ -3686,20 +3740,23 @@ describe('ApprovalDetailScreen', () => {
       profile: { id: 'server-approval', serverIdentityId: 'srv_approval_home_a', name: '' } };
     const { ApprovalRequesterThreadCard } = await import('./ApprovalRequesterThreadCard');
     const screen = await renderScreen(<ApprovalRequesterThreadCard serverId="server-approval" approval={{
+      kind: 'requester_confirmation',
       artifact: { ...currentArtifact, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true } as DecryptedArtifact,
       parsed: { family: 'built_in', request }, subject: request.requesterConfirmation!, requestRef: 'received-question', originMessageId: 'message-1',
     }} />);
 
-    // The decision is offered on the card itself; the standalone page is only a link away.
+    // The card opens the shared review in place; the standalone page is only a link away.
     await waitForHomeGovernance(() => {
-      expect(screen.findByTestId('approval-requester-thread-review')).toBeNull();
+      expect(screen.findByTestId('approval-requester-thread-review')).not.toBeNull();
       expect(screen.findByTestId('approval-requester-thread-open')).not.toBeNull();
       // The refusal reads the bar's one word, not a per-surface variant.
       expect(decisionButton(screen, 'approval-requester-thread-decline')?.props.title).toBe('approvals.reject');
     });
     await act(async () => {
-      await screen.pressByTestIdAsync('approval-requester-thread-approve');
+      await screen.pressByTestIdAsync('approval-requester-thread-review');
     });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
+    await screen.pressByTestIdAsync('approvals.approve');
 
     const { Modal } = await import('@/modal');
     expect(Modal.alert).not.toHaveBeenCalled();
@@ -3726,12 +3783,15 @@ describe('ApprovalDetailScreen', () => {
       profile: { id: 'server-approval', serverIdentityId: 'srv_approval_home_a', name: '' } };
     const { ApprovalRequesterThreadCard } = await import('./ApprovalRequesterThreadCard');
     const screen = await renderScreen(<ApprovalRequesterThreadCard serverId="server-approval" approval={{
+      kind: 'requester_confirmation',
       artifact: { ...currentArtifact, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true } as DecryptedArtifact,
       parsed: { family: 'built_in', request }, subject: request.requesterConfirmation!, requestRef: 'received-question', originMessageId: 'message-1',
     }} />);
 
-    await waitForHomeGovernance(() => expect(screen.findByTestId('approval-requester-thread-approve')).not.toBeNull());
-    await act(async () => { await screen.pressByTestIdAsync('approval-requester-thread-approve'); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('approval-requester-thread-review')).not.toBeNull());
+    await screen.pressByTestIdAsync('approval-requester-thread-review');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
+    await screen.pressByTestIdAsync('approvals.approve');
 
     expect(daemonDecisions()).toHaveLength(1);
     expect(screen.findByTestId('approval-requester-thread-receipt-confirmed_pending')).not.toBeNull();
@@ -3739,7 +3799,7 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approval-requester-thread-decline')).toBeNull();
   });
 
-  it('executes approval decisions even when the web confirm modal resolves false (ModalProvider unavailable)', async () => {
+  it('executes an approval decision without requiring a second web confirmation', async () => {
     modalConfirmResult = false;
     currentArtifact = await createCurrentApprovalArtifact('server-approval', { placedOnMachine: true });
     approvalHomeFixture = {

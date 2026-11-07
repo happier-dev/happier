@@ -33,6 +33,21 @@ import {
   useApprovalRequestTitle,
 } from './approvalRequestTitle';
 import { resolveApprovalRequesterThreadState } from './approvalRequesterThreadState';
+import { DiscussionWaitingApprovalCard } from '@/components/discussions/DiscussionWaitingApprovalCard';
+
+type ThreadCardProps = Readonly<{
+  approval: DiscussionRequesterApproval;
+  serverId: string;
+  requesterAccountActor?: SessionMessageAccountActorV1 | null;
+  returnHref?: string;
+}>;
+
+export const ApprovalRequesterThreadCard = React.memo(function ApprovalRequesterThreadCard(props: ThreadCardProps) {
+  const { approval, ...rest } = props;
+  return approval.kind === 'request'
+    ? <DiscussionWaitingApprovalCard approvalId={approval.artifact.id} serverId={props.serverId} returnHref={props.returnHref} />
+    : <RequesterConfirmationThreadCard {...rest} approval={approval} />;
+});
 
 /**
  * C7 "External write needs confirmation", in the thread that asked: a shared Bot's outward request,
@@ -41,10 +56,10 @@ import { resolveApprovalRequesterThreadState } from './approvalRequesterThreadSt
  * read the request sees who can act. Once decided the card is the receipt in
  * place: done only with effect evidence, and an unknown effect never reads as success.
  */
-export const ApprovalRequesterThreadCard = React.memo(
-  function ApprovalRequesterThreadCard(
+const RequesterConfirmationThreadCard = React.memo(
+  function RequesterConfirmationThreadCard(
     props: Readonly<{
-      approval: DiscussionRequesterApproval;
+      approval: Extract<DiscussionRequesterApproval, { kind: 'requester_confirmation' }>;
       /** The viewer's profile for the Discussion's Home: routes the request page and the decision. */
       serverId: string;
       /** The enclosing Discussion's server-projected requester on this exact reply. */
@@ -114,10 +129,14 @@ export const ApprovalRequesterThreadCard = React.memo(
       setRecordedDecision,
     );
     const [reviewRequested, setReviewRequested] = React.useState(false);
+    const recordReviewDecision = React.useCallback((answer: 'approve' | 'reject' | 'cancel') => {
+      if (answer !== 'cancel') setRecordedDecision(answer);
+    }, []);
     const review = useInPlaceApprovalReview({
       approvalId: artifact.id,
       approvalPending: reviewRequested && (state.kind === 'open' || state.kind === 'stale'),
       serverId: props.serverId,
+      onDecisionRecorded: recordReviewDecision,
     });
     const openReview = React.useCallback(() => {
       setReviewRequested(true);

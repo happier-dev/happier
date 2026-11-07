@@ -13,7 +13,7 @@ import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
-import { useApprovalReview } from './useApprovalReview';
+import { useApprovalReview, type ApprovalReviewInput } from './useApprovalReview';
 
 type ApprovalReviewModalProps = CustomModalInjectedProps &
   Readonly<{
@@ -21,6 +21,7 @@ type ApprovalReviewModalProps = CustomModalInjectedProps &
     serverId: string;
     /** The person closed the review without answering; the request stays open where it was made. */
     onDismissed: () => void;
+    onDecisionRecorded?: ApprovalReviewInput['onDecisionRecorded'];
   }>;
 
 /**
@@ -40,6 +41,7 @@ function ApprovalReviewModal(props: ApprovalReviewModalProps) {
     artifactId: props.artifactId,
     serverId: props.serverId,
     onBack: close,
+    onDecisionRecorded: props.onDecisionRecorded,
   });
   const ready = review.kind === 'ready' ? review : null;
   const decision = ready ? (ready.decisionBar ?? ready.capabilityDecisions ?? null) : null;
@@ -116,6 +118,7 @@ function showApprovalReview(
     artifactId: string;
     serverId: string;
     onDismissed: () => void;
+    onDecisionRecorded?: ApprovalReviewInput['onDecisionRecorded'];
   }>,
 ): string {
   return Modal.show({
@@ -150,6 +153,7 @@ export function useInPlaceApprovalReview(
     approvalId: string | null;
     approvalPending: boolean;
     serverId: string | null;
+    onDecisionRecorded?: ApprovalReviewInput['onDecisionRecorded'];
   }>,
 ) {
   const { approvalId, approvalPending, serverId } = approval;
@@ -172,13 +176,14 @@ export function useInPlaceApprovalReview(
     const modalId = showApprovalReview({
       artifactId: presentId,
       serverId,
+      onDecisionRecorded: approval.onDecisionRecorded,
       onDismissed: () => {
         if (shown.current?.modalId === modalId) shown.current = null;
         setClosedId(presentId);
       },
     });
     shown.current = { artifactId: presentId, modalId };
-  }, [presentId, serverId]);
+  }, [presentId, serverId, approval.onDecisionRecorded]);
   // The surface that asked owns the review: leaving it withdraws the dialog, never the request.
   React.useEffect(
     () => () => {
