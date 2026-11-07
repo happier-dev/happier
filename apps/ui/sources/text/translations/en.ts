@@ -1,7 +1,15 @@
-import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
-import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
+import { deploymentCopyTranslations } from './deploymentCopyTranslations';
+import { pluginPublishTranslations } from './pluginPublishTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botFaceNameTranslations, type BotFaceNames } from './botFaceNameTranslations.shared';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
+import { deploymentPlatformLinkTranslations } from './deploymentPlatformLinkTranslations';
+import { deploymentPromotionTranslations } from './deploymentPromotionTranslations';
+import { PUBLIC_USAGE_CHART_COPY_EN, PUBLIC_USAGE_ORIGINAL_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -11,11 +19,13 @@ import { actionPresentationTranslations } from './actionPresentationTranslations
 import { fileReviewNoteTranslations } from './fileReviewNoteTranslations.shared';
 import { composerReferenceTranslations } from './composerReferenceTranslations.shared';
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
+import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { sessionListSpacesKeyboardTranslations } from './sessionListSpacesKeyboardTranslations.shared';
 import { reviewKeyboardTranslations } from './reviewKeyboardTranslations.shared';
 import { paneArrangementTranslations, paneKeyboardTranslations, paneRegionLabels } from './paneKeyboardTranslations';
+import { needsYouHighlightTranslations, workingIndicatorTranslations } from './needsYouHighlightTranslations';
 import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
 import { quickOpenTranslations } from './quickOpenTranslations';
 import { paneMainColumnTranslations } from './paneMainColumnTranslations';
@@ -629,14 +639,10 @@ const { browserToolTranslations } = feature_browserToolTranslations;
 const { accountEncryptionRecoveryTranslations } =
   feature_accountEncryptionRecoveryTranslations;
 
-const { glassAppearanceTranslations } = feature_glassAppearanceTranslations;
+const { glassAppearanceTranslations, newSessionBackdropStrengthTranslations } = feature_glassAppearanceTranslations;
 
 const mcpServersUxTranslationExtension = {
   mcpServersSegmentConfigured: 'Configured',
-  mcpServersDetectedDirectoryTitle: 'Project directory',
-  mcpServersDetectedDirectorySubtitle:
-    'Optional workspace path for project-level configs',
-  mcpServersDetectedDirectoryPlaceholder: '/path/to/project',
   mcpServersBuiltInDescription: 'Always available in Happier sessions.',
   mcpServersSourceHappier: 'Happier',
   mcpServersSourceBuiltIn: 'Built-in',
@@ -869,6 +875,7 @@ const settingsAppearanceTranslationExtension = {
     strengthDescription: "The ink and strength of the soft finish over solid or glass surfaces.",
   },
   glassControls: glassAppearanceTranslations['en'],
+  newSessionBackdropStrength: newSessionBackdropStrengthTranslations['en'],
   switchToDarkTheme: 'Switch to dark theme',
   switchToLightTheme: 'Switch to light theme',
   themeToggle: {
@@ -1357,6 +1364,9 @@ const enPluginSurfaces = {
   },
   appScopeRightSidebar: {
     empty: 'No app plugin tabs available.',
+    noneTitle: 'Keep a panel beside this page',
+    noneReason: 'Panels from your plugins open here while you work.',
+    noneOpen: ({ name }: { name: string }) => `Open ${name}`,
   },
 };
 
@@ -1430,6 +1440,7 @@ const enSettingsKeyboard = {
     voiceToggle: 'Start or end Voice',
     composerSendImmediate: 'Alternate send (queue / steer)',
             composerSendInterrupt: 'Interrupt and send',
+            composerSendAlternateAfterSend: "Send and start another / open",
     composerSendPending: 'Send to pending queue',
     commandPaletteOpen: 'Open Search',
     searchTextInFiles: fileContentSearchTranslations['en'].textInFiles,
@@ -1486,7 +1497,7 @@ const enSettingsKeyboard = {
 const enTabs = {
   // Tab navigation labels
   inbox: 'Inbox',
-  friends: 'Friends',
+  friends: "People",
   sessions: 'Sessions',
   sessionsNeedsAttention: 'Sessions, needs attention',
   settings: 'Settings',
@@ -1653,8 +1664,10 @@ const enApprovals = {
   decisionError: 'Failed to update approval.',
   decisionAuthorityError:
     'This sign-in cannot approve requests. Sign in to this Home with your account recovery key, or approve from another device with an account sign-in.',
-  staleFailure: "This request is no longer current, so it wasn't executed. Review the latest request in Inbox.",
+  staleFailure: "Its target changed after this was asked, so nothing was run.",
+  conflictFailure: "It changed after this was reviewed, so nothing was applied. Review the current version and try again.",
   transientFailure: "The server was busy, so nothing was changed. Try again.",
+  trayPosition: ({ index, total }: { index: number; total: number }) => `Request ${index} of ${total}`,
   failureGeneric: 'The approved action failed',
   failureNoReason: 'No reason was recorded.',
   failureNamed: ({ action }: { action: string }) => `Couldn't finish: ${action}`,
@@ -1664,6 +1677,18 @@ const enApprovals = {
   failureFileRead: "Couldn't read the file",
   failureFileOther: "Couldn't finish the file operation",
   technicalDetails: 'Technical details',
+  failureTechnicalLabels: {
+    reason: "Reason",
+    phase: "Failure phase",
+    causePhase: "Cause phase",
+    errorClass: "Error class",
+    causeCode: "Cause code",
+    httpStatus: "HTTP status",
+    effectAttempted: "Effect attempted",
+    requiredFact: "Required fact",
+    currentEnvironmentRevision: "Current environment revision",
+    remedy: "Recovery",
+  },
   confidentialSupplied: 'Supplied and kept hidden',
   linkRemoved: 'This link no longer exists',
   unsafeDetailsTitle: 'These details cannot be shown safely',
@@ -1671,10 +1696,23 @@ const enApprovals = {
     'Happier could not display this request exactly as it was sent, so it cannot be approved. Deny it, or ask for it to be sent again.',
   approveUnavailableHint:
     'Approval is unavailable while these details cannot be shown safely.',
+  cannotRun: "This request can no longer run as it was sent, so it can't be approved. Deny it, or ask for it again.",
+  cannotRunTitle: "Can't be approved",
+  cannotRunNoMachine: "This request has no machine recorded to run it on, so it can't be approved. Deny it, or ask for it again from the session that needs it.",
   irreversibleNote: "This can't be undone.",
   irreversibleFact: "Can't be undone",
   dismiss: "Dismiss",
   dismissHint: "Closes the request without approving or denying it.",
+  includedStepsTitle: "Steps it includes",
+  includedStepsDescription: "Approving this also lets these steps run without asking you again.",
+  includedStepFromPlugin: ({ plugin }: { plugin: string }) => `A step from ${plugin}`,
+  includedStepUnnamed: "Another step",
+  includedStepMachineFromRequest: "The Machine this request picks",
+  includedStepKeepAlwaysOn: "Keep the machine always on",
+  includedStepRetentionNow: ({ policy }: { policy: string }) => `Now: ${policy}`,
+  includedStepsDescriptionRequestMachine: "Approving this also lets these steps run on the machine this request picks, without asking you again.",
+  includedStepsDescriptionOnMachine: ({ machine }: { machine: string }) => `Approving this also lets these steps run on ${machine} without asking you again.`,
+  machineNotKnown: "A Machine this Home doesn't know yet",
   confirmApproveTitle: 'Approve request?',
   confirmApproveBody: 'This will run the requested action.',
   confirmRejectTitle: 'Deny request?',
@@ -1691,6 +1729,7 @@ const enApprovals = {
     executed: 'Executed',
     failed: 'Failed',
     canceled: 'Canceled',
+    notEntered: 'Not entered',
     expired: 'Expired',
   },
 };
@@ -1790,6 +1829,10 @@ const enMemoryContext = {
     detailApprovedOn: ({ date }: { date: string }) => `A person · ${date}`,
     detailSaved: 'Saved',
     detailExpired: ({ date }: { date: string }) => `Expired ${date}`,
+    renew: 'Renew',
+    duplicateView: 'View',
+    duplicateBack: 'Back',
+    duplicateSavedFactGone: 'This fact changed since the comparison. Back to choose again.',
     whatAgentsSee: 'What agents see',
     whatAgentsSeeLoaded: 'Sessions that use this memory load this line. The reason and source stay here.',
     whatAgentsSeeNotLoaded: 'Agents don’t load this fact. It stays searchable.',
@@ -1827,6 +1870,7 @@ const enMemoryContext = {
     refused: 'Couldn’t change this memory. Nothing was lost.',
     offline: 'Couldn’t read this memory right now.',
     offlineStale: 'Couldn’t read the current memory. Showing the last version.',
+    offlineHeld: 'Offline. Changes can’t be saved until you’re back.',
     locked: 'Unlock this account to read its memory.',
     missing: 'This memory document was deleted.',
     invalid: 'This memory couldn’t be read.',
@@ -1837,10 +1881,16 @@ const enMemoryContext = {
     remembered: 'Remembered',
     pastSessions: 'Past sessions',
     noResults: ({ query }: { query: string }) => `Nothing about “${query}” yet.`,
+    noResultsInProject: ({ query, project }: { query: string; project: string }) => `No memory in ${project} matches “${query}”.`,
+    projectFirstUseTitle: "Decisions your agents remember",
+    projectFirstUseReason: ({ project }: { project: string }) => `Save a decision from any message: the reason, who approved it and when it ends. Every session in ${project} sees it as one line.`,
     searchUnavailable: 'Search needs a machine with memory search turned on.',
     searchUnavailableOn: ({ machine }: { machine: string }) => `Memory search isn’t available on ${machine}.`,
+    searchFailedOn: ({ machine }: { machine: string }) => `Couldn’t search memory on ${machine} right now.`,
+    searchIndexMissingOn: ({ machine }: { machine: string }) => `${machine} hasn’t built its memory index yet.`,
     turnOnSearch: "Turn on",
     documentSearchUnavailable: 'Memory document search is unavailable here.',
+    documentSearchUnavailableOn: ({ machine }: { machine: string }) => `Remembered facts can’t be searched on ${machine}.`,
     accessPrivate: 'Only you can see it',
     accessShared: 'Shared',
     writesWithoutAsking: 'saved without asking',
@@ -2082,7 +2132,7 @@ const enPromptLibrary = {
   registriesRefresh: 'Refresh registries',
   registriesStatus: {
     limited: ({ time }: { time?: string }) => time === undefined ? 'Too many requests. Try again in a moment.' : `Too many requests. Try again at ${time}.`,
-    unreachable: "Couldn’t reach this registry. Try again.",
+    unreachable: "Couldn’t reach this registry.",
     authFailed: "Token rejected. Replace the token.",
     needsMachine: "Bring a machine online to browse this registry.",
     newerFormat: "This registry uses a newer format.",
@@ -2324,15 +2374,15 @@ const enSessionLog = {
 
 const enAutomations = {
   unsupportedReference: ({ reference }: { reference: string }) =>
-    `Automations save the message text only, so ${reference} would no longer point to what you picked. Remove it from the message, or mention a file path instead.`,
-  openA11y: 'Open automations',
+    `Workflows save the message text only, so ${reference} would no longer point to what you picked. Remove it from the message, or mention a file path instead.`,
+  openA11y: 'Open workflows',
   pluralEditor: {
     triggersTitle: 'Triggers',
     emptyBody:
-      'No automatic triggers. You can still run this automation manually.',
+      'No automatic triggers. You can still run this workflow manually.',
     orSemantics:
-      'Add any number of triggers. They work independently — when any one matches, the automation runs.',
-    enabledSubtitle: 'Pause the whole automation without changing any trigger.',
+      'Add any number of triggers. They work independently — when any one matches, the workflow runs.',
+    enabledSubtitle: 'Pause the whole workflow without changing any trigger.',
     addTrigger: 'Add trigger',
     addTriggerSubtitle:
       'Schedule it, connect an Event, or react to a Session lifecycle event.',
@@ -2420,10 +2470,10 @@ const enAutomations = {
   },
   exactTurn: {
     actionTitle: 'When this Session…',
-    createNew: 'Create a new automation',
+    createNew: 'Create a new workflow',
     createNewSubtitle: 'Start with this Session event already selected.',
-    addToExistingSubtitle: 'Add this Session event to an existing automation.',
-    searchPlaceholder: 'Search automations',
+    addToExistingSubtitle: 'Add this Session event to an existing workflow.',
+    searchPlaceholder: 'Search workflows',
     eventSearchPlaceholder: 'Search events',
     eventListA11y: 'Choose the Session lifecycle event',
     destinationA11y: 'Choose where to add this Session lifecycle trigger',
@@ -2432,13 +2482,13 @@ const enAutomations = {
       'The selected turn is no longer the active parent turn. Refresh and choose the current turn explicitly.',
     useCurrentTurn: 'Use current turn',
     unavailable: 'There is no active parent turn to use right now.',
-    refreshFailedTitle: 'Could not refresh automations',
+    refreshFailedTitle: 'Could not refresh workflows',
     refreshFailedBody:
-      'The list of automations could not be read just now. Try again to load the current list.',
-    resolvingRowSubtitle: 'Checking which automations you can use…',
+      'The list of workflows could not be read just now. Try again to load the current list.',
+    resolvingRowSubtitle: 'Checking which workflows you can use…',
     unavailableRowSubtitle:
-      'Details unavailable — this automation cannot be verified for this Session.',
-    incompleteNoticeTitle: 'Some automations could not be read',
+      'Details unavailable — this workflow cannot be verified for this Session.',
+    incompleteNoticeTitle: 'Some workflows could not be read',
   },
   list: {
     interval: ({
@@ -2467,25 +2517,25 @@ const enAutomations = {
     nextRunPending: 'Next run pending',
   },
   gate: {
-    disabledTitle: 'Automations are disabled',
+    disabledTitle: 'Workflows are disabled',
     disabledBody:
-      'Enable them from Settings, then turn on Experiments and Automations.',
+      'Enable them from Settings, then turn on Experiments and Workflows.',
   },
   edit: {
-    title: 'Edit automation',
-    saveAutomationLabel: 'Save automation',
+    title: 'Edit workflow',
+    saveAutomationLabel: 'Save workflow',
     messageLabel: 'MESSAGE',
     messageHelpText:
       'This message will be queued into the session as a pending user message.',
-    updateFailed: 'Failed to update automation.',
-    loadTemplateFailed: 'Failed to load automation template.',
+    updateFailed: 'Failed to update workflow.',
+    loadTemplateFailed: 'Failed to load workflow template.',
   },
   form: {
-    groupAutomationTitle: 'Automation',
+    groupAutomationTitle: 'Workflow',
     groupScheduleTitle: 'Schedule',
-    toggleEnableTitle: 'Enable automation',
+    toggleEnableTitle: 'Enable workflow',
     toggleEnableSubtitle:
-      'Create this new session template as a scheduled automation instead of starting immediately.',
+      'Create this new session template as a scheduled workflow instead of starting immediately.',
     toggleEnabledTitle: 'Enabled',
     toggleEnabledSubtitle: 'When disabled, no scheduled runs will be executed.',
     labels: {
@@ -2513,8 +2563,8 @@ const enAutomations = {
     confirm: {
       createTitle: ({ name }: { name: string }) => `Create “${name}”?`,
       editTitle: ({ name }: { name: string }) => `Save changes to “${name}”?`,
-      createConfirm: 'Create automation',
-      editConfirm: 'Save automation',
+      createConfirm: 'Create workflow',
+      editConfirm: 'Save workflow',
       trigger: ({
         pluginId,
         eventLocalId,
@@ -2550,10 +2600,11 @@ const enAutomations = {
       chooseExistingSession: 'Choose a session',
       noEligibleExistingSessions: 'No sessions are available for this target.',
       existingSessionUnavailable:
-        'The selected session is unavailable for Automation execution.',
+        'The selected session is unavailable for Workflow execution.',
       executionPermissionMode: 'Permission mode',
       executionNoTools: 'No tools',
       executionReadOnly: 'Read only',
+      eventCatalogLoading: 'Loading Event sources on this machine…',
       eventCatalogUnavailable:
         'Event sources are unavailable until this machine finishes loading.',
       eventSource: 'Event source',
@@ -2569,6 +2620,8 @@ const enAutomations = {
       chooseWatcher: 'Choose an observation watcher',
       noEligibleWatchers:
         'No current watcher is available for this Event source.',
+      watcherCannotObserve: 'This installation can’t watch this Event.',
+      fixUnavailableWatchers: 'Fix unavailable watchers',
       observationTransport: 'HOW EVENTS ARRIVE',
       observationCheckpointedPull: 'Poll for changes',
       observationSocket: 'Live connection',
@@ -2592,24 +2645,24 @@ const enAutomations = {
     },
   },
   session: {
-    emptyTitle: 'No automations',
+    emptyTitle: 'No workflows',
     emptyBody:
-      'Add an automation to run work in this session when any of its triggers fires.',
-    addAutomation: 'Add automation',
-    addEventAutomation: 'Add event automation',
-    failedToLoad: 'Failed to load automations.',
+      'Add a workflow to run work in this session when any of its triggers fires.',
+    addAutomation: 'Add workflow',
+    addEventAutomation: 'Add event workflow',
+    failedToLoad: 'Failed to load workflows.',
   },
   screen: {
-    emptyTitle: 'No automations yet',
+    emptyTitle: 'No workflows yet',
     emptyBody:
       'Create one from New Session, then add schedules, Events, or exact-turn triggers.',
-    createAutomationA11y: 'Create automation',
+    createAutomationA11y: 'Create workflow',
   },
   settings: {
-    title: 'Automation settings',
+    title: 'Workflow settings',
     openSubtitle: 'Configure capacity and run-history retention.',
-    failedToLoad: 'Failed to load automation settings.',
-    updateFailed: 'Failed to update automation settings.',
+    failedToLoad: 'Failed to load workflow settings.',
+    updateFailed: 'Failed to update workflow settings.',
     maxActiveRunsPerMachine: 'Maximum active runs per machine',
     maxActiveRunsPerMachineSubtitle:
       'Limits how many runs each machine can actively claim at once.',
@@ -2622,8 +2675,8 @@ const enAutomations = {
       'When off, eligible completed runs are retained for 30 days.',
   },
   detail: {
-    invalidId: 'Invalid automation id.',
-    notFound: 'Automation not found.',
+    invalidId: 'Invalid workflow id.',
+    notFound: 'Workflow not found.',
     unknownDate: 'Unknown',
     notScheduled: 'Not scheduled',
     overviewGroupTitle: 'Overview',
@@ -2674,13 +2727,13 @@ const enAutomations = {
     cancelRunConfirmMessage:
       'This stops the Run when possible. Work that has already started may still finish.',
     cancelRunConfirmButton: 'Cancel Run',
-    pauseAutomation: 'Pause automation',
-    resumeAutomation: 'Resume automation',
-    editAutomation: 'Edit automation',
-    deleteAutomation: 'Delete automation',
-    deleteConfirmTitle: 'Delete automation',
+    pauseAutomation: 'Pause workflow',
+    resumeAutomation: 'Resume workflow',
+    editAutomation: 'Edit workflow',
+    deleteAutomation: 'Delete workflow',
+    deleteConfirmTitle: 'Delete workflow',
     deleteConfirmMessage:
-      'This automation and its triggers will be removed. Existing Run history keeps its cause.',
+      'This workflow and its triggers will be removed. Existing Run history keeps its cause.',
     deleteConfirmButton: 'Delete',
     clearHistory: 'Clear run history',
     clearHistorySubtitle:
@@ -2692,13 +2745,13 @@ const enAutomations = {
     clearHistoryFailed: 'Failed to clear run history.',
     machineAssignmentsTitle: 'Machine assignments',
     machineAssignmentsFooter:
-      'Enable at least one machine for this automation to run.',
-    refreshFailed: 'Failed to refresh automation.',
+      'Enable at least one machine for this workflow to run.',
+    refreshFailed: 'Failed to refresh workflow.',
     mutationsRefreshingTitle: 'Checking for the latest version',
     mutationsRefreshingSubtitle:
-      'Actions are unavailable for a moment so a change is never made against an outdated automation. Run history stays open.',
-    runFailed: 'Failed to run automation.',
-    deleteFailed: 'Failed to delete automation.',
+      'Actions are unavailable for a moment so a change is never made against an outdated workflow. Run history stays open.',
+    runFailed: 'Failed to run workflow.',
+    deleteFailed: 'Failed to delete workflow.',
     assignmentsUpdateFailed: 'Failed to update machine assignments.',
     recentRunsTitle: 'Recent runs',
     loadMoreRuns: 'Load more runs',
@@ -2733,7 +2786,7 @@ const enAutomations = {
         `${id} · revision ${revision}`,
       triggerRetired: 'Trigger retired',
       triggerRetiredSubtitle:
-        'This Run keeps its immutable cause even though the trigger is no longer on the Automation.',
+        'This Run keeps its immutable cause even though the trigger is no longer on the Workflow.',
       state: {
         queued: 'Queued',
         claimed: 'Claimed',
@@ -2821,7 +2874,7 @@ const enAutomations = {
         dispatch_result_missing_after_lease_expiry:
           'The claiming machine never reported the dispatch result',
         automation_retired_after_lease_expiry:
-          'The automation was retired while its claim lease expired',
+          'The workflow was retired while its claim lease expired',
       },
     },
     runDetail: {
@@ -2870,18 +2923,27 @@ const enAutomations = {
     },
   },
   create: {
-    createFailed: 'Failed to create automation.',
+    createFailed: 'Failed to create workflow.',
     unavailableGroupTitle: 'Unavailable',
-    cannotCreateForSession: 'Cannot create automation for this session',
+    cannotCreateForSession: 'Cannot create workflow for this session',
     sessionNotFound: 'Session not found.',
     missingMachineId: 'This session is missing a machine id.',
     missingResumeKey:
       'This session does not have a resume encryption key loaded yet.',
-    createButtonTitle: 'Create automation',
+    createButtonTitle: 'Create workflow',
   },
 };
 
 const enAppCrash = {
+  copyFailed: "The crash details could not be copied. Try again.",
+  discardFailed: "The saved crash could not be discarded. Try again.",
+  saveDiagnostics: "Save diagnostics",
+  diagnosticsSaveFailed: "Diagnostics could not be saved. Your crash details are still available. Try again or copy them.",
+  restartWithoutReport: "Restart without saving",
+  reportSaveFailed: "Crash details could not be saved. Copy the error details before restarting, or try reporting again.",
+  savedReportNotice: "The saved crash is shown below. Review and edit it before submitting. It stays on this device until submission or dismissal.",
+  discardSavedReport: "Discard saved crash",
+  stackTruncated: "Stack shortened for this field. The full crash remains saved on this device.",
   title: 'Something went wrong',
   subtitle:
     'Happier hit an unexpected error. You can restart the app UI or copy details for support.',
@@ -3100,6 +3162,7 @@ encryptedUnavailable: 'Encrypted details unavailable',
   workingExternally: 'Working externally',
   needsInputExternally: 'Needs input externally',
   retryingExternally: 'Retrying externally',
+  retryingAttempt: ({ attempt }: { attempt: number }) => `Retrying · attempt ${attempt}`,
   ready: 'Ready',
   recentlyActive: 'Recently active',
   externalStatusUnknown: 'External status unknown',
@@ -3127,7 +3190,7 @@ const enConnectionStatus = {
     signInAgain: 'Sign in again',
   },
   labels: {
-    server: 'Server',
+    server: 'Home',
     socket: 'Socket',
     authenticated: 'Authenticated',
     lastSync: 'Last sync',
@@ -3209,9 +3272,9 @@ const enConnect = {
   enterUrlManually: 'Enter URL manually',
   scanComputerQrUnavailableTitle: 'Scan desktop QR unavailable',
   scanComputerQrUnavailableBody:
-    'This sign-in method is disabled on this server. Use another option below to restore your account.',
+    'This sign-in method is disabled on this Home. Use another option below to restore your account.',
   scanComputerQrInstructions:
-    'Scan the QR code shown in Happier on your computer (Settings → Add your phone).',
+    'Scan the QR code shown in Happier on your machine (Settings → Add your phone).',
   scanExistingHomeQrTitle: 'Scan a QR or paste a Home link',
   scanExistingHomeQrBody:
     'This Home is not linked to your sign-in service on this device. Scan its QR code or paste its Home link to connect directly.',
@@ -3223,9 +3286,9 @@ const enConnect = {
   addPhoneChooseHomeTitle: 'Choose a Home',
   addPhoneChooseHomeFooter:
     'The phone you add gets access to the Home you pick here. Your focused Home does not change.',
-  serverUrlNotEmbeddedTitle: 'Set up your phone’s server',
+  serverUrlNotEmbeddedTitle: 'Set up your phone’s Home',
   pairingAlreadyRequestedBody:
-    'This QR code has already been scanned on another phone. Ask the computer to generate a new one.',
+    'This QR code has already been scanned on another phone. Ask the machine to generate a new one.',
   expiresAtLabel: 'Expires',
   showPairingLink: 'Show pairing link',
   pairingLinkSecurityWarning:
@@ -3265,6 +3328,7 @@ const enConnect = {
   legacyPairingUpdateRequiredBody:
     'This QR was created by an older version of Happier. Update Happier on the other device and create a new QR.',
   scanNewQr: 'Scan a new QR',
+  pasteNewLink: 'Paste a new link',
   homeEnrollmentRetryBody:
     'We could not finish adding this Home. Check the connection and try again.',
   homeEnrollmentPartialCommitBody:
@@ -3288,6 +3352,8 @@ const enConnect = {
   lostAccessLink: 'Lost access?',
   lostAccessBody:
     'If you no longer have any device linked to this account and you lost your recovery key, you can reset your account using your identity provider. This creates a new Happier account. Your old encrypted history cannot be recovered.',
+  lostAccessNoResetBody:
+      "This Home doesn't offer an account reset. You can still get back in from a device that's signed in to this account, or with your recovery key.",
   lostAccessContinue: ({ provider }: { provider: string }) =>
     `Continue with ${provider}`,
   lostAccessConfirmTitle: 'Reset account?',
@@ -3299,8 +3365,8 @@ const enConnect = {
   linkNewDeviceTitle: 'Link new device',
   linkNewDeviceSubtitle:
     'Scan the QR code shown on your new device to link it to this account',
-  pairingConnectionWarningTitle: "Server disconnected",
-  pairingConnectionWarningBody: "Pairing needs a reachable server. Check your connection, or scan a code for another server.",
+  pairingConnectionWarningTitle: "Home disconnected",
+  pairingConnectionWarningBody: "Pairing needs a reachable Home. Check your connection, or scan a code for another Home.",
   scanQrCodeOnDevice: 'Scan QR code',
   unsupported: {
     connectTitle: ({ name }: { name: string }) => `Connect ${name}`,
@@ -3312,7 +3378,39 @@ const enConnect = {
 };
 
 const enBugReports = {
+  reportSession: "Report an issue with this session",
+  sessionPickerTitle: "Related session",
+  sessionPickerSubtitle: "Choose the session this report is about.",
+  sessionPickerSearchPlaceholder: "Search sessions",
+  sessionPickerNoResults: "No matching sessions",
+  noRelatedSession: "No related session",
   composer: {
+    collection: {
+      collected: "Attached",
+      unavailable: "Unavailable",
+      disabled: "Not included",
+      unsupported: "Update the CLI to attach these logs",
+      skipped: "Skipped",
+      error: "Could not collect",
+    },
+    logOptions: {
+      daemonTitle: "App and daemon logs",
+      daemonDetail: "App activity and connection logs from the selected machine and Home.",
+      sessionTitle: "Happier session logs",
+      sessionDetail: "Session activity that helps us investigate this issue.",
+      providerTitle: "Provider transcript",
+      providerDetail: "Provider session transcript, when needed.",
+      technicalOnly: "Technical information only",
+      technicalOnlyDetail: "Leave all raw logs out of this report.",
+    },
+    scopeChanged: "The selected account changed. Choose the session again before attaching diagnostics.",
+    addMoreDetails: "Add more details (optional)",
+    technicalInformation: "Technical information",
+    relatedSession: "Related session (optional)",
+    chooseSession: "Choose a session",
+    changeSession: "Change session",
+    removeSession: "Remove session",
+    selectedSession: "Session selected",
     pageDescription:
       'Tell us what went wrong. Include diagnostics so we can find it faster.',
     alerts: {
@@ -3346,12 +3444,12 @@ const enBugReports = {
       includeTitle: 'Include diagnostics',
       includeSubtitle:
         'Attach sanitized debugging artifacts for faster diagnosis.',
-      disabledByServerSuffix: ' (disabled by server)',
+      disabledByServerSuffix: ' (disabled by Home)',
       chooseIncluded: 'Choose what’s included',
       pasteDoctorJson: {
         title: 'CLI doctor JSON',
         subtitle:
-          'If your machine is unreachable from the UI, run happier doctor --json on your computer and paste it here.',
+          'If your machine is unreachable from the UI, run happier doctor --json on your machine and paste it here.',
         placeholder: '{ "capturedAt": "...", ... }',
         invalid: ({ error }: { error: string }) =>
           `Invalid doctor JSON: ${error}`,
@@ -3381,21 +3479,20 @@ const enBugReports = {
           detail: 'Stack context and recent stack logs (if available).',
         },
         server: {
-          title: 'Server diagnostics',
-          detail: 'Server snapshot from the currently active server.',
+          title: 'Home diagnostics',
+          detail: 'Home snapshot from the currently active Home.',
         },
       },
     },
     issueDetails: {
       title: 'Describe the issue',
-      subtitle:
-        'Provide enough detail so we can reproduce and diagnose quickly.',
+      subtitle: "A title and a short description are enough to get started.",
       titleLabel: 'Title',
       titlePlaceholder: 'Short issue title',
       githubUsernameLabel: 'GitHub username',
       githubUsernamePlaceholder: 'Used as contact info in the issue body',
-      summaryLabel: 'Concise summary',
-      summaryPlaceholder: 'One-paragraph summary',
+      summaryLabel: "What happened?",
+      summaryPlaceholder: "Tell us what went wrong.",
       currentBehaviorLabel: 'Current behavior',
       currentBehaviorPlaceholder: 'What actually happens?',
       expectedBehaviorLabel: 'Expected behavior',
@@ -3449,8 +3546,8 @@ const enBugReports = {
       platformLabel: 'Platform',
       osVersionLabel: 'OS version',
       deviceModelLabel: 'Device model',
-      serverUrlLabel: 'Server URL',
-      serverVersionLabel: 'Server version',
+      serverUrlLabel: 'Home URL',
+      serverVersionLabel: 'Home version',
       deploymentTypeLabel: 'Deployment type',
       deploymentType: {
         cloud: 'Cloud',
@@ -3459,11 +3556,9 @@ const enBugReports = {
       },
     },
     consent: {
-      title: 'Consent',
-      understandTitle:
-        'I understand diagnostics may include technical metadata',
-      understandSubtitle:
-        'Do not include passwords, access tokens, or private keys.',
+      title: "Before sending",
+      understandTitle: "Share this report and the selected diagnostics",
+      understandSubtitle: "Report text is public. Diagnostic attachments are sent privately to Happier maintainers. Session logs can include conversation excerpts.",
     },
     validation: {
       titleTooShort: ({ min }: { min: number }) => `Title must be at least ${min} characters.`,
@@ -3832,6 +3927,8 @@ const enSubAgentGuidance = {
 };
 
 const enSettings = {
+  writeValueRefused: "This choice could not be applied. Refresh Settings, review the current value and choose again.",
+  writeContextChanged: "Your Account or Settings changed before this choice could be applied. Refresh Settings and review the current value before trying again.",
   title: 'Settings',
   overview: 'Overview',
 
@@ -3863,7 +3960,7 @@ const enSettings = {
   remoteHostsTitle: 'Remote hosts',
   remoteHostsDesktopOnlyTitle: 'Remote hosts need the desktop app',
   remoteHostsDesktopOnlySubtitle:
-    'Open Happier on your computer to save SSH hosts, then set them up as machines or relays.',
+    'Open Happier on your machine to save SSH hosts, then set them up as machines or relays.',
   remoteHostsManagementDisabledTitle: 'Remote host management is disabled',
   remoteHostsManagementDisabledSubtitle:
     'This build does not allow managing remote hosts.',
@@ -3901,7 +3998,6 @@ const enSettings = {
   remoteHostsRelayRuntimeRestartTitle: 'Restart relay runtime',
   remoteHostsPortLine: ({ port }: { port: number }) => `Port: ${port}`,
   remoteHostsActiveTaskTitle: 'System task',
-  remoteHostsHostTrustTitle: 'Trust SSH host?',
   remoteHostsPasswordRequiredTitle: 'SSH password required',
   remoteHostsConnectionSucceeded: 'Connection succeeded.',
   remoteHostsConnectionFailed: 'Connection failed.',
@@ -3925,7 +4021,6 @@ const enSettings = {
   remoteHostsTrustedHostKeysTitle: 'Trusted host keys',
   remoteHostsTrustedHostKeysClearTitle: 'Clear trusted host keys',
   remoteHostsTrustedHostKeyRemoveTitle: 'Remove trusted host key',
-  remoteHostsReplaceHostKeyTitle: 'Replace SSH host key?',
   remoteHostsReplaceHostKeyAction: 'Replace key',
   remoteHostsRememberHostKeyTitle: 'Remember this SSH host key?',
   remoteHostsRememberHostKeyAction: 'Remember key',
@@ -3933,7 +4028,7 @@ const enSettings = {
   remoteHostsPrivateKeyPassphraseTitle: 'Private key passphrase',
   remoteHostsKeyboardInteractivePromptLabel: 'SSH prompt',
   remoteHostsKeyboardInteractiveTitle: 'SSH authentication',
-  remoteHostsMissingServerUrl: 'The active server URL is missing.',
+  remoteHostsMissingServerUrl: 'The active Home URL is missing.',
   remoteHostsSetupAsMachineTitle: 'Set up as machine',
   remoteHostsSetupAsMachineFailed: 'Remote machine setup failed.',
   remoteHostsRelayAccessIdentityFileRequired:
@@ -3972,13 +4067,13 @@ const enSettings = {
       'relay-access-provider': 'Relay access provider',
       'ssh-tunnel-desktop': 'Desktop SSH tunnel',
       'ssh-tunnel-native': 'Native SSH tunnel',
-      'server-profile-url': 'Server profile URL',
+      'server-profile-url': 'Home profile URL',
       'peer-mediation': 'Peer mediation',
       'manual-url': 'Manual URL',
     },
     direction: {
-      makeCurrentServerReachable: 'Make this server reachable',
-      reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
+      makeCurrentServerReachable: 'Make this Home reachable',
+      reachRemoteServerFromThisDevice: 'Reach a remote Home from this device',
     },
     scope: {
       availableToOtherDevices: 'Available to other devices',
@@ -4048,46 +4143,46 @@ const enSettings = {
   addYourPhone: 'Add your phone',
   addYourPhoneSubtitle: 'Show a QR code to sign in on your phone',
   addMachine: 'Add a machine',
-  machineSetupCurrentMachineTitle: 'Set up this computer',
+  machineSetupCurrentMachineTitle: 'Set up this machine',
   machineSetupCurrentMachineSubtitle: 'Set up Happier directly on this device',
   machineSetupAdoptExistingTitle: 'Adopt existing installation',
   machineSetupAdoptExistingSubtitle:
-    'Use an existing daemon/service setup on this computer',
+    'Use an existing daemon/service setup on this machine',
   machineSetupAdoptExistingProgressTitle: 'Checking existing installation',
   machineSetupAdoptExistingNotReady:
-    'No ready installation found. Start setup on this computer instead.',
+    'No ready installation found. Start setup on this machine instead.',
   machineSetupSshMachineTitle: 'Remote machine over SSH',
   machineSetupSshMachineSubtitle: 'Connect a dev box, VM, or server with SSH',
-  machineSetupStagesTitle: 'What happens',
-  machineSetupStageConnect: 'Connect and validate access',
-  machineSetupStageInstall: 'Install Happier and pair the machine',
-  machineSetupStageFinish: 'Finish setup in the built-in terminal',
-  machineSetupStepResolveRelay: 'Checking existing components',
-  machineSetupStepCheckAuth: 'Checking sign-in status',
-  machineSetupStepConfigureRelay: 'Connecting to server',
-  machineSetupStepAuthRequest: 'Approve this computer',
-  machineSetupStepAuthWait: 'Waiting for approval',
-  machineSetupStepInstallService: 'Installing background service',
-  machineSetupStepStartService: 'Starting background service',
-  machineSetupStepRestartService: 'Restarting background service',
-  machineSetupStepVerifyService: 'Verifying background service',
+  machineEnrollStagesTitle: 'What happens',
+  machineEnrollStageConnect: 'Connect and validate access',
+  machineEnrollStageInstall: 'Install Happier and pair the machine',
+  machineEnrollStageFinish: 'Finish setup in the built-in terminal',
+  machineEnrollStepResolveRelay: 'Checking existing components',
+  machineEnrollStepCheckAuth: 'Checking sign-in status',
+  machineEnrollStepConfigureRelay: 'Connecting to Home',
+  machineEnrollStepAuthRequest: 'Approve this machine',
+  machineEnrollStepAuthWait: 'Waiting for approval',
+  machineEnrollStepInstallService: 'Installing background service',
+  machineEnrollStepStartService: 'Starting background service',
+  machineEnrollStepRestartService: 'Restarting background service',
+  machineEnrollStepVerifyService: 'Verifying background service',
   machineSetupComingSoon: 'Machine setup is coming soon.',
   machineSetupTaskWaitingForInput: 'Waiting for input',
-  machineSetupRemoteSshTargetLabel: 'SSH target',
-  machineSetupRemoteSshTargetPlaceholder: 'user@host',
-  machineSetupRemoteSshUsernameLabel: 'SSH username',
-  machineSetupRemoteSshUsernamePlaceholder: 'ubuntu',
-  machineSetupRemoteSshHostLabel: 'SSH host',
-  machineSetupRemoteSshHostPlaceholder: 'example.test',
-  machineSetupRemoteSshPortLabel: 'SSH port',
-  machineSetupRemoteSshPortPlaceholder: '22',
-  machineSetupRemoteSshAuthMethodLabel: 'Authentication method',
-  machineSetupRemoteSshAgentAuthLabel: 'Use SSH agent',
-  machineSetupRemoteSshKeyFileAuthLabel: 'Use private key',
-  machineSetupRemoteSshPasswordAuthLabel: 'Use password',
-  machineSetupRemoteSshIdentityFileLabel: 'Private key path',
-  machineSetupRemoteSshPrivateKeyMaterialLabel: 'Paste private key',
-  machineSetupRemoteSshPasswordLabel: 'SSH password',
+  machineEnrollRemoteSshTargetLabel: 'SSH target',
+  machineEnrollRemoteSshTargetPlaceholder: 'user@host',
+  machineEnrollRemoteSshUsernameLabel: 'SSH username',
+  machineEnrollRemoteSshUsernamePlaceholder: 'ubuntu',
+  machineEnrollRemoteSshHostLabel: 'SSH host',
+  machineEnrollRemoteSshHostPlaceholder: 'example.test',
+  machineEnrollRemoteSshPortLabel: 'SSH port',
+  machineEnrollRemoteSshPortPlaceholder: '22',
+  machineEnrollRemoteSshAuthMethodLabel: 'Authentication method',
+  machineEnrollRemoteSshAgentAuthLabel: 'Use SSH agent',
+  machineEnrollRemoteSshKeyFileAuthLabel: 'Use private key',
+  machineEnrollRemoteSshPasswordAuthLabel: 'Use password',
+  machineEnrollRemoteSshIdentityFileLabel: 'Private key path',
+  machineEnrollRemoteSshPrivateKeyMaterialLabel: 'Paste private key',
+  machineEnrollRemoteSshPasswordLabel: 'SSH password',
   machineSetupRemoteRelayRuntimeLabel:
     'Also install Relay runtime on the remote machine',
   machineSetupRemoteRelayRuntimeTitle: 'Remote Relay runtime',
@@ -4107,15 +4202,13 @@ const enSettings = {
   }: {
     relayUrl: string;
   }) => `Switch Happier to ${relayUrl} and continue setup?`,
-  machineSetupRemotePromptTrustAction: 'Trust host key',
-  machineSetupRemotePromptReplaceAction: 'Replace saved key',
   machineSetupRemotePromptReplaceServicesAction: 'Replace services',
   machineSetupRemotePromptApproveAction: 'Approve pairing',
   localRelayRuntime: {
     title: 'Local Relay runtime',
     statusTitle: 'Status',
     statusChecking: 'Checking local Relay runtime',
-    statusNotInstalled: 'Not installed on this computer yet',
+    statusNotInstalled: 'Not installed on this machine yet',
     statusStopped: 'Installed, but not currently running',
     statusRunningHealthy: 'Running and responding normally',
     statusRunningNeedsAttention: 'Running, but health checks need attention',
@@ -4126,7 +4219,7 @@ const enSettings = {
     stopAction: 'Stop Relay runtime',
     refreshAction: 'Refresh Relay status',
     footer:
-      'Manage the self-hosted Relay running on this computer before you connect other devices.',
+      'Manage the self-hosted Relay running on this machine before you connect other devices.',
     progressTitle: 'Updating local Relay runtime',
     progressStepInspect: 'Inspect local Relay runtime',
     progressStepHealth: 'Check Relay health',
@@ -4158,7 +4251,7 @@ const enSettings = {
     openInstallAction: 'Open Tailscale download',
     openLoginAction: 'Open Tailscale sign-in',
     footer:
-      'This keeps access tailnet-private. Your phone or other computer must also join the same tailnet.',
+      'This keeps access tailnet-private. Your phone or other machine must also join the same tailnet.',
     progressTitle: 'Configuring Tailscale secure access',
     progressStepDetect: 'Check Tailscale availability',
     progressStepInstall: 'Install Tailscale',
@@ -4167,6 +4260,7 @@ const enSettings = {
     progressStepVerifyUrl: 'Verify the shareable URL',
   },
   relayAccess: {
+    tailscaleOperatorAuthorizationRefused: "Tailscale refused operator access. Rerun this step with sudo. On Linux, set the account’s display name to its login name with sudo usermod --comment <user> <user>, or configure the operator with sudo tailscale set --operator=<user>.",
     title: 'Relay access',
     footer: 'Choose how your phone reaches this Relay.',
     statusTitle: 'Status',
@@ -4191,7 +4285,7 @@ const enSettings = {
     providers: {
       localOnly: {
         title: 'Local only',
-        subtitle: 'Only this computer can reach the Relay.',
+        subtitle: 'Only this machine can reach the Relay.',
       },
       lan: {
         title: 'LAN / custom URL',
@@ -4218,7 +4312,7 @@ const enSettings = {
     missingUrl: 'Enter a Relay URL to continue.',
     missingHostname: 'Enter a hostname to continue.',
     missingToken: 'Enter a token to continue.',
-    webHandoffTitle: 'Run this on your computer',
+    webHandoffTitle: 'Run this on your machine',
     webHandoffSubtitle:
       'Use the CLI to configure relay access, then come back here and refresh.',
   },
@@ -4245,12 +4339,11 @@ const enSettings = {
   attachmentsSubtitle: 'File upload preferences',
   sourceControl: 'Source control',
   sourceControlSubtitle: 'Commit strategy and backend behavior',
-  automations: 'Automations',
+  automations: 'Workflows',
   automationsSubtitle: 'Manage scheduled sessions and recurring runs',
   executionRunsSubtitle: 'Subagents across machines',
-  connectedServices: 'Connected services',
-  connectedServicesSubtitle:
-    'The accounts your agents sign in with, and how much each has left.',
+  connectedServices: 'Credentials',
+  connectedServicesSubtitle: 'Accounts, keys and secrets your agents and tools sign in with.',
   featuresTitle: 'Features',
   featuresSubtitle:
     'Turn parts of Happier on or off, and try what is still being built.',
@@ -4334,10 +4427,6 @@ const enSettings = {
   mcpServersDetectedRefreshTitle: 'Refresh detected servers',
   mcpServersDetectedRefreshSubtitle:
     'Scan provider config files on this machine',
-  mcpServersDetectedWarningsTitle: 'Detection warnings',
-  mcpServersDetectedEmptyTitle: 'No detected MCP servers',
-  mcpServersDetectedEmptySubtitle:
-    'Click refresh to scan Claude/Codex/OpenCode configs.',
   mcpServersImportTitle: 'Import MCP server?',
   mcpServersImportConfirm: ({
     provider,
@@ -4518,7 +4607,7 @@ const enDiagnosis = {
     actions: 'Actions',
     pasteDoctorJson: 'Paste CLI doctor JSON',
     machineRuns: 'Machine runs',
-    serverProbe: 'Server probe',
+    serverProbe: 'Home probe',
     findings: 'Findings',
   },
   overview: {
@@ -4530,18 +4619,18 @@ const enDiagnosis = {
   },
   actions: {
     run: 'Run diagnosis',
-    runSubtitle: 'Checks server, account, machines, and daemon targeting',
+    runSubtitle: 'Checks Home, account, machines, and daemon targeting',
     copyReport: 'Copy diagnosis report',
     copyReportSubtitle: 'Copy a redacted JSON report for support',
   },
   pasteDoctorJson: {
     footer:
-      'Tip: run happier doctor --json on your computer and paste it here.',
+      'Tip: run happier doctor --json on your machine and paste it here.',
     placeholder: '{ "capturedAt": "...", ... }',
     parse: 'Validate pasted JSON',
     ok: 'Pasted doctor JSON looks valid.',
     helper:
-      'Optional: paste doctor JSON to diagnose account/server mismatches when your machine is unreachable.',
+      'Optional: paste doctor JSON to diagnose account/Home mismatches when your machine is unreachable.',
     error: ({ error }: { error: string }) => `${error}`,
   },
   machine: {
@@ -4555,7 +4644,7 @@ const enDiagnosis = {
     error: 'Error',
   },
   serverProbe: {
-    title: 'Server diagnostics',
+    title: 'Home diagnostics',
     httpError: ({ status }: { status: string }) => `HTTP ${status}`,
   },
   findings: {
@@ -4573,24 +4662,24 @@ const enDiagnosis = {
       },
     },
     serverMismatch: {
-      title: 'Server mismatch (UI vs daemon)',
+      title: 'Home mismatch (UI vs daemon)',
       subtitle: ({ ui, machine }: { ui: string; machine: string }) =>
         `UI: ${ui} • Daemon: ${machine}`,
       steps: {
-        chooseAccount: 'Decide which server/account you want to use.',
+        chooseAccount: 'Decide which Home/account you want to use.',
         switchUiServer:
-          'Switch the UI to the same server as the daemon (or vice versa).',
+          'Switch the UI to the same Home as the daemon (or vice versa).',
         restartDaemon:
-          'Restart the daemon targeting the correct server, then retry.',
+          'Restart the daemon targeting the correct Home, then retry.',
       },
     },
     serverMismatchPasted: {
-      title: 'Server mismatch (UI vs pasted doctor)',
+      title: 'Home mismatch (UI vs pasted doctor)',
       subtitle: ({ ui, pasted }: { ui: string; pasted: string }) =>
         `UI: ${ui} • Pasted: ${pasted}`,
     },
     settingsMismatch: {
-      title: 'CLI settings vs resolved server mismatch',
+      title: 'CLI settings vs resolved Home mismatch',
       subtitle: ({
         settings,
         resolved,
@@ -4605,9 +4694,9 @@ const enDiagnosis = {
         `UI: ${ui} • Daemon: ${machine}`,
       steps: {
         signInSameAccount:
-          'Make sure UI and CLI are signed in to the same account on the same server.',
+          'Make sure UI and CLI are signed in to the same account on the same Home.',
         cliReauth:
-          'In CLI: log out, then run auth again for the correct server.',
+          'In CLI: log out, then run auth again for the correct Home.',
       },
     },
     machineMissingAccount: {
@@ -4621,31 +4710,31 @@ const enDiagnosis = {
       },
     },
     serverDiagnosticsDisabled: {
-      title: 'Server diagnostics disabled',
+      title: 'Home diagnostics disabled',
       steps: {
-        ok: 'This is normal if your server has diagnostics disabled.',
+        ok: 'This is normal if your Home has diagnostics disabled.',
       },
     },
     serverAuthError: {
-      title: 'Server auth error (401)',
+      title: 'Home auth error (401)',
     },
     serverUnreachable: {
-      title: 'Server unreachable',
+      title: 'Home unreachable',
       steps: {
-        checkServerUrl: 'Verify the server URL and your network connectivity.',
+        checkServerUrl: 'Verify the Home URL and your network connectivity.',
         tryAgain: 'Try again in a moment.',
       },
     },
     serverHttpError: {
-      title: 'Server diagnostics HTTP error',
+      title: 'Home diagnostics HTTP error',
       subtitle: ({ status }: { status: string }) =>
-        `Server responded with ${status}`,
+        `Home responded with ${status}`,
     },
     activeServerNotInProfiles: {
-      title: 'Active server not found in saved server profiles',
+      title: 'Active Home not found in saved Home profiles',
     },
     multipleServers: {
-      title: 'Multiple servers detected across machines',
+      title: 'Multiple Homes detected across machines',
     },
   },
 };
@@ -4662,16 +4751,16 @@ const enConnectedServices = {
     poolAccounts: ({ count }: { count: number }) => count === 1 ? '1 account' : `${count} accounts`,
     poolAccountsInUse: ({ accounts, account }: { accounts: string; account: string }) => `${accounts} · using ${account}`,
     requiredPrompt: 'Choose an account or group',
-    signInToChoose: 'Sign in to this Home to choose an account',
-    requiredAccountPrompt: 'Choose an account',
     notSet: 'Not set',
     ownSignIn: ({ agent }: { agent: string }) => `${agent}’s own sign-in`,
-    legacyUnavailable: 'This server cannot show connected-account targets yet',
+    legacyUnavailable: 'This Home cannot show connected-account targets yet',
+    requiredAccountPrompt: 'Choose an account',
+    signInToChoose: 'Sign in to this Home to choose an account',
   },
   fallbackName: 'Connected service',
-  accountScopeMismatchTitle: 'Switch server Accounts to continue',
+  accountScopeMismatchTitle: 'Switch Home Accounts to continue',
   accountScopeMismatchDescription:
-    'This machine belongs to another server Account. Switch to that server Account to manage its connected accounts.',
+    'This machine belongs to another Home Account. Switch to that Home Account to manage its connected accounts.',
   serviceNames: {
     claudeSubscription: 'Claude subscription',
     openaiCodex: 'ChatGPT',
@@ -4782,7 +4871,7 @@ const enConnectedServices = {
     profileNotFound:
       'This connected account no longer exists. Refresh the account list and try again.',
     activeProfileNotMember: 'Only enabled group members can be made active.',
-    fallbackDisabled: 'Account fallback is disabled on this server.',
+    fallbackDisabled: 'Account fallback is disabled on this Home.',
     duplicateMember: 'This account is already in the group.',
     groupAlreadyExists: 'An account group with this id already exists.',
     groupCapacityExhausted:
@@ -4820,7 +4909,7 @@ const enConnectedServices = {
     accountOperationBusy:
       'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
     accountAuthenticationRejected:
-      'The service could not accept this sign-in. Check the account details and start the connection again.',
+      'The service could not accept this sign-in. Check the account details and try again.',
     accountIdentityMismatch:
       'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
     accountAccessUnavailable:
@@ -5069,9 +5158,9 @@ const enConnectedServices = {
       moveDown: 'Move down',
       noMembersTitle: 'No members yet',
       noMembersSubtitle: 'Add a connected account to this pool.',
-      manualApplyDivergenceTitle: 'Switched on server, not on running sessions',
+      manualApplyDivergenceTitle: 'Switched on the Home, not on running sessions',
       manualApplyDivergenceSubtitle: ({ detail }: { detail: string }) =>
-        `The active account changed on the server, but applying it to running sessions failed (${detail}). Retry, or revert to keep everything on the previous account.`,
+        `The active account changed on the Home, but applying it to running sessions failed (${detail}). Retry, or revert to keep everything on the previous account.`,
       manualApplyRetry: 'Retry applying to running sessions',
       manualApplyRevert: 'Revert to previous account',
       machineTarget: {
@@ -5358,7 +5447,7 @@ const enConnectedServices = {
         `Delete "${group}"? Sessions using this group will need another account selection.`,
       enableFallback: 'Enable automatic fallback',
       disableFallback: 'Disable automatic fallback',
-      accountFallbackDisabled: 'Automatic fallback is disabled by this server.',
+      accountFallbackDisabled: 'Automatic fallback is disabled by this Home.',
       useManualStrategy: 'Use manual switching',
       usePriorityStrategy: 'Use priority order',
       addMember: 'Add member',
@@ -5370,7 +5459,7 @@ const enConnectedServices = {
       activeMember: 'Active member',
       manualApplyFailedTitle: 'Account switched, daemon update incomplete',
       manualApplyFailedBody:
-        'The active account changed on the server, but one or more running local sessions could not be updated. Restart or resume those sessions if they keep using the previous account.',
+        'The active account changed on the Home, but one or more running local sessions could not be updated. Restart or resume those sessions if they keep using the previous account.',
       enableMember: 'Enable member',
       disableMember: 'Disable member',
       editPriority: 'Edit priority',
@@ -5527,7 +5616,7 @@ const enSettingsAttachments = {
   disabled: {
     bannerTitle: 'File uploads are turned off',
     title: 'Attachments',
-    footer: 'This feature is disabled by your server or build policy.',
+    footer: 'This feature is disabled by your Home or build policy.',
   },
   fileUploads: {
     title: 'File uploads',
@@ -5906,6 +5995,11 @@ const enSettingsSourceControl = {
 };
 
 const enSettingsDesktop = {
+  nativeTitleBarTitle: 'Use Windows title bar',
+  nativeTitleBarSubtitle: 'Show the standard Windows frame and window controls.',
+  nativeTitleBarChangeFailed: 'The title bar could not be changed. Try again.',
+  nativeTitleBarPersistenceFailed: 'The title bar preference could not be loaded or saved. Change it again to retry.',
+  nativeTitleBarRestartRequired: 'Restart Happier to apply this change.',
   ...menuBarModeTranslations.en,
   title: 'Desktop app',
   footer: "How Happier behaves on this computer: the notch, windows and the menu bar.",
@@ -5981,9 +6075,9 @@ const enSettingsPets = {
   previewSubtitle: 'A small companion for session status and review attention.',
   disabledTitle: 'Pets are disabled',
   disabledSubtitle: 'Enable Pets in Features to use companions on this device.',
-  disabledByServerTitle: 'Pets are disabled by this server',
+  disabledByServerTitle: 'Pets are disabled by this Home',
   disabledByServerSubtitle:
-    'Your administrator has turned off pet companions for this server.',
+    'Your administrator has turned off pet companions for this Home.',
   accountTitle: 'Companion',
   accountDescription: 'On for your account; each device can choose for itself.',
   enabledTitle: 'Enable pets',
@@ -6160,8 +6254,8 @@ const enSettingsNotifications = {
         hostedRelayAvailableSubtitle:
           'Available for remote Live Activity updates',
         hostedRelayDisabledSubtitle: 'Disabled by settings',
-        hostedRelayBlockedSubtitle: 'Blocked by this provider or server',
-        hostedRelayUnavailableSubtitle: 'Not available on this server',
+        hostedRelayBlockedSubtitle: 'Blocked by this provider or Home',
+        hostedRelayUnavailableSubtitle: 'Not available on this Home',
         directApnsTitle: 'Direct APNs',
         directApnsConfiguredSubtitle:
           'Configured for direct Apple Push Notification updates',
@@ -6259,12 +6353,22 @@ const enSettingsNotifications = {
     openSettingsFailed: 'Could not open system settings.',
   },
   pushTroubleshooting: {
+    remoteTest: {
+      title: "Send a remote test",
+      subtitle: "Send a real push through this Home. This checks delivery plumbing, not alert, mute, quiet-hour or enrollment settings.",
+      notRegistered: "Register this phone’s token, then try again.",
+      accepted: "The push service accepted the test. This does not confirm that your phone received or displayed it. Check your notifications.",
+      rejected: "The push service did not confirm acceptance. Check your notifications and registration before trying again.",
+      invalidCredentials: "The push provider rejected this app’s credentials. Check APNs or FCM configuration.",
+      unsupported: "This Home does not support remote push tests. Update it, then try again.",
+      unconfirmed: "The result could not be confirmed. The request may still complete; check your notifications before trying again.",
+    },
     pageDescription:
       "Check why push notifications don't arrive on this device, and fix it.",
     status: {
       title: 'Status',
       footer:
-        'Checks the account setting, OS permission, and server registration state.',
+        'Checks the account setting, OS permission, and Home registration state.',
       accountSettingTitle: 'Account setting',
       accountSettingEnabledSubtitle:
         'Push notifications are enabled for this account',
@@ -6310,9 +6414,9 @@ const enSettingsNotifications = {
       requestPermissionTitle: 'Request permission',
       requestPermissionSubtitle: 'Ask the OS for notification permission.',
       reregisterTitle: 'Re-register token',
-      reregisterSubtitle: 'Send this device token to the server again.',
+      reregisterSubtitle: 'Send this device token to the Home again.',
       refreshTitle: 'Refresh',
-      refreshSubtitle: 'Reload permission, token, and server devices.',
+      refreshSubtitle: 'Reload permission, token, and Home devices.',
     },
     devices: {
       title: 'Registered devices',
@@ -6320,8 +6424,8 @@ const enSettingsNotifications = {
         `${count} token(s) on ${serverUrl}`,
       emptyTitle: 'No devices',
       emptySubtitle:
-        'No push tokens are registered on the server for this account.',
-      clientServerUrl: ({ url }: { url: string }) => `Server: ${url}`,
+        'No push tokens are registered on the Home for this account.',
+      clientServerUrl: ({ url }: { url: string }) => `Home: ${url}`,
       registeredAt: ({ at }: { at: string }) => `Registered: ${at}`,
       lastSeenAt: ({ at }: { at: string }) => `Last seen: ${at}`,
       thisDevice: 'This device',
@@ -6336,6 +6440,19 @@ const enSettingsNotifications = {
     },
   },
   webhooks: {
+    testTitle: "Webhook test",
+    sendTest: "Send test",
+    testSubtitle: "Send a fixed diagnostic message using the saved endpoint and signing secret.",
+    testDelivered: "Delivered: the receiver accepted the test.",
+    testRefused: ({ reason }: { reason: string }) => "Refused: " + reason,
+    testUnreachable: ({ reason }: { reason: string }) => "Unreachable: " + reason,
+    testReasons: {
+      channel_not_found: "Channel no longer exists",
+      catalog_unavailable: "Channel catalog unavailable",
+      signing_secret_unavailable: "Signing secret unavailable",
+      destination_rejected: "Destination rejected",
+      http_rejected: "Receiver refused the request",
+    },
     signingSecretReplaceAction: 'Replace',
     signingSecretAddAction: 'Add secret',
     title: 'Webhook notifications',
@@ -6416,7 +6533,22 @@ const enSettingsNotifications = {
     },
   },
   quietHours: {
-    customSubtitle: 'A custom schedule is set. Choosing an option replaces it.',
+    customShort: "Custom",
+    editSchedule: "Custom schedule",
+    timezone: "Time zone",
+    timezoneHint: "Use local times in this zone, for example Europe/Amsterdam.",
+    invalidTimezone: "Enter a valid time zone, for example Europe/Amsterdam.",
+    windowTitle: ({ number }: { number: number }) => "Window " + number + "",
+    overnightHint: "An end time before the start continues into the next day.",
+    startTime: "Start time",
+    endTime: "End time",
+    timeFormat: "24-hour time (HH:MM).",
+    invalidTime: "Enter a time from 00:00 to 23:59.",
+    days: "Days",
+    daysHint: "Choose the days each window starts.",
+    everyDay: "Every day",
+    addWindow: "Add time window",
+    customSubtitle: 'Choose specific days, times and a timezone, or use a preset.',
     syncedShort: 'Synced',
     nightlyShort: 'Nightly',
     offShort: 'Off',
@@ -6490,8 +6622,12 @@ const enSettingsNotifications = {
 };
 
 const enNotifications = {
-  permissionActionNeedsReview: "The notification permission response could not be confirmed. Open the session and check its current request before responding again.",
+  permissionActionNeedsReview: "The response sent from the notification could not be confirmed. Review pending requests before responding again.",
+  permissionActionReviewUnavailable: "We couldn’t open the Home and Account for this response. Check your connection and sign-in in Settings, then review pending requests.",
   actions: {
+    reviewPendingRequests: "Review pending requests",
+    questionReply: "Reply",
+    questionPlaceholder: "Your answer",
     allow: 'Allow',
     deny: 'Deny',
     answer: 'Answer',
@@ -6547,22 +6683,24 @@ const enSettingsProviders = {
   searchEmptyTitle: 'No providers match this search',
   searchEmptyDescription: 'Try another provider or connection name.',
   unavailable: 'Providers are not available',
-  unavailableDescription: 'This server has not enabled provider connections.',
+  unavailableDescription: 'This Home has not enabled provider connections.',
   availabilityChecking: 'Checking provider availability',
   availabilityCheckingDescription:
-    'Happier is confirming whether this server supports provider connections.',
+    'Happier is confirming whether this Home supports provider connections.',
   availabilityProblem: 'Could not check provider availability',
   availabilityProblemDescription:
-    'Happier will retry automatically. Check the server connection if this continues.',
-  availabilityUnsupported: 'Providers require a server update',
+    'Happier will retry automatically. Check the Home connection if this continues.',
+  availabilityUnsupported: 'Providers require a Home update',
   availabilityUnsupportedDescription:
-    'This server version does not support provider connections.',
+    'This Home version does not support provider connections.',
   availabilityContextUnsupported: 'Providers are unsupported in this context',
   availabilityContextUnsupportedDescription:
-    'The current server configuration or selection cannot support provider connections.',
+    'The current Home configuration or selection cannot support provider connections.',
   availabilityPolicyDisabled: 'Providers are disabled by policy',
   availabilityPolicyDisabledDescription:
     'A local or build policy has disabled provider connections.',
+  accountAccessStale:
+    'Its settings changed after you turned this on. Turn it on again to approve them.',
   noMachine: 'No machine available',
   noMachineDescription: 'Connect a machine to configure and test providers.',
   problemTitle: 'Provider needs attention',
@@ -6601,9 +6739,9 @@ const enSettingsProviders = {
     subscriptionPolicyTitle: 'Subscription routing is experimental',
     subscriptionPolicyDescription:
       'Upstream policy or enforcement may change and make subscription-backed routing stop working. Happier surfaces the rejection and does not silently use another credential.',
-    accountScopeMismatchTitle: 'Connected accounts live on the active server',
+    accountScopeMismatchTitle: 'Connected accounts live on the active Home',
     accountScopeMismatchDescription:
-      'This provider is managed on a machine from another server. Switch to that server to choose its connected account or group.',
+      'This provider is managed on a machine from another Home. Switch to that Home to choose its connected account or group.',
     editManagedDefaults: 'Edit managed session defaults',
     editManagedDefaultsDescription:
       'Change the connected account or group for future sessions. Existing sessions keep their saved selection.',
@@ -6754,7 +6892,7 @@ const enSettingsProviders = {
     testNotSupported:
       'This provider does not support an automatic connection test',
     testOnFirstSession:
-      'Happier will validate the connection safely when you start the first session that uses it.',
+      'Automatic connection tests are unavailable for this provider. Start a session to try your model.',
     machinesTitle: 'Machines',
     machinesFooter:
       'Local and private endpoints must be enabled separately on each machine.',
@@ -6794,6 +6932,7 @@ const enSettingsProviders = {
     resetEndpoint: 'Reset endpoint',
     resetMachineEndpoint: 'Use the default endpoint on this machine',
     resetDefaultEndpoint: 'Use the endpoint supplied by the provider plugin',
+    clearEndpoint: 'Clear this address',
   },
   authoring: {
     providerTitle: 'Provider',
@@ -6934,12 +7073,17 @@ const enSettingsProviders = {
     connectionChangedTitle: 'Provider connection changed',
     connectionChangedDescription:
       'Reload the current provider settings, then try again.',
+    accountScopeRequiredTitle: 'Enable for your Account',
+    accountScopeRequiredDescription:
+      'This provider uses a public endpoint. Enable it for your Account instead of only this machine.',
+    secretUnavailableTitle: 'Saved Secret unavailable',
+    secretUnavailableDescription: 'Refresh your Saved Secrets, then try again.',
     sourceUnavailableTitle: 'Provider plugin unavailable',
     sourceUnavailableDescription:
       'Re-enable or reinstall the plugin that provides this connection.',
     featureDisabledTitle: 'Providers are unavailable',
     featureDisabledDescription:
-      'This server has not enabled provider connections.',
+      'This Home has not enabled provider connections.',
     unauthorizedTitle: 'API key rejected',
     unauthorizedDescription:
       'Replace the Saved Secret with a valid key, then test the connection again.',
@@ -6968,6 +7112,8 @@ const enSettingsProviders = {
     modelNotFoundTitle: 'Model is no longer available',
     modelNotFoundDescription:
       'Choose another model or add its exact model ID manually when the provider supports it.',
+    effortUnsupportedTitle: "Reasoning effort not supported",
+    effortUnsupportedDescription: "Choose a reasoning effort supported by this model and agent, or clear the option.",
     modelUnloadedTitle: 'Model is not loaded',
     modelUnloadedDescription:
       'Load the model on the selected machine, then try again.',
@@ -7043,6 +7189,23 @@ const enSettingsProviders = {
     invalidModelIds: ({ ids }: { ids: string }) =>
       `These model IDs are invalid: ${ids}`,
     noNewModels: 'No new model IDs to add.',
+    reasoningEffort: 'Reasoning effort',
+    reasoningEffortDescription:
+      'The levels these models support. Leave all off if you are not sure.',
+    reasoningEffortSummary: ({ levels }: { levels: string }) =>
+      `Reasoning effort: ${levels}`,
+    editEffort: 'Edit reasoning effort',
+    editEffortHelp: ({ model }: { model: string }) =>
+      `Choose the levels ${model} supports.`,
+    generationSettings: 'Generation settings',
+    generationHelp: ({ model }: { model: string }) => `Settings that apply only to ${model}.`,
+    outputAllowance: 'Output allowance',
+    outputAllowancePlaceholder: 'Tokens',
+    outputAllowanceSaved: ({ tokens }: { tokens: string }) => `Saved: ${tokens} tokens per reply.`,
+    outputAllowanceUnsetForEditor: 'Not set. AI suggestions in the editor skip this model until it has one.',
+    outputAllowanceClear: 'Clear',
+    outputAllowanceInvalid: 'Enter a whole number of tokens above zero.',
+    outputAllowanceTooLarge: 'This model can’t write that many tokens per reply.',
     providerManagedTitle: 'Models are managed by this provider',
     providerManagedDescription:
       'Refresh the provider catalog to update this list. Manual model IDs are not supported.',
@@ -7098,7 +7261,6 @@ const enSettingsAgents = {
     idDerivedDescription:
       'Made from the name. Sessions use it to find this agent.',
     idFixedDescription: 'Fixed once saved: sessions use it to find this agent.',
-    idPending: 'Made from the name',
     shortNameTitle: 'Short name',
     shortNameDescription: 'A compact name, unique among your custom agents.',
     descriptionTitle: 'Description',
@@ -7107,6 +7269,9 @@ const enSettingsAgents = {
     launchSectionDescription:
       'What Happier runs on a machine to start the agent.',
     commandTitle: 'Command',
+    commandFound: 'Command found',
+    commandMissing: 'Command not found',
+    commandCheckDescription: 'Check this command before saving. Nothing is installed or saved by the check.',
     argsTitle: 'Arguments',
     argsDescription: 'Passed to the command in this order.',
     argumentLabel: ({ position }: { position: number }) =>
@@ -7866,6 +8031,8 @@ const enInstrument = {
 
 const enSettingsAppearance = {
   ...paneArrangementTranslations['en'],
+  needsYouHighlight: needsYouHighlightTranslations['en'],
+  workingIndicator: workingIndicatorTranslations['en'],
   pageDescription: 'Theme, text, layout and motion.',
   themesSummary: ({ light, dark }: { light: string; dark: string }) =>
     `Light uses ${light} · Dark uses ${dark}`,
@@ -7889,6 +8056,8 @@ const enSettingsAppearance = {
   resetConfirmBody:
     'Theme, text, layout, motion, avatar and tab bar preferences return to their defaults. Your custom themes are kept.',
   tabBarAppearance: {
+    sideRailTitle: "Tabs in side rail",
+    sideRailSubtitle: "Turn off to use Happier's tab bar and its swipe gestures.",
     title: 'Tab bar',
     footer: 'Customize the bottom tab bar.',
     showLabels: 'Show tab labels',
@@ -8080,11 +8249,23 @@ const enSettingsAppearance = {
   loadingIndicatorSpeedUnavailable:
     'The Classic Ring turns at its own fixed pace.',
   avatarStyle: 'Avatar style',
+  homeBotFaces: "Bot faces on Home",
+  homeBotFacesDescription: "On a phone, a row of your Bots' faces at the top of Home. Tap one to open it.",
   avatarStyleDescription: 'Choose session avatar appearance',
+  botFaceStyle: "Bots",
+  botFaceStyleDescription: "Choose the default Bot face style",
+  botMotion: "Bot motion",
+  botMotionDescriptions: {
+    lively: "Bots move while idle and react to activity. System Reduce motion always applies.",
+    reactions: "Bots react to activity without idle movement. System Reduce motion always applies.",
+    still: "Bots stay still.",
+  },
+  botMotionOptions: { lively: "Lively", reactions: "Reactions only", still: "Still" },
   avatarOptions: {
     pixelated: 'Pixelated',
     gradient: 'Gradient',
     brutalist: 'Brutalist',
+    planet: "Planet",
   },
   showFlavorIcons: 'Agent icon on avatars',
   showFlavorIconsDescription: 'Show the agent’s logo on each session avatar.',
@@ -8134,6 +8315,14 @@ const enSettingsAppearance = {
 const enSettingsFeatures = {
   deployments: "Deployments",
   bots: "Bots",
+  browser: "Browser",
+  search: "Search",
+  discussions: "Discussions",
+  board: "Board",
+  following: "Following",
+  teams: "Teams",
+  localDiscovery: "Local provider discovery",
+  devices: "Devices",
   featureOptOutSubtitle: "Show this feature and allow new work. Work already started continues.",
   // Features settings screen
   experiments: 'Experiments',
@@ -8152,7 +8341,7 @@ const enSettingsFeatures = {
   featureDiagnostics: {
     title: 'Feature diagnostics',
     footer:
-      'Resolved feature decisions (build policy, local policy, daemon/server probes, and scope).',
+      'Resolved feature decisions (build policy, local policy, daemon/Home probes, and scope).',
     decisionUnknown: 'unknown',
     decisionEnabled: 'enabled',
     decisionBlocked: ({
@@ -8165,15 +8354,12 @@ const enSettingsFeatures = {
       code: string;
     }) => `${state} (blockedBy=${blockedBy ?? 'null'}, code=${code})`,
   },
-  expAutomations: 'Automations',
+  expAutomations: 'Workflows',
   expAutomationsSubtitle:
     'Run workflows on a schedule or when something happens.',
   expExecutionRuns: 'Subagents',
   expExecutionRunsSubtitle:
     'Enable Subagents (reviews / delegation) control plane surfaces',
-  expAttachmentsUploads: 'Attachment uploads',
-  expAttachmentsUploadsSubtitle:
-    'Enable file/image uploads so the agent can read them from disk',
   expUsageReporting: 'Usage reporting',
   expUsageReportingSubtitle: 'Enable usage and token reporting screens',
   expScmOperations: 'Source control operations',
@@ -8286,12 +8472,13 @@ const enSettingsFeatures = {
 
 const enErrors = {
   networkError: 'Network error occurred',
-  serverError: 'Server error occurred',
+  serverError: 'Home error occurred',
   unknownError: 'An unknown error occurred',
   connectionTimeout: 'Connection timed out',
   authenticationFailed: 'Authentication failed',
   permissionDenied: 'Permission denied',
   machineAdminAccessRequired: 'Set up administrator access for this machine, then try adding the domain again.',
+  machineNetworkReviewRequired: "Review this machine’s Network settings, then try adding the domain again.",
   machineManagedCliUnavailable: "Install or update Happier on this machine, then try adding the domain again.",
   machineNativeProtocolInvalid: "This machine’s elevated helper returned an invalid or missing response. Update or repair its managed Happier CLI, then retry.",
   machineNativeCheckUnavailable: "A native prerequisite could not be checked. Review this machine’s setup diagnostics, resolve the unavailable prerequisite, then retry.",
@@ -8306,7 +8493,7 @@ const enErrors = {
   invalidFormat: 'Invalid format',
   operationFailed: 'Operation failed',
   signupDisabled:
-    'This server has new account sign-ups disabled. Sign in with an existing account, or ask the server admin to enable sign-ups.',
+    'This Home has new account sign-ups disabled. Sign in with an existing account, or ask the Home admin to enable sign-ups.',
   accountDisabled: ({ home }: { home: string }) =>
     `This account is disabled on ${home}. Contact a Home administrator.`,
   homeIdentityMismatch: ({ home }: { home: string }) =>
@@ -8326,7 +8513,11 @@ const enErrors = {
   connectedAccountsUnavailable: 'Your connected accounts aren’t available right now. Check your connection and try again.',
   daemonUnavailableTitle: 'Daemon unavailable',
   daemonUnavailableBody:
-    'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
+    'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the Home.',
+  agentIsolationMemberSetupAskManager: "Ask a Machine manager to set up separate users for you.",
+  agentIsolationMemberSetupOpenSecurity: "Open this Machine’s Security page to inspect separate-user setup for you.",
+  agentIsolationUnavailable:
+    'Agent isolation isn’t ready on this machine. Ask the machine owner to check its setup, then try again.',
   tryAgain: 'Please try again',
   permissionAnswerUnconfirmed: 'Answer sent, but we couldn’t confirm it arrived. This clears once the agent settles the request.',
   permissionCheckAgain: 'Check again',
@@ -8390,6 +8581,8 @@ const enErrors = {
   failedToRejectRequest: 'Failed to reject friend request',
   failedToRemoveFriend: 'Failed to remove friend',
   searchFailed: 'Search failed. Please try again.',
+  scmOutcomeUnknown: 'Happier couldn’t confirm whether this finished. Refresh and check before trying again.',
+  scmMessageOutcomeUnknown: 'Happier couldn’t confirm your message was sent. Your draft is kept. Check the conversation before sending it again.',
   workspaceFolderMissing: 'This folder no longer exists on the machine. Choose another folder.',
   failedToSendRequest: 'Failed to send friend request',
   failedToResumeSession: 'Failed to resume session',
@@ -8417,9 +8610,9 @@ const enErrors = {
 
 const enCliAcquisitionProgress = {
   blockedCliUnavailableStatus:
-    'Happier couldn’t start its command line on this computer.',
+    'Happier couldn’t start its command line on this machine.',
   blockedCliFailedStatus:
-    'Happier couldn’t finish reading this computer’s setup.',
+    'Happier couldn’t finish reading this machine’s setup.',
   acquisitionResolvingReleaseStatus:
     'Finding the Happier command line release.',
   acquisitionDownloadingStatus: 'Downloading the Happier command line.',
@@ -8545,14 +8738,15 @@ const enNewSession = {
   selectMachineDescription: 'Choose where this session runs.',
   selectPathTitle: 'Select path',
   selectWorkingDirectoryTitle: 'Select working directory',
-  recipeComposerTitle: "Session recipe",
-  recipeComposerSubmit: "Use recipe",
+  recipeComposerTitle: "Where should it run?",
+  recipeComposerSubmit: "Use this setup",
   recipeComposerMachine: "Machine",
   recipeComposerMachineNotReady: "Offline or not set up for sessions right now. The recipe keeps this Machine.",
   recipeComposerFolderRetained: "Kept as saved. This folder can't be loaded here right now.",
   recipeComposerDirectory: "Working directory",
   profileUnavailableTurnedOff: "Profiles are off. Turn them on in Settings → Features to choose one.",
   profileUnavailableNoneYet: "No profiles yet. Add one in Settings → Profiles to choose it here.",
+  chooseAgentFirst: "Choose an agent to set these.",
   selectWorkingDirectoryDescription:
     'Pick the folder used for commands and context.',
   selectPermissionModeTitle: 'Select permission mode',
@@ -8654,6 +8848,10 @@ const enNewSession = {
   launchApprovalTitle: 'Create session',
   launchApprovalBody:
     'Waiting for your approval. The session starts once it’s approved, and your message stays here.',
+  requesterFoldersChecking: 'Checking your folders on this machine…',
+  requesterFoldersFailed: 'Couldn’t check your folders on this machine.',
+  requesterFoldersHint:
+    'Start in your workspace or home folder on this machine. The owner’s private home may not be open to you.',
   initialInputNotConfirmedTitle: 'Check your first message',
   initialInputRejectedTitle: 'Your first message wasn’t sent',
   initialInputNotConfirmed:
@@ -9096,6 +9294,8 @@ const enSession = {
   homeFreshness: sessionHomeFreshnessTranslations['en'],
   embedded: sessionEmbeddedTranslations['en'],
   providerBinding: {
+    modelChangeUnavailableTitle: 'Couldn’t change model',
+    modelChangeUnavailableBody: 'The session couldn’t apply this change. Your draft is safe. Choose the model again to retry.',
     launchDefaultLabel: ({ provider }: { provider: string }) =>
       `Provider: ${provider}`,
     launchNamedLabel: ({
@@ -9279,6 +9479,7 @@ const enSession = {
         'This goal has reached its token budget. Remove the budget to continue.',
       removeBudgetAndResume: 'Remove budget and continue',
       statusInterrupted: 'Interrupted',
+      statusBlocked: 'Blocked',
       tokenBudget: 'Token budget',
       budgetProgress: ({ used, budget }: { used: string; budget: string }) =>
         `${used} / ${budget}`,
@@ -9421,17 +9622,22 @@ const enSession = {
     confirmAction: 'Restart anyway',
   },
   startFailure: {
+    requestId: ({ id }: { id: string }) => `Request ID: ${id}`,
     title: 'Couldn’t start this session',
     cause: {
       agent_startup_rpc_rejected: 'Agent startup was rejected by its native API.',
       agent_startup_transport_failed: 'Agent startup transport failed.',
       agent_startup_invalid_state: 'Agent startup encountered invalid local runtime state.',
+      agent_startup_model_reconciliation_failed: 'The selected model could not be applied during startup. Review the model selection, then retry the session.',
       agent_startup_failed: 'Agent startup failed.',
       AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing.',
       codex_refresh_free_auth_unsupported: 'Agent startup authentication is unavailable.',
+      codex_refresh_bridge_unavailable: "Agent sign-in is unavailable on this machine. Reconnect or update Happier on the machine.",
+      codex_experimental_api_unavailable: "This Agent version does not support the required sign-in API. Update the Agent on the machine.",
       plugin_services_managed_provider_authority_unavailable: 'Access to the shared provider is unavailable. Check the Gateway and its machine connection, then retry the session.',
       provider_endpoint_unavailable: 'The provider endpoint is unavailable. Check the Gateway and its machine connection, then retry the session.',
       plugin_mcp_preparation_unavailable: 'Plugin MCP preparation is unavailable. Check the target machine, then retry the session.',
+      project_environment_binding_unavailable: 'Required Project environment bindings are unavailable. Review the Project variables and selected profile, then retry the session.',
       agent_cli_not_runnable: "This Agent cannot run as this member. Install its Happier-managed runtime.",
       agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
       plugin_disabled: "This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.",
@@ -9442,9 +9648,26 @@ const enSession = {
       skills_unavailable: 'Skill delivery is unavailable. Check the target machine, then retry the session.',
       team_credential_provider_selection_not_current: 'The selected Team provider is unavailable. Review the Team model selection, then retry the session.',
       team_credential_model_selection_required: 'Choose a Team model before starting this session.',
+      connected_account_purpose_catalog_unavailable: "Default Connected Accounts are temporarily unavailable. Retry starting the session.",
+      connected_services_default_settings_invalid: "Default Connected Account settings are invalid. Review Connected Accounts, then retry starting the session.",
+      permission_denied: "Access to this operation is not allowed. Check your permissions.",
+      admission_unavailable: "The request could not be authorized. Check access before retrying.",
+      controller_unavailable: "The control machine is unavailable. Check its connection before retrying.",
+      controller_retired: "The control machine is no longer active for this operation. Review the machine setup.",
+      credential_unavailable: "The selected credential is unavailable. Review the credential before retrying.",
+      provider_unavailable: "The selected provider is unavailable. Review the provider before retrying.",
+      request_conflict: "The request conflicts with the saved operation. Check its status before retrying.",
+      intent_changed: "The requested operation is no longer current. Review the machine state before retrying.",
+      managed_not_found: "The managed machine could not be found. Review the selected machine.",
+      enrollment_retired: "The machine enrollment is no longer active. Review the machine setup.",
+      resource_mismatch: "The request does not match the current resource. Review the selection before retrying.",
       action_outcome_unknown: "The external operation could not be confirmed. Check its status before retrying.",
       teamCredential: 'The shared Team credential refused the request.',
     },
+  },
+  agentAuthRequired: {
+    message: ({ agent }: { agent: string }) => `Sign in to ${agent} or choose a ${agent} account.`,
+    action: 'Sign in or choose account',
   },
   staleRunner: {
     banner: {
@@ -9749,7 +9972,7 @@ const enSession = {
   machineOfflineCannotResume:
     'Machine is offline. Bring it online to resume this session.',
   openRuns: 'Open session runs',
-  openAutomations: 'Open session automations',
+  openAutomations: 'Open session workflows',
   openSubagents: ({ count }: { count: number }) =>
     count > 0 ? `Open agents (${count})` : 'Open agents',
   participants: {
@@ -10019,10 +10242,12 @@ const enSession = {
     indicator: ({ count }: { count: number }) => `${count} queued`,
     badgeLabel: ({ count }: { count: number }) =>
       count > 0 ? `Queued (+${count})` : 'Queued',
+    updatesWaiting: ({ count }: { count: number }) => count === 1 ? '1 update waiting for the next turn' : `${count} updates waiting for the next turn`,
     deliveryStatus: {
       blocked: 'Blocked',
       delivering: 'Delivering',
       queuedInClaude: 'Queued in Claude',
+      notStarted: 'Didn’t start',
       nextTurn: 'Waiting for the next turn',
     },
     queuedReasons: {
@@ -10112,6 +10337,7 @@ const enSession = {
       sendToAgentNow: 'Send to agent now',
       sendNowInterrupt: 'Send now (interrupt)',
       retryDelivery: 'Retry',
+      openDraft: 'Open draft',
       interruptAndRunNow: 'Interrupt and run now',
       markHandled: 'Mark handled',
       continueWaiting: 'Continue waiting',
@@ -10338,6 +10564,7 @@ const enUniversalSearch = {
   sessionInventoryLoading: 'Still loading sessions…',
   searchingGroup: 'Searching…',
   groupFailed: ({ group }: { group: string }) => `Couldn’t search ${group}.`,
+  machineNotAnswering: ({ machine }: { machine: string }) => `${machine} isn’t answering. Search there again when it’s back.`,
   textUnavailableOnMachine: ({ machine }: { machine: string }) => `Text search isn’t available on ${machine}. Update Happier there, then retry.`,
   commitsUnavailableOnMachine: ({ machine }: { machine: string }) => `Commit search isn’t available on ${machine}. Check that Git is installed there, then retry.`,
   thisMachine: 'this machine',
@@ -10383,6 +10610,7 @@ const enCommandPalette = {
     sessionFallbackSubtitle: 'Switch to session',
     sessionRequiredTitle: 'Session required',
     sessionRequiredBody: 'Open a session first so this command can target it.',
+    openNotchTitle: "Open the notch",
     startReviewRunTitle: 'Start review run',
     startPlanRunTitle: 'Start plan run',
     startDelegationRunTitle: 'Start delegation run',
@@ -10662,16 +10890,16 @@ const enServer = {
     'If you’re self-hosting: configure your Home first, then sign in (or create an account), then connect your terminal.',
   renameServer: 'Rename Home',
   renameServerPrompt: 'Enter a new name for this Home.',
-  renameServerGroup: 'Rename Home group',
-  renameServerGroupPrompt: 'Enter a new name for this Home group.',
+  renameServerGroup: 'Rename Home set',
+  renameServerGroupPrompt: 'Enter a new name for this Home set.',
   serverNamePlaceholder: 'Home name',
   cannotRenameCloud: 'You can’t rename the cloud Home.',
   removeServer: 'Remove Home',
   removeServerConfirm: ({ name }: { name: string }) =>
     `Remove "${name}" from this device? This deletes this Home’s saved credentials from this device.`,
-  removeServerGroup: 'Remove Home group',
+  removeServerGroup: 'Remove Home set',
   removeServerGroupConfirm: ({ name }: { name: string }) =>
-    `Remove "${name}" from saved Home groups?`,
+    `Remove "${name}" from saved Home sets?`,
   cannotRemoveCloud: 'You can’t remove the cloud Home.',
   signOutThisServer: 'Also sign out from this Home?',
   signOutThisServerPrompt:
@@ -10699,13 +10927,13 @@ const enServer = {
   insecureHttpUrlTitle: 'Insecure Home address',
   insecureHttpUrlBody:
     'This URL uses http:// and may not work from your phone or outside your LAN. Use HTTPS if possible. Continue anyway?',
-  addServerGroupTitle: 'Add Home group',
-  addServerGroupSubtitle: 'Create a reusable group of Homes',
-  serverGroupNameLabel: 'Home group name',
-  serverGroupNamePlaceholder: 'My Home group',
+  addServerGroupTitle: 'Add Home set',
+  addServerGroupSubtitle: 'Create a reusable set of Homes',
+  serverGroupNameLabel: 'Home set name',
+  serverGroupNamePlaceholder: 'My Home set',
   serverGroupServersLabel: 'Homes',
-  saveServerGroup: 'Save group',
-  serverGroupMustHaveServer: 'A Home group must include at least one Home.',
+  saveServerGroup: 'Save set',
+  serverGroupMustHaveServer: 'A Home set must include at least one Home.',
   relayDrift: {
     progressTitle: 'Connecting background service to this Home',
     progressStepPrepare: 'Prepare background service',
@@ -10760,8 +10988,8 @@ const enServer = {
     authPairingSessions: 'Auth pairing sessions',
     repeatKeys: 'Repeat keys',
     globalLocks: 'Global locks',
-    automationRuns: 'Automation runs',
-    automationRunEvents: 'Automation run events',
+    automationRuns: 'Workflow runs',
+    automationRunEvents: 'Workflow run events',
     homeAdministrationEvents: 'Activity (this Home’s audit)',
   },
   multiServerView: {
@@ -10772,10 +11000,10 @@ const enServer = {
       flatDescription: 'Each session shows its Home as a badge.',
       groupedDescription: 'Each Home gets its own section.',
     },
-    editMembersAction: 'Edit Homes in this group',
-    title: 'Homes in this view',
+    editMembersAction: 'Edit Homes in this set',
+    title: 'Homes in this set',
     footer:
-      'Choose how these Homes appear in your session list, and which of them belong to this group.',
+      'Choose how these Homes appear in your session list, and which of them belong to this set.',
     presentationTitle: 'Presentation mode',
     presentation: {
       flatWithBadges: 'Flat list with Home badges',
@@ -10788,7 +11016,7 @@ const enServer = {
     tailscale: {
       title: 'This Home uses Tailscale',
       desktopBody:
-        'This computer could not reach the Home over Tailscale. Tailscale may not be installed, signed in, or connected to the right tailnet on this computer.',
+        'This machine could not reach the Home over Tailscale. Tailscale may not be installed, signed in, or connected to the right tailnet on this machine.',
       webBody:
         'This browser could not reach the Home over Tailscale. Open Tailscale on this device, make sure it is connected to the right tailnet, then retry.',
       nativeBody:
@@ -10810,9 +11038,22 @@ const enSessionTags = {
 };
 
 const enSessionsList = {
+  lockedSection: 'Locked section',
+  unavailableSection: 'Unavailable section',
   reminders: sessionReminderTranslations['en'],
+  appearance: {
+    setColor: 'Set color',
+    customColor: 'Custom color…',
+    customColorTitle: 'Custom color',
+    customColorMessage: 'Pick a shade or enter a hex value.',
+    invalidColor: 'Use a hex value like #3A7BD5.',
+    removeColor: 'Remove color',
+    inheritedFromProject: 'From the project',
+    customColorLabel: ({ hex }: { hex: string }) => `Custom color ${hex}`,
+    colors: { blue: 'Blue', green: 'Green', orange: 'Orange', yellow: 'Yellow', red: 'Red', indigo: 'Indigo', purple: 'Purple' },
+  },
   ...sessionListFilterTranslations.en,
-  serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
+  serverHeader: ({ server }: { server: string }) => `Home: ${server}`,
   storagePersistedTab: 'Happier',
   storageAllFilter: 'All',
   storageFilterCategory: 'Sessions',
@@ -10853,14 +11094,43 @@ const enSessionsList = {
   clearFolderFocus: 'Clear folder focus',
   folderViewTree: 'Folder view',
   folderViewOff: 'Hide folders',
-  moveToFolder: 'Move to folder',
-  moveToWorkspaceRoot: 'Workspace root',
+  moveToFolder: "Move to section",
+  moveToWorkspaceRoot: "Back to project",
   sectionsMenuTitle: "Sections",
   newSectionEllipsis: "New section…",
   moveToProjectNamed: ({ project }: { project: string }) => `Back to ${project}`,
+  sectionDropHintTouch: "Move sessions here",
+  sectionMembersOutsideView: ({ count }: { count: number }) => `${count} ${count === 1 ? "session outside this view" : "sessions outside this view"}`,
+  sectionMovedTo: ({ section }: { section: string }) => `Moved this session to ${section}`,
+  sectionMovedBack: "Moved this session back to its project",
+  sectionMoveUndo: "Undo",
+  sectionMoveUndone: "Undone",
+  sectionMoveChangedSince: "This session has moved since. Nothing was changed.",
+  sectionMoveUndoFailed: "Couldn’t undo the move",
   sectionTitle: "Section",
+  noSection: "No section",
   newSection: "New section",
   sectionNamePlaceholder: "Section name",
+  sectionCreateFailed: "Couldn’t create this section. Press Enter to try again.",
+  sectionChangeIcon: "Change icon",
+  sectionIcons: {
+      list: "Lines",
+      rocket: "Rocket",
+      eye: "Eye",
+      star: "Star",
+      flag: "Flag",
+      bug: "Bug",
+      lightning: "Lightning",
+      target: "Target",
+      flask: "Flask",
+      book: "Book",
+      heart: "Heart",
+      sparkle: "Sparkle",
+  },
+  sectionNewSessionHere: "New session here",
+  removeSection: "Remove section",
+  removeSectionDetail: "Sessions return to their projects",
+  sectionArchiveAll: "Archive all in section",
   sectionArchivePartialTitle: "Some sessions weren’t archived",
   sectionArchivePartial: ({ archived, total }: { archived: number; total: number }) => `Archived ${archived} of ${total}. The others stay in this section. Check them before trying again.`,
   sectionArchiveNeedsStop: ({ archived, total }: { archived: number; total: number }) => `Archived ${archived} of ${total}. Open the remaining sessions and make sure they have stopped before archiving them.`,
@@ -10869,11 +11139,12 @@ const enSessionsList = {
   removeSectionConfirmDescription: "Sessions return to their projects. Nothing is deleted.",
   removeNestedSectionConfirmDescription: ({ parent }: { parent: string }) => `Its sessions and sections move to ${parent}. Nothing is deleted.`,
   removeSectionConfirm: "Remove",
+  sectionDropHint: "Drag sessions here",
   sessionFallbackLabel: 'Session',
   moveSheetTitle: ({ item }: { item: string }) => 'Move ' + item,
   moveSheetDestinationLabel: 'Destination',
   moveSheetSubmit: 'Move',
-  moveSheetSearchPlaceholder: 'Search folders...',
+  moveSheetSearchPlaceholder: 'Search sections…',
   moveSheetEmpty: 'No move targets available',
   moveSheetDestinations: 'Destinations',
   moveSheetDisabledDescendant: 'Cannot move into itself or a child folder.',
@@ -11033,6 +11304,7 @@ const enSessionInfo = {
   stopSession: 'Stop session',
   stopSessionConfirm: 'Are you sure you want to stop this session?',
   sessionStopped: "Session stopped",
+  stopSessionHoldFailed: 'Couldn’t save the hold until Resume. Try Stop again before sending another message.',
   stopSessionControlUnavailable:
     'Happier could not reach the session controls. Make sure the session machine and daemon are online, then try again.',
   archiveSession: 'Archive session',
@@ -11085,6 +11357,9 @@ const enSessionInfo = {
   metadataCopied: 'Metadata copied to clipboard',
   failedToCopyMetadata: 'Failed to copy metadata',
   copyDebugInformation: 'Copy information',
+  sessionInformation: "Session information",
+  happierSessionId: "Happier Session ID",
+  providerSessionId: ({ provider }: { provider: string }) => `${provider} Session ID`,
   debugInformationCopyLabel: 'Information',
   providerSessionLogs: ({ provider }: { provider: string }) =>
     `${provider} session logs`,
@@ -11105,7 +11380,7 @@ const enSessionInfo = {
   removeFromAttention: 'Remove from Needs attention',
   removeFromAttentionSubtitle: 'Let it move down the list again when read',
   executionRunsSubtitle: 'See Subagents for this session',
-  automationsTitle: 'Automations',
+  automationsTitle: 'Workflows',
   automationsSubtitle:
     'Run work in this session on a schedule, an event, or when a turn finishes',
   viewSessionLogTitle: 'View session log',
@@ -11176,12 +11451,14 @@ const enSessionInfo = {
   renameSession: 'Rename session',
   renameSessionSubtitle: 'Change the display name for this session',
   renameSessionPlaceholder: 'Enter session name...',
+  cancelRenameSession: 'Cancel renaming',
   forkSession: 'Fork session',
   forkSessionSubtitle: 'Create a new session from the latest context',
   newSessionSameSetup: 'New session with same setup',
   newSessionSameSetupSubtitle:
     'Reuse this session’s machine, folder, engine, model, and session options.',
   failedToRenameSession: 'Failed to rename session',
+  renameWaitingForApproval: 'Waiting for your approval to rename',
   failedToMarkSessionRead: 'Failed to mark session as read',
   failedToMarkSessionUnread: 'Failed to mark session as unread',
   sessionRenamed: 'Session renamed successfully',
@@ -11189,6 +11466,7 @@ const enSessionInfo = {
 
 const enWorkspacePresentation = {
   homeFolder: 'Home folder',
+  memberWorkspace: 'Your workspace',
   checkoutKinds: {
     primary: 'Primary checkout',
     git_worktree: 'Git worktree',
@@ -11225,7 +11503,7 @@ const enComponents = {
       'Start a new session on any of your connected machines.',
     startNewSessionButton: 'Start New Session',
     openTerminalToStart:
-      'Open a new terminal on your computer to start session.',
+      'Open a new terminal on your machine to start session.',
   },
 };
 
@@ -11247,8 +11525,12 @@ const enZen = {
 };
 
 const enAgentInput = {
+    keepKeyboard: { label: "Keep keyboard open after sending" },
+    historyPosition: ({ index, total }: { index: number; total: number }) => `${index} of ${total}`,
     sendOptions: {
         title: "Send options",
+        sendAndStartAnother: "Send and start another",
+        sendAndOpen: "Send and open session",
         queue: "Queue",
         hint: "Hold to choose how to send",
     },
@@ -11291,8 +11573,7 @@ const enAgentInput = {
     title: 'Agent is busy',
     modeChangeMessage:
       "Changing the permission mode can't be applied to the running turn.",
-    providerConfigMessage:
-      "Changing this provider setting can't be applied to the running turn.",
+    providerConfigMessage: "This message can’t join the running turn.",
     specialCommandMessage: "This command can't run during the active turn.",
     interruptAndSend: 'Interrupt & send now',
     applySettingAndSteer: 'Apply setting & steer now',
@@ -11334,8 +11615,8 @@ const enAgentInput = {
     },
   },
   envVars: {
-    title: 'Env Vars',
-    titleWithCount: ({ count }: { count: number }) => `Env Vars (${count})`,
+    title: 'Environment variables',
+    titleWithCount: ({ count }: { count: number }) => `Environment variables (${count})`,
   },
   resumeChip: {
     withId: ({ title, id }: { title: string; id: string }) => `${title}: ${id}`,
@@ -11554,7 +11835,6 @@ const enAgentInput = {
     sectionTitle: 'Profile',
   },
   runOn: "Run on…",
-  noMachinesAvailable: 'No machines',
 };
 
 const enMachineLauncher = {
@@ -11803,6 +12083,8 @@ const enTools = {
         'Answer the dialog where the agent is asking, in its own terminal.',
     },
     submit: 'Submit answer',
+    dismiss: 'Dismiss question',
+    dismissed: 'Question dismissed',
     multipleQuestions: ({ count }: { count: number }) => `${count} questions`,
     other: 'Other',
     otherDescription: 'Type your own answer',
@@ -11920,6 +12202,12 @@ const enFiles = {
       copyPath: 'Copy path',
       download: 'Download',
       downloadAsZip: 'Download as zip',
+      deleteFileConsequence: 'Removes the file.',
+      deleteFolderConsequence: 'Removes the folder and everything in it.',
+      renameEllipsis: "Rename…",
+      deleteEllipsis: "Delete…",
+      newFolderEllipsis: "New folder…",
+      uploadFilesEllipsis: "Upload files…",
       openWith: 'Open with',
       share: 'Share',
     },
@@ -12412,6 +12700,7 @@ const enFiles = {
     checkpointTurnView: 'Checkpoint turn',
   },
   transfers: {
+    uploadUnavailable: 'File transfer is unavailable. Reconnect this session or ask its owner to check the machine.',
     preparingUpload: ({ count }: { count: number }) =>
       `Preparing upload (${count} files)…`,
     uploading: ({
@@ -12439,6 +12728,9 @@ const enFiles = {
         carrierUnavailable: 'No transfer connection available',
         carrierInterrupted: 'Transfer connection interrupted',
         declined: "Not approved",
+        accessRefused: "Your access doesn’t include this · ask the owner for access",
+        teamSignIn: "Sign in to your team again, then retry",
+        updateRequired: ({ machine }: { machine: string }) => `${machine} needs a Happier update`,
         tooLarge: "Too large to upload",
         unconfirmed: "Not sure it finished · check the folder",
         other: ({ machine }: { machine: string }) => `${machine} couldn’t take it`,
@@ -12776,6 +13068,7 @@ const enLocalServices = {
     checkAgain: 'Check again',
     addService: 'Add a service',
     sectionRunning: 'Running',
+    sectionFailed: 'Couldn’t start',
     sectionReady: 'Ready to start',
     sectionElsewhereOn: ({ machine }: { machine: string }) =>
       `Elsewhere on ${machine}`,
@@ -12785,10 +13078,12 @@ const enLocalServices = {
     emptyTitle: 'Preview what you’re building',
     emptyReason:
       'Dev servers started in this workspace show up here, with a link that also opens on your phone.',
+    emptyReasonMachine: "Dev servers started on this machine show up here, with a link that also opens on your phone.",
     copyAddress: 'Copy address',
     publicLinkTitle: 'Public link',
     publicLinkScanHint: 'Scan it to open it on your phone.',
     purpose: 'Long-running services for this checkout: open them, share them, choose where they run.',
+    purposeMachine: 'Long-running services on this machine: open them, share them, choose where they run.',
     backToServices: 'Back to services',
   },
   effectReview: {
@@ -12814,7 +13109,6 @@ const enLocalServices = {
     startedByOn: ({ name, machine }: { name: string; machine: string }) => `Started by ${name} on ${machine}`,
     waitingAddress: 'Started. Waiting for an address.',
     noAddress: 'No address',
-    failed: 'Service could not start.',
     reviewOutput: 'Review output',
     address: 'Address',
     addressOpensHere: 'Opens on this phone through Local services',
@@ -12929,29 +13223,29 @@ const enLocalServices = {
       dnsTlsUnavailable: 'Public previews are waiting for DNS/TLS to be ready.',
       expired: 'This public preview link has expired.',
       linkLifetimeUnconfigured:
-        'No public preview link lifetime is configured on the server.',
-      modeUnconfigured: 'No public preview mode is configured on the server.',
+        'No public preview link lifetime is configured on the Home.',
+      modeUnconfigured: 'No public preview mode is configured on the Home.',
       policyInvalid: 'Public preview policy is incomplete.',
       previewNotEligible:
         'This local preview is not eligible for a public link.',
       previewServerDisabled:
-        'Local service previews are turned off on the server.',
+        'Local service previews are turned off on the Home.',
       publicBaseUrlUnavailable: 'Public preview base URL is not configured.',
       rateLimitProfileUnconfigured:
-        'No public preview rate limit profile is configured on the server.',
+        'No public preview rate limit profile is configured on the Home.',
       rateLimitUnavailable: 'Public preview rate limiting is unavailable.',
       rateLimited: 'This public preview link is rate limited.',
       relayUnavailable: 'Public preview relay is unavailable.',
       revoked: 'This public preview link was revoked.',
       secretLinkUnavailable: 'Secret-link public previews are not configured.',
-      serverDisabled: 'Public previews are turned off on the server.',
+      serverDisabled: 'Public previews are turned off on the Home.',
       sessionNotAuthorized:
         'You do not have access to create a public link for this session.',
-      tunnelPortsUnconfigured: 'The server allows no tunnel ports.',
+      tunnelPortsUnconfigured: 'The Home allows no tunnel ports.',
       tunnelRelayDisabled:
-        'The server relay for machine tunnels is turned off.',
+        'The Home relay for machine tunnels is turned off.',
       tunnelSigningUnconfigured:
-        'The server has no signing key for machine tunnels.',
+        'The Home has no signing key for machine tunnels.',
     },
     createActionA11y: 'Create public preview link',
     shareCta: 'Share a link',
@@ -13096,6 +13390,8 @@ const enBrowserRecording = {
     cancel: 'Cancel recording',
   },
   failure: {
+    startTitle: 'Couldn’t start the recording',
+    startBody: 'Recording isn’t available for this view right now. Try again in a moment.',
     stopTitle: 'Couldn’t stop the recording',
     stopBody: 'It may still be recording. Try again in a moment.',
     discardTitle: 'Couldn’t discard the recording',
@@ -13103,11 +13399,30 @@ const enBrowserRecording = {
   },
   status: {
     noView: 'No browser view selected.',
+    turnedOff: 'Recording is turned off.',
+    notAllowed: 'Recording isn’t allowed here.',
     stoppedForPrivacy: 'Stopped for privacy',
   },
 };
 
 const enBrowserPresence = browserPresenceTranslations.en;
+
+const enPresentation = {
+  expandView: 'Expand view',
+  restoreView: 'Restore view',
+  dockView: 'Dock view',
+  floatView: 'Float view',
+  closeView: 'Close view',
+  moveView: 'Move view',
+  resizeView: 'Resize view',
+  moveTopLeft: 'Move to top left',
+  moveTopRight: 'Move to top right',
+  moveBottomLeft: 'Move to bottom left',
+  moveBottomRight: 'Move to bottom right',
+  larger: 'Larger',
+  smaller: 'Smaller',
+  viewOptions: 'View options',
+};
 
 const enComputerUse = computerUseTranslations.en;
 
@@ -13159,6 +13474,7 @@ const enBrowserLaunchpad = {
 };
 
 const enBrowserShell = {
+  viewport: { title: 'Device preview', fitViewer: 'Fit viewer' },
   address: {
     label: 'Browser address',
     placeholder: 'Enter URL',
@@ -13178,8 +13494,8 @@ const enBrowserShell = {
     stop: 'Stop',
     openNativeDevtools: 'Open native developer tools',
     reloadAfterCrash: 'Reload page',
-    historyUncontrollable: "This site doesn't let Happier control its history.",
-    stopUncontrollable: "This site doesn't let Happier stop the page loading.",
+    historyUncontrollable: 'This site doesn’t let Happier control its history.',
+    stopUncontrollable: 'This site doesn’t let Happier stop the page loading.',
   },
   tabs: {
     newTab: 'New tab',
@@ -13278,7 +13594,6 @@ const enBrowserShell = {
       app_bound_encryption: "Chrome on Windows locks some cookies to Chrome itself, so they can't be copied. Sign in to those sites in this browser instead.",
       partition_unsupported: "Firefox containers and partitioned cookies can't be copied. Sign in to those sites in this browser instead.",
     },
-    appBoundExplanation: "Chrome on Windows locks some cookies to Chrome itself, so they can't be copied. Sign in to those sites in this browser instead.",
     notInstalled: "Not installed on this Machine",
     status: { imported: "Imported", skipped: "Skipped", failed: "Couldn't import" },
     browsers: { firefox: "Firefox", chromium: "Chrome and Chromium", safari: "Safari" },
@@ -13287,7 +13602,7 @@ const enBrowserShell = {
       source_locked: "Close the source browser on that Machine and try again. If it asks for keychain access, allow it.",
       permission_denied: "You need Manage access to that Machine.",
       source_format_unsupported: "This format isn't supported.",
-      partition_unsupported: "Container and partitioned cookies aren't supported.",
+      partition_unsupported: "Container or partitioned cookie",
       expired: "Expired",
       destination_unavailable: "The destination browser isn't available any more.",
       profile_mismatch: "The page in view moved to another profile. Open it again and retry.",
@@ -13320,7 +13635,10 @@ const enBrowserShell = {
     }) => `${service} runs on ${machine}`,
     previewElsewhereTitleUnknownMachine: ({ service }: { service: string }) =>
       `${service} runs on another machine`,
-    previewElsewhere: `This device can’t open it directly. Share a link from Services to open it here.`,
+    previewElsewhere: `Private previews aren’t set up on this Home. Share a link from Services to open it here.`,
+    previewElsewhereSharingOff: `Private previews aren’t set up on this Home, and public links are turned off.`,
+    previewElsewhereNoRoute: `Private previews aren’t set up on this Home.`,
+    previewPrivateRouteTitle: `Private previews aren’t set up`,
     previewEndedTitle: `This preview has ended`,
     previewEnded: `Its service stopped sharing it, or the link was revoked. Open it again from Services.`,
     previewEndedLastPageDetail: ({ page }: { page: string }) => `Last page: ${page}`,
@@ -13331,13 +13649,16 @@ const enBrowserShell = {
     previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} stopped sharing it, or the link was revoked.`,
     previewEndedRunningNamed: ({ service }: { service: string }) => `${service} is running, so you can open it again here.`,
     openAgain: `Open again`,
+    startService: ({ service }: { service: string }) => `Start ${service}`,
+    startAgain: `Start again`,
     openServices: `Go to Services`,
+    previewPortNotAllowedTitle: `Port not shared`,
+    previewPortNotAllowed: `This machine’s sharing policy doesn’t allow this port.`,
+    previewPortNotAllowedAtPort: ({ port }: { port: number }) => `This machine’s sharing policy doesn’t allow port ${port}.`,
     previewTransportUnavailableTitle: `Can’t reach this preview`,
     previewTransportUnavailable: `The machine running it isn’t answering right now.`,
-    closeTab: `Close tab`,
     previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} isn’t answering for this preview right now.`,
-    startAgain: `Start again`,
-    startService: ({ service }: { service: string }) => `Start ${service}`,
+    closeTab: `Close tab`,
     desktopEngineUnavailable:
       'The in-app browser engine is unavailable on this machine.',
     desktopWebView:
@@ -13861,6 +14182,24 @@ const enSettingsActions = {
     '"Ask first" shows a confirmation before this action runs from that surface. "Allowed" lets the action run from that surface without an approval prompt.',
   sourceControlAsks: ({ setting }: { setting: string }) =>
     `Asks first because “${setting}” is on in Source Control settings.`,
+  loosening: {
+    title: 'Agents can now loosen their own limits',
+    body: 'With this allowed, an agent can change approval settings, administrator access and agent isolation without asking you, so it can loosen its other limits too.',
+    keepAskFirst: 'Keep Ask first',
+  },
+  scopedMachines: {
+    title: 'On specific machines',
+    description: 'For agents. A machine here overrides the setting above for this action only; Default follows it.',
+    default: 'Default',
+    othersFollow: 'Other machines follow the setting above.',
+    addMachine: 'Add machine',
+    noMachinesToAdd: 'Every machine already has its own setting.',
+    removedMachine: 'Removed machine',
+    removedMachineBody: 'It is no longer on your account, so this setting has no effect.',
+    remove: 'Remove',
+    looseningBody: ({ machine }: { machine: string }) =>
+        `On ${machine}, an agent can change this without asking you, so it can loosen its other limits too.`,
+  },
   contributed: {
     removedDescription:
       'This contributed action is no longer available from the selected machine. Its saved settings are retained.',
@@ -14010,9 +14349,7 @@ const enSettingsActions = {
     useDefault: 'Use default',
   },
   sections: {
-    app: 'In the app',
-    voice: 'Voice',
-    integrations: 'Integrations',
+    whoMayUseIt: 'Who may use it',
   },
   facts: actionSettingsResourcesTranslations.en.facts,
   families: {
@@ -14131,6 +14468,13 @@ const enSettingsActions = {
       subtitle:
         'Shown in contextual UI surfaces that do not have a dedicated placement.',
     },
+    foreign_session_html: {
+      title: 'HTML in other people’s Sessions',
+      subtitle: 'Allow agent-created HTML in Sessions you don’t own to use this Action. Off by default.',
+    },
+    foreign_session_html_resources: {
+      subtitle: 'Allow Resource reads and live updates from HTML in Sessions you don’t own. Off by default; approval prompts aren’t available.',
+    },
 
     voice: {
       title: 'Voice',
@@ -14140,6 +14484,7 @@ const enSettingsActions = {
 };
 
 const enWorkspaceSync = {
+  replace: {"action": "Replace link", "title": "Replace workspace sync link", "confirm": "This stops the current link and starts a new synchronization history with the selected mode and content policy. Files in both folders stay in place. Continue?"},
   title: 'Workspace sync',
   availableOn: 'Available on',
   addMachine: {
@@ -14156,26 +14501,7 @@ const enWorkspaceSync = {
   footer:
     'Status comes from the machine managing each link. Changes appear only after that machine confirms them.',
   legacyRecovery: {
-    title: 'Retired workspace sync data',
-    footer:
-      'Happier only inspects and quarantines this retired data. It never deletes it in the app.',
-    checking: 'Checking machines…',
-    inspectFailed:
-      'Some machines could not be checked. Previously found quarantine folders remain shown; retry when those machines are reachable.',
-    outdatedTitle: ({ machine }: { machine: string }) =>
-      `${machine} runs an older version of Happier`,
-    outdatedBody:
-      'That version cannot check for retired workspace sync data. Update Happier on that machine, then reinspect here.',
-    explanation:
-      'This machine contains data from the retired workspace replication engine. Happier moved the recognized data into a private quarantine and disabled workspace sync to prevent the retired engine from running.',
-    quarantinePath: 'Quarantine folder',
     openFolder: 'Open Folder',
-    offlineTitle: 'Remove it while Happier is offline',
-    offlineSteps: ({ path }: { path: string }) =>
-      `1. Stop every Happier daemon that can use this data.\n2. Remove exactly this folder using your operating system: ${path}\n3. Restart the daemons, then reinspect here.`,
-    unknown: ({ path, reason }: { path: string; reason: string }) =>
-      `Happier could not safely classify legacy state at ${path} (${reason}). Workspace sync remains disabled. Inspect this path manually; do not delete it from the app.`,
-    reinspect: 'Reinspect',
   },
   none: 'Not synced to another machine yet',
   emptyDescription:
@@ -14206,7 +14532,8 @@ const enWorkspaceSync = {
   },
   mode: {
     copyOnce: 'Copy once',
-    keepSynced: 'Keep updated — recommended',
+    keepSynced: 'Keep updated',
+    keepSyncedRecommended: 'Keep updated — recommended',
     mirrorExactly: 'Mirror exactly',
     keepBothInSync: 'Keep both in sync',
   },
@@ -14218,9 +14545,9 @@ const enWorkspaceSync = {
     paused: 'Paused',
     peerOffline: 'Offline',
     conflicted: 'Conflicts',
-    controllerUnavailable: 'Needs Attention',
-    engineUnavailable: 'Component Unavailable',
-    error: 'Needs Attention',
+    controllerUnavailable: 'Status unavailable',
+    engineUnavailable: 'Component unavailable',
+    error: 'Needs attention',
     stopped: 'Stopped',
     working: 'Working…',
   },
@@ -14276,11 +14603,12 @@ const enWorkspaceSync = {
     },
   },
   engine: {
-    checking: 'Checking workspace sync on this computer…',
+    checking: 'Checking workspace sync on this machine…',
   },
   actions: {
     refresh: 'Refresh status',
     syncNow: 'Sync now',
+    review: 'Review',
     more: 'Workspace Sync Actions',
     pause: 'Pause',
     resume: 'Resume',
@@ -14332,7 +14660,7 @@ const enWorkspaceSync = {
     inspectionUnavailable:
       'Could not inspect current versions. Refresh when the controller is reachable.',
     coverageIncomplete:
-      'Some links or endpoints have not been checked. Loaded conflicts remain visible; only explicitly reviewed, available versions can be resolved.',
+      'Some linked folders haven’t been checked yet, so this may not show every conflict. Only versions Happier has checked can be used.',
     versions: 'Versions',
     comparison: 'Compare selected versions',
     linkDecisions: 'Link selection',
@@ -14398,6 +14726,7 @@ const enWorkspaceSync = {
 const enSettingsSession = {
   pageDescription:
     'How new sessions start, what Happier remembers, and how the session list is organized.',
+  newSessionAfterSend: { title: "After sending", footer: "Choose what happens when you send from the new session composer. Hold Send to choose the other way for one message.", openTitle: "Open the session", openSubtitle: "Go to the session as soon as it starts.", startAnotherTitle: "Stay and start another", startAnotherSubtitle: "Keep it starting in the background and open a fresh draft." },
   newSessionDraftEntry: {
     title: 'New session drafts',
     footer:
@@ -14477,15 +14806,21 @@ const enSettingsSession = {
       'Use active color for every active connected session.',
     layoutTitle: 'Layout',
     layoutSubtitle:
-      'Arrange the one sessions list by project, recency, or activity.',
+      'Group sessions by project, or show one timeline.',
     layoutProjectsTitle: 'Projects',
     layoutRecentActivityTitle: 'Recent activity',
+    layoutProjectsSubtitle: 'Grouped by project, your order',
+    layoutRecentActivitySubtitle: 'One timeline, newest first',
     layoutActiveInactiveTitle: 'Active & inactive',
-    attentionPlacementTitle: 'Attention placement',
+    attentionPlacementTitle: "Needs you and Working",
     sectionsTitle: 'Sections',
-    placementInPlaceTitle: 'In place',
-    placementAtTopTitle: 'At top',
+    placementInPlaceTitle: "In their project only",
+    placementAtTopTitle: "At the top only",
     placementBothTitle: "At the top and in their project",
+    viewTitle: "View",
+    rowsTitle: "Rows",
+    leadingMarkTitle: "Leading mark",
+    densityMenuTitle: "Density",
     rowContextTitle: "Show where it runs",
     rowContextSubtitle: "Project, machine and branch, when they differ from the group",
     identityDisplayAutoTitle: "Auto",
@@ -14575,17 +14910,12 @@ const enSettingsSession = {
       'Show detected project favicons next to workspace names',
     workspaceFaviconsDisabledSubtitle:
       'Hide project favicons from workspace headers',
-    workspaceMachineSubtitlesTitle: 'Machine names',
-    workspaceMachineSubtitlesEnabledSubtitle:
-      'Show the machine name below workspace names when needed',
-    workspaceMachineSubtitlesDisabledSubtitle:
-      'Hide machine names from workspace headers',
+
+
+
 
     folderTreeView: 'Folder tree view',
-
-    layoutProjectsSubtitle: 'Grouped by project, your order',
-    layoutRecentActivitySubtitle: 'One timeline, newest first',
-},
+  },
   mobileWorkspaceExperience: {
     groupTitle: 'Mobile workspace',
     groupFooter: 'Controls how phone-sized session screens are organized.',
@@ -14614,9 +14944,9 @@ const enSettingsSession = {
       footer: 'Choose how new sessions start and which choices are remembered.',
     },
     listOrganization: {
-      title: 'Session list organization',
+      title: 'Session list',
       footer:
-        'Control ordering, grouping, sections, inactive sessions, and desktop pane defaults.',
+        'How the sidebar arranges your sessions. Sections and pins show in both views.',
     },
     rowDetails: {
       title: 'Session row details',
@@ -14668,6 +14998,8 @@ const enSettingsSession = {
     resetHiddenSubtitle: 'Clear the banners hidden on this device.',
   },
   inputBehavior: {
+      keepFocusTitle: "Keep composer focused after sending",
+      keepFocusSubtitle: "Stay in the message field so you can write the next message right away.",
     title: 'Input behavior',
     footer: 'Configure Enter-to-send and message history behavior.',
     enterToSendEnabledNativeSubtitle: 'Press Enter to send',
@@ -15211,7 +15543,7 @@ const enSettingsSession = {
       'Controls the route used when you open New Session.',
     presentationAutoTitle: 'Auto',
     presentationAutoSubtitle:
-      'Use the default modal presentation on each platform.',
+      'Same as Modal: New Session opens above the current page in each platform’s style.',
     presentationScreenTitle: 'Screen',
     presentationScreenSubtitle:
       'Open New Session in the main content area with the composer anchored at the bottom.',
@@ -16590,13 +16922,13 @@ const enSettingsVoice = {
         noToolsSubtitle: 'Should avoid tool requests and never run tools.',
       },
       chatModelSource: {
-        sessionSubtitle: 'Use the session model configuration for agent chat.',
-        customSubtitle: 'Override the voice agent chat model id.',
+        sessionSubtitle: "Answers with the session's model.",
+        customSubtitle: "Always answers with the model below.",
       },
       chatModelId: {
-        title: 'Voice agent chat model id',
+        title: "Chosen model",
         subtitle:
-          'Used when the voice agent chat model source is set to Custom model.',
+          "The Voice agent answers with this model.",
       },
       commitModelSource: {
         chatSubtitle: 'Use the agent chat model for commits.',
@@ -16695,11 +17027,11 @@ const enSettingsVoice = {
     mediatorIdleTtlSubtitle: 'Auto-stop voice agent after inactivity',
     mediatorIdleTtlDescription: 'Enter a positive whole number of seconds.',
     mediatorIdleTtlInvalid: 'Please enter a positive whole number of seconds.',
-    mediatorChatModelSource: 'Voice agent chat model source',
+    mediatorChatModelSource: "Model",
     mediatorChatModelSourceSubtitle:
       'Use the session model, or a custom fast model',
-    mediatorChatModelSourceSession: 'Session model',
-    mediatorChatModelSourceCustom: 'Custom model',
+    mediatorChatModelSourceSession: "Follow session",
+    mediatorChatModelSourceCustom: "Fixed model",
     mediatorCommitModelSource: 'Voice agent commit model source',
     mediatorCommitModelSourceSubtitle:
       'Use chat model, session model, or a custom model',
@@ -16896,7 +17228,7 @@ const enSettingsVoice = {
       sttGroupTitle: 'Speech-to-text models',
       ttsGroupTitle: 'Text-to-speech models',
       defaultBadge: 'Default',
-      defaultSubtitle: 'Default for this kind',
+      defaultSubtitle: "Used by default",
       installSubtitle: 'Tap to install it on your Voice machine',
       setDefaultSubtitle: 'Tap to use as the default',
       modelFiles: ({ size }: { size: string }) => `${size} model files`,
@@ -17248,8 +17580,7 @@ const enSettingsAccount = {
     unavailable: 'History is unavailable',
     entryTitle: ({ version }: { version: string }) =>
       `Restore version ${version}`,
-    entrySubtitle: ({ recordedAt }: { recordedAt: string }) =>
-      `Saved ${recordedAt}`,
+    entryVersion: ({ version }: { version: string }) => `Version ${version}`,
     restoreConfirmTitle: 'Restore settings?',
     restoreConfirmBody:
       'Your account preferences will be replaced with the values from the selected snapshot.',
@@ -17410,7 +17741,7 @@ const enSettingsAccount = {
     accountService?: string;
   }) =>
     `The account or signing key${accountService ? ` for ${accountService}` : ''} changed. Continue only if you expect this change. Happier will replace the trusted sign-in information saved for this Home.`,
-  server: 'Server',
+  server: 'Home',
   backup: 'Backup',
   backupDescription:
     'Your recovery key restores access to this encrypted account. Save it in a secure place, such as a password manager.',
@@ -17448,10 +17779,10 @@ const enSettingsAccount = {
     'Forget every Home and sign-in-service credential on this device? Your saved Home list will remain available.',
   deleteAccount: 'Delete account',
   deleteAccountSubtitle:
-    'Permanently delete this account and its data from this server',
+    'Permanently delete this account and its data from this Home',
   deleteAccountConfirmTitle: 'Delete this account?',
   deleteAccountConfirmBody:
-    'This permanently deletes the account data stored on this server and cannot be undone. Type DELETE to continue.',
+    'This permanently deletes the account data stored on this Home and cannot be undone. Type DELETE to continue.',
   deleteAccountInvalidTitle: 'Confirmation did not match',
   deleteAccountInvalidBody: 'Type DELETE exactly to continue.',
   deleteAccountFailedTitle: 'Deletion not confirmed',
@@ -17459,8 +17790,11 @@ const enSettingsAccount = {
     'Happier could not confirm deletion. Your local sign-in was kept so you can retry or reconnect.',
   deleteAccountCleanupFailedTitle: 'Account deleted',
   deleteAccountCleanupFailed:
-    'The server confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',
+    'The Home confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',
   encryptionUpdateFailed: 'Failed to update encryption setting',
+  encryptionInventoryChanged: "Account data no longer matches this conversion. Refresh and try again.",
+  encryptionRequiredByHome: "This Home requires end-to-end encryption.",
+  encryptionPlainOnlyHome: "This Home does not allow end-to-end encryption.",
   requireE2ee: 'Require end-to-end encryption',
   requireE2eeDescription:
     'Refuse plaintext Account settings and sessions on this device and synced daemons.',
@@ -17860,25 +18194,22 @@ const enTerminal = {
   webBrowserRequiredDescription:
     'Terminal connection links can only be opened in a web browser for security reasons. Please use the QR code scanner or open this link on a computer.',
   processingConnection: 'Processing connection...',
-  invalidConnectionLink: 'Invalid Connection Link',
+  invalidConnectionLink: 'Invalid connection link',
   invalidConnectionLinkDescription:
     'The connection link is missing or invalid. Please check the URL and try again.',
-  connectTerminal: 'Connect Terminal',
+  connectTerminal: 'Connect terminal',
   terminalRequestDescription:
-    'A terminal is requesting to connect to your Happier Coder account. This will allow the terminal to send and receive messages securely.',
+    'A terminal is asking to connect to your Happier account. It will be able to send and receive messages securely.',
   connectionDetails: 'Connection Details',
-  publicKey: 'Public Key',
   encryption: 'Encryption',
   endToEndEncrypted: 'End-to-end encrypted',
-  acceptConnection: 'Accept Connection',
+  acceptConnection: 'Accept connection',
   connecting: 'Connecting...',
   reject: 'Reject',
-  security: 'Security',
   securityFooter:
     'This connection link was processed securely in your browser and was never sent to any server. Your private data will remain secure and only you can decrypt the messages.',
   securityFooterDevice:
     'This connection was processed securely on your device and was never sent to any server. Your private data will remain secure and only you can decrypt the messages.',
-  clientSideProcessing: 'Client-Side Processing',
   linkProcessedLocally: 'Link processed locally in browser',
   linkProcessedOnDevice: 'Link processed locally on device',
   switchServerToConnectTerminal: ({
@@ -17958,10 +18289,10 @@ const enModals = {
   pasteUrlFromTerminal: 'Paste the authentication URL from your terminal',
   deviceLinkedSuccessfully: 'Device linked successfully',
   terminalConnectedSuccessfully: 'Terminal connected successfully',
-  terminalAlreadyConnected: 'Connection Already Used',
+  terminalAlreadyConnected: 'Connection already used',
   terminalConnectionAlreadyUsedDescription:
     'This connection link was already used by another device. To connect multiple devices to the same terminal, sign out and log in to the same account on all devices.',
-  authRequestExpired: 'Connection Expired',
+  authRequestExpired: 'Connection expired',
   authRequestExpiredDescription:
     'This connection link has expired. Please generate a new link from your terminal.',
   pleaseSignInFirst:
@@ -18003,9 +18334,9 @@ const enNavigation = {
   restoreWithSecretKey: 'Restore with Recovery Key',
   whatsNew: "What's New",
   friends: 'Friends',
-  automations: 'Automations',
-  automation: 'Automation',
-  newAutomation: 'New Automation',
+  automations: 'Workflows',
+  automation: 'Workflow',
+  newAutomation: 'New Workflow',
   sourceControl: 'Source control',
   developerTools: 'Developer Tools',
   listComponentsDemo: 'List Components Demo',
@@ -18028,7 +18359,7 @@ const enWelcome = {
   createAccount: 'Create account',
   chooseEncryptionTitle: 'Choose encryption',
   chooseEncryptionBody:
-    'This server supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.',
+    'This Home supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.',
   chooseEncryptionEncrypted: 'Continue with end-to-end encryption',
   chooseEncryptionPlain: 'Continue without encryption',
   signUpWithProvider: ({ provider }: { provider: string }) =>
@@ -18054,6 +18385,8 @@ const enWelcome = {
   // Unified onboarding redesign — welcome decision (right pane)
   welcomeQuestionTitle: 'Welcome.',
   welcomeQuestionSubtitle: 'First time here?',
+  terminalContinuationTitle: 'Connect terminal.',
+  terminalContinuationSubtitle: 'Sign in to finish.',
 
   welcomePrimaryButton: 'New here?',
   welcomePrimarySubtitle: 'One tap. No form. Your key lives here.',
@@ -18146,8 +18479,8 @@ const enWelcome = {
 
 const enSessionGettingStarted = {
   title: {
-    connectMachine: 'Set up this computer',
-    startDaemon: 'Reconnect this computer',
+    connectMachine: 'Set up this machine',
+    startDaemon: 'Reconnect this machine',
     createSession: 'Create a session',
     selectSession: 'Select a session',
     loading: 'Loading…',
@@ -18155,7 +18488,7 @@ const enSessionGettingStarted = {
   cliFollowUpTitle: 'Terminal fallback (optional)',
   subtitle: {
     connectMachine: ({ targetLabel }: { targetLabel: string }) =>
-      `Use the desktop setup flow to connect this computer to ${targetLabel}.`,
+      `Use the desktop setup flow to connect this machine to ${targetLabel}.`,
     startDaemon: ({ targetLabel }: { targetLabel: string }) =>
       `Use the desktop setup flow to reconnect the background service for ${targetLabel}.`,
     createSession:
@@ -18167,11 +18500,11 @@ const enSessionGettingStarted = {
     openSetup: {
       title: 'Use the desktop setup flow',
       description:
-        'This is the recommended path. It connects this computer to your Home, installs the background service, and keeps the rest of setup in the app.',
+        'This is the recommended path. It connects this machine to your Home, installs the background service, and keeps the rest of setup in the app.',
     },
     startDaemonOpenSetup: {
       description:
-        'Use the desktop setup flow to reconnect or repair the background service on this computer before you fall back to terminal commands.',
+        'Use the desktop setup flow to reconnect or repair the background service on this machine before you fall back to terminal commands.',
     },
     installCli: {
       title: 'Install the CLI',
@@ -18209,7 +18542,7 @@ const enSessionGettingStarted = {
       copyLabel: 'Create session',
     },
     startSession: {
-      title: 'Start a session from your computer',
+      title: 'Start a session from your machine',
       description: 'Or use the + button in the app.',
       copyLabel: 'Start session',
     },
@@ -18289,7 +18622,7 @@ const enJourney = {
     a14: {
       eyebrow: 'And more',
       title: 'And more when you need it.',
-      body: 'Goals, prompts, folders, handoff, sharing, automation, notifications, and cross-platform workflows are ready when the work asks for them.',
+      body: 'Goals, prompts, folders, handoff, sharing, workflows, notifications, and cross-platform work are ready when the work asks for them.',
     },
     s1: {
       eyebrow: 'Setup',
@@ -18304,7 +18637,7 @@ const enJourney = {
     s3: {
       eyebrow: 'Machine',
       title: "Let's wake this machine up.",
-      body: 'Connect the computer that will run your sessions, and watch it come online.',
+      body: 'Connect the machine that will run your sessions, and watch it come online.',
     },
     s4: {
       eyebrow: 'Providers',
@@ -18366,10 +18699,10 @@ const enJourney = {
       },
       notifications: {
         title: 'The right ping.',
-        body: 'Smart notifications route taps to the exact session and server - approve or answer right from the alert.',
+        body: 'Smart notifications route taps to the exact session and Home - approve or answer right from the alert.',
       },
       crossPlatform: {
-        title: 'Run sessions on every computer you own.',
+        title: 'Run sessions on every machine you own.',
         body: 'Native apps for iOS and Android, a desktop app for every OS, and a web app - all in sync.',
       },
     },
@@ -18377,10 +18710,10 @@ const enJourney = {
 };
 
 const enSetupOnboarding = {
-  screenTitle: 'Set up this computer',
+  screenTitle: 'Set up this machine',
   welcomeTitle: 'Welcome to Happier',
   welcomeBody:
-    'Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer and continue seamlessly from your phone, browser, or desktop app.',
+    'Run Claude Code, Codex, Gemini, OpenCode (and more) on your machine and continue seamlessly from your phone, browser, or desktop app.',
   welcomeBody2: 'Open-source. End-to-end encrypted.',
   welcomeBody3: 'Built by developers, for developers.',
   providersShowcaseLabel: 'Supports all your favorite AI coding agents:',
@@ -18396,14 +18729,14 @@ const enSetupOnboarding = {
   recommendedBadge: 'Recommended',
   relayCloudTitle: 'Happier Cloud',
   relayCloudSubtitle: 'Find and connect your linked Homes',
+  relayOnThisComputerTitle: 'On this machine',
   personalHomeOfferSubtitle: 'Keeps your data on this computer.',
-  relayOnThisComputerTitle: 'On this computer',
-  relayOnThisComputerSubtitle: 'Create a Personal Home on this computer',
-  relayOnYourComputerTitle: 'On your computer',
-  relayOnYourComputerSubtitle: 'Create a Personal Home on your computer',
-  relayOnRemoteComputerTitle: 'Create a Personal Home on a remote computer',
-  relayOnRemoteComputerSubtitle: 'Use SSH to create it on a computer you trust',
-  remoteRelayHostInstallTitle: 'Create a Personal Home on the remote computer',
+  relayOnThisComputerSubtitle: 'Create a Personal Home on this machine',
+  relayOnYourComputerTitle: 'On your machine',
+  relayOnYourComputerSubtitle: 'Create a Personal Home on your machine',
+  relayOnRemoteComputerTitle: 'Create a Personal Home on a remote machine',
+  relayOnRemoteComputerSubtitle: 'Use SSH to create it on a machine you trust',
+  remoteRelayHostInstallTitle: 'Create a Personal Home on the remote machine',
   relayAccessWizardTitle: 'How should your phone reach this relay?',
   relayAccessUrlTitle: 'Relay URL',
   relayAccessUrlSubtitle: 'Enter a URL your phone can reach.',
@@ -18425,19 +18758,19 @@ const enSetupOnboarding = {
   authSecretKeyTitle: 'Sign in with your key',
   authSecretKeySubtitle: 'Paste your secret key or recovery key.',
   authLostAccessTitle: 'Lost access?',
-  authLostAccessSubtitle: 'Reset your account with your identity provider',
-  webRelayHostHandoffTitle: 'Create a Personal Home on your computer',
+  authLostAccessSubtitle: 'Your options on this Home',
+  webRelayHostHandoffTitle: 'Create a Personal Home on your machine',
   webRelayHostHandoffBody:
-    'Use the desktop app or run the CLI command on the computer that will host your Personal Home. When it is ready, connect this device using its pairing flow.',
+    'Use the desktop app or run the CLI command on the machine that will host your Personal Home. When it is ready, connect this device using its pairing flow.',
   webDesktopOnlyTitle: 'Desktop app required',
   webDesktopOnlyBody:
-    'Open the desktop app to set up this computer. The web app can show status, but it can’t install or configure the background service.',
+    'Open the desktop app to set up this machine. The web app can show status, but it can’t install or configure the background service.',
   webDesktopOnlyPrimary: 'I have a Home address',
   webDesktopOnlyDesktopAppTitle: 'Continue this setup in the desktop app',
   webDesktopOnlyDesktopAppSubtitle:
-    'Download and open Happier to set up this computer with a guided flow.',
+    'Download and open Happier to set up this machine with a guided flow.',
   webDesktopOnlyDesktopAppButton: 'Download desktop app',
-  webDesktopOnlyCliTitle: 'Install the CLI on this computer',
+  webDesktopOnlyCliTitle: 'Install the CLI on this machine',
   webDesktopOnlyCliSubtitle:
     'Run this once in a terminal (Node is not required).',
   handoffPlatformPosixLabel: 'macOS/Linux',
@@ -18445,11 +18778,11 @@ const enSetupOnboarding = {
   handoffPlatformLinuxLabel: 'Linux',
   handoffPlatformWindowsLabel: 'Windows',
   orDividerLabel: 'or',
-  webDesktopOnlySetupCommandTitle: 'Set up this computer using the CLI',
+  webDesktopOnlySetupCommandTitle: 'Set up this machine using the CLI',
   webDesktopOnlySetupCommandSubtitle:
-    'Run this interactive command to connect the computer to the selected Home and install the background service.',
+    'Run this interactive command to connect the machine to the selected Home and install the background service.',
   webDesktopOnlySetupRemotePrereqsSubtitle:
-    'Run this interactive command to connect to the selected Home before setting up a remote computer over SSH.',
+    'Run this interactive command to connect to the selected Home before setting up a remote machine over SSH.',
   webDesktopOnlyDescriptorFileRequiredSubtitle:
     'Happier cannot confirm that this Iroh-only Home is available through the selected sign-in service. Copy its nonsecret descriptor, save it as happier-home.json in the terminal folder, then run the command below.',
   webDesktopHandoffDesktopAppOption: 'Using the desktop app (Recommended)',
@@ -18457,10 +18790,10 @@ const enSetupOnboarding = {
     'Download and open Happier to create a Personal Home with guided setup.',
   webDesktopHandoffCliOption: 'Using the terminal (CLI)',
   webDesktopHandoffCliSubtitle:
-    'Run one command on the computer that will host your Personal Home.',
+    'Run one command on the machine that will host your Personal Home.',
   webDesktopOnlyRelayInstallTitle: 'Create a Personal Home using the CLI',
   webDesktopOnlyRelayInstallSubtitle:
-    'Run this interactively on the computer you trust to host your Home.',
+    'Run this interactively on the machine you trust to host your Home.',
   webDesktopOnlyRelayStatusTitle: 'Connect to your Home',
   webDesktopOnlyRelayStatusSubtitle:
     'Use the pairing guidance printed after creation to connect this device.',
@@ -18502,20 +18835,20 @@ const enSetupOnboarding = {
     'You may need to sign in again on the new Home',
   confirmSwitchRelayWarning:
     'You can change your Home later in Settings → Homes.',
-  postAuthTitle: 'Finish setting up this computer',
+  postAuthTitle: 'Finish setting up this machine',
   postAuthBody:
-    'You are signed in. Continue with the local setup flow to make this computer ready for the selected Home.',
-  setupThisComputerTitle: 'Set up this computer',
+    'You are signed in. Continue with the local setup flow to make this machine ready for the selected Home.',
+  setupThisComputerTitle: 'Set up this machine',
   setupThisComputerSkipLabel: "I'll do this later",
   setupThisComputerConnectHonesty:
     'Setup is not complete until this machine connects to the selected Home.',
   controlPanelTitle: 'Readiness summary',
   activeRelaySummaryTitle: 'Active Home',
   selectedRelaySummaryTitle: 'Selected Home',
-  thisComputerSummaryTitle: 'This computer',
+  thisComputerSummaryTitle: 'This machine',
   nextActionSummaryTitle: 'Next action',
   thisComputerReady: 'Ready for this Home',
-  nextActionReady: 'Create your first session or add another computer below.',
+  nextActionReady: 'Create your first session or add another machine below.',
   doneConnectedMachineSummary: ({ machine }: { machine: string }) =>
     `Connected machine: ${machine}`,
   doneMachineFallback: 'Connected machine',
@@ -18527,9 +18860,9 @@ const enSetupOnboarding = {
   machineArrival: {
     oneCommand: 'One command.',
     detectedAfterSignIn:
-      "Run this on the computer you want to use. After you sign in, we'll detect it automatically.",
+      "Run this on the machine you want to use. After you sign in, we'll detect it automatically.",
     liveBody:
-      'Run this on the computer you want to use. Happier is watching for the daemon over your signed-in connection.',
+      'Run this on the machine you want to use. Happier is watching for the daemon over your signed-in connection.',
     watching: 'Watching for your machine...',
     connected: 'Connected',
     unknownMachine: 'Detected machine',
@@ -18543,9 +18876,9 @@ const enSetupOnboarding = {
   thisComputerStages: {
     installToolsTitle: 'Install Happier tools',
     installToolsSubtitle:
-      'Install the local Happier command-line tools needed for setup on this computer.',
+      'Install the local Happier command-line tools needed for setup on this machine.',
     installToolsReadySubtitle:
-      'The local Happier tools are already available on this computer.',
+      'The local Happier tools are already available on this machine.',
     installToolsDetails:
       'We make sure the managed Happier runtime used by local setup is available and sync the matching terminal command for this release channel.',
     installToolsChildTitle: 'Install local Happier command-line tools',
@@ -18568,43 +18901,43 @@ const enSetupOnboarding = {
       `Connected to ${relayUrl}.`,
     useRelayMissingSubtitle: 'Choose or add a Home to continue.',
     useRelayDetails:
-      'We confirm which Home and account this computer should use before local registration starts.',
+      'We confirm which Home and account this machine should use before local registration starts.',
     backgroundServiceTitle: 'Background service',
     backgroundServiceDecisionSubtitle:
-      'Choose how this computer should own the default background service.',
+      'Choose how this machine should own the default background service.',
     backgroundServiceRunningSubtitle:
       'The background service is installed and running.',
     backgroundServiceInstalledSubtitle:
       'The background service is installed and needs to be started.',
     backgroundServiceSubtitle:
-      'Install and start the background service for this computer.',
+      'Install and start the background service for this machine.',
     backgroundServiceDetails:
-      'The background service keeps this computer ready for future starts and reconnects it to the selected Home automatically.',
+      'The background service keeps this machine ready for future starts and reconnects it to the selected Home automatically.',
     backgroundServiceReleaseChannelChildTitle:
       'Resolve release-channel ownership',
     backgroundServiceConflictChildTitle:
       'Resolve existing background-service conflicts',
-    registerComputerTitle: 'Register this computer',
+    registerComputerTitle: 'Register this machine',
     registerComputerDoneSubtitle:
-      'This computer is already registered to your account.',
+      'This machine is already registered to your account.',
     registerComputerNeedsAuthSubtitle:
-      'Sign in before registering this computer.',
+      'Sign in before registering this machine.',
     registerComputerReconnectSubtitle:
-      'Reconnect this computer after the Home settings are updated.',
+      'Reconnect this machine after the Home settings are updated.',
     registerComputerSubtitle:
-      'Connect this computer to your account on the selected Home.',
+      'Connect this machine to your account on the selected Home.',
     registerComputerDetails:
-      'We register this computer to your account on the selected Home so local sessions and background features can identify this machine correctly.',
+      'We register this machine to your account on the selected Home so local sessions and background features can identify this machine correctly.',
     footerHint:
       'We handle the low-level setup steps for you and only surface decisions that need your input.',
   },
-  resumeIntentTitle: 'Continue setup on this computer',
+  resumeIntentTitle: 'Continue setup on this machine',
   resumeIntentBody:
-    'Sign in to continue setting up this computer for the selected Home.',
-  openSetupAction: 'Set up this computer',
+    'Sign in to continue setting up this machine for the selected Home.',
+  openSetupAction: 'Set up this machine',
   openSetupWizardAction: 'Open setup wizard',
   openSetupWizardSubtitle:
-    'Use the guided setup flow to set up Happier on your computer.',
+    'Use the guided setup flow to set up Happier on your machine.',
   setupNewMachineAction: 'Set up a new machine',
   setupNewRelayAction: 'Create a Personal Home',
   remoteHosts: {
@@ -18778,6 +19111,9 @@ const enMachine = {
       "End-to-end encrypted, and this device doesn't have the key yet",
     unopenable: "End-to-end encrypted, and this device's key can't open it",
     unreadable: "This device can't read its details",
+    unpublished: "Details not published by its owner yet",
+    custodianOnly: "Owner only; Can manage isn't enough",
+    upgradeRequired: "Owner must update Happier",
   },
   unknownPath: 'unknown path',
   previousSessionsTitle: 'Previous Sessions (up to 5 most recent)',
@@ -18908,10 +19244,18 @@ const enMessage = {
   }) => `Forwarded by ${sender} via plugin ${pluginId}`,
   pluginAttributionExternalSender: 'an external sender',
   pluginAttributionExternalBot: 'an external bot',
+  forgeEvidence: {
+      kind: { pullRequest: 'PR update', hostedCi: 'CI run', releaseNotes: 'Release notes', alert: 'Security alert', localTerminal: 'Local run', entry: 'Linked item' },
+      author: { person: 'Someone', bot: 'A bot', process: 'Automation', unknown: 'Unknown sender' },
+      showEvidence: 'Show evidence',
+      hideEvidence: 'Hide evidence',
+      moreSources: ({ count }: { count: number }) => `and ${count} more`,
+  },
   provenanceFrom: ({ source }: { source: string }) => `From ${source}`,
   provenanceSession: 'Session',
   provenanceAutomation: 'Automation',
   provenanceWorkflow: 'Workflow',
+  provenanceDiscussion: 'Discussion',
   unknownEvent: 'Unknown event',
   runtimeConfigOutcomeAppliesBeforeNextMessage:
     'Applies before your next message',
@@ -18928,17 +19272,17 @@ const enMessage = {
   runtimeConfigOutcomeRequiresInteractiveControl: 'Needs terminal interaction',
   runtimeConfigOutcomeUnsupported: 'Not supported',
   runtimeConfigOutcomeFailed: 'Could not apply',
+  contextCompactionStarted: 'Compacting context...',
+  contextCompactionCompleted: 'Context compacted',
+  contextCompactionFailed: 'Context compaction failed',
+  contextCompactionCancelled: 'Context compaction cancelled',
+  contextCompactionPaused: 'Context compacted; send a message to continue',
   contextCompactionIdleStarted: 'Compacting while idle…',
   contextCompactionIdleCompleted: 'Compacted while idle',
   contextCompactionIdleDetail: 'Before the prompt cache expired',
   contextCompactionIdleDetailCounts: ({ before, after }: { before: string; after: string }) => `${before} → ${after} tokens · before the prompt cache expired`,
   contextCompactionIdleFailed: 'Couldn’t compact while idle',
   contextCompactionIdleFailedDetail: 'The conversation stays at full size.',
-  contextCompactionStarted: 'Compacting context...',
-  contextCompactionCompleted: 'Context compacted',
-  contextCompactionFailed: 'Context compaction failed',
-  contextCompactionCancelled: 'Context compaction cancelled',
-  contextCompactionPaused: 'Context compacted; send a message to continue',
   goalChanged: 'Goal updated',
   usageLimitUntil: ({ time }: { time: string }) =>
     `Usage limit reached until ${time}`,
@@ -18996,7 +19340,7 @@ const enChatFooter = {
   sessionRunningLocally:
     'This session is running locally on this computer. You can switch to remote to control it from the app.',
   sessionRunningLocallyAndRemotely:
-    'This session is attached locally in OpenCode and is still controllable from the app.',
+    'This session is attached locally and is still controllable from the app.',
   switchingToRemote: 'Switching to remote mode…',
   switchToRemote: 'Switch to remote',
   detachLocalTerminal: 'Detach terminal',
@@ -19185,6 +19529,13 @@ const enFriends = {
   manageFriends: 'Manage your friends and connections',
   searchTitle: 'Find friends',
   pendingRequests: 'Friend requests',
+  peopleDescription: "Friends and teammates you work and share with.",
+  peopleTeamsEmpty: "Create a Team to share sessions, machines and credentials with the people you work with.",
+  peopleCreateTeam: "Create a Team",
+  peopleTeamMembers: "All members",
+  peopleTeamOnlyYou: "Only you",
+  peopleTeamMembersLoading: "Loading members",
+  peopleTeamMembersFailed: "Couldn’t load members",
   myFriends: 'My friends',
   noFriendsYet: "You don't have any friends yet",
   findFriends: 'Find friends',
@@ -19204,7 +19555,7 @@ const enFriends = {
   checkUsername: 'Please check the username and try again',
   howToFind: 'How to find friends',
   findInstructions:
-    'Search for friends by their username. Depending on your server, you may need to connect a provider or choose a username to use Friends.',
+    'Search for friends by their username. Depending on your Home, you may need to connect a provider or choose a username to use Friends.',
   emptyTitle: 'No friend activity yet',
   emptyDescription: 'Add friends to share sessions and see activity here.',
   activity: 'Activity',
@@ -19239,23 +19590,23 @@ const enFriends = {
     `You are now friends with ${name}`,
   sharedSessions: 'Shared sessions',
   noSharedSessions: 'No shared sessions yet',
-  disabled: 'Friends is disabled on this server.',
+  disabled: 'Friends is disabled on this Home.',
   username: {
     required: 'Choose a username to use Friends.',
     taken: 'That username is already taken.',
     invalid: 'That username is not allowed.',
-    disabled: 'Username-based Friends is not enabled on this server.',
+    disabled: 'Username-based Friends is not enabled on this Home.',
     preferredNotAvailable:
-      'Your preferred username is not available on this server. Please choose another.',
+      'Your preferred username is not available on this Home. Please choose another.',
     preferredNotAvailableWithLogin: ({ login }: { login: string }) =>
-      `Your preferred username @${login} is not available on this server. Please choose another.`,
+      `Your preferred username @${login} is not available on this Home. Please choose another.`,
   },
   githubGate: {
     title: 'Connect GitHub to use Friends',
     body: 'Friends uses GitHub usernames for discovery and sharing.',
     connect: 'Connect GitHub',
     notAvailable: 'Not available?',
-    notConfigured: 'GitHub OAuth is not configured on this server.',
+    notConfigured: 'GitHub OAuth is not configured on this Home.',
   },
   providerGate: {
     title: ({ provider }: { provider: string }) =>
@@ -19265,7 +19616,7 @@ const enFriends = {
     connect: ({ provider }: { provider: string }) => `Connect ${provider}`,
     notAvailable: 'Not available?',
     notConfigured: ({ provider }: { provider: string }) =>
-      `${provider} OAuth is not configured on this server.`,
+      `${provider} OAuth is not configured on this Home.`,
   },
 };
 
@@ -19291,8 +19642,8 @@ const enUsage = {
     usage_night_shift: "Night shift",
     usage_recap: "Recap",
     usage_footprint: "Footprint",
-    usage_sources: "Sources",
-    usage_source_coverage: "Coverage",
+    usage_sources: PUBLIC_USAGE_ORIGINAL_COPY_EN.widgets.usage_sources,
+    usage_source_coverage: PUBLIC_USAGE_ORIGINAL_COPY_EN.widgets.usage_source_coverage,
     usage_unpriced: "Unpriced",
     usage_score: "Score",
     usage_orbit: "Orbit",
@@ -19320,15 +19671,15 @@ const enUsage = {
       sourceAccounting: "usage",
       sourceClaudeResponses: "Claude responses",
       sourceClaudeSessionSummaries: "Claude session summaries",
-      executionHappier: "In Happier",
-      executionOutside: "Outside Happier",
-      executionUnknown: "Unknown execution",
+      executionHappier: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.executionHappier,
+      executionOutside: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.executionOutside,
+      executionUnknown: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.executionUnknown,
       sourceQuota: "allowances",
       sourceWork: "pull requests and branches",
       sourceHowYouWork: "activity",
       sourceComparison: "previous period",
-      sourceKindMeasured: "Measured",
-      sourceKindFromLogs: "From logs",
+      sourceKindMeasured: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.sourceKindMeasured,
+      sourceKindFromLogs: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.sourceKindFromLogs,
       sourceKindNotAdded: "Not added",
       coverageFailed: ({ sources }: { sources: string | number }) => `Couldn't read ${sources}. Showing what arrived.`,
       coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Reading ${sources} needs a newer version of your Home`,
@@ -19352,6 +19703,12 @@ const enUsage = {
       readFailedReason: "Your Home didn't answer. Nothing is lost.",
       notReadTitle: "Not read",
       retryRead: "Retry reading usage",
+      historyNotRead: ({ count }: { count: string }) => count === '1' ? '1 session not read yet' : `${count} sessions not read yet`,
+      historyReading: ({ done, total }: { done: string; total: string }) => `Reading sessions · ${done} of ${total}`,
+      historyFailed: ({ count }: { count: string }) => count === '1' ? "Couldn't read 1 session" : `Couldn't read ${count} sessions`,
+      historyReadNow: "Read now",
+      historyReadCommand: "Read sessions not read yet",
+      historyCancelCommand: "Stop reading sessions",
       signedOutTitle: "Sign in to this Home to see usage",
       loading: "Reading usage",
       unattributed: "Unknown",
@@ -19369,7 +19726,7 @@ const enUsage = {
       noneLinkedByEvidence: "none linked yet",
       notMeasuredYet: "not measured yet",
       needsNewerServer: "your Home needs a newer version",
-      agentTime: "Agent time",
+      agentTime: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.agentTime,
       elapsedTime: ({ time }: { time: string | number }) => `${time} on the clock`,
       activeDays: "Active days",
       longestStreak: ({ count }: { count: string | number }) => `longest streak ${count} d`,
@@ -19389,7 +19746,7 @@ const enUsage = {
       noCostFactsReason: "Agents haven't reported a price for this period, and none could be estimated.",
       unpricedCaption: "never counted as $0",
       factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens`,
-      factIncomplete: "partial history",
+      factIncomplete: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.factIncomplete,
       flowEmptyTitle: "Not enough history for a flow",
       flowEmptyReason: "It appears once usage spans two or more buckets.",
       efficiencyNoBasisTitle: "No basis for ratios yet",
@@ -19732,7 +20089,7 @@ const enUsage = {
       walletExpiresFirst: ({ expires, window, reset }: { expires: string | number; window: string | number; reset: string | number }) => `Expires ${expires}, before ${window} resets on its own (${reset}). Unused, it is lost.`,
       walletOutlasts: ({ window, reset, expires }: { window: string | number; reset: string | number; expires: string | number }) => `Still valid after ${window} resets on its own (${reset}); it expires ${expires}.`,
       resetStartTitle: "Queued in this session",
-      resetStartMeta: "hold a message until a window resets",
+      resetStartMeta: "Hold a message until a window resets",
       resetStartAction: "Start at a reset",
       sendAtReset: "Send at reset",
       resetStartStale: "This allowance reading is no longer current. Refresh the allowance and try again.",
@@ -19882,10 +20239,10 @@ const enUsage = {
       modelQualified: ({ model, candidate, cost, candidateCost, provider }: { model: string; candidate: string; cost: string; candidateCost: string; provider: string }) => `Completed matching requests on ${model} in this session cost about ${cost}, versus ${candidateCost} on ${candidate} (partial, observed; ${provider}). The lower-cost model may be enough for this request; completion does not establish equal quality.`,
       disabledCount: ({ count }: { count: string | number }) => `${count} checks off`,
       summary_unused_mcp_binding_observed: "An included MCP binding was not used",
-      digestDescription: ({ duration }: { duration: string }) => `An Automation can review the latest ${duration} with this view’s filters and notify you. Choose when and where it runs.`,
+      digestDescription: ({ duration }: { duration: string }) => `A Workflow can review the latest ${duration} with this view’s filters and notify you. Choose when and where it runs.`,
       digestConfigure: "Schedule a digest…",
-      digestCreate: "Create Automation",
-      digestCreated: "Digest Automation created. Its existing trigger editor handles changes and removal.",
+      digestCreate: "Create Workflow",
+      digestCreated: "Digest Workflow created. Its existing trigger editor handles changes and removal.",
       detector_duplicated_instructions: "Duplicated instructions",
       detector_model_misfit: "Model fit",
       detector_idle_recaching: "Idle re-caching",
@@ -19975,8 +20332,8 @@ const enUsage = {
       method_duplicate_injection_bytes_v1: "Counts duplicated bytes per injection; the agent's cache may already discount them.",
       apply_setting: "Apply",
       apply_model: "Switch model",
-      apply_mcp_off: "Turn off server",
-      apply_mcp_on: "Turn on server",
+      apply_mcp_off: "Turn off MCP server",
+      apply_mcp_on: "Turn on MCP server",
       apply_prepared_session: "Start a session",
       apply_recovery: "Run it",
       applied: "Applied",
@@ -20009,8 +20366,7 @@ const enUsage = {
       unavailableTitle: "Coach evidence isn't loaded for this period",
     },
     charts: {
-      ...usageChartInputTranslations.en, ...usageChartPlanetFamilyTranslations.en,
-      // usage-board:charts — the shared chart bodies (Sky of days, Week tide, Daylight, A day in agents, Score, Orbit, Crew, Agent river, Shipped, Constellation, Your planet, Steering by Agent, Run length)
+      ...usageChartInputTranslations.en, ...usageChartPlanetFamilyTranslations.en, ...PUBLIC_USAGE_CHART_COPY_EN,
       shippedUnavailableTitle: "Merged pull requests aren't available",
       collaborationNotRecorded: "Collaboration between agents isn't recorded for this period yet; each planet is an agent sized by its share.",
       coveragePartial: "Partial · some of its sources are incomplete",
@@ -20025,8 +20381,6 @@ const enUsage = {
       coverageMeasured: "Measured · complete for the sources read",
       coverageMeasuredShort: "Measured",
       coveragePartialShort: "Partial",
-      showValues: "Exact values",
-      hideValues: "Hide values",
       metric_tokens: "Tokens",
       metric_cost: "Cost",
       metric_sessions: "Sessions",
@@ -20035,63 +20389,24 @@ const enUsage = {
       metric_peakParallel: "Peak parallel",
       sessionsCount: ({ count }: { count: string | number }) => `${count} sessions`,
       steersCount: ({ count }: { count: string | number }) => `${count} steers`,
-      atOnceCount: ({ count }: { count: string | number }) => `${count} at once`,
-      upToAtOnce: ({ count }: { count: string | number }) => `Up to ${count} at once`,
-      minutes: ({ count }: { count: string | number }) => `${count} min`,
-      daysCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'day' : 'days'}`,
-      daysOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} of ${total} days`,
-      dayStreak: ({ count }: { count: string | number }) => `${count}-day streak`,
       levelNone: "No activity",
-      levelQuiet: "Quiet",
-      levelSteady: "Steady",
-      levelBusy: "Busy",
-      levelBusiest: "Busiest",
-      quieter: "Quieter",
-      busier: "Busier",
-      tie: "Tie",
-      notAttributed: "Not attributed",
-      noActivity: "No activity",
-      notRecorded: "Not recorded",
-      unknownAgent: "Unknown agent",
       needsDataTitle: "Not enough recorded work for this chart yet",
       needsCalendarReason: "It appears once this period's usage has been read.",
       needsCollaborationReason: "It appears once agents have started work for each other.",
       metricNotByHourReason: ({ metric }: { metric: string }) => `${metric} can't be split by hour of the day yet. Choose another metric.`,
-      dateColumn: "Day",
-      leaderColumn: "Led by",
-      weekdayColumn: "Weekday",
-      hourColumn: "Hour",
       weekColumn: "Week",
-      agentColumn: "Agent",
-      spansColumn: "Worked",
       busyHoursColumn: "Busy hours",
       skyA11y: ({ metric, count }: { metric: string; count: string | number }) => `Sky of days: ${metric} for each of ${count} days`,
       skyCaptionAgent: ({ metric, runs, band }: { metric: string; runs: boolean; band: boolean }) => `Colour is the agent that led the day on ${metric}; a tie shows both, and a day with no known agent stays a ring. Higher, larger and brighter is a bigger day.${runs && band ? ' Faint lines join runs of five days or more; the soft band is the 7-day average.' : runs ? ' Faint lines join runs of five days or more.' : band ? ' The soft band is the 7-day average.' : ''}`,
-      skyCaptionIntensity: ({ runs, band }: { runs: boolean; band: boolean }) => `Higher, larger and brighter is a busier day.${runs && band ? ' Faint lines join runs of five days or more; the soft band is the 7-day average.' : runs ? ' Faint lines join runs of five days or more.' : band ? ' The soft band is the 7-day average.' : ''}`,
-      streakBestOngoing: ({ count }: { count: string | number }) => `${count}-day streak · best this period, still going`,
-      streakBest: ({ count }: { count: string | number }) => `Best · ${count} ${Number(count) === 1 ? 'day' : 'days'}`,
-      streakNow: ({ count }: { count: string | number }) => `Now · ${count} ${Number(count) === 1 ? 'day' : 'days'}`,
-      streakShort: ({ count }: { count: string | number }) => `${count}-day streak`,
-      streakShortBest: ({ count }: { count: string | number }) => `${count}-day streak · best`,
       tideA11y: ({ metric }: { metric: string }) => `Week tide: ${metric} for each weekday hour, one wave per weekday`,
       tidePeak: ({ when, value }: { when: string; value: string }) => `${when} · ${value}`,
       daylightA11y: ({ metric }: { metric: string }) => `Daylight: ${metric} by hour of the typical day`,
-      nightWindow: ({ window }: { window: string }) => `Night · ${window}`,
-      nightWindowShare: ({ window, share }: { window: string; share: string }) => `Night · ${window} · ${share}`,
       daylightCaption: ({ hour }: { hour: string }) => `Busiest around ${hour}. Each column is an hour of the day; taller is busier.`,
       daylightCaptionNight: ({ hour, share }: { hour: string; share: string }) => `Busiest around ${hour}. ${share} of busy time fell in your night window, set in Night shift.`,
       dayA11y: ({ day, count }: { day: string; count: string | number }) => `A day in agents, ${day}: each agent's closed turns and the waits for you; up to ${count} turns at once`,
       dayEmptyTitle: "No recorded work on this day",
-      daylightCaptionNoPeak: "Each column is an hour of the day; taller is busier.",
-      peakOnlyCaption: "Only the period peak is available; individual turn timings are not included.",
       dayEmptyReason: "Turns that ran on any machine appear here once they close.",
-      atOnce: "At once",
-      turns: "turns",
-      agentTime: "Agent time",
       peakAt: ({ count, time }: { count: string | number; time: string }) => `${count} at once · ${time}`,
-      waitingForYou: "Waiting for you",
-      lanesCaption: "Each lane is one agent's closed turns; hatched is waiting for you; the figure is its agent time that day (turns running together add up). The curve is turns running at once, so two turns of one agent count twice.",
-      dialCaption: "Around the clock from 00 at the top. The filled shape is turns running at once (rings at 2, 4 and 6); each outer ring is one agent, solid while it worked; gaps are waits for you.",
       scoreA11y: ({ week }: { week: string }) => `Score: the week of ${week}, one line per agent, a dot for each hour it was busy`,
       scoreLight: "1–15 min",
       scoreMedium: "15–40 min",
@@ -20099,39 +20414,18 @@ const enUsage = {
       scorePresence: "Busy in that hour",
       scorePresenceNote: "Hours only, never minutes",
       orbitA11y: ({ metric }: { metric: string }) => `Orbit: agents by share of ${metric}; the closest orbit did the most`,
-      shareUnknown: ({ names }: { names: string }) => `${names} · share unknown`,
       crewA11y: "Crew: every agent, its share and how it is measured",
       coverageContextOnly: "Context only · reports context fill, not tokens",
-      coverageContextOnlyShort: "Context only",
       riverA11y: ({ metric }: { metric: string }) => `Agent river: each week's share of ${metric} per agent; the river's width is the week's total`,
       riverCaption: "Complete weeks only: this week joins when it ends. Shares come from each week's own totals, never smoothed across weeks.",
       riverEmptyTitle: "Not enough weeks yet",
       riverEmptyReason: "The river needs two complete weeks in this period.",
       shippedA11y: ({ count }: { count: string | number }) => `Shipped: ${count} merged pull requests by merge week`,
-      shippedCount: ({ count }: { count: string | number }) => `${count} merged pull requests linked to agent work`,
       shippedEmptyTitle: "No merged pull requests in this period",
       shippedEmptyReason: "Pull requests linked to agent work appear here once they merge.",
-      noDate: "No date",
-      mixed: "Mixed",
-      noMergeDate: "No merge date",
       constellationA11y: "Constellation: how agents worked together; arrows point from the agent that started the work to the one that did it",
-      edgeSession: "Started a session",
-      edgeRun: "Execution run · delegate, review, plan",
-      edgeNative: "Native subagents",
-      edgeNote: "Arrow: who started → who did it · width: how often",
-      unknownStarts: ({ count }: { count: string | number }) => `${count} sessions started by an agent we can't name`,
       nodesOnly: "No collaboration between agents is recorded in this period yet; each planet is an agent sized by its share.",
       planetA11y: "Your planet: light is active days, halo is the most work run at once, trail is the current streak",
-      planetLight: "Light",
-      planetHalo: "Halo",
-      planetTrail: "Trail",
-      planetLightNote: "Grows with each active day in the period",
-      planetLightRest: "Rests at half light",
-      planetHaloNote: "Widens with the most work run at once (of 8)",
-      planetHaloRest: "No halo",
-      planetTrailNote: ({ count }: { count: string | number }) => `Lengthens toward the best this period, ${count} ${Number(count) === 1 ? 'day' : 'days'}`,
-      planetTrailNoteNoBest: "Lengthens with each day of the current streak",
-      planetTrailRest: "No trail",
       steeringA11y: "Steering by agent: accepted steers by hour of the day for each agent; dots are permission answers from a phone",
       steeringEmptyTitle: "No steering recorded in this period",
       steeringEmptyReason: "Steers you send while an agent works appear here.",
@@ -20144,15 +20438,7 @@ const enUsage = {
       runA11y: "Run length: how long each agent's closed turns took, with the median and 90th percentile",
       runEmptyTitle: "No closed turns in this period",
       runEmptyReason: "Turns appear here once they finish.",
-      runDetail: ({ p90, count }: { p90: string; count: string | number }) => `p90 ${p90} · ${count}`,
-      tickMinute: "1 min",
-      tickTenMinutes: "10 min",
-      tickHour: "1 h",
-      tickFourHours: "4 h",
-      runCaption: "Each dot is an equal share of that agent's closed turns. Bold is the median, thin is the 90th percentile. Wall time from start to finish, permission waits included.",
       runCaptionOpen: ({ count }: { count: string | number }) => `Each dot is an equal share of that agent's closed turns. Bold is the median, thin is the 90th percentile. Wall time from start to finish, permission waits included. ${count} still running, not counted.`,
-      median: "Median",
-      p90: "90th percentile",
       closedTurns: "Closed turns",
       recordsA11y: "Personal records: the bests within the period shown",
       recordsCaption: "Bests within the period shown. Turns still running are not counted.",
@@ -20160,15 +20446,13 @@ const enUsage = {
       recordRange: ({ from, to }: { from: string; to: string }) => `${from} – ${to}`,
       recordRangeOngoing: ({ from, to }: { from: string; to: string }) => `${from} – ${to} · still going`,
       recordBusiestDay: "Busiest day",
-      recordPeak: "Most at once",
-      recordLongestTurn: "Longest closed turn",
       recordMostAgents: "Most agents in a day",
       turnsCount: ({ count }: { count: string | number }) => `${count} turns`,
       countOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} of ${total}`,
     },
     howYouWork: {
       // usage-board:howYouWork
-      longestStreak: ({ count }: { count: string | number }) => `Longest streak: ${count} days`,
+      longestStreak: ({ count }: { count: string | number }) => `Longest streak: ${count} ${plural({ count: Number(count), singular: 'day', plural: 'days' })}`,
       rhythmEmptyTitle: "No activity recorded in this period",
       rhythmEmptyReason: "Sessions you run on any machine appear here.",
       activeDays: "Active days",
@@ -20229,16 +20513,16 @@ const enUsage = {
       eventCount: ({ count }: { count: string | number }) => `Usage events: ${count}`,
       nightBusySub: ({ window }: { window: string | number }) => `of agent work recorded between ${window}`,
       nightEventsSub: ({ window }: { window: string | number }) => `recorded between ${window}`,
-      footprintNoUsageTitle: "No usage to estimate yet",
-      footprintNoUsageReason: "The footprint lens reads the same usage as the rest of this page.",
-      footprintInsufficientTitle: "Not enough to estimate energy or emissions",
-      footprintInsufficientReason: "Providers don't publish energy per request, and the published methods need the model's serving hardware, date and region, which your usage doesn't carry. Rather than invent a factor, no number is shown.",
-      footprintNoEstimate: "No estimate",
-      footprintAccounted: "Accounted this period",
-      footprintProxy: "A proxy",
-      footprintProxyDetail: "tokens are not a measure of energy",
-      footprintMethodTitle: "How an estimate would work",
-      footprintMethodBody: "Tokens by model × a versioned, published per-token coefficient for that model's serving, with cache reads weighted separately and the grid mix of the serving region. It appears here, with its method, date and uncertainty range, once those facts exist for your models.",
+      footprintNoUsageTitle: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintNoUsageTitle,
+      footprintNoUsageReason: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintNoUsageReason,
+      footprintInsufficientTitle: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintInsufficientTitle,
+      footprintInsufficientReason: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintInsufficientReason,
+      footprintNoEstimate: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintNoEstimate,
+      footprintAccounted: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintAccounted,
+      footprintProxy: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintProxy,
+      footprintProxyDetail: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintProxyDetail,
+      footprintMethodTitle: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintMethodTitle,
+      footprintMethodBody: PUBLIC_USAGE_ORIGINAL_COPY_EN.howYouWork.footprintMethodBody,
     },
     recap: {
       // usage-board:recap
@@ -20322,8 +20606,8 @@ const enUsage = {
       foundCaption: "Native usage is counted after you add a source",
       coveragePurpose: "What the selected history reports",
       unpricedPurpose: "Tokens without a price",
-      coverageAvailable: "Reported",
-      coverageUnknown: "Coverage unknown",
+      coverageAvailable: PUBLIC_USAGE_ORIGINAL_COPY_EN.sources.coverageAvailable,
+      coverageUnknown: PUBLIC_USAGE_ORIGINAL_COPY_EN.sources.coverageUnknown,
       continueInHappier: "Continue in Happier",
       rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} on ${machine}`,
       defaultFolder: "Default folder",
@@ -20969,7 +21253,7 @@ const enProfiles = {
     },
     previewModal: {
       titleWithProfile: ({ profileName }: { profileName: string }) =>
-        `Env Vars · ${profileName}`,
+        `Environment variables · ${profileName}`,
       descriptionPrefix:
         'These environment variables are sent when starting the session. Values are resolved using the daemon on',
       descriptionFallbackMachine: 'the selected machine',
@@ -21043,7 +21327,7 @@ const enProjects = {
       where: "Where",
       change: "Change",
       use: "Use",
-      existing: ({ machine }: { machine: string }) => `The checkout already on ${machine}`,
+      existing: "The checkout already here",
       worktree: "A new worktree",
       clone: "A fresh clone",
       copy: "A copy of another checkout",
@@ -21053,6 +21337,9 @@ const enProjects = {
       chooseCheckout: ({ count }: { count: number }) => `Choose which of the ${count} checkouts`,
       cloneDetail: ({ path }: { path: string }) => `Into ${path} with your own Git account`,
       copyDetail: "Copied once or kept in sync",
+      copyFrom: ({ machine, path }: { machine: string; path: string }) => `${machine}’s ${path}`,
+      copyFromDetail: ({ machine, path }: { machine: string; path: string }) => `${machine}’s ${path}, copied once or kept in sync`,
+      copyFiles: "Files",
       noAgent: "Opening prepares files. No agent starts until you start a session.",
       setupDisclosure: "Setup commands wait for your approval.",
       githubRateLimitedUntil: ({ time }: { time: string }) => `GitHub is limiting requests right now. Try again after ${time}.`,
@@ -21097,6 +21384,21 @@ const enProjects = {
       forgetHint: "Forget removes this checkout from Happier. Delete files needs the machine online.",
   },
   scripts: {
+    environment: {
+      title: "Environment",
+      description: "Saved Secret bindings apply to every named task in this Project.",
+      recovery: "Choose the Saved Secrets this Project needs, then run the task again.",
+      required: "Required",
+      optional: "Optional",
+      choose: "Choose Saved Secret",
+      change: "Change Saved Secret",
+      chooseNamed: ({ name }: { name: string }) => `Choose Saved Secret for ${name}`,
+      changeNamed: ({ name }: { name: string }) => `Change Saved Secret for ${name}`,
+      removeNamed: ({ name }: { name: string }) => `Remove Saved Secret for ${name}`,
+      unavailable: "Project environment bindings are unavailable.",
+      saveFailed: "Couldn’t save the binding.",
+      refused: "Choose a Saved Secret before running this task.",
+    },
     addToProjectFile: "Add to project file",
     anyWorker: "Any worker",
     createProjectFile: "Create project file",
@@ -21104,6 +21406,7 @@ const enProjects = {
     filesList: ({ head, last }: { head: string; last: string }) => `${head} and ${last}`,
     foundCount: ({ count, tool }: { count: number; tool: string }) => `${count} · ${tool}`,
     foundMore: ({ count }: { count: number }) => `${count} more`,
+    showMore: ({ count }: { count: number }) => `Show ${count} more`,
     foundIn: ({ files }: { files: string }) => `found in ${files}`,
     foundNote: "Found by reading the files only. Nothing runs until you press ▶ and approve it.",
     noScripts: "No scripts in the project file yet",
@@ -21121,7 +21424,8 @@ const enProjects = {
     kindTeardown: "Teardown",
     byAgent: "by the agent",
     agentsTitle: "Agents",
-    agentsDescription: "Agents in sessions on this checkout can run these scripts, and see their output, with happier project script run. They can’t approve setup.",
+    agentsDescriptionBefore: "Agents in sessions on this checkout can run these scripts, and see their output, with ",
+    agentsDescriptionAfter: ". They can’t approve setup.",
     tabRunning: ({ count }: { count: string }) => `Scripts, ${count} running`,
     adhocTitle: "Run this command?",
     adhocTitleWorker: "Run this command on a worker?",
@@ -21143,17 +21447,17 @@ const enProjects = {
     agentWaitedFor: ({ name }: { name: string }) => `Waited for ${name}`,
     agentAccepted: "Accepted",
     agentOn: ({ machine }: { machine: string }) => `on ${machine}`,
-    environment: {
-      host: "Host environment",
-      empty: "No native environment detected",
+    toolchain: {
+      host: "Machine environment",
+      empty: "No native toolchain detected",
       checking: "Checking available tools…",
-      pending: "Waiting for approval to evaluate this environment",
+      pending: "Waiting for approval to evaluate this toolchain",
       preparing: ({ tool, machine }: { tool: string; machine: string }) => `Preparing ${tool} on ${machine}…`,
       unavailable: ({ tool }: { tool: string }) => `${tool} is unavailable on this Machine`,
-      failed: "Native environment preparation failed. View output.",
-      changed: "Environment inputs changed. Review again.",
-      unevaluated: "Nix definitions are read once this environment is evaluated.",
-      noFallback: "Nothing was run in the host environment",
+      failed: "Native toolchain preparation failed. View output.",
+      changed: "Toolchain inputs changed. Review again.",
+      unevaluated: "Nix definitions are read once this toolchain is evaluated.",
+      noFallback: "Nothing was run in the machine environment",
     },
     definition: {
       inspecting: "Finding project commands…",
@@ -21248,8 +21552,8 @@ const enProjects = {
       lineError: ({ line, message }: { line: number; message: string }) => `Line ${line}: ${message}`,
       unknownKeys: "Some fields aren’t recognized",
       unknownKeysBody: ({ keys }: { keys: string }) => `Happier ignores ${keys} and keeps them in the file.`,
-      environment: "Environment",
-      environmentBody: "Every agent, terminal, script and service for this project starts inside it. Found by reading files; nothing is evaluated until setup is approved.",
+      toolchain: "Tools",
+      toolchainBody: "Every agent, terminal, script and service for this project uses these tools. Found by reading files; nothing is evaluated until setup is approved.",
       toolsFrom: "Tools from",
       toolAvailable: ({ machine }: { machine: string }) => `Available on ${machine}`,
       toolUnavailable: ({ machine }: { machine: string }) => `Not installed on ${machine}`,
@@ -21312,6 +21616,7 @@ const enProjects = {
       noProjectFile: "No project file yet",
       noProjectFileBody: ({ count }: { count: number }) => (count === 0 ? `Happier didn’t find anything this checkout can run. Create a project file, or let an agent set up the whole project.` : count === 1 ? `Happier found 1 thing this checkout can run by reading its files. Nothing runs until you choose, or let an agent set up the whole project.` : `Happier found ${count} things this checkout can run by reading its files. Nothing runs until you choose, or let an agent set up the whole project.`),
       scriptsFound: ({ count, files }: { count: number; files: string }) => (count === 1 ? `1 script found in ${files}. Nothing runs until you choose.` : `${count} scripts found in ${files}. Nothing runs until you choose.`),
+      scriptsReview: "Review",
       scriptsFoundBy: ({ files }: { files: string }) => `Found by reading ${files}. Nothing has run.`,
       add: "Add widget",
       about: "About",
@@ -21337,6 +21642,9 @@ const enProjects = {
       layoutUnavailable: "Widget layout couldn’t be loaded. Your layout hasn’t been replaced.",
       pluginUnavailable: "This widget’s plugin is unavailable.",
       definitionUnavailable: "This widget’s private definition is unavailable.",
+      definitionUnavailableOwner: ({ owner }: { owner: string }) => `${owner} made this widget. Only they can see how it’s built.`,
+      definitionUnavailableReason: "Only the person who made it can see how it’s built.",
+      pluginUnavailableReason: "Its plugin isn’t available to you here. Everything else works without it.",
       collapse: "Collapse widget",
       expand: "Expand widget",
       moveMain: "Move to main area",
@@ -21365,7 +21673,7 @@ const enProjects = {
       moveBefore: ({ name }: { name: string }) => `Move before ${name}`,
       moveAfter: ({ name }: { name: string }) => `Move after ${name}`,
       delete: "Delete dashboard…",
-      deleteLabel: "Delete dashboard",
+      deleteLabel: "Delete view",
       deleteConfirmTitle: ({ name }: { name: string }) => `Delete “${name}”?`,
       deleteConfirmBody: "Its widgets and their layout go with it. People it was shared with lose it too.",
       deleted: ({ name }: { name: string }) => `Deleted “${name}”. Showing Overview.`,
@@ -21374,6 +21682,8 @@ const enProjects = {
       check: "Check",
       reorder: "Reorder dashboards",
       defaultProtected: "The default dashboard can’t be deleted. You can remove its widgets.",
+      widgets: "Widgets",
+      openInProject: "Open in project",
       empty: "Add widgets to this dashboard.",
       identity: ({ name, owner, access }: { name: string; owner: string; access: string }) => `${name} · ${owner} · ${access}`,
       ownerDashboard: ({ owner }: { owner: string }) => `${owner}’s dashboard`,
@@ -21406,29 +21716,536 @@ const enProjects = {
       scripts: "Scripts",
       services: "Services",
       context: "Context",
+      deployments: "Deployments",
       memory: "Memory",
       unavailable: "This page isn’t available for this checkout yet.",
   },
   deployments: {
       title: "Deployments",
+      creationDefaults: 'Deployment creation defaults',
+      environments: "Environments",
+      add: "Add environment",
+      emptyTitle: "Put this project on the internet",
+      emptyBody: "An environment is a place this project runs, like Staging on one of your Machines. Add one here, or ask an agent in this project to set it up; you approve before anything deploys.",
+      noSourceTitle: "Save this project as a source to deploy it",
+      noSourceBody: "Environments belong to the project source, so every checkout and teammate sees the same ones.",
+      allTitle: "All deployments",
+      allDescription: "Every environment across your projects: what’s live, what’s deploying and what needs you.",
+      allOtherProject: "Projects not opened on this device",
+      allEmptyTitle: "Nothing deployed yet",
+      allEmptyBody: "Add an environment from a project’s Deployments tab. It shows up here with what’s live and what needs you.",
+      allPageEmpty: "Nothing on this page that you can open.",
+      allLoadErrorTitle: "Couldn’t load your deployments",
+      allDeniedTitle: "You can’t see these deployments",
+      allDeniedBody: "Your access on this Home changed. Ask a Home admin if you expected to see them.",
+      loading: "Loading environments…",
+      loadErrorTitle: "Couldn’t load this project’s environments",
+      loadErrorBody: "Nothing was changed. Deploys that were running keep running on their machines.",
+      unavailableTitle: "Your Home isn’t answering",
+      unavailableBody: "Environments show again when it reconnects. What runs on your machines keeps running.",
+      environmentErrorTitle: "Couldn’t open this environment",
+      compose: "Compose",
+      production: "Production",
       overview: "Overview",
       history: "History",
       tabVariables: "Variables",
       tabDomains: "Domains",
       tabPermissions: "Permissions",
       tabSettings: "Settings",
-      review: {
-          environment: "Environment",
-      },
+      variablesTitle: "Secrets and variables",
+      variablesDescription: "Each name gets a value, a saved secret, or a reference to another environment. Secret values are never shown. Changes apply on the next deploy.",
+      variablesEmpty: "No variables yet",
+      phaseBuild: "Build",
+      phaseRuntime: "Runtime",
+      phaseBoth: "Both",
+      sourceValue: "Value",
+      sourceSecret: ({ revision }: { revision: number }) => `Saved secret · revision ${revision}`,
+      sourceReference: ({ output, environment }: { output: string; environment: string }) => `${output} from ${environment}`,
+      sourceAnotherEnvironment: "another environment",
+      factPrimaryUrl: "This environment’s address",
+      factCommitSha: "The deployed commit",
+      factDeploymentId: "The deployment’s id",
+      factEnvironmentName: "The environment’s name",
+      factDomainUrl: "A domain’s address",
+      domainsDescription: "Addresses that reach this environment.",
+      domainsEmpty: "No domains yet",
+      domainAdd: "Add domain",
+      domainAddTitle: "Add a domain",
+      domainFieldHost: "Domain",
+      domainFieldService: "Service",
+      domainFieldPort: "Container port",
+      domainFieldPath: "Path",
+      domainPathHint: "e.g. /docs sends only that path",
+      domainFieldCheck: "Outside check",
+      domainCheckHint: "The page Happier opens from outside, the way your users reach it. It should answer 200.",
+      domainExists: "This address is already on this environment",
+      domainCheckAgain: "Check again",
+      domainRemove: "Remove domain",
+      domainApprovalBody: "Nothing changes until this is approved.",
+      domainChangeFailedTitle: "Couldn’t change the domain",
+      settingChangeFailedTitle: "Couldn’t change this setting",
+      columnName: "Name",
+      columnUsedAt: "Used at",
+      columnValueFrom: "Value from",
+      phaseBuildHint: "Only while the image builds. Never written into it.",
+      phaseRuntimeHint: "Only in the running services.",
+      phaseBothHint: "While building and while running.",
+      addVariable: "Add",
+      removeVariable: "Remove from this environment",
+      variableExists: "This name is already used here",
+      variableInvalid: "Use letters, digits and underscores, starting with a letter",
+      variablesConflictTitle: "Someone changed these variables",
+      variablesConflictBody: "Your edits are kept here but weren’t saved. Discard them to see the current variables.",
+      variablesReviewBody: "Nothing changes until this is approved. Changes apply on the next deploy.",
+      variablesSaveFailedTitle: "Couldn’t save the variables",
+      secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} secrets sealed to ${machine} for this environment. Only its daemon can open them, and only while starting a release.`,
+      sourceSavedSecret: "Saved secret",
+      sourceSecretRevision: ({ revision }: { revision: number }) => `revision ${revision}`,
+      sourceReferenceDetail: "Filled in at each deploy",
+      sourceFactDetail: "Filled in by Happier at each deploy",
+      servingErrorTitle: "Couldn’t load what’s serving",
+      historyErrorTitle: "Couldn’t load the history",
+      pageNewer: "Newer",
+      pageOlder: "Older",
+      redeployLive: "Redeploy what’s live",
+      redeployLiveHint: "Builds the serving commit again with today’s variables",
+      moreWaysToDeploy: "More ways to deploy",
+      menuRollBack: "Roll back…",
+      menuRollBackHint: "Open History and pick a kept release",
+      menuEdit: "Edit environment",
+      whoMayDeploy: "Who may deploy",
+      whoMayDeployDescription: "People who may deploy, roll back and approve requests here. Everyone in the project can see it.",
+      deployers: "Deployers",
+      deployersManagers: "Project managers",
+      deployersMembers: "Everyone in the project",
+      deployersChosen: "Chosen people",
+      yourAccess: "You",
+      roleReader: "Can view",
+      roleDeployer: "Can deploy",
+      roleManager: "Can manage",
+      settingsDescription: ({ name }: { name: string }) => `How ${name} runs. Variables, Domains and Permissions have their own tabs.`,
+      sectionServersBuild: "Servers & build",
+      sectionServersBuildDescription: "Where this environment runs and builds.",
+      runsOn: "Runs on",
+      buildsOn: "Builds on",
+      buildsOnTarget: "The server it runs on",
+      sectionController: "Controller",
+      sectionControllerDescription: "The Machine that runs this environment’s scheduled jobs, alerts and outside checks.",
+      controllerRow: "Runs jobs and alerts on",
+      sectionRollout: "Rollout",
+      sectionRolloutDescription: "How a deploy replaces what runs, and what happens when it fails.",
+      rolloutStartFirst: "Starts new copies first · no downtime",
+      rolloutRecreate: "Restarts in place · down a few seconds",
+      restoreOnFail: "Restore when a deploy fails",
+      restoreOnFailOn: "On",
+      restoreOnFailOff: "Off",
+      keptForRollback: "Kept for rollback",
+      keptCount: ({ count }: { count: number }) => `${count} previous`,
+      creationReview: deploymentCreationReviewTranslations['en'],
+      defaultsEditor: deploymentDefaultsTranslations['en'],
+      copy: deploymentCopyTranslations['en'],
+      platformLink: deploymentPlatformLinkTranslations['en'],
+      promotion: deploymentPromotionTranslations['en'],
+      healthTitle: "Health",
+      healthUp: "Passing",
+      healthDown: "Down",
+      healthDegraded: "Degraded",
+      healthNotChecked: "Not checked yet",
+      servicesTitle: "Services",
+      servicesDescription: ({ machine }: { machine: string }) => `What the Compose file runs on ${machine} for this environment. Logs and restarts live on the Machine’s Services page.`,
+      servicesFact: ({ count }: { count: number }) => `${count} deployed`,
+      openOnMachine: ({ machine }: { machine: string }) => `Open on ${machine}`,
+      rolloutFactStartFirst: "No downtime",
+      rolloutFactRecreate: "In place · brief",
+      keptNone: "Off",
+      serviceBuiltOn: ({ machine }: { machine: string }) => `Built on ${machine}`,
+      addSecret: "New secret…",
+      addSecretTitle: "New secret",
+      addSecretHint: "Saved in Settings → Secrets, then bound here",
+      addPlain: "Plain variable…",
+      addPaste: "Paste a .env file…",
+      openMachineServices: "Open Services",
+      serviceBuiltHere: "Built by this deploy",
+      servicesDescriptionAny: "What the Compose file runs for this environment. Logs and restarts live on the Machine’s Services page.",
+      nothingDeployedBodyAny: "The first deploy builds the Compose file and starts it.",
+      addSaved: "Use a saved secret…",
+      addSavedHint: "Bind one you already saved",
+      addSavedTitle: "Use a saved secret",
+      addSavedBound: ({ name }: { name: string }) => `Binds “${name}” from Settings → Secrets`,
+      variablesEmptyBody: "Add a secret or a plain value, or paste a .env file. Each applies on the next deploy.",
+      linkMachine: "Link a machine",
+      linkTitle: ({ name }: { name: string }) => `Choose where ${name} runs`,
+      linkLead: ({ name }: { name: string }) => `${name} deploys to this Machine. Nothing starts until you deploy.`,
+      linkConfirm: ({ machine }: { machine: string }) => `Link ${machine}`,
+      linkRefused: ({ machine }: { machine: string }) => `${machine} wasn’t linked`,
+      linkAction: "Link…",
+      runsOnNone: "No machine yet",
+      checksNotDeployed: "Health checks start after the first deploy",
+      variablesModeTable: "Table",
+      variablesModeBulk: "Bulk edit",
+      secretSaving: "Saving the secret…",
+      secretWaitingApproval: "Waiting for your approval to save the secret",
+      bulkHeader: ({ name }: { name: string }) => `# ${name} · one entry per line · secrets stay ‹references›, never values`,
+      bulkPlaceholder: "SENTRY_DSN=https://…\nLOG_LEVEL=info",
+      bulkSecret: "Secret",
+      bulkPlain: "Plain",
+      bulkSecretSaved: "Saved as a secret",
+      bulkDecide: "New names · choose how each value is kept",
+      bulkAddedSecrets: ({ count }: { count: number }) => `+${count} ${count === 1 ? 'secret' : 'secrets'}`,
+      bulkAddedPlain: ({ count }: { count: number }) => `+${count} plain`,
+      bulkChanged: ({ count }: { count: number }) => `${count} changed`,
+      bulkRemoved: ({ count }: { count: number }) => `${count} removed`,
+      bulkNothingRemoved: "Nothing removed",
+      bulkNoChanges: "No changes yet",
+      bulkSave: ({ count }: { count: number }) => count === 1 ? 'Save 1 change' : `Save ${count} changes`,
+      bulkReused: ({ count }: { count: number }) => `${count} already saved as secrets; Save binds them without saving them again.`,
+      bulkFailed: "Not saved. Nothing changed.",
+      bulkUnknownReference: "A ‹reference› doesn’t match a saved secret here. Choose it in the table instead.",
+      bulkInvalidLine: "Each line needs NAME = value.",
+      menuDelete: ({ name }: { name: string }) => `Delete ${name}…`,
+      deleteTitle: ({ name }: { name: string }) => `Delete ${name}`,
+      deleteLead: ({ name, machine }: { name: string; machine: string }) => `${name} runs on ${machine}. Choose what happens to what’s running.`,
+      deleteLeadIdle: ({ name }: { name: string }) => `${name} isn’t running, so nothing stops. Happier removes the environment and its settings.`,
+      deleteStopTitle: "Stop and remove",
+      deleteStopBody: ({ machine }: { machine: string }) => `Stops its services on ${machine} and removes what Happier put there.`,
+      deleteStopUnavailable: ({ machine }: { machine: string }) => `Happier can’t stop these services from here yet. Stop them on ${machine} first, or detach.`,
+      deleteDetachTitle: "Detach, keep running",
+      deleteDetachBody: ({ name, machine }: { name: string; machine: string }) => `Happier forgets ${name}. Everything keeps running on ${machine} exactly as it is, and you manage it by hand from then on.`,
+      deleteConfirmDetach: ({ name }: { name: string }) => `Detach ${name}`,
+      deleteConfirmRemove: ({ name }: { name: string }) => `Stop and remove ${name}`,
+      deleteConfirm: ({ name }: { name: string }) => `Delete ${name}`,
+      deleteRefused: ({ name }: { name: string }) => `${name} wasn’t deleted`,
+      unlinkAction: "Unlink…",
+      unlinkTitle: ({ machine }: { machine: string }) => `Unlink ${machine}`,
+      unlinkLead: ({ name, machine }: { name: string; machine: string }) => `${name} stops deploying to ${machine}. Choose what happens to what’s running there.`,
+      unlinkLeadIdle: ({ name, machine }: { name: string; machine: string }) => `Nothing of ${name} is running on ${machine}, so nothing stops. ${name} stops deploying there.`,
+      unlinkDetachBody: ({ name, machine }: { name: string; machine: string }) => `Happier stops managing ${machine} for ${name}. Everything there keeps running exactly as it is, and you manage it by hand.`,
+      unlinkConfirmDetach: ({ machine }: { machine: string }) => `Detach ${machine}`,
+      unlinkConfirm: ({ machine }: { machine: string }) => `Unlink ${machine}`,
+      unlinkRefused: ({ machine }: { machine: string }) => `${machine} wasn’t unlinked`,
+      factKeepsRunning: "Keeps running",
+      factKeepsRunningValue: ({ machine }: { machine: string }) => `Its services on ${machine}, with their volumes and data`,
+      factStops: "Stops",
+      factStopsValue: ({ name }: { name: string }) => `Health checks, alerts and deploys from Happier · ${name} leaves this list`,
+      factStopsTargetValue: ({ name, machine }: { name: string; machine: string }) => `Deploys, health checks and alerts for ${name} on ${machine}`,
+      factSecrets: "Secrets",
+      factSecretsValue: "They may stay inside the running services. If someone lost access, rotate them where they were issued.",
+      factCosts: "Costs",
+      factCostsValue: ({ machine }: { machine: string }) => `Whatever it costs on ${machine} keeps going. Happier can’t see those costs.`,
+      factData: "Data",
+      factDataValue: "Volumes are kept. Deleting the environment never touches them.",
+      factKeeps: "Keeps",
+      factKeepsValue: "The deployment history and backups",
+      deleteDomains: ({ domains }: { domains: string }) => `Also removes these Domains: ${domains}`,
+      healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} of ${count} servers healthy`,
+      sectionChecks: "Checks & alerts",
+      sectionChecksDescription: "Health checks for this environment and who hears when one fails.",
+      sectionBackups: "Backups",
+      sectionBackupsDescription: "Where this environment’s data is copied and how long copies are kept.",
+      sectionPreviews: "Previews",
+      sectionPreviewsDescription: "Short-lived copies of this environment for pull requests.",
+      nothingSetUp: "Nothing set up yet",
+      sectionDenied: "You don’t have access to this",
+      domainsErrorTitle: "Couldn’t load the domains",
+      domainRoute: ({ service, port, path }: { service: string; port: number; path: string }) => `${service} : ${port} · ${path}`,
+      domainAllPaths: "all paths",
+      domainRedirect: ({ target }: { target: string }) => `Redirects to ${target}`,
+      domainTagRedirect: "Redirect",
+      domainTagBasicAuth: "Basic auth",
+      domainTagOwnCertificate: "Your certificate",
+      domainTagPath: "Path",
+      domainStateSettingUp: "Setting up",
+      domainStateWarning: "Needs a look",
+      domainStateFailed: "Failed",
+      domainStateRemoving: "Removing",
+      pagePrevious: "Previous",
+      pageNext: "Next",
+      checksErrorTitle: "Couldn’t read service health",
+      checksServices: ({ count }: { count: number }) => `${count === 1 ? "1 service health check" : `${count} service health checks`}`,
+      checksNoServices: "No services report health yet",
+      checksWaiting: "Waiting for the first check",
+      checksFailing: ({ names }: { names: string }) => `${names} not passing`,
+      checksAllPassing: "All passing",
+      checksOnMachine: ({ summary, machine }: { summary: string; machine: string }) => `${summary} · on ${machine}`,
+      alertsRow: "Alerts",
+      notAvailableYet: "Not available yet",
+      backupsErrorTitle: "Couldn’t load the backup settings",
+      backupNotNeededTitle: "Nothing to back up here",
+      backupNotNeededBody: ({ name }: { name: string }) => `${name} keeps no data that needs a backup.`,
+      backupSources: "Backs up",
+      backupDestination: "Backup destination",
+      backupRun: "Back up now",
+      backupNeedsDeployment: "Deploy this Environment before backing up its data.",
+      backupCompleted: ({ count }: { count: number }) => `Backup complete · ${count} snapshots saved`,
+      backupVerify: "Verify backup",
+      backupVerifyDescription: "Read back a snapshot’s manifest and payload, or check the repository’s integrity. These checks do not restore the database.",
+      backupManifestReadBack: "Manifest read-back",
+      backupRepositoryCheck: "Repository check",
+      backupVerified: ({ level, time }: { level: string; time: string }) => `${level} passed · backup from ${time}`,
+      backupNoSnapshots: "No snapshots found in this destination.",
+      backupCaptureUnavailable: "The capture record is unavailable, so this snapshot cannot be verified here.",
+      dataTitle: "Data",
+      dataAdd: "Add a database",
+      dataEmpty: "No database is described by this Environment’s template or linked targets.",
+      dataConnectionGuide: "Install a database from Store as its own Environment. Then connect it through Variables using an Environment export or a saved secret binding.",
+      dataVariables: "Open Variables",
+      dataBackups: "Backups",
+      dataService: ({ service, port }: { service: string; port: number }) => `${service} · port ${port}`,
+      backupSourceDump: ({ service }: { service: string }) => `${service} (database dump)`,
+      backupSourceVolume: ({ service, volume }: { service: string; volume: string }) => `${volume} on ${service}`,
+      backupKeeps: "Keeps",
+      backupKeepEverything: "Every backup",
+      backupKeepLast: ({ count }: { count: number }) => `last ${count}`,
+      backupKeepDaily: ({ count }: { count: number }) => `${count} daily`,
+      backupKeepWeekly: ({ count }: { count: number }) => `${count} weekly`,
+      backupKeepMonthly: ({ count }: { count: number }) => `${count} monthly`,
+      backupStatusTitle: "Backup run history",
+      backupStatusUnavailable: "Past backup runs aren’t available here.",
+      restoreTitle: "Restore a backup",
+      restoreLead: ({ name }: { name: string }) => `Replace ${name}’s data with this backup. Happier checks it and saves the current data first; nothing is replaced until you confirm.`,
+      restoreReadyLead: ({ name }: { name: string }) => `The backup checks out and the current data is saved. Replacing ${name}’s data can’t be undone here; the safety backup is how you go back.`,
+      restoreReadyLeadEmpty: ({ name }: { name: string }) => `The backup checks out. ${name}’s database holds no data yet, so there was nothing to save first.`,
+      restoreBackup: "Backup",
+      restoreBackupBefore: ({ version, time }: { version: string; time: string }) => `Before ${version} · ${time}`,
+      restoreBackupTaken: ({ time }: { time: string }) => `Taken ${time}`,
+      restoreBackupBeforeVersion: ({ version }: { version: string }) => `Before ${version}`,
+      restoreBackupRetained: "Kept by an earlier deploy",
+      restoreDatabase: "Replaces",
+      restoreDatabaseValue: ({ service, database }: { service: string; database: string }) => `${database} on ${service}`,
+      restoreSafety: "Safety backup",
+      restoreSafetySaved: ({ time }: { time: string }) => `Current data saved ${time}`,
+      restoreSafetySavedNow: "Current data saved",
+      restoreSafetyNotNeeded: "Not needed: the database is empty",
+      restoreCheck: "Check backup",
+      restoreConfirm: "Replace data",
+      restoreRestored: ({ name }: { name: string }) => `${name}’s data is restored`,
+      restoreRolledBack: "The restore didn’t finish, so the data was put back as it was",
+      restoreUnknown: "Happier couldn’t confirm whether the data was replaced",
+      restoreRecoveryRequired: "The restore stopped partway and the data needs recovery",
+      restoreCodeUnchanged: "The running code is unchanged.",
+      restoreCheckAgain: "That check is no longer current. Check the backup again.",
+      restoreBackupUnusable: "This backup can’t be restored",
+      restoreRefused: "Couldn’t restore the backup",
+      restoreEntry: "Restore a backup",
+      restoreAction: "Restore",
+      retentionTitle: "Keeps running",
+      retentionAlwaysOn: "Always on",
+      retentionCurrentRule: "Current rule",
+      retentionAlwaysOnBody: "The machine never stops on its own, so the deploy stays up.",
+      retentionCurrentRuleBody: ({ policy }: { policy: string }) => `${policy}. The deploy is down while the machine is stopped.`,
+      previewOf: ({ pullRequest }: { pullRequest: string }) => `Preview of pull request ${pullRequest}`,
+      previewMadeFrom: ({ name }: { name: string }) => `Made from ${name}`,
+      previewMadeFromTemplate: "Made from a preview template",
+      previewsEmpty: "No pull request previews made from this environment",
+      previewsErrorTitle: "Couldn’t load previews",
+      secretsSealedTeam: ({ count, machine }: { count: number; machine: string }) => `${count} secrets sealed to ${machine} for this Team environment. Whoever controls its Machines can read them.`,
+      secretsTeamDisclosure: ({ count }: { count: number }) => `${count} secrets linked to this Team environment. Whoever controls its Machines can read them.`,
+      servingNow: "Serving now",
+      nothingDeployedTitle: "Nothing deployed yet",
+      nothingDeployedBody: ({ machine }: { machine: string }) => `The first deploy builds the Compose file on ${machine} and starts it.`,
+      recent: "Recent deployments",
+      recentDescription: "Each deploy keeps its own record; rolling back starts a new one.",
+      historyEmpty: "No deployments yet",
+      deploy: "Deploy",
+      managersOnly: "Only managers of this environment can deploy here.",
+      rollBack: "Roll back to this version",
+      deployAgain: "Deploy again",
+      cancelFailedTitle: "Couldn’t cancel",
+      cancelApprovalBody: "The deploy stops once the request is approved.",
+      menuOpenEnvironment: ({ name }: { name: string }) => `Open ${name}`,
+      byYou: "you",
+      took: ({ duration }: { duration: string }) => `took ${duration}`,
+      live: "Live",
+      steps: "Steps",
+      stepsOn: ({ machine }: { machine: string }) => `On ${machine}`,
+      stateQueued: "Queued",
+      stateWaitingApproval: "Waiting for approval",
+      stateRunning: "Deploying",
+      stateUnverified: "Running, not verified",
+      stateSucceeded: "Deployed",
+      stateFailed: "Failed",
+      stateCancelled: "Cancelled",
+      rollback: "Roll back",
+      rollbackTo: ({ version }: { version: string }) => `Roll back to ${version}`,
+      chooseRecovery: 'Choose recovery',
+      chooseRecoveryBody: 'Restore the pre-migration backup and previous release, replacing current data, or roll back code only and keep current data.',
+      restoreBackupAndCode: 'Restore backup and previous release',
+      rollbackCodeOnly: 'Roll back code only',
+      rollbackApprovalBody: "The rollback starts once the request is approved.",
+      rollbackFailedTitle: "Couldn’t roll back",
+      stateUnknown: "Outcome unknown",
+      headlineDeploying: ({ sha }: { sha: string }) => `Deploying ${sha}`,
+      headlineDeployed: ({ sha }: { sha: string }) => `Deployed ${sha}`,
+      headlineFailed: ({ sha }: { sha: string }) => `Deploy of ${sha} failed`,
+      headlineRollbackFailed: ({ sha }: { sha: string }) => `Rollback to ${sha} failed`,
+      headlineRollingBack: ({ sha }: { sha: string }) => `Rolling back to ${sha}`,
+      headlineRolledBack: ({ sha }: { sha: string }) => `Rolled back to ${sha}`,
+      headlineWaiting: ({ sha }: { sha: string }) => `${sha} is waiting for approval`,
+      headlineQueued: ({ sha }: { sha: string }) => `${sha} is queued`,
+      headlineCancelled: ({ sha }: { sha: string }) => `Deploy of ${sha} cancelled`,
+      headlineUnknown: ({ sha }: { sha: string }) => `Couldn’t confirm ${sha}`,
+      waitingBody: "Nothing runs until someone approves it in the Inbox.",
+      unknownBody: "Happier couldn’t confirm whether this finished. It won’t try again on its own; check the machine before deploying again.",
+      unverifiedBody: "There’s no health check, so Happier can’t tell whether it works. Add a healthcheck to this service in its Compose file, then deploy again.",
+      healthHealthy: "Healthy",
+      healthUnhealthy: "Unhealthy",
+      healthUnknown: "Health unknown",
+      healthUnverified: "Not verified",
+      restoredPrevious: "Back on the previous version",
+      failureInterrupted: "The deployment was interrupted before activation could be confirmed.",
+      failureSource: "Couldn’t get the source",
+      failureBuild: "The build failed",
+      failureActivate: "The new version didn’t start",
+      failureObserve: "The new version didn’t pass its health check",
+      failureRestore: "Putting the previous version back failed",
+      failureCleanup: "Cleaning up after the deploy failed",
+      failureAdmission: "The deploy couldn’t start",
+      failureRollbackActivate: "The rollback didn’t start",
+      failureRollbackObserve: "The restored version didn’t pass its health check",
+      failureRollbackAdmission: "The rollback couldn’t start",
+      failureRollbackGeneric: "This rollback failed",
+      failureGeneric: "This deploy failed",
+      failureRestored: ({ sha }: { sha: string }) => `Happier put ${sha} back, and it’s serving again.`,
+      failureRestoreFailed: ({ sha }: { sha: string }) => `Happier couldn’t put ${sha} back, so this environment may not be serving.`,
+      failureRestoreUnknown: "Happier couldn’t confirm whether the previous version is back. Check the machine before deploying again.",
+      failureNothingChanged: ({ machine }: { machine: string }) => `Nothing changed on ${machine}; what was serving kept serving.`,
+      failureFirstDeploy: "Nothing was serving before this deploy.",
+      failureNotRestored: ({ sha }: { sha: string }) => `Happier didn’t put ${sha} back on its own.`,
+      logTitle: "Last lines of the log",
+      deployLog: "Deploy log",
+      logWhole: ({ machine }: { machine: string }) => `From ${machine}. Secret values are redacted.`,
+      logTail: ({ machine }: { machine: string }) => `The end of the deploy log from ${machine}. Secret values are redacted.`,
+      stepLogsDescription: ({ machine }: { machine: string }) => `The deploy log from ${machine}, step by step. Secret values are redacted.`,
+      allSteps: "All steps",
+      failedOnly: "Failed only",
+      stepLogEmpty: "No lines from this step yet.",
+      stepLogRestarted: "This step’s log changed while it was open.",
+      stepLogAdmission: ({ machine }: { machine: string }) => `${machine} can’t give this step’s log to this device yet.`,
+      stepLogSaveFailed: "Couldn’t save this step’s log. Try again.",
+      liveAt: ({ address }: { address: string }) => `Live at ${address}`,
+      servingOn: ({ machine }: { machine: string }) => `Serving on ${machine}`,
+      ranOn: ({ machine }: { machine: string }) => `Ran on ${machine}`,
+      receiptHealthPassed: "Health check passed",
+      receiptHealthFailed: "Health check failed",
+      downtimeBrief: "down briefly while it restarted",
+      factHealthNow: "Health now",
+      factAddress: "Address",
+      factNotAvailable: "Not available yet",
+      factPrevious: "Previous version",
+      factFirstDeploy: "None · first deploy",
+      restoreFailed: "Couldn’t restore the previous version",
+      aMachine: "a machine",
+      allStepsPassed: ({ count }: { count: number }) => `All ${count} steps passed`,
+      machineOffline: ({ machine }: { machine: string }) => `${machine} isn’t answering. Deploys wait for it; what runs there keeps running.`,
+      deployUnavailableTitle: "Deploying from Happier isn’t available here yet",
+      deployNoTarget: "This environment has no machine to deploy to yet.",
+      reviewWaitingTitle: "Waiting for your review",
+      reviewWaitingBody: ({ machine }: { machine: string }) => `Nothing changes on ${machine} until this deploy is approved.`,
+      openReview: "Open review",
+      deployStartedTitle: "Deploy started",
+      deployStartedBody: "Its steps show in the list while it runs.",
+      deployFailedTitle: "Couldn’t deploy",
+      deployNeedsBuild: ({ machine }: { machine: string }) => `This environment builds its images, and Happier can’t build them yet. Deploys use images already on ${machine}.`,
+      nothingChanged: "Nothing changed.",
+      machineAway: "Not answering",
+      saveEnvironment: "Save environment",
       newEnvironment: "New environment",
       name: "Name",
       namePlaceholder: "Staging",
-      whoTitle: "Who may deploy",
-      whoManagers: "Managers of this environment",
-      production: "Production",
-      productionHint: "Marked as production wherever it appears.",
+      draftDescription: "Not saved · nothing is deployed until you choose to",
+      createApprovalTitle: "Waiting for approval",
+      createApprovalBody: "The environment is saved once the request is approved.",
+      environmentCreated: "Environment created",
+      partialProgressBody: "Completed steps are kept. Continue with the step that needs attention.",
+      openEnvironment: "Open environment",
       createFailedTitle: "Couldn’t save this environment",
-      creationReview: deploymentCreationReviewTranslations['en'],
+      createDenied: "You can’t add environments to this project.",
+      whereTitle: "Where it runs",
+      whereDescription: "One of your Machines runs it with Docker Compose.",
+      noMachineTitle: "No Machine can host it yet",
+      noMachineBody: "Connect a Machine to this Home first.",
+      machine: "Machine",
+      whatRunsTitle: "What runs",
+      whatRunsDescription: "The Compose file in this project’s repository, at the branch you choose.",
+      composeFile: "Compose file",
+      branch: "Branch",
+      branchDefault: ({ ref }: { ref: string }) => `${ref} (default)`,
+      branchChoose: "Choose a branch",
+      whoTitle: "Who may deploy",
+      whoDescription: "Agents ask first.",
+      whoManagers: "Managers of this environment",
+      productionHint: "Marked as production wherever it appears.",
+      review: {
+        whatTitle: "What deploys",
+        decisionDeploy: ({ version, environment }: { version: string; environment: string }) => `Deploy ${version} to ${environment}`,
+        decisionPromote: ({ version, environment }: { version: string; environment: string }) => `Promote ${version} to ${environment}`,
+        decisionRollback: ({ version, environment }: { version: string; environment: string }) => `Roll back ${environment} to ${version}`,
+        consequenceOn: ({ machine }: { machine: string }) => `Nothing changes on ${machine} until you confirm.`,
+        consequence: "Nothing changes until you confirm.",
+        approveDeploy: ({ version }: { version: string }) => `Deploy ${version}`,
+        approvePromote: ({ version }: { version: string }) => `Promote ${version}`,
+        approveRollback: ({ version }: { version: string }) => `Roll back to ${version}`,
+        replacesNote: ({ revision }: { revision: string }) => `Replaces ${revision}`,
+        secretsNoteOn: ({ machine }: { machine: string }) => `Names only. Sealed to ${machine} and opened only while a release starts.`,
+        secretsNote: "Names only. The values stay sealed and open only while a release starts.",
+        environment: "Environment",
+        version: "Version",
+        versionStored: ({ revision }: { revision: number }) => `Compose file, revision ${revision}`,
+        replaces: "Replaces",
+        replacesNothing: "Nothing is serving yet",
+        secrets: "Secrets",
+        ingressTunnel: "Cloudflare Tunnel",
+        reachedThrough: "Reached through",
+        whereTitle: "Where it runs",
+        engineNative: "Docker",
+        engineDockerDesktop: "Docker Desktop",
+        awakeNote: "Runs only while this Machine is awake and Docker Desktop is open.",
+        domainsUnavailable: "Custom domains aren’t available with Docker Desktop.",
+        servicesTitle: "What starts",
+        servicesOn: ({ machine }: { machine: string }) => `What starts on ${machine}`,
+        copies: ({ count }: { count: number }) => `${count} copies`,
+        port: ({ port }: { port: string }) => `Port ${port}`,
+        portLocal: ({ port }: { port: string }) => `Port ${port}, this Machine only`,
+        noHealthCheck: "No health check",
+        risksTitle: "Check before approving",
+        risksOn: ({ machine }: { machine: string }) => `Check before approving on ${machine}`,
+        risk: {
+          privileged: "Runs with full privileges on the Machine",
+          docker_socket: "Can control Docker on the Machine",
+          host_network: "Uses the Machine’s network directly",
+          host_pid: "Can see the Machine’s processes",
+          host_ipc: "Shares memory with the Machine’s processes",
+          additional_capabilities: "Adds extra Linux capabilities",
+          devices: "Can use devices from the Machine",
+          host_bind: "Mounts a folder from the Machine",
+          in_release_bind: "Can write into the release’s own files",
+          non_loopback_publish: "Opens a port to other Machines",
+          missing_reboot_restart_policy: "Won’t restart after a reboot",
+          inspection_unknown: "Couldn’t be fully inspected",
+        },
+        writableSource: ({ service, target }: { service: string; target: string }) => `${service} can write to ${target}, which is part of the release.`,
+        concurrentWriters: ({ service, target, count }: { service: string; target: string; count: number }) => `${count} copies of ${service} write to ${target} together.`,
+        rolloutTitle: "How it rolls out",
+        promotion: "Promotion",
+        promotionImages: "Promotes the images already built for the source environment.",
+        promotionCompose: "Replaces this environment’s Compose file.",
+        rollout: "Rollout",
+        rollouts: {
+          recreate: "Stops the old version, then starts the new one.",
+          startFirst: "Starts the new version before stopping the old one.",
+        },
+        beforeStart: "Before it starts",
+        migrationRuns: ({ service, command }: { service: string; command: string }) => `Runs ${command} in ${service}.`,
+        backupFirst: "Backs up the data first.",
+        migrationFails: {
+          ask: "If it fails, you choose what happens.",
+          restoreBackupAndRollbackCode: "If it fails, restores the backup and the previous release.",
+          rollbackCodeOnly: "If it fails, restores the previous release only.",
+        },
+        ifItFails: "If the deploy fails",
+        restoresPrevious: "The previous release comes back automatically.",
+        staysDown: "It stays down until you roll back.",
+      },
   },
   identity: {
     savedNotOpen: 'Saved, not open',
@@ -21477,6 +22294,7 @@ const enProjects = {
   },
   localChanges: {
     filesNotCommitted: ({ count }: { count: number }) => count === 1 ? '1 file not committed' : `${count} files not committed`,
+    includedForCommit: ({ count }: { count: number }) => `${count} included`,
     commitsToPush: ({ count }: { count: number }) => count === 1 ? '1 commit to push' : `${count} commits to push`,
     push: 'Push',
     clean: 'No local changes.',
@@ -21512,6 +22330,7 @@ const enProjects = {
     outcomeFound: "A source like this is already in your list.",
     dashboardOtherHome: "On another Home",
     addressResolving: ({ machine }: { machine: string }) => `Checking the address on ${machine}…`,
+    addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Couldn’t check this address on ${machine} (${code}).`,
     addressUnknown: "Happier couldn’t tell which Git host this is. Check the address.",
     addressUnsupported: "This Git host isn’t supported yet.",
     addressNoMachine: "Connect a machine on this Home to check the address.",
@@ -21634,7 +22453,7 @@ const enProjects = {
   detail: {
     notFoundTitle: 'Project not found',
     notFoundDescription:
-      'This project may have been removed, or it belongs to a different server.',
+      'This project may have been removed, or it belongs to a different Home.',
     missingWorktreeRecovered:
       'Selected worktree no longer exists. Switched back to the project root.',
     groupTitle: 'Project',
@@ -21655,6 +22474,7 @@ const enProjects = {
 };
 
 const enSettingsPlugins = {
+  publish: pluginPublishTranslations['en'],
   updateReview: pluginUpdateReviewTranslations.en,
   ...pluginWebhookAdministrationTranslations['en'],
   ...pluginAccountDataEraseTranslations.en,
@@ -21831,6 +22651,7 @@ const enSettingsPlugins = {
   loadCatalog: 'Load catalog',
   catalog: {
     browse: 'Browse',
+    addTitle: 'Add a plugin',
     byPublisher: ({ publisher }: { publisher: string }) => `By ${publisher}`,
     adds: 'What it adds',
     links: 'Links',
@@ -21839,6 +22660,8 @@ const enSettingsPlugins = {
     support: 'Support',
     pluginPage: 'Plugin page',
     addsLine: {
+      machineRecipes: "Reviewable steps to set up a machine",
+      machineSetupPresets: "Reusable collections of machine setup choices",
       agent: "Coding agents you can start sessions with",
       skills: "Instructions your agents can follow",
       machines: "More machines to run sessions on",
@@ -21948,6 +22771,27 @@ const enSettingsPlugins = {
     action: string;
     outcome: string;
   }) => `${action} failed (${outcome}).`,
+  updatePluginTitle: "Update plugin",
+  installDeclined: "Install declined",
+  updateDeclined: "Update declined",
+  installCanceled: "Install canceled",
+  updateCanceled: "Update canceled",
+  installOnMachines: "Install on several machines",
+  multiInstall: {
+      chooseDescription: "Choose the machines to install it on. Each one checks this release, then you confirm once.",
+      machinesTitle: "Machines",
+      sharedTitle: "Same on each machine",
+      reviewDescription: "Each machine checked this release itself. Confirm once to install it on all of them.",
+      footerNote: "Nothing installs until you confirm.",
+      ready: "Ready to install",
+      checking: "Checking this release…",
+      installing: "Installing…",
+      installed: "Installed",
+      notInstalled: "Not installed",
+      superseded: "Changed since you reviewed it",
+      supersededReason: "Review it again to see what the new release uses.",
+      reviewAgain: "Review again",
+  },
   marketplaceInstallRefused: ({ reason }: { reason: string }) =>
     `The plugin was not installed.\n\n${reason}`,
   marketplaceChangeRefused: ({ action, reason }: { action: string; reason: string }) =>
@@ -22025,7 +22869,7 @@ const enSettingsPlugins = {
     'Plugin settings are unavailable for this machine.',
   genericSettingsLoadError: 'Failed to load plugin settings.',
   genericSettingsSaveError: 'Failed to save plugin setting.',
-  registriesTitle: 'Private npm registries',
+  registriesTitle: 'npm registries',
   registriesFooter:
     'Registry sign-in controls only package access. Installed and trusted plugins remain available if a registry is removed or signed out.',
   registriesAdd: 'Add registry',
@@ -22052,6 +22896,8 @@ const enSettingsPlugins = {
   registriesAllowPrivateNetwork: 'Allow private network',
   registriesPublicOnly: 'Public addresses only',
   registriesLogin: 'Sign in',
+  registriesLoginMachine: "Use this Machine’s npm login",
+  registriesLoginBrowser: "Sign in with browser",
   registriesLoginTitle: 'Registry token',
   registriesLoginBody:
     'Paste a token for this registry. It is encrypted on the selected machine and is not stored in this app.',
@@ -22087,6 +22933,14 @@ const enSettingsPlugins = {
   },
   registriesErrorTitle: 'Registry operation failed',
   registriesErrorBody: 'Refresh the registry list and try again.',
+  registriesErrorReason: {
+    authentication_required: 'No usable npm login was found on the selected Machine. Sign in to npm on that Machine, use browser sign-in, or enter a token, then try again.',
+    authentication_failed: 'The registry rejected the credentials. Sign in again or enter a valid token, then retry.',
+    offline: 'The registry could not be reached. Check the Machine’s network connection and registry address, then retry.',
+    unavailable: 'The Machine could not complete the registry operation. Check its connection and npm configuration, then retry.',
+    web_login_unsupported: 'This registry could not start browser sign-in. Use the Machine’s npm login or enter a token instead.',
+    external_link_unavailable: 'The sign-in page could not be opened. Retry opening it, or use the Machine’s npm login or a token.',
+  },
   registriesConflictTitle: 'Registry settings changed',
   registriesConflictBody:
     'The registry settings changed before this action was applied. Review the refreshed list and try again.',
@@ -22192,8 +23046,7 @@ const enUpdates = {
     checkedAt: ({ time }: { time: string }) => `Checked ${time}`,
     upToDateDescription:
       'Happier, its command line and your agents are current.',
-    unknownDescription:
-      'Everything that could be checked is current. The rest is checked again when it can be reached.',
+    unknownDescription: "Some update information is unavailable or cached. See the affected rows for details.",
     offlineDescription:
       'Everything reachable is current. Offline machines are checked when they’re back.',
   },
@@ -22250,6 +23103,9 @@ const enUpdates = {
     appCheckFailed: 'Couldn’t check for a newer version.',
     appDownloadFailed: 'The download didn’t finish.',
     appInstallFailed: 'The update couldn’t be installed.',
+    cachedRelease: 'Cached release information; not refreshed here',
+    cachedReleaseChannel: ({ channel }: { channel: string }) => `Cached ${channel} release information; not refreshed here`,
+    manualUpdateInterruptsSessions: 'Update on this machine. Services may stop and running sessions may end.',
     latestUnknown: 'Couldn’t check for a newer version',
     uncheckedTools: ({ count }: { count: number }) => `Couldn’t check ${count} tools for a newer version`,
     rolledBack: ({ kept, target }: { kept: string; target: string }) =>
@@ -22391,6 +23247,7 @@ const enExternalSessions = {
   browseContentUpdateRequired: ({ machine }: { machine: string }) =>
     `Update Happier on ${machine} to search conversations.`,
   browseContentPartial: 'Some conversations could not be searched.',
+  browseContentPartialNoMatches: ({ query }: { query: string }) => `No conversations match “${query}” · some couldn’t be searched`,
   browseContentNothingYet: 'No matches yet in what’s been searched.',
   browseContentNotSearchable: 'Not searchable',
   browseContentStopped: 'Search stopped. Results are incomplete.',
@@ -22404,6 +23261,7 @@ const enExternalSessions = {
     `Opens the conversation at this message with Find on “${query}”.`,
   browseContentPreviewEmpty: 'The matching message appears here.',
   browseContentPreviewElided: ({ count }: { count: number }) => count === 1 ? '1 step in between' : `${count} steps in between`,
+  browseContentPreviewFailed: 'Couldn’t load this conversation',
   browseContentMore: 'Search more conversations',
   browseContentBack: 'Back to Search',
   browseNoSearchResults: 'No loaded sessions match this search yet.',
@@ -22606,11 +23464,12 @@ const enConversationSearch = {
     scanAllMachines: 'On all machines',
     coverageOffline: ({ machines }: { machines: string }) => `Offline: ${machines}`,
     coverageOutdated: ({ machines }: { machines: string }) => `Needs an update: ${machines}`,
-    coveragePartial: ({ machines }: { machines: string }) => `Partial results: ${machines}`,
+    coveragePartial: ({ machines }: { machines: string }) => `Partly searched: ${machines}`,
     coverageDisabled: ({ machines }: { machines: string }) => `Search is off: ${machines}`,
     coverageHomeUnavailable: 'This Home’s search is unavailable.',
     coverageMachineCount: ({ count }: { count: number }) => `${count} machines`,
     coverageSourcesFailed: 'Some sources couldn’t be searched',
+    noMessagesMatch: ({ query, coverage }: { query: string; coverage: string }) => `No messages match “${query}” · ${coverage}`,
     resultIndexed: 'Indexed',
     resultScanned: 'Scanned',
     searching: 'Searching conversations…',
@@ -22643,6 +23502,7 @@ export const en: TranslationStructure = {
     composerReferences: composerReferenceTranslations.en,
     screenCapture: screenCaptureCopy.en,
     hunkReview: hunkReviewTranslations['en'],
+    storeInstalled: storeInstalledTranslations['en'],
   panes: { mainColumn: paneMainColumnTranslations['en'], emptyEditor: paneEmptyEditorTranslations['en'], shortcutsSheet: paneShortcutsSheetTranslations['en'] },
     sessionCoordinator: {
         make: {
@@ -22694,6 +23554,7 @@ export const en: TranslationStructure = {
             stopTurnDescription: "It’s still working. Ending the turn lets the role apply.",
             roleHeldNote: "Everything else is done. Retry to apply the role.",
             done: ({ name }: { name: string }) => `${name} is now a coordinator`,
+            doneNoRule: ({ name }: { name: string }) => `${name} is set up. It becomes a coordinator once it manages a session or follows a rule.`,
         },
         menu: {
             make: "Make coordinator…",
@@ -22749,6 +23610,7 @@ export const en: TranslationStructure = {
       levelEverythingHint: "Every update, as it happens",
       levelImportantHint: "Interrupts only when something needs you, fails or stalls",
       levelQuietHint: "Updates arrive without interrupting",
+      levelMeaning: "What each level means",
       checkInTitle: "Check-in",
       checkInDescription: "When agents keep asking each other with no person involved, they pause and ask you before going on.",
       pauseAfter: "Pause after",
@@ -22779,6 +23641,7 @@ export const en: TranslationStructure = {
   ...managedMachines,
   ...projectWorkers,
   ...publicIdentity,
+  projectStarters: { staticWebsite: { title: 'Static website', summary: 'A small HTML and CSS site for static hosting. Your own server needs deployment preparation.' } },
   homeDeviceApproval: enHomeDeviceApproval,
   settingsOverview: enSettingsOverview,
   homeSetup: enHomeSetup,
@@ -22902,6 +23765,12 @@ export const en: TranslationStructure = {
   // contextPages:value:begin
   contextPages: enContextPages,
   // contextPages:value:end
+  sessionIntentConflict: {
+    changed: (p: { subject: string }) => `${p.subject} changed somewhere else.`,
+    changedNow: (p: { subject: string; current: string }) => `${p.subject} changed somewhere else. Now ${p.current}.`,
+    apply: 'Apply mine',
+    keep: 'Keep current',
+  },
   sessionInstructions: {
     title: 'Instructions',
     description: 'Instructions set its persona for coding and bound voice. Notes guide orchestration and are inherited by workers.',
@@ -22921,7 +23790,6 @@ export const en: TranslationStructure = {
     locked: 'Unlock this account to read its instructions.',
     ownerPrivate: 'These instructions belong to the session owner and aren\'t shared with you.',
     refused: 'You can\'t change this session\'s instructions.',
-    setConflict: 'This session changed somewhere else. Try again.',
     setFailed: 'Couldn\'t change its instructions. Nothing was lost.',
     savePending: 'Waiting to save the instructions…',
     saveDenied: 'Kept its previous instructions.',
@@ -22993,6 +23861,8 @@ export const en: TranslationStructure = {
         newHint: 'Or make any session a bot',
         pinHint: 'Show this bot separately on the rail',
         needsYou: (params: { count: number }) => params.count === 1 ? '1 needs you' : `${params.count} need you`,
+        moreOnHome: (params: { count: number }) => `+${params.count}`,
+        moreOnHomeA11y: (params: { count: number }) => `${params.count} more bots. Open Bots`,
         working: (params: { count: number }) => `${params.count} working`,
         rowNeedsYou: (params: { name: string }) => `${params.name}, needs you`,
         rowWorking: (params: { name: string }) => `${params.name}, working`,
@@ -23018,6 +23888,7 @@ export const en: TranslationStructure = {
         startBlank: "Start a blank bot", menuSubtitle: "Set up Happier and find what it can do",
     },
     name: { placeholder: "New bot", label: "Bot name", hint: "Leave the name empty to let it name itself." },
+    face: { ...botFaceNameTranslations.en, title: "Choose a face", change: "Change face", style: "Style", body: "Body", colour: "Colour", styles: { dither: "Dither", pixel: "Pixel", solid: "Solid", dots: "Dots", planet: "Planet" }, note: "Seeded from this Bot; only its face changes.", useDefault: "Use my default", surprise: "Surprise me", custom: "Custom", surpriseNote: "A new shape each time. Seeded from this Bot; only its face changes.", customNote: "Your Bot drew this shape. Ask it for another, or pick one here.", customEmptyNote: "Custom: ask this Bot for a shape, like “make yourself a cat”.", failed: "Couldn't save this face. Try again." },
     create: {
         description: "Tell it what to look after. You can change its name and instructions any time.",
         placeholder: "What should this bot look after?",
@@ -23052,6 +23923,7 @@ export const en: TranslationStructure = {
   browserContext: enBrowserContext,
   browserRecording: enBrowserRecording,
   browserPresence: enBrowserPresence,
+  presentation: enPresentation,
   computerUse: enComputerUse,
   browserTool: enBrowserTool,
   browserSurface: enBrowserSurface,
@@ -23172,6 +24044,12 @@ type EnglishNamespaces0 = {
   // contextPages:type:begin
   readonly contextPages: typeof enContextPages;
   // contextPages:type:end
+  readonly sessionIntentConflict: {
+    readonly changed: (p: { subject: string }) => string;
+    readonly changedNow: (p: { subject: string; current: string }) => string;
+    readonly apply: string;
+    readonly keep: string;
+  };
   readonly sessionInstructions: {
     readonly title: string;
     readonly description: string;
@@ -23191,7 +24069,6 @@ type EnglishNamespaces0 = {
     readonly locked: string;
     readonly ownerPrivate: string;
     readonly refused: string;
-    readonly setConflict: string;
     readonly setFailed: string;
     readonly savePending: string;
     readonly saveDenied: string;
@@ -23263,6 +24140,7 @@ type EnglishNamespaces0 = {
         readonly newHint: string; readonly pinHint: string;
         readonly needsYou: (params: { count: number }) => string; readonly working: (params: { count: number }) => string;
         readonly rowNeedsYou: (params: { name: string }) => string; readonly rowWorking: (params: { name: string }) => string;
+        readonly moreOnHome: (params: { count: number }) => string; readonly moreOnHomeA11y: (params: { count: number }) => string;
     };
     readonly promote: 'Make this a bot';
     readonly demote: 'Make a regular session';
@@ -23283,6 +24161,12 @@ type EnglishNamespaces0 = {
         readonly unavailable: string; readonly startBlank: string; readonly menuSubtitle: string;
     };
     readonly name: { readonly placeholder: string; readonly label: string; readonly hint: string };
+    readonly face: {
+        readonly title: string; readonly change: string; readonly style: string; readonly body: string; readonly colour: string;
+        readonly styles: { readonly dither: string; readonly pixel: string; readonly solid: string; readonly dots: string; readonly planet: string };
+        readonly note: string; readonly useDefault: string; readonly surprise: string; readonly custom: string;
+        readonly surpriseNote: string; readonly customNote: string; readonly customEmptyNote: string; readonly failed: string;
+    } & BotFaceNames;
     readonly create: { readonly description: string; readonly placeholder: string; readonly documentFailed: string };
   };
   readonly homeDeviceApproval: typeof enHomeDeviceApproval;
@@ -23307,9 +24191,9 @@ type EnglishNamespaces0 = {
   readonly sidebarFooter: typeof enSidebarFooter;
   readonly accountPopover: typeof enAccountPopover;
   readonly homesHub: typeof enHomesHub;
-  readonly organizationPolicy: typeof enOrganizationPolicy;
   readonly homesJourneys: typeof enHomesJourneys;
   readonly homeAdd: typeof enHomeAdd;
+  readonly organizationPolicy: typeof enOrganizationPolicy;
   readonly accountDisplay: typeof enAccountDisplay;
   readonly actionConfirmations: typeof enActionConfirmations;
   readonly detailPages: typeof enDetailPages;
@@ -23473,6 +24357,7 @@ type EnglishNamespaces10 = TranslationOverlay<
     readonly browserContext: typeof enBrowserContext;
     readonly browserRecording: typeof enBrowserRecording;
     readonly browserPresence: typeof enBrowserPresence;
+    readonly presentation: typeof enPresentation;
     readonly computerUse: typeof enComputerUse;
     readonly browserTool: typeof enBrowserTool;
     readonly browserSurface: typeof enBrowserSurface;
@@ -23674,6 +24559,7 @@ type EnglishNamespaces27 = TranslationOverlay<
         readonly stopTurnDescription: string;
         readonly roleHeldNote: string;
         readonly done: (params: { name: string }) => string;
+        readonly doneNoRule: (params: { name: string }) => string;
       };
       readonly menu: {
         readonly make: string;
@@ -23729,6 +24615,7 @@ type EnglishNamespaces27 = TranslationOverlay<
       readonly levelEverythingHint: string;
       readonly levelImportantHint: string;
       readonly levelQuietHint: string;
+      readonly levelMeaning: string;
       readonly checkInTitle: string;
       readonly checkInDescription: string;
       readonly pauseAfter: string;
@@ -23770,7 +24657,7 @@ type EnglishNamespaces30 = TranslationOverlay<
   typeof publicIdentity
 >;
 
-export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
+export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveMachineDaemonReadServerId } from '@/sync/domains/machines/useMachineDaemonReadTarget';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 import type {
     LocalServiceLauncherSnapshotClientInput,
@@ -66,7 +67,8 @@ export function useLocalServiceLauncherStateController(
     const { binding } = useServerCredentialAccountScopeBinding(serverId);
     const sessionId = normalizeId(input.sessionId);
     const scope = input.scope ?? null;
-    const workspaceRoot = normalizeId(input.workspaceRoot);
+    const sessionWorkspace = useWorkspaceScopeForSession(sessionId, serverId);
+    const workspaceRoot = normalizeId(input.workspaceRoot ?? sessionWorkspace?.rootPath);
     const snapshotClient = input.snapshotClient;
     const nowMs = input.nowMs ?? Date.now;
     const snapshotClientRef = React.useRef(snapshotClient);

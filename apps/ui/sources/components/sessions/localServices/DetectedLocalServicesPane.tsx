@@ -1,18 +1,17 @@
 import * as React from 'react';
-import { Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useShallow } from 'zustand/react/shallow';
 
 import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
 
-import { usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
+import { usePaneHeaderSlotBinding, usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useRestoreFocusToTrigger, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useProjectPageBack } from '@/components/projects/detail/projectPageBack';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { renderPageHeaderText } from '@/components/ui/layout/PageHeader';
@@ -48,6 +47,7 @@ import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { ServerCredentialAccountScopeBindingProvider, useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useUnistyles } from 'react-native-unistyles';
@@ -105,7 +105,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
     },
     /**
      * The pane's own scroll. It had none: the bands, the suggestion band and the public-preview
@@ -136,6 +135,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     offlineLine: {
         marginTop: theme.space.s4,
+        // The scope toggle under the line keeps the air it keeps above the rows, so the band never touches it.
+        marginBottom: theme.space.s8,
     },
     /** The list stays mounted under a pushed detail, so Back returns to the same scroll position. */
     listHidden: {
@@ -178,6 +179,8 @@ function sectionTitle(section: ServiceRowSection, machineName: string | null): s
     switch (section) {
         case 'running':
             return t('localServices.pane.sectionRunning');
+        case 'failed':
+            return t('localServices.pane.sectionFailed');
         case 'ready':
             return t('localServices.pane.sectionReady');
         case 'elsewhere':
@@ -309,7 +312,7 @@ function firstInventoryDiagnosticCopy(diagnostics: readonly unknown[], homeDir?:
     }) : null;
 }
 
-export function DetectedLocalServicesPane(props: Readonly<{
+type DetectedLocalServicesPaneProps = Readonly<{
     inventoryState: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
     publicPreviewState?: LocalServicePublicPreviewState | null;
@@ -362,7 +365,23 @@ export function DetectedLocalServicesPane(props: Readonly<{
      */
     onAddService?: () => void;
     testID?: string;
-}>): React.ReactElement {
+}>;
+
+/**
+ * The pane resolves its Home's credential once and lends it to every Service row below, so a row's
+ * Machine presence and preview reads never resolve the same Home again (a Project page has no
+ * destination scope above the pane; a Session's scope is inherited unchanged).
+ */
+export function DetectedLocalServicesPane(props: DetectedLocalServicesPaneProps): React.ReactElement {
+    const credentialScope = useServerCredentialAccountScopeBinding(props.serverId);
+    return (
+        <ServerCredentialAccountScopeBindingProvider serverId={props.serverId ?? null} state={credentialScope}>
+            <DetectedLocalServicesPaneBody {...props} />
+        </ServerCredentialAccountScopeBindingProvider>
+    );
+}
+
+function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): React.ReactElement {
     const testID = props.testID ?? 'detected-local-services-pane';
     const preferredLanguage = usePreferredLanguage();
     const reducedMotion = useReducedMotionPreference();
@@ -399,7 +418,11 @@ export function DetectedLocalServicesPane(props: Readonly<{
         (port: number, failedTarget: LocalServiceLaunchTarget) => selectRunningOpenTargetOnPort(rows, port, failedTarget),
         [rows],
     );
-    const runningCount = React.useMemo(() => selectLocalServiceRunningCount(rows), [rows]);
+    // The header counts what the groups below list as live (Running, and Elsewhere on a machine view), so the
+    // line never says "nothing running" over a Running group, nor "1 running" over a row that is still starting.
+    const runningCount = React.useMemo(() => sections
+        .filter((entry) => entry.section === 'running' || entry.section === 'elsewhere')
+        .reduce((count, entry) => count + entry.rows.length, 0), [sections]);
     const machineName = props.machine?.name ?? null;
     // Only a machine we know about and cannot reach is offline; an unknown one (a shared Session)
     // keeps today's behaviour rather than claiming an outage.
@@ -428,6 +451,9 @@ export function DetectedLocalServicesPane(props: Readonly<{
     useNativeBackLayerBackHandler(Boolean(detailRow), React.useCallback(() => { closeDetail(); return true; }, [closeDetail]));
     // Inside a Project the phone bar's own Back closes the detail; a pane with no such host draws its own arrow.
     const backHostedByBar = useProjectPageBack(Boolean(detailRow), closeDetail);
+    // Under a pane header (the Session cockpit) the header's line is the way back, so no arrow row of its own.
+    const underPaneHeader = usePaneHeaderSlotBinding() !== null;
+    const backOnHeader = Boolean(detailRow) && !backHostedByBar && underPaneHeader;
     const starterNames = useServiceStarterNames(rows, props.viewerAccountId ?? null);
     // Happier's own listeners: one quiet group, closed until the person asks.
     const [happierOpen, setHappierOpen] = React.useState(false);
@@ -463,15 +489,22 @@ export function DetectedLocalServicesPane(props: Readonly<{
             accessibilityLabel={t('common.refresh')}
             tooltip={t('common.refresh')}
             variant="plain"
-            minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
             disabled={isRefreshing}
             animationEnabled={animationEnabled}
             onPress={onRefresh}
         />
     ) : null), [animationEnabled, isRefreshing, onRefresh, testID]);
+    const backLine = React.useMemo((): PaneHeaderLine => ({
+        segments: [{
+            text: t('localServices.pane.backToServices'),
+            icon: 'arrow-left',
+            onPress: closeDetail,
+            testID: `${testID}-header-back`,
+        }],
+    }), [closeDetail, testID]);
     usePaneHeaderSlotContent(React.useMemo(
-        () => ({ line: headerLine, action: headerAction }),
-        [headerAction, headerLine],
+        () => ({ line: backOnHeader ? backLine : headerLine, action: headerAction }),
+        [backLine, backOnHeader, headerAction, headerLine],
     ));
 
     const renderRow = React.useCallback((row: ServiceRow) => (
@@ -580,7 +613,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
             showTitle={false}
             columnMaxWidthPx={columnMaxWidth}
             renderText={renderPageHeaderText}
-            description={t('localServices.pane.purpose')}
+            description={scope === 'machine' ? t('localServices.pane.purposeMachine') : t('localServices.pane.purpose')}
             testID={`${testID}-header`}
         />
     ) : null;
@@ -597,16 +630,33 @@ export function DetectedLocalServicesPane(props: Readonly<{
             iconName="globe"
             scene="nothingListening"
             title={t('localServices.pane.emptyTitle')}
-            reason={t('localServices.pane.emptyReason')}
+            reason={scope === 'machine' ? t('localServices.pane.emptyReasonMachine') : t('localServices.pane.emptyReason')}
             {...(addService
                 ? { action: addService, ...(checkAgain ? { secondaryAction: checkAgain } : {}) }
                 : checkAgain ? { action: checkAgain } : {})}
         />
     );
 
-    // A whole-pane state keeps the Services panel's plugin surfaces reachable below it.
-    const withFooter = (state: React.ReactElement): React.ReactElement => (props.footer ? (
+    const scopeBar = props.onChangeScope ? (
+        <ServicesScopeBar
+            scope={scope}
+            onChangeScope={props.onChangeScope}
+            page={page}
+            phone={phone}
+            testID={`${testID}-scope-toggle`}
+        />
+    ) : null;
+    // A whole-pane state stands in for the rows only: the page's purpose and the scope stay above it
+    // (a Machine-scope scan can take minutes, and the person must be able to switch back), and the
+    // Services panel's plugin surfaces stay reachable below it.
+    const withFooter = (state: React.ReactElement): React.ReactElement => (props.footer || pageHeader || scopeBar ? (
         <ScrollView style={styles.root} contentContainerStyle={styles.stateScrollContent}>
+            {pageHeader || scopeBar ? (
+                <ConstrainedScreenContent>
+                    {pageHeader}
+                    {scopeBar}
+                </ConstrainedScreenContent>
+            ) : null}
             {state}
             {props.footer}
         </ScrollView>
@@ -625,7 +675,11 @@ export function DetectedLocalServicesPane(props: Readonly<{
         );
     }
 
-    if (viewModel.status === 'loading' && !hasLauncherTargets) {
+    // Inventory completion does not settle the launcher projection that owns these rows.
+    // Its initial idle frame is unknown too; only an admitted snapshot proves emptiness.
+    const launcherPending = props.launcherState != null && launcherState.updatedAt === null
+        && launcherState.refreshStatus !== 'error';
+    if ((viewModel.status === 'loading' || launcherPending) && !hasLauncherTargets) {
         return withFooter(
             <SurfaceStateCard
                 testID={`${testID}-loading`}
@@ -636,12 +690,12 @@ export function DetectedLocalServicesPane(props: Readonly<{
         );
     }
 
-    if (viewModel.status === 'empty' && !hasLauncherTargets) {
+    if (viewModel.status === 'empty' && launcherState.refreshStatus !== 'error' && !hasLauncherTargets) {
         // Pane-states E: an empty pane that invites — what shows up here and why it is worth it.
         return withFooter(emptyCard);
     }
 
-    if (viewModel.status === 'error' && !hasLauncherTargets) {
+    if ((viewModel.status === 'error' || launcherState.refreshStatus === 'error') && !hasLauncherTargets) {
         const diagnosticCopy = firstInventoryDiagnosticCopy(viewModel.diagnostics, props.machine?.homeDir);
         // G16: a failed first read used to be terminal. The card's own primary-action slot is the
         // retry, so the failure recovers through the same invalidation the refresh control uses.
@@ -686,15 +740,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                             </View>
                         ) : null}
                         <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
-                        {props.onChangeScope ? (
-                            <ServicesScopeBar
-                                scope={scope}
-                                onChangeScope={props.onChangeScope}
-                                page={page}
-                                phone={phone}
-                                testID={`${testID}-scope-toggle`}
-                            />
-                        ) : null}
+                        {scopeBar}
                         {detailRow ? null : effectReview}
                         {hasRows
                             ? sections.map((entry, index) => (
@@ -723,6 +769,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                                                 testID={`${testID}-section-${entry.section}-label`}
                                                 title={sectionTitle(entry.section, machineName)}
                                                 count={entry.rows.length}
+                                                countPlacement="title"
                                                 first={index === 0}
                                             />
                                             <ItemGroup
@@ -744,7 +791,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
             </View>
             {detailRow ? (
                 <ScrollView testID={`${testID}-detail`} style={styles.root} contentContainerStyle={styles.scrollContent}>
-                    {backHostedByBar ? null : (
+                    {backHostedByBar || backOnHeader ? null : (
                         <View style={styles.detailBar}>
                             <IconButton
                                 testID={`${testID}-detail-back`}
@@ -752,7 +799,6 @@ export function DetectedLocalServicesPane(props: Readonly<{
                                 variant="plain"
                                 accessibilityLabel={t('localServices.pane.backToServices')}
                                 tooltip={t('localServices.pane.backToServices')}
-                                minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
                                 animationEnabled={animationEnabled}
                                 onPress={closeDetail}
                             />

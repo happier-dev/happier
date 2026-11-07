@@ -1,7 +1,8 @@
 import type {
-    BrowserPlatformV1,
+    BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
+import type {
     BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 import * as React from 'react';
 import { Platform } from 'react-native';
 
@@ -24,7 +25,7 @@ import type { LocalServicePreviewSnapshotClient } from '@/sync/domains/local/ser
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     createPluginUiPolicyEvaluationContext,
     type PluginUiPolicyEvaluationContext,
@@ -206,7 +207,7 @@ export function useBrowserSurfaceHostFeed(
         machineId,
         serverId,
         sessionId: input.sessionId,
-        scope: input.workspaceRefId ? 'workspace' : undefined,
+        scope: 'workspace',
         workspaceRoot: input.workspaceRoot,
         enabled: input.enabled !== false && input.launcherEnabled !== false && input.launcherState === undefined,
         snapshotClient: input.launcherSnapshotClient,
@@ -229,13 +230,10 @@ export function useBrowserSurfaceHostFeed(
             : previewController.state;
     const onRefreshLaunchpad = previewController.refresh;
     const pluginLocale = getPreferredLanguage();
-    const localizePluginText = React.useMemo(
-        () => createPluginLocalizedTextResolver({
+    const localizePluginText = usePluginLocalizedTextResolver({
             projection: input.pluginUiProjection,
             locale: pluginLocale,
-        }),
-        [input.pluginUiProjection, pluginLocale],
-    );
+    });
 
     const feed = React.useMemo<BrowserSurfaceHostFeedAssembly>(() => buildBrowserLaunchpadModel({
         launcherSnapshot: snapshotFromLocalServiceLauncherState(launcherState),
