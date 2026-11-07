@@ -382,7 +382,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         if (!installed.ok) return refuse(machineUnavailable(installed.details));
         return installed.machine.installationId;
     };
-    const readReceiptHistory = (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>, lineage: ReadonlySet<string>) =>
+    const readReceiptHistory = (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>, lineage?: ReadonlySet<string>) =>
         readOwnServerDeploymentReceiptHistoryForHost({ environmentId: request.environmentId, lineage,
             async readPage(cursor) {
                 const loaded = await storage('deployments.receipts.list', { serverId: host.serverId,
@@ -425,6 +425,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 actionOperationId: request.context.operationAcceptance?.operationId }), request.context));
         },
         async *readBuildHistory(request) {
+            if (request.targetLinkId === undefined) {
+                yield* readReceiptHistory(request);
+                return;
+            }
             const environment = request.environment ?? await targetHostReaders.readEnvironment(request);
             const link = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId)?.targetLink;
             if (!link) return refuse('target_mismatch');
@@ -713,6 +717,43 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 ...(copy.review ? { copy: copy.review } : {}) }) };
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
+    const dispatchReceipt: NonNullable<Parameters<typeof createCliDeploymentActionDeps>[0]['dispatchReceipt']> = async request => {
+        if (request.actionId === 'deployments.teardown') {
+            let receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
+                deploymentId: request.receipt.deploymentId, context: request.context });
+            const resumed = await resumeDeploymentTeardownReceiptForHost({ request, receipt, writeTransition: targetHost.writeTransition });
+            if (resumed) {
+                if (!resumed.ok) return resumed;
+                receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
+                    deploymentId: receipt.deployment.id, context: request.context });
+            }
+            if (receipt.deployment.state !== 'succeeded' && receipt.deployment.state !== 'cancelled') {
+                request.context.signal?.throwIfAborted();
+                const retirement = await domainActions.retireEnvironment(request.input, request.context);
+                if (retirement) {
+                    const details = projectDeploymentFailureRecoveryV1(isRecord(retirement.details) ? retirement.details : {});
+                    const domain = details.domainHostname ?? details.domainId;
+                    const saved = await targetHost.writeTransition({ environmentId: request.input.environmentId,
+                        deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment,
+                        expectedRevision: receipt.deployment.revision, state: 'failed', context: request.context,
+                        content: { ...receipt.content, failure: { code: retirement.errorCode, phase: 'cleanup',
+                            remedy: `Domain ${domain}: ${details.remedy}`,
+                            ...(retirement.failureCause ? { failureCause: retirement.failureCause } : {}),
+                            ...(retirement.effectAttempted === undefined ? {} : { effectAttempted: retirement.effectAttempted }) } } });
+                    return saved.ok ? retirement : { ...retirement,
+                        ...(saved.failureCause ? { failureCause: saved.failureCause } : {}) };
+                }
+            }
+            if (DeploymentDataTeardownContentV1Schema.safeParse(receipt.content).success) return dataTeardown.execute(request, receipt);
+        }
+        const environment = await readEnvironmentMetadata({ environmentId: request.input.environmentId, context: request.context });
+        const link = environment.targetLinks.find(item => item.id === request.input.targetLinkId);
+        if (!link) return failure('target_mismatch');
+        return link.source.kind === 'plugin' ? contributedTarget.execute(request)
+            : request.actionId === 'deployments.teardown'
+                ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
+                : target.execute(request);
+    };
     const storageDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
         admitAccount: async (serverId, context) => {
             if (serverId !== host.serverId) return failure('server_scope_mismatch');
@@ -757,43 +798,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     && current.installationId === member.installationId))) return failure('deployment_conflict');
             return null;
         },
-        async dispatchReceipt(request) {
-            if (request.actionId === 'deployments.teardown') {
-                let receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
-                    deploymentId: request.receipt.deploymentId, context: request.context });
-                const resumed = await resumeDeploymentTeardownReceiptForHost({ request, receipt, writeTransition: targetHost.writeTransition });
-                if (resumed) {
-                    if (!resumed.ok) return resumed;
-                    receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
-                        deploymentId: receipt.deployment.id, context: request.context });
-                }
-                if (receipt.deployment.state !== 'succeeded' && receipt.deployment.state !== 'cancelled') {
-                    request.context.signal?.throwIfAborted();
-                    const retirement = await domainActions.retireEnvironment(request.input, request.context);
-                    if (retirement) {
-                        const details = projectDeploymentFailureRecoveryV1(isRecord(retirement.details) ? retirement.details : {});
-                        const domain = details.domainHostname ?? details.domainId;
-                        const saved = await targetHost.writeTransition({ environmentId: request.input.environmentId,
-                            deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment,
-                            expectedRevision: receipt.deployment.revision, state: 'failed', context: request.context,
-                            content: { ...receipt.content, failure: { code: retirement.errorCode, phase: 'cleanup',
-                                remedy: `Domain ${domain}: ${details.remedy}`,
-                                ...(retirement.failureCause ? { failureCause: retirement.failureCause } : {}),
-                                ...(retirement.effectAttempted === undefined ? {} : { effectAttempted: retirement.effectAttempted }) } } });
-                        return saved.ok ? retirement : { ...retirement,
-                            ...(saved.failureCause ? { failureCause: saved.failureCause } : {}) };
-                    }
-                }
-                if (DeploymentDataTeardownContentV1Schema.safeParse(receipt.content).success) return dataTeardown.execute(request, receipt);
-            }
-            const environment = await readEnvironmentMetadata({ environmentId: request.input.environmentId, context: request.context });
-            const link = environment.targetLinks.find(item => item.id === request.input.targetLinkId);
-            if (!link) return failure('target_mismatch');
-            return link.source.kind === 'plugin' ? contributedTarget.execute(request)
-                : request.actionId === 'deployments.teardown'
-                    ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
-                    : target.execute(request);
-        },
+        dispatchReceipt,
     });
     const failureEnrollment = createPlatformFailureEnrollmentForHost({ ...host,
         readEnvironment: targetHostReaders.readEnvironment });
@@ -1082,7 +1087,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             try {
                 const input = DeploymentTeardownPreparedInputV1Schema.parse(request.input);
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
-                if ('detachKeepRunning' in input) return null;
+                if ('detachKeepRunning' in input || 'nothingDeployed' in input) return null;
                 const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId, targetLinkId: input.targetLinkId, context: request.context });
                 const link = environment.targetLinks.find(row => row.targetLink.id === input.targetLinkId)?.targetLink;
                 if (!link) return failure('target_mismatch');
@@ -1136,7 +1141,28 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (!selected.success || !('mode' in selected.data)) return failure('invalid_parameters');
                 return ownServerTeardown.preview(selected.data, context);
             }
-            const recovery = actionId === 'deployments.teardown' && 'detachKeepRunning' in input
+            if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && context.resumeActionRequest
+                && context.operationAcceptance?.actionId === actionId) {
+                const prepared = DeploymentTeardownInputV1Schema.safeParse(input);
+                if (!prepared.success || prepared.data.serverId !== host.serverId) return failure('deployment_conflict');
+                const operation = await host.readOperation?.(context.operationAcceptance.operationId, context);
+                const reference = operation?.domainRef;
+                if (!operation || operation.actionId !== actionId || reference?.kind !== 'deployment'
+                    || reference.serverId !== prepared.data.serverId || reference.environmentId !== prepared.data.environmentId) {
+                    return failure('deployment_conflict');
+                }
+                // The retained invocation already admitted this exact receipt. It
+                // resumes through dispatch without repeating Home begin or review.
+                const [environment, receipt] = await Promise.all([
+                    readEnvironmentMetadata({ environmentId: reference.environmentId, context }),
+                    readReceiptMetadata(reference.environmentId, reference.deploymentId, context),
+                ]);
+                return dispatchReceipt({ actionId, input: prepared.data, context, receipt: { ok: true,
+                    environmentId: reference.environmentId, revision: environment.environment.revision,
+                    deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision,
+                    state: receipt.deployment.state } });
+            }
+            const recovery = actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && ('detachKeepRunning' in input || 'nothingDeployed' in input)
                 ? null : await recoverInterruptedReceipt(actionId, input, context);
             if (recovery) return recovery;
             if (actionId === 'deployments.restart') {

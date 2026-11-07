@@ -16,8 +16,33 @@ import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTa
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerTeardownForHost } from './teardown';
 
+it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
+    'removes a never-deployed repository Environment without content or native preparation: %s', async history => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        delete environment.targetLinks[0].targetLink.activeDeploymentId;
+        const prior = createDeploymentReceiptDetailV1();
+        prior.deployment.targetLinkId = 'other-target';
+        const teardown = createOwnServerTeardownForHost({ serverId: 'home', machineId: 'machine-a',
+            credentials: { token: 'test-token', encryption: null }, serverHttpBaseUrl: 'https://unused-home.test',
+            runtime: { async acquire() { throw new Error('No native work was admitted'); } },
+            async readEnvironment() { return environment; },
+            async *readBuildHistory(request) {
+                if (history === 'unavailable') throw Object.assign(new Error('History is incomplete'), { code: 'deployment_content_unavailable' });
+                if (history === 'other-target-deployed' && request.targetLinkId === undefined) yield prior;
+            },
+            async readReceipt() { throw new Error('No receipt is required'); },
+            async writeTransition() { throw new Error('No receipt is required'); },
+            async findReceipt() { return null; },
+            async createCandidate() { throw new Error('No content is required'); },
+        });
+        const prepared = await teardown.prepare({ input: { serverId: 'home', environmentId: environment.environment.id,
+            targetLinkId: 'target-link', requestKey: 'remove-empty', reason: 'manual', removeEnvironment: true, volumes: [] }, context: {} });
+        if (history === 'empty') expect(prepared).toMatchObject({ input: { nothingDeployed: true, removeEnvironment: true } });
+        else expect(prepared).toMatchObject({ ok: false });
+    });
+
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-retry', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
@@ -40,6 +65,17 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-caddy', '
             machines: [{ machineId: 'machine-a', installationId: 'installation-a' }],
             resources: [{ id: environment.environment.id, kind: 'workload', machineId: 'machine-a', ownership: 'owned', disposition: 'remove' }], proofs: [],
         } });
+        if (scenario === 'remote-retry') {
+            receipt.deployment.state = 'outcome_unknown';
+            receipt.deployment.revision = 3;
+            receipt.content.failure = { code: 'domain_native_failed', phase: 'cleanup', remedy: 'Retry Domain retirement.' };
+            receipt.content.teardown!.proofs = [
+                ...(['admit', 'settleDeploy'] as const).map(step => ({ step, machineId: 'machine-a',
+                    installationId: 'installation-a', state: 'succeeded' as const, resources: [] })),
+                { step: 'removeTarget', machineId: 'machine-a', installationId: 'installation-a',
+                    state: 'outcome_unknown', resources: [], reason: 'removal_unproved' },
+            ];
+        }
         const credentials = { token: 'test-token', encryption: null };
         // Substitute persisted Home/installation records and the OS process port only.
         // Tool lookup, native runtime, own-server boundary and receipt continuation are real.
@@ -59,7 +95,7 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-caddy', '
             const processFailure = scenario.endsWith('denied') || scenario === 'engine-unreachable';
             const caddy = scenario.startsWith('remote-caddy');
             const caddyId = 'c'.repeat(64);
-            const docker = scenario === 'remote-native' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
+            const docker = scenario === 'remote-native' || scenario === 'remote-retry' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
                 nativeCaddy: { Id: caddyId, Name: '/happier-caddy',
                     Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
                         Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' } },
@@ -104,11 +140,26 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-caddy', '
                 } };
             const targetTeardown = createOwnServerTeardownForHost({ ...host, async findReceipt() { return null; },
                 async createCandidate() { throw new Error('Native child cannot create a candidate'); } });
+            if (scenario === 'never-deployed') {
+                const { acquireTeardownReview: _review, ...withoutVolumeReview } = host.runtime;
+                const neverDeployed = createOwnServerTeardownForHost({ ...host, runtime: withoutVolumeReview,
+                    async findReceipt() { return null; },
+                    async createCandidate() { throw new Error('Preview must not create a candidate'); } });
+                expect(await neverDeployed.preview({ serverId: 'home', environmentId: environment.environment.id,
+                    targetLinkId: link.id, reason: 'manual', mode: 'preview' }, {}))
+                    .toEqual({ ok: true, kind: 'preview', volumes: [] });
+            }
             const remoteJobs: string[] = [];
             if (docker) {
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: 'home', environmentId: environment.environment.id });
+                await mkdir(identity.deploymentRoot, { recursive: true });
                 await docker.seedComposeGeneration(identity.projectName);
+                if (scenario === 'remote-native') {
+                    await docker.seedVolume('app_data', identity.projectName);
+                    await docker.seedVolume('app_logs', identity.projectName);
+                    await docker.seedVolume('foreign_data', 'unrelated-project');
+                }
                 await docker.seedNetwork('owned-network', identity.projectName,
                     caddy ? [caddyId, ...(scenario === 'remote-caddy-other-endpoint' ? ['unrelated-endpoint'] : [])] : []);
                 await docker.seedNetwork('foreign-network', 'unrelated-project', caddy ? [caddyId] : []);
@@ -118,23 +169,50 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-caddy', '
                     runtime: { ...host.runtime, async acquireTeardown() { throw new Error('Controller cannot acquire native target'); } },
                     async sendChild(job: DeploymentChildRpcV1, childContext: ActionExecutorContext) {
                         const parsed = DeploymentChildRpcV1Schema.parse(job);
+                        if (parsed.kind === 'prepare' && parsed.actionId === 'deployments.teardown') return targetTeardown.executeNative(parsed, childContext);
                         if (parsed.kind !== 'teardown') throw new Error('Expected finite teardown child');
                         remoteJobs.push(`${parsed.step}:${parsed.mode}`);
                         return targetTeardown.executeNative(parsed, childContext);
                     } } : {}), async findReceipt() { return null; },
-                async createCandidate() { throw new Error('Receipt supplied at storage boundary'); } });
+                async createCandidate(_environment, content) {
+                    if (scenario !== 'remote-native') throw new Error('Receipt supplied at storage boundary');
+                    receipt.content = DeploymentOwnServerContentV1Schema.parse(content);
+                    return { contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+                } });
+            if (scenario === 'remote-native') {
+                expect(await teardown.preview({ serverId: 'home', environmentId: environment.environment.id,
+                    targetLinkId: link.id, reason: 'manual', mode: 'preview' }, {})).toEqual({ ok: true, kind: 'preview',
+                    volumes: [{ name: 'app_data', machineId: 'machine-a' }, { name: 'app_logs', machineId: 'machine-a' }] });
+                expect(await docker!.readVolumeNames()).toEqual(['app_data', 'app_logs', 'foreign_data']);
+                expect(await docker!.readNetworkIds()).toEqual(['owned-network', 'foreign-network']);
+                const prepared = await teardown.prepare({ input: { serverId: 'home', environmentId: environment.environment.id,
+                    targetLinkId: link.id, reason: 'manual', requestKey: receipt.deployment.requestKey,
+                    volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
+                        { name: 'app_logs', disposition: 'keep' }] }, context: {} });
+                expect(prepared).toHaveProperty('input');
+                if (!('input' in prepared)) throw new Error('Expected native volume preparation');
+                expect(await teardown.admit(environment, link.id, receipt.content, prepared.input, {})).toBeNull();
+                const forged = structuredClone(receipt.content);
+                forged.teardown!.resources.find(resource => resource.id === 'app_data')!.id = 'foreign_data';
+                expect(await teardown.admit(environment, link.id, forged, prepared.input, {})).toMatchObject({ ok: false });
+            }
             const result = await teardown.execute({ actionId: 'deployments.teardown', input: {
                 serverId: 'home', environmentId: environment.environment.id, targetLinkId: link.id,
                 expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
                 requestKey: receipt.deployment.requestKey, reason: 'manual', contentArtifactId: receipt.deployment.contentArtifactId,
-                contentHeaderVersion: 1, contentBodyVersion: 1 }, receipt: { ok: true,
+                contentHeaderVersion: 1, contentBodyVersion: 1,
+                ...(scenario === 'remote-native' ? { volumes: [{ name: 'app_data', disposition: 'delete' as const, confirmation: 'app_data' },
+                    { name: 'app_logs', disposition: 'keep' as const }] } : {}) }, receipt: { ok: true,
                 environmentId: environment.environment.id, revision: environment.environment.revision,
-                deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'queued' },
+                deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
                 context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
-            if (scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-caddy') {
+            if (scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-caddy') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
+                if (scenario === 'remote-retry') expect(receipt.content.failure).toBeUndefined();
                 expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'removeTarget'))
-                    .toMatchObject({ state: 'succeeded', resources: [{ resourceId: environment.environment.id, disposition: 'absent' }] });
+                    .toMatchObject({ state: 'succeeded', resources: [{ resourceId: environment.environment.id, disposition: 'absent' },
+                        ...(scenario === 'remote-native' ? [{ resourceId: 'app_data', disposition: 'absent' },
+                            { resourceId: 'app_logs', disposition: 'retained' }] : [])] });
             } else {
                 const reason = scenario === 'remote-caddy-other-endpoint' ? 'network_removal_unproved' : scenario === 'missing-tool' || scenario === 'other-link' ? 'plugin_exec_system_tool_unavailable'
                     : scenario === 'engine-unreachable' ? 'ECONNREFUSED' : scenario.endsWith('observation-denied') ? 'EACCES' : 'ENOSPC';
@@ -145,6 +223,7 @@ it.skipIf(process.platform === 'win32').each(['remote-native', 'remote-caddy', '
                     .toMatchObject({ state: 'outcome_unknown', reason });
             }
             if (docker) {
+                if (scenario === 'remote-native') expect(await docker.readVolumeNames()).toEqual(['app_logs', 'foreign_data']);
                 expect(remoteJobs).toEqual(scenario === 'remote-caddy-other-endpoint'
                     ? ['removeTarget:observe', 'removeTarget:execute'] : ['removeTarget:observe', 'removeTarget:execute', 'verify:observe']);
                 expect(await docker.readNetworkIds()).toEqual(scenario === 'remote-caddy-other-endpoint'

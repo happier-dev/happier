@@ -43,6 +43,7 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolvePolicyApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, resolveExplicitApprovalRequestingSessionId, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
@@ -1523,7 +1524,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     const confidentialRequestAction = ActionIdSchema.safeParse(args.request.actionId);
     if (!args.privateSecretContinuation && !args.privateActionInputContinuation && confidentialRequestAction.success
-      && requiresConfidentialActionChoice(confidentialRequestAction.data, args.request.actionArgs, deps.listContributedActionDefinitions)) {
+      && requiresConfidentialActionChoice(confidentialRequestAction.data, args.request.preview)) {
       return await persistExecutionFailure(args.request, {
         ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required',
       });
@@ -2157,15 +2158,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // and routed branches. Count per Action so a completed grant/read on retry
     // cannot shift another Action's slots. Nested parents extend the same path.
     const childPositions = new Map<ActionId, number>();
-    const executeHostChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => {
+    const executeChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean) => {
       const position = childPositions.get(childId) ?? 0;
       childPositions.set(childId, position + 1);
       const parentRequestId = normalizeId(childContext.actionRequestId);
-      return executeInvocation(childId, childInput, parentRequestId ? { ...childContext,
+      const derivedContext = parentRequestId ? { ...childContext,
         actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
           childActionId: childId, position }),
-      } : childContext, true);
+      } : childContext;
+      return !hostInternal && deps.executeOrdinaryChildAction
+        ? deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext })
+        : executeInvocation(childId, childInput, derivedContext, hostInternal);
     };
+    const executeHostChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) =>
+      executeChild(childId, childInput, childContext, true);
     const stopThenArchiveSession = async (sessionId: string, childContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
       const stopped = await executeHostChild('session.stop', { sessionId }, childContext);
       if (!stopped.ok || isDeferredApprovalResult(stopped)) return stopped;
@@ -3626,12 +3632,27 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const runActionOperation = ctx.runActionOperation ?? deps.runActionOperation;
       if (spec.operation && runActionOperation && !existingAdmission?.operationObserved
         && ctx.operationAcceptance?.actionId !== actionId) {
-        return await runActionOperation({ actionId, input: admittedInput, context: ctx,
-          execute: operationContext => executeCoreTerminal(actionId, admittedInput, operationContext, true, legacyMetadataLabel,
+        const execute = (operationContext: ActionExecutorContext) => executeCoreTerminal(actionId, admittedInput, operationContext, true, legacyMetadataLabel,
             // Bind the retained child plan to the runner's admitted lifetime.
             // The pre-operation port closes over context without acceptance.
             { ...dispatchAdmission, context: { ...operationContext, hostReviewedChild: undefined }, operationObserved: true },
-            options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true) });
+            options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true);
+        return await runActionOperation({ actionId, input: admittedInput, context: ctx, execute,
+          ...(actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { resume: async (operationContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
+            const authorization = ctx.externalActionExecutionAuthorization;
+            const prepared = authorization && deps.prepareApprovalExecutionAuthorization
+              ? await deps.prepareApprovalExecutionAuthorization({ authorization,
+                  ...(ctx.originalActionEnvelope ? { originalActionEnvelope: ctx.originalActionEnvelope } : {}),
+                  ...(operationContext.signal ? { signal: operationContext.signal } : {}) }) : undefined;
+            try {
+              if (authorization && (!prepared || prepared.authorization.token !== authorization.token
+                || !sameStrictJsonValue(prepared.authorization.binding, authorization.binding))) return {
+                ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: { reason: 'requester_account_unavailable' } };
+              return await execute({ ...operationContext, resumeActionRequest: true,
+                ...(prepared ? { externalActionExecutionAuthorization: prepared.authorization,
+                  ...(prepared.signExternalActionApprovalInput ? { signExternalActionApprovalInput: prepared.signExternalActionApprovalInput } : {}) } : {}) });
+            } finally { await prepared?.dispose?.(); }
+          } } : {}) });
       }
       const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
       if (actionId === 'inbox.get') {
@@ -4553,7 +4574,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       if (actionId === 'ui.current_context.read' || actionId === 'ui.current_context.command.invoke') {
         return deps.uiCurrentContextAction
-          ? await deps.uiCurrentContextAction({ actionId, input: parsed.data, context: ctx })
+          ? await deps.uiCurrentContextAction({ actionId, input: parsed.data, context: { ...ctx,
+            executeOrdinaryChildAction: (childId, childInput, options) => executeChild(childId, childInput, { ...ctx,
+              ...(options?.signal ? { signal: options.signal } : {}),
+              ...(options?.externalActionTarget ? { externalActionTarget: options.externalActionTarget } : {}),
+            }, false),
+          } })
           : { ok: false, errorCode: 'unsupported_action', error: 'current_ui_context_not_mounted' };
       }
       if (actionId === 'ui.find') {
@@ -6502,7 +6528,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const confidentialAction = ActionIdSchema.safeParse(existing.actionId);
         if (decision === 'approve' && confidentialAction.success && requiresConfidentialActionChoice(confidentialAction.data,
-          existing.actionArgs, deps.listContributedActionDefinitions)) {
+          existing.preview)) {
           return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
         }
         const narrowsInput = data.narrowedInput !== undefined;
@@ -7291,7 +7317,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
   };
 
-  const executeInvocation = async (
+  const executeNewInvocation = async (
     actionId: ActionId,
     input: unknown,
     context?: ActionExecutorContext,
@@ -7322,6 +7348,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       } });
     }
     return result.ok ? result : projectActionExecuteFailure(result, context?.actionRequestId ?? undefined);
+  };
+  const executeInvocation = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
+    hostInternal = false): Promise<ActionExecuteResult> => {
+    const runActionOperation = context?.runActionOperation ?? deps.runActionOperation;
+    return actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && runActionOperation && !context?.operationAcceptance
+      ? runActionOperation({ actionId, input, context: context ?? {}, resumeRetained: true,
+          execute: () => executeNewInvocation(actionId, input, context, hostInternal) })
+      : executeNewInvocation(actionId, input, context, hostInternal);
   };
 
   const prepare = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,

@@ -4,6 +4,7 @@ import type { ActionExecutorContext, DeploymentReceiptResultV1 } from '@happier-
 import {
     DEPLOYMENT_TEARDOWN_STEPS_V1,
     DeploymentTeardownStepProofV1Schema,
+    type DeploymentReceiptDetailV1,
     type DeploymentTeardownResourceV1,
     type DeploymentTeardownStepProofV1,
     type DeploymentTeardownStepV1,
@@ -42,6 +43,23 @@ export type DeploymentTeardownBoundary = Readonly<{
 }>;
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+
+/** Resume the admitted receipt before any Domain, provider or native child spends
+ * its active-job custody. Step proofs and original teardown choices stay intact. */
+export async function resumeDeploymentTeardownReceiptForHost(input: Readonly<{
+    request: Extract<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>;
+    receipt: DeploymentReceiptDetailV1;
+    writeTransition: OwnServerDeploymentTargetHostInput['writeTransition'];
+}>): Promise<Result | null> {
+    const { request, receipt } = input;
+    if (receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'cancelled') return null;
+    if (request.context.operationAcceptance?.operationId !== receipt.deployment.actionOperationId) return failure('deployment_conflict');
+    if (receipt.deployment.cancelRequestedAtMs !== undefined || request.context.signal?.aborted) return failure('cancelled');
+    if (receipt.deployment.state !== 'failed' && receipt.deployment.state !== 'outcome_unknown') return null;
+    return input.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
+        receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision,
+        state: 'running', content: receipt.content, context: request.context });
+}
 const kinds: Record<DeploymentTeardownStepV1, readonly DeploymentTeardownResourceV1['kind'][]> = {
     admit: [], settleDeploy: [], removeTarget: ['workload', 'network', 'data', 'providerResource'], removeDomain: ['domain'],
     removeRelease: ['release'], withdrawBindings: ['binding'], verify: ['workload', 'network', 'data', 'domain', 'release', 'binding', 'providerResource'],
@@ -89,13 +107,18 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             revision: environment.environment.revision, deploymentId: receipt.deployment.id,
             deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state });
         if (receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'cancelled') return result();
-        if (request.context.operationAcceptance?.operationId !== receipt.deployment.actionOperationId) return failure('deployment_conflict');
-        if (receipt.deployment.cancelRequestedAtMs !== undefined || request.context.signal?.aborted) return failure('cancelled');
+        const resumed = await resumeDeploymentTeardownReceiptForHost({ request, receipt, writeTransition: host.writeTransition });
+        if (resumed) {
+            if (!resumed.ok) return resumed;
+            receipt = await read();
+        }
 
         const write = async (state: OwnServerDeploymentTransition['state'], proof?: DeploymentTeardownStepProofV1) => {
             const current = receipt.content.teardown!;
             const proofs = proof ? [...current.proofs.filter(item => item.step !== proof.step || item.machineId !== proof.machineId), proof] : current.proofs;
-            const content = proof ? { ...receipt.content, teardown: { ...current, proofs } } : receipt.content;
+            const { failure: _failure, ...withoutFailure } = receipt.content;
+            const currentContent = state === 'succeeded' ? withoutFailure : receipt.content;
+            const content = proof ? { ...currentContent, teardown: { ...current, proofs } } : currentContent;
             if (state === receipt.deployment.state && isDeepStrictEqual(content, receipt.content)) return null;
             const teardownProof: OwnServerDeploymentTransition['teardownProof'] = state === 'succeeded'
                 ? { targetLinkRevision: intent.targetLinkRevision, machines: intent.machines, workloadAbsent: true,
@@ -155,9 +178,7 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     failureCause = normalizeActionExecutorThrownError(error, 'deployment.teardown.observe').failureCause;
                     observed = { kind: 'unknown', reason: failureCause?.errorCode ?? 'observation_unavailable' };
                 }
-                if (observed.kind === 'needed' && prior && prior.state !== 'failed') {
-                    observed = { kind: 'unknown', reason: 'removal_unproved' };
-                } else if (observed.kind === 'needed') {
+                if (observed.kind === 'needed') {
                     const started = await write('running', { step, ...member, state: 'running', resources: [] });
                     if (started) return started;
                     const current = await read();

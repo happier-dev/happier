@@ -1,5 +1,3 @@
-import type { RpcHandlerContext } from '@/api/rpc/types';
-import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 import type {
   ActionOperationDeclarationV1,
   ActionExecuteResult,
@@ -9,6 +7,35 @@ import type {
 import type { ActionOperationObservationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
+
+export type HostActionOperationExecute = (context: Readonly<{
+  actionRequestId?: string;
+  resumeActionRequest?: true;
+  signal: AbortSignal;
+  requesterWorkAttributionV1?: import('@happier-dev/protocol/machines/requesterWorkAttributionV1').RequesterWorkAttributionV1;
+  operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
+  operationOwnerUpdate: Readonly<{ update: (update: ActionOperationOwnerUpdate) => void }>;
+  operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+  operationCancellation?: ActionOperationCancellation;
+  operationReview?: ActionOperationReviewContinuation;
+  afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
+  settleManagedNativeOperation?: import('@/machines/managed/managedIntentReconciler').ManagedMachineOperationSettlementContext['settleManagedNativeOperation'];
+}>) => Promise<ActionExecuteResult>;
+
+/** Host-only authority captured from the currently admitted cancellation request. */
+export type ActionOperationCancellationContext = Readonly<Partial<Pick<RpcHandlerContext,
+  'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap'
+  | 'callerInputAuthorization' | 'originalActionEnvelope' | 'callerAuthority' | 'callerInputConstraints'>> & {
+  assertCurrent(): Promise<void>;
+  /** Daemon-private capture of this external-operation request, never transported. */
+  externalSessionOperationAdmission?: ExternalSessionOperationAccountAdmission;
+}>;
+
+export type ActionOperationCancellation = Readonly<{
+  onRequest(listener: (context?: ActionOperationCancellationContext) => void | Promise<void>): () => void;
+}>;
 
 /** Retained setup-review continuation; the original invocation owns review and re-entry. */
 export type ActionOperationSetupDecision = Readonly<{ reviewedEffectDigest: string; skipForInvocation: boolean }>;
@@ -21,6 +48,12 @@ export type ActionOperationReviewContinuation = Readonly<{
 }>;
 
 export type ActionOperationScope = ActionOperationSnapshotV1['scope'];
+/** Private native-invocation custody, never a public receipt or grant. */
+export type DeploymentTokenOperationOrigin = Readonly<{
+  serverIdentityId: string;
+  credentialId: string;
+  environmentId: string;
+}>;
 export type ActionOperationQueryScope = Readonly<{
   accountId: string;
   machineId: string;
@@ -57,33 +90,15 @@ export interface ActionOperationDomainOwner {
   readonly actionIds: readonly string[];
   list(scope: ActionOperationQueryScope): Promise<readonly import('@happier-dev/protocol/actions').ActionOperationSnapshotV1[]>;
   get(scope: ActionOperationQueryScope, operationId: string): Promise<import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null>;
-  cancel(scope: ActionOperationQueryScope, operationId: string): Promise<import('@happier-dev/protocol/actions').ActionOperationCancelV1Response | null>;
+  cancel(scope: ActionOperationQueryScope, operationId: string, context?: ActionOperationCancellationContext): Promise<import('@happier-dev/protocol/actions').ActionOperationCancelV1Response | null>;
   refreshSetupReview?(scope: ActionOperationQueryScope, operationId: string): Promise<void>;
   decideSetupReview?(scope: ActionOperationQueryScope, operationId: string,
     workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1,
     phase: 'setup' | 'teardown', decision: ActionOperationSetupDecision): Promise<ActionOperationSnapshotV1 | null>;
   waitForTerminal?(scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
-    options?: Readonly<{ includeSetupReview?: true }>): Promise<ActionOperationSnapshotV1 | null>;
+    options?: Readonly<{ includeSetupReview?: true; includeManagedPrompt?: true }>): Promise<ActionOperationSnapshotV1 | null>;
   subscribe(input: Readonly<{
     resolveScope(): Promise<ActionOperationQueryScope | null>;
     publishSnapshot(snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): void;
   }>): () => void;
 }
-
-export type ActionOperationCancellation = Readonly<{
-  onRequest(listener: (context?: ActionOperationCancellationContext) => void | Promise<void>): () => void;
-}>;
-
-export type ActionOperationCancellationContext = Readonly<Partial<Pick<RpcHandlerContext,
-  'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap'
-  | 'callerInputAuthorization' | 'originalActionEnvelope' | 'callerAuthority' | 'callerInputConstraints'>> & {
-  assertCurrent(): Promise<void>;
-  /** Daemon-private capture of this external-operation request, never transported. */
-  externalSessionOperationAdmission?: ExternalSessionOperationAccountAdmission;
-}>;
-
-export type DeploymentTokenOperationOrigin = Readonly<{
-  serverIdentityId: string;
-  credentialId: string;
-  environmentId: string;
-}>;

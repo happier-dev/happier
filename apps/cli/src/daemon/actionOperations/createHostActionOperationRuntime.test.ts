@@ -36,7 +36,7 @@ import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/bui
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
-import { DeploymentChildRpcV1Schema, DeploymentDeployInputV1Schema, projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { DeploymentChildRpcV1Schema, DeploymentDeployInputV1Schema, projectDeploymentChildRoutingV1, type DeploymentTeardownInputV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createDeploymentChildExecutionProofV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -44,6 +44,43 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionSpawnNewResultV1Schema as preObservationSpawnResult } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation';
 
 describe('finite host operation custody', () => {
+  it.each([
+    { actionId: 'deployments.backups.restore', errorCode: 'backup_failed', facts: { steps: [
+      { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
+    ] } },
+    { actionId: 'deployments.backups.prune', errorCode: 'backup_failed', facts: { step: 'prune', code: 'backup_failed',
+      removedSnapshotIds: ['a'.repeat(64)], uncertainSnapshotIds: [] } },
+    { actionId: 'deployments.backups.prune', errorCode: 'backup_failed', facts: { step: 'forget', code: 'backup_failed',
+      removedSnapshotIds: [], uncertainSnapshotIds: ['b'.repeat(64)] } },
+    { actionId: 'deployments.backups.prune', errorCode: 'cancelled', facts: { step: 'prune', code: 'cancelled',
+      removedSnapshotIds: ['c'.repeat(64)], uncertainSnapshotIds: [] } },
+    { actionId: 'deployments.backups.restore', errorCode: 'cancelled', facts: { steps: [
+      { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
+    ] } },
+  ])('retains safe $actionId failure evidence through receipt reads and request replay ($errorCode)', async ({ actionId, errorCode, facts }) => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine',
+      resolveAccountId: async () => 'account', generateOperationId: () => 'backup-failure' });
+    const target = { serverId: 'home', environmentId: 'environment', machineId: 'machine',
+      installationId: 'installation', targetLinkId: 'link', deploymentId: 'capture', expectedRevision: 1 };
+    const input = actionId === 'deployments.backups.restore'
+      ? { ...target, mode: 'prepare', restoreBackupId: 'backup' }
+      : { ...target, configRevision: 1, retention: { kind: 'keepEverything' } };
+    let executions = 0;
+    const request = { actionId, input, context: { surface: 'agent' as const,
+      actionCaller: { kind: 'host' as const }, serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'backup-failure' },
+      execute: async () => {
+        executions++;
+        return { ok: false as const, errorCode, error: errorCode,
+          details: { ...facts, credential: 'private-native-diagnostic' } };
+      } };
+    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, errorCode });
+    const receipt = await runtime.handlers.getV2({ operationId: 'backup-failure' });
+    expect(receipt).toMatchObject({ kind: 'found', operation: { state: errorCode === 'cancelled' ? 'cancelled' : 'failed', result: facts } });
+    if (receipt.kind === 'found') expect(receipt.operation.result).toEqual(facts);
+    expect(await runtime.runActionOperation(request)).toEqual({ ok: false, errorCode, error: errorCode, details: facts });
+    expect(executions).toBe(1);
+  });
+
   it('retains native recovery for an unclassified Domain result through operation settlement', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
       resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-result' });
@@ -76,6 +113,51 @@ describe('finite host operation custody', () => {
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
     expect(await invoke({ ...input, reason: 'previewClosed' }))
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  });
+
+  it('retries an unproved teardown under its original operation and retained removal choices', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner',
+      generateOperationId: () => 'original-teardown-operation' });
+    const input: DeploymentTeardownInputV1 = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+      expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'retry-cleanup', reason: 'manual',
+      removeEnvironment: true as const,
+      volumes: [{ name: 'app_data', disposition: 'delete' as const, confirmation: 'app_data' },
+        { name: 'app_logs', disposition: 'keep' as const }],
+      contentArtifactId: 'original-receipt', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const operationIds: string[] = [];
+    const invoke = (value: DeploymentTeardownInputV1 = input) => runtime.runActionOperation({ actionId: 'deployments.teardown', input: value,
+      context: { actionRequestId: crypto.randomUUID() }, execute: async context => {
+        operationIds.push(context.operationAcceptance!.operationId);
+        context.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: 'home',
+          environmentId: 'environment', deploymentId: 'original-receipt' } });
+        return operationIds.length === 1
+          ? { ok: false, errorCode: 'outcome_unknown', error: 'removeTarget: outcome_unknown',
+              details: { step: 'removeTarget', reason: 'removal_unproved' } }
+          : { ok: true, result: { ok: true, state: 'succeeded', environmentRemoved: true } };
+      } });
+    expect(await invoke()).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    const { removeEnvironment: _removeEnvironment, ...withoutEnvironmentRemoval } = input;
+    expect(await invoke(withoutEnvironmentRemoval))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(await invoke({ ...input, volumes: [{ name: 'app_logs', disposition: 'keep' }] }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(await invoke({ ...input, reason: 'previewClosed' }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      runActionOperation: runtime.runActionOperation,
+      prepareDeploymentTeardown: async () => { throw new Error('Retry must continue the retained admitted input'); } });
+    expect(await executor.execute('deployments.teardown', {
+      serverId: input.serverId, environmentId: input.environmentId, targetLinkId: input.targetLinkId,
+      requestKey: input.requestKey, reason: input.reason,
+    }, { surface: 'ui', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', actionRequestId: 'retry-transport' }))
+      .toMatchObject({ ok: true, result: { state: 'succeeded', environmentRemoved: true } });
+    expect(await invoke({ ...input, contentHeaderVersion: 8, contentBodyVersion: 8 }))
+      .toMatchObject({ ok: true, result: { state: 'succeeded', environmentRemoved: true } });
+    expect(operationIds).toEqual(['original-teardown-operation', 'original-teardown-operation']);
+    expect(await runtime.handlers.getV2({ operationId: 'original-teardown-operation' }))
+      .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { state: 'succeeded' } } });
+    expect(await invoke()).toMatchObject({ ok: true, result: { state: 'succeeded' } });
+    expect(operationIds).toHaveLength(2);
   });
 
   it('continues a partial Compose adoption under the same request key across transport retries', async () => {

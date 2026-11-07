@@ -276,7 +276,8 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         : deploymentContentReference(row);
     if (!isDeepStrictEqual(nextContent, deploymentContentReference(row))) return deploymentFailure('deployment_conflict');
     if (!input.contentUpdate && row.state === input.state) return receiptResult(row, loaded.row.revision);
-    const resumedTeardown = row.operation === 'teardown' && row.state === 'failed' && input.state === 'running' && !row.cancelRequestedAt;
+    const resumedTeardown = row.operation === 'teardown' && (row.state === 'failed' || row.state === 'outcome_unknown')
+        && input.state === 'running' && !row.cancelRequestedAt;
     if (row.cancelRequestedAt && (input.state === 'queued' || input.state === 'running' || input.state === 'succeeded' || input.state === 'running_unverified')) {
         return deploymentFailure('deployment_conflict');
     }

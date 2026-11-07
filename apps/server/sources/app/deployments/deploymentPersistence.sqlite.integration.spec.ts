@@ -357,7 +357,7 @@ describe('deployment storage real SQLite boundary', () => {
         const unrelatedReference = await artifactFor('deployment-domain.v1');
         expect(await signedGet(`/v1/artifacts/${unrelatedReference.contentArtifactId}`, 'deployments.teardown')).toMatchObject({ status: 404 });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
-        const transition = async (state: 'running' | 'failed' | 'succeeded') => {
+        const transition = async (state: 'running' | 'failed' | 'outcome_unknown' | 'succeeded') => {
             const row = await db.deployment.findUniqueOrThrow({ where: { id: admitted.deploymentId } });
             const body: Omit<DeploymentTransitionInputV1, 'proof'> = { serverId, environmentId: environment.id,
                 deploymentId: row.id, expectedRevision: row.revision, actionOperationId: row.actionOperationId,
@@ -402,6 +402,11 @@ describe('deployment storage real SQLite boundary', () => {
         await expectRefusedStart('failed');
         await db.$executeRawUnsafe('UPDATE "DeploymentDomain" SET "deletedAt"=CURRENT_TIMESTAMP WHERE "id"=?', failedDomainId);
         expect(await transition('running')).toMatchObject({ ok: true, state: 'running' });
+        // Explicit Retry continues the same admitted receipt after an unproved
+        // native removal. Its captured disposition and signed writer stay intact.
+        expect(await transition('outcome_unknown')).toMatchObject({ ok: true, state: 'outcome_unknown' });
+        expect(await begin()).toMatchObject({ ok: true, deploymentId: admitted.deploymentId, state: 'outcome_unknown' });
+        expect(await transition('running')).toMatchObject({ ok: true, deploymentId: admitted.deploymentId, state: 'running' });
         // A late persisted Domain changes no Environment revision. This tests
         // the final current-inventory read, not a future add-writer race proof.
         const lateId = await insertDomain(environment.id, predecessor.id, 'removing');

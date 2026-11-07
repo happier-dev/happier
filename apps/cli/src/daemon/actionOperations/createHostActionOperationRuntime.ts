@@ -10,7 +10,7 @@ import { createActionOperationRpcHandlers, resolveActionOperationScope, type Act
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore, type DeploymentBackupOperationTarget } from './actionOperationStore';
 import { readDeploymentTokenOperationOrigin } from './deploymentTokenOrigin';
-import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate } from './actionOperationTypes';
+import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate, HostActionOperationExecute } from './actionOperationTypes';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
@@ -26,6 +26,7 @@ import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } 
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 
 type ConfirmationContext = Pick<ActionExecutorContext, 'presentUserConfirmation' | 'externalActionExecutionAuthorization' | 'approvedActionReplay'>;
@@ -256,19 +257,9 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined>;
     existingDeploymentOperationId?: string;
     onOperation?: (operation: ActionOperationSnapshotV1) => void;
-    execute: (context: Readonly<{
-      actionRequestId?: string;
-      resumeActionRequest?: true;
-      signal: AbortSignal;
-      requesterWorkAttributionV1?: RequesterWorkAttributionV1;
-      operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
-      operationOwnerUpdate: Readonly<{ update: (update: import('./actionOperationTypes').ActionOperationOwnerUpdate) => void }>;
-      operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
-      operationCancellation?: ActionOperationCancellation;
-      operationReview?: import('./actionOperationTypes').ActionOperationReviewContinuation;
-      afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
-      settleManagedNativeOperation?: ManagedMachineOperationSettlementContext['settleManagedNativeOperation'];
-    }>) => Promise<ActionExecuteResult>;
+    resumeRetained?: true;
+    resume?: HostActionOperationExecute;
+    execute: HostActionOperationExecute;
   }>): Promise<ActionExecuteResult> => {
     const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
     const deploymentChildIdentity = await readDeploymentArchiveOperationIdentityForHost(request.rpcContext, request.actionId);
@@ -336,6 +327,15 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     const deploymentRequestId = readDeploymentOperationRequestId(request.actionId, request.input);
     const requestId = deploymentRequestId || request.actionRequestId?.trim()
       || readRequestId(request.actionId, request.input);
+    const retainedOperation = request.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && requestId
+      ? store.findByRequestIdentity(scope, request.actionId, requestId) : null;
+    const retainedTeardown = retainedOperation ? store.readRetainedTeardownExecution(scope, retainedOperation.operationId) : undefined;
+    if (request.resumeRetained && !retainedTeardown) {
+      if (retainedOperation?.domainRef?.kind === 'deployment') return { ok: false,
+        errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
+      return request.execute({ signal: new AbortController().signal, operationProgress: { update() {} },
+        operationOwnerUpdate: { update() {} } });
+    }
     let restoredDeploymentOperationId: string | undefined;
     if (request.actionId === 'deployments.deploy' && requestId && request.recoverPendingDeployment && deps.custodyBinding
       && !store.findByRequestIdentity(scope, request.actionId, requestId)) {
@@ -352,7 +352,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       // the incumbent runner remains the sole conflict/rejoin authority.
     }
     const domainRef = readInitialDomainRef(request.actionId, request.input, requestId);
-    const teardown = request.actionId === 'deployments.teardown'
+    const teardown = request.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
       ? DeploymentActionInputSchemasV1['deployments.teardown'].safeParse(request.input) : null;
     let operationInput = request.input;
     if (teardown?.success && 'contentArtifactId' in teardown.data) {
@@ -360,6 +360,12 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       // identity and teardown intent, rather than those head versions, identify a retry.
       const { contentHeaderVersion: _header, contentBodyVersion: _body, ...intent } = teardown.data;
       operationInput = intent;
+    }
+    if (request.resumeRetained && teardown?.success && retainedOperation && !('contentArtifactId' in teardown.data)) {
+      const original = store.readDeploymentInvocationInput(scope, retainedOperation.operationId);
+      if (!original || typeof original !== 'object' || Array.isArray(original)) return { ok: false,
+        errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
+      operationInput = { ...original, ...teardown.data };
     }
     let observedOperationId: string | undefined;
     const execution = runner.observe({
@@ -376,7 +382,12 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       input: operationInput,
       ...(deploymentChildIdentity ? { deploymentChildIdentity } : {}),
       ...(deploymentTokenOrigin ? { deploymentTokenOrigin } : {}),
-      onOperation: operation => { observedOperationId = operation.operationId; request.onOperation?.(operation); },
+      onOperation: operation => {
+        observedOperationId = operation.operationId;
+        if (teardown?.success && 'contentArtifactId' in teardown.data) store.retainTeardownExecution(scope, operation.operationId,
+          { execute: request.execute, ...(request.resume ? { resume: request.resume } : {}) });
+        request.onOperation?.(operation);
+      },
       ...(domainRef ? { domainRef } : {}),
       cancellation: request.actionId === 'workspace.files.replace'
         || request.actionId === 'projects.script.run' || request.actionId === 'projects.compute.exec' || request.actionId === 'projects.prepare'
@@ -392,10 +403,12 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         ? 'supported'
         : 'unsupported',
       execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => {
-        const result = await request.execute({
+        const execute = resumeActionRequest && retainedTeardown
+          ? retainedTeardown.resume ?? retainedTeardown.execute : request.execute;
+        const result = await execute({
           ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
           // Receipt correspondence is not a replacement for original-root correlation.
-          ...(deploymentRequestId ? request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}
+          ...(deploymentRequestId ? !retainedTeardown && request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}
             : actionRequestId ? { actionRequestId } : {}),
           ...(resumeActionRequest ? { resumeActionRequest } : {}),
           signal,
@@ -623,7 +636,10 @@ export async function runHostActionOperation(
   if ((request.actionId === 'projects.open' || request.actionId === 'localServices.launcher.start')
     && !carriesNativeConfirmation(request.actionId, context)) return request.execute(context);
   if (context.operationAcceptance?.actionId === request.actionId) return request.execute(context);
+  const resume = request.resume;
   return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context,
+    ...(request.resumeRetained ? { resumeRetained: true as const } : {}),
+    ...(resume ? { resume: (operation: Parameters<HostActionOperationExecute>[0]) => resume({ ...context, ...operation }) } : {}),
     ...(request.recoverPendingDeployment ? { recoverPendingDeployment: request.recoverPendingDeployment } : {}),
     ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
     ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),

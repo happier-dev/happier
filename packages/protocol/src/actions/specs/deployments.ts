@@ -1,11 +1,13 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { deploymentTeardownOperationReentryV1 } from '../operations/v1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
 import { createDeploymentDeployActionCompletionV1 } from '../actionCompletion.js';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
 import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymentBindingSelectionNarrowing.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
-import { isDeploymentBackupActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 
 const deploymentDeployActionCompletionV1 = createDeploymentDeployActionCompletionV1(DeploymentActionOutputSchemasV1['deployments.deploy']);
 
@@ -24,7 +26,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !isDeploymentPromoteActionIdV1(id);
   return {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
-    ...(id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' ? { safetyForInput: (input: unknown): 'safe' | 'danger' => {
+    ...(id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' || id === 'deployments.teardown' ? { safetyForInput: (input: unknown): 'safe' | 'danger' => {
       const parsed = DeploymentActionInputSchemasV1[id].safeParse(input);
       return parsed.success && 'mode' in parsed.data && parsed.data.mode === 'preview' ? 'safe' : 'danger';
     } } : {}),
@@ -152,7 +154,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ...(id === 'deployments.environments.list'
         ? [{ path: 'machineId', title: 'Machine', widget: 'text' as const },
           { path: 'environmentIds', title: 'Exact Environment headers', widget: 'json' as const }] : []),
-      ...(id === 'deployments.health.read' || id === 'deployments.drift.read' || id === 'deployments.logs.read' || id === 'deployments.restart' ? [
+      ...(isDeploymentNativeReadActionIdV1(id) || id === 'deployments.restart' ? [
         { path: 'deploymentId', title: 'Active deployment', widget: 'text' as const, required: true },
         { path: 'targetLinkId', title: 'Deployment target', widget: 'text' as const, required: true },
         { path: 'machineId', title: 'Selected Machine', widget: 'text' as const, required: true },
@@ -214,7 +216,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         { path: 'contentBodyVersion', title: 'Content body revision', widget: 'number' as const, required: preparedContentRequired },
       ]),
     ] },
-    ...(backup && id !== 'deployments.backups.inventory' || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
+    ...(backup && !isDeploymentBackupReadActionIdV1(id) || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
   } as const satisfies DeploymentActionSpec<TId>;
@@ -249,13 +251,15 @@ function createDeploymentActionSpecsV1() {
   { ...deploymentSpec('deployments.rollback', 'Roll back deployment', '/v1/deployments/environments/:environmentId/rollback'), requesterAccountContentDemandForInput: () => true },
   deploymentSpec('deployments.restart', 'Restart deployed service', undefined),
   { ...deploymentSpec('deployments.backups.restore', 'Restore deployment backup', undefined), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec('deployments.backups.test', 'Test backup destination', undefined, true), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec('deployments.backups.history', 'Read backup history', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.inventory', 'List deployment backups', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.run', 'Back up deployment', undefined), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.verify', 'Verify deployment backup', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec('deployments.backups.prune', 'Apply backup retention', undefined), requesterAccountContentDemandForInput: () => true },
   deploymentSpec('deployments.cancel', 'Cancel deployment', '/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions'),
   { ...deploymentSpec('deployments.promote', 'Promote deployment', '/v1/deployments/environments/:environmentId/promote'), requesterAccountContentDemandForInput: () => true },
-  { ...deploymentSpec('deployments.teardown', 'Tear down deployment resources', '/v1/deployments/environments/:environmentId/teardown'), requesterAccountContentDemandForInput: (input: unknown) => !('detachKeepRunning' in readRecord(input)) },
+  { ...deploymentSpec('deployments.teardown', 'Tear down deployment resources', '/v1/deployments/environments/:environmentId/teardown'), operationReentry: deploymentTeardownOperationReentryV1, requesterAccountContentDemandForInput: (input: unknown) => !('detachKeepRunning' in readRecord(input)) },
   deploymentSpec('deployments.environments.get', 'Read deployment environment', '/v1/deployments/environments/:environmentId', true),
   deploymentSpec('deployments.receipts.get', 'Read deployment receipt', '/v1/deployments/receipts/:deploymentId', true),
   { ...deploymentSpec('deployments.receipts.observe', 'Observe provider deployment receipt', undefined, true), requesterAccountContentDemandForInput: () => true },

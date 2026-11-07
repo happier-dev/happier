@@ -1,4 +1,4 @@
-import { canAdvanceActionOperationSnapshotV1, ActionOperationFailureV1ReadSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { canAdvanceActionOperationSnapshotV1, canResumeDeploymentTeardownOperationV1, ActionOperationFailureV1ReadSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type {
   ActionOperationDomainRefV1,
   ActionOperationFailureV1,
@@ -15,7 +15,12 @@ import { isDeepStrictEqual } from 'node:util';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
-import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+
+type RetainedTeardownExecution = Readonly<{
+  execute: import('./actionOperationTypes').HostActionOperationExecute;
+  resume?: import('./actionOperationTypes').HostActionOperationExecute;
+}>;
 
 export type DeploymentBackupOperationTarget = DeploymentBackupTargetV1;
 export type DeploymentBackupOperation = Readonly<{
@@ -24,15 +29,17 @@ export type DeploymentBackupOperation = Readonly<{
 }>;
 
 function backupTargetKey(scope: ActionOperationQueryScope, target: DeploymentBackupOperationTarget): string {
+  // Retained backups belong to this Environment target across deployment generations.
+  // The original generation remains in the authored input, never in the lookup scope.
   return JSON.stringify([scope.accountId, scope.machineId, target.serverId, target.environmentId,
-    target.machineId, target.installationId, target.targetLinkId, target.deploymentId]);
+    target.machineId, target.installationId, target.targetLinkId]);
 }
 
 function readBackupInput(actionId: string, inputIdentity: string): DeploymentBackupOperation['input'] | undefined {
-  if (!isDeploymentBackupActionIdV1(actionId) && actionId !== 'deployments.backups.restore') return undefined;
+  if (!isDeploymentBackupActionIdV1(actionId) && actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) return undefined;
   let input: unknown;
   try { input = JSON.parse(inputIdentity); } catch { return undefined; }
-  const parsed = actionId === 'deployments.backups.restore'
+  const parsed = actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     ? DeploymentBackupRestoreInputV1Schema.safeParse(input)
     : DeploymentBackupActionInputSchemasV1[actionId].safeParse(input);
   if (!parsed.success) return undefined;
@@ -117,7 +124,7 @@ export function createActionOperationStore(options?: Readonly<{
   const snapshots = new Map<string, ActionOperationSnapshotV1>();
   const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
-    backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string }>>();
+    backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution }>>();
   // Derived from this owner's authored invocation input; imported history cannot
   // manufacture backup or restore evidence. No separate persisted receipt ledger.
   const backupOperationIds = new Map<string, Set<string>>();
@@ -324,6 +331,29 @@ export function createActionOperationStore(options?: Readonly<{
       return snapshot;
     },
 
+    /** Only the canonical declared terminal re-entry may reopen the same operation. */
+    reenter(operationId: string): ActionOperationSnapshotV1 | null {
+      const current = snapshots.get(operationId);
+      if (!current || !canResumeDeploymentTeardownOperationV1(current)) return current ?? null;
+      const { settledAt: _settled, error: _error, result: _result, observation: _observation, ...retained } = current;
+      const next = freezeSnapshot({ ...retained, state: 'running', revision: current.revision + 1,
+        startedAt: current.startedAt ?? lifecycleTime(current) });
+      snapshots.set(operationId, next);
+      notify(next, current);
+      return next;
+    },
+
+    retainTeardownExecution(scope: ActionOperationQueryScope, operationId: string, execution: RetainedTeardownExecution): void {
+      const snapshot = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);
+      if (snapshot && inScope(snapshot, scope) && snapshot.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
+        && metadata && !metadata.retainedTeardown) retainInvocation(snapshot, { ...metadata, retainedTeardown: execution });
+    },
+    readRetainedTeardownExecution(scope: ActionOperationQueryScope, operationId: string): RetainedTeardownExecution | undefined {
+      const snapshot = snapshots.get(operationId);
+      return snapshot && inScope(snapshot, scope) && snapshot.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
+        && snapshot.domainRef?.kind === 'deployment' ? invocationMetadata.get(operationId)?.retainedTeardown : undefined;
+    },
+
     markRunning(operationId: string): ActionOperationSnapshotV1 | null {
       return mutate(operationId, (current) => current.state === 'running' ? current : ({
         ...current,
@@ -436,7 +466,7 @@ export function createActionOperationStore(options?: Readonly<{
       });
     },
 
-    cancel(operationId: string): ActionOperationSnapshotV1 | null {
+    cancel(operationId: string, result?: unknown): ActionOperationSnapshotV1 | null {
       return mutate(operationId, (current) => {
         const settledAt = lifecycleTime(current);
         const { observation: _observation, setupReview: _review, error: _error, ...settled } = current;
@@ -446,6 +476,7 @@ export function createActionOperationStore(options?: Readonly<{
           state: 'cancelled',
           startedAt: current.startedAt ?? settledAt,
           settledAt,
+          ...(result === undefined ? {} : { result }),
         };
       });
     },
@@ -486,7 +517,7 @@ export function createActionOperationStore(options?: Readonly<{
     readDeploymentInvocationInput(scope: ActionOperationQueryScope, operationId: string): unknown {
       const snapshot = snapshots.get(operationId);
       const metadata = invocationMetadata.get(operationId);
-      if (!snapshot || !inScope(snapshot, scope) || snapshot.actionId !== 'deployments.deploy' || !metadata) return undefined;
+      if (!snapshot || !inScope(snapshot, scope) || (snapshot.actionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 && snapshot.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1) || !metadata) return undefined;
       return JSON.parse(metadata.inputIdentity);
     },
     /** Exact host-only receipt read. Work is proportional to this target's

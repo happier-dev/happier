@@ -636,6 +636,9 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Host-local ordinary child ingress retained by a mounted command. Never Action/RPC input or an admission bypass. */
+  executeOrdinaryChildAction?: (actionId: ActionId, input: unknown,
+    options?: Pick<ActionExecutorContext, 'signal' | 'externalActionTarget'>) => Promise<ActionExecuteResult>;
   /** Host-stamped native Realtime input: ordinary Actions only, never approval decisions. Not Action/RPC input. */
   nativeRealtimeInput?: true;
   /** Exact dependency census retained from this host's reviewed Delete click; never Action input or execution authority. */
@@ -1511,6 +1514,10 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown;
     context: ActionExecutorContext;
     execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+    /** Probe this host's retained admitted invocation before preparing a new one. */
+    resumeRetained?: true;
+    /** Reacquire the original signed requester's private ports after settlement. */
+    resume?: (context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   }>) => Promise<ActionExecuteResult>;
 
   // Execution runs share one scope owner: an exact Session id or detached (`null`).
@@ -1650,6 +1657,12 @@ export type ActionExecutorDeps = Readonly<{
     input: SessionAuthoringOpenV1;
     context: ActionExecutorContext;
   }>) => Promise<SessionAuthoringOpenResultV1>;
+  /** Host front door for ordinary children whose mounted parent may already have returned. */
+  executeOrdinaryChildAction?: (args: Readonly<{
+    actionId: ActionId;
+    input: unknown;
+    context: ActionExecutorContext;
+  }>) => Promise<ActionExecuteResult>;
   /** The answering client's existing current-context owner; absent on headless hosts. */
   uiCurrentContextAction?: (args: Readonly<{
     actionId: 'ui.current_context.read' | 'ui.current_context.command.invoke';

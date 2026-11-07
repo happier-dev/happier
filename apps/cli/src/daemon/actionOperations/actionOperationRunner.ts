@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+  isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
@@ -11,7 +12,9 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol';
+import { DeploymentBackupFailureResultV1Schema, DeploymentRestoreFailureResultV1Schema,
+  MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol';
+import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments';
 import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -59,6 +62,20 @@ type ActiveInvocation = Readonly<{
   serviceMoveStart?: { claimed: boolean };
 }>;
 
+/** Retain only named native backup facts; executor diagnostics never enter receipts. */
+function projectDeploymentBackupFailureResult(actionId: string, errorCode: string, details: unknown) {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
+  if (actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
+    const parsed = DeploymentRestoreFailureResultV1Schema.safeParse({ steps: 'steps' in details ? details.steps : undefined });
+    return parsed.success ? parsed.data : undefined;
+  }
+  if (!isDeploymentBackupActionIdV1(actionId) || !('step' in details) || typeof details.step !== 'string') return undefined;
+  const partial = actionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1
+    ? readDeploymentBackupMaintenanceFailureEvidenceV1({ details }) : undefined;
+  const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: details.step, code: errorCode, ...partial });
+  return parsed.success ? parsed.data : undefined;
+}
+
 function terminalResult(snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): ActionExecuteResult | null {
   const metadata = snapshot.operationCredentialUses ? { operationCredentialUses: snapshot.operationCredentialUses } : {};
   if (snapshot.state === 'succeeded') return { ok: true, result: snapshot.result, ...metadata };
@@ -66,11 +83,8 @@ function terminalResult(snapshot: import('@happier-dev/protocol/actions').Action
     const spawn = snapshot.actionId === 'session.spawn_new'
       ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
     if (spawn?.success && spawn.data.type === 'error') return { ok: true, result: spawn.data, ...metadata };
-    const result = snapshot.result;
-    const backupFailure = isDeploymentBackupActionIdV1(snapshot.actionId) && result
-      && typeof result === 'object' && 'step' in result && typeof result.step === 'string'
-      && 'code' in result && typeof result.code === 'string' && result.code === snapshot.error?.errorCode
-      ? { step: result.step, code: result.code } : undefined;
+    const backupFailure = projectDeploymentBackupFailureResult(snapshot.actionId,
+      snapshot.error?.errorCode ?? 'action_operation_failed', snapshot.result);
     return {
       ok: false,
       errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
@@ -81,7 +95,10 @@ function terminalResult(snapshot: import('@happier-dev/protocol/actions').Action
       ...metadata,
     };
   }
-  if (snapshot.state === 'cancelled') return { ok: false, errorCode: 'cancelled', error: 'cancelled', ...metadata };
+  if (snapshot.state === 'cancelled') {
+    const details = projectDeploymentBackupFailureResult(snapshot.actionId, 'cancelled', snapshot.result);
+    return { ok: false, errorCode: 'cancelled', error: 'cancelled', ...(details ? { details } : {}), ...metadata };
+  }
   return null;
 }
 
@@ -456,8 +473,10 @@ export function createActionOperationRunner(deps: Readonly<{
             // Session has started. Its actual owner retains this uncertainty.
             return executionResult;
           }
+          const backupFailure = !executionResult.ok
+            ? projectDeploymentBackupFailureResult(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
           if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
-            deps.store.cancel(operationId);
+            deps.store.cancel(operationId, backupFailure);
           } else if (executionResult.ok) {
             terminalSuccess = deps.store.succeed(operationId, executionResult.result);
             settleReviewedIsolationPredecessors({ store: deps.store, scope: request.scope, action, operationId,
@@ -494,11 +513,6 @@ export function createActionOperationRunner(deps: Readonly<{
               || action.actionId === 'deployments.templates.instantiate'
               || isDeploymentDomainChildActionIdV1(action.actionId)
               ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
-            const details = executionResult.details;
-            // Backup readiness needs the recorded failure phase, never arbitrary executor diagnostics.
-            const backupFailure = isDeploymentBackupActionIdV1(action.actionId) && details
-              && typeof details === 'object' && !Array.isArray(details) && 'step' in details
-              && typeof details.step === 'string' ? { step: details.step, code: failure.errorCode } : undefined;
             deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, backupFailure);
           }
           return executionResult;
@@ -580,7 +594,10 @@ export function createActionOperationRunner(deps: Readonly<{
         ? request.rejoinPendingApproval && hasMatchingInputIdentity ? 'replay' : reviewedPendingApproval ? 'resume' : 'fresh'
         : action.operationReentry?.(existing, request.input) ?? (settled ? 'replay' : 'refuse');
       if (reentry === 'replay' && settled) return settled;
-      if (reentry === 'reinvoke') return await invoke(existing.operationId, existing.cancellation);
+      if (reentry === 'reinvoke') {
+        const resumed = deps.store.reenter(existing.operationId);
+        return await invoke(existing.operationId, existing.cancellation, resumed?.state === 'running' && existing.state === 'failed');
+      }
       if (reentry === 'resume') {
         deps.store.replaceInputIdentity(existing.operationId, inputIdentity);
         deps.store.updateObservation(existing.operationId, null, undefined);
