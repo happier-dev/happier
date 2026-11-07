@@ -42,10 +42,10 @@ describe('which actions an entry is offered', () => {
     it('offers an action on the subjects it declares, in the configured order', () => {
         expect(planTriageOfferedActionsV1(TRIAGE_DEFAULT_ACTIONS_V1, 'pullRequest')
             .map((action) => action.actionId)).toEqual(['ask', 'fix', 'review', 'explain-pr']);
-        // The ordinary agent Review is declared on pull requests alone, so an
-        // error group is offered the other two.
+        // The ordinary agent Review is declared on pull requests alone; error
+        // groups also offer the built-in investigation.
         expect(planTriageOfferedActionsV1(TRIAGE_DEFAULT_ACTIONS_V1, 'errorIssue')
-            .map((action) => action.actionId)).toEqual(['ask', 'fix']);
+            .map((action) => action.actionId)).toEqual(['ask', 'fix', 'investigate']);
     });
 
     it('offers the mounted reviewStart arm in entries and the action editor', () => {
@@ -95,14 +95,14 @@ describe('the words on a configured control', () => {
 describe('moving one action inside the set', () => {
     it('produces an exact permutation the writer will accept', () => {
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'fix', 'up'))
-            .toEqual(['fix', 'ask', 'review', 'explain-pr']);
+            .toEqual(['fix', 'ask', ...TRIAGE_DEFAULT_ACTIONS_V1.slice(2).map(action => action.actionId)]);
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'fix', 'down'))
-            .toEqual(['ask', 'review', 'fix', 'explain-pr']);
+            .toEqual(['ask', 'review', 'fix', ...TRIAGE_DEFAULT_ACTIONS_V1.slice(3).map(action => action.actionId)]);
     });
 
     it('refuses a move off either end rather than wrapping or writing a no-op', () => {
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'ask', 'up')).toBeNull();
-        expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'explain-pr', 'down')).toBeNull();
+        expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, TRIAGE_DEFAULT_ACTIONS_V1.at(-1)!.actionId, 'down')).toBeNull();
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'not-a-stored-action', 'up'))
             .toBeNull();
     });
@@ -177,6 +177,12 @@ describe('the draft a person is editing', () => {
         expect(triageActionDraftBlockerV1(
             withTriagePromptTokenV1(formal, 'review-prompt'),
         )).toBeNull();
+    });
+
+    it('keeps a native subject a subject owner declared, so editing its record cannot drop it', () => {
+        const draft = withTriageAppliesToV1(newTriageActionDraftV1(), ['deploymentEnvironment', 'other']);
+
+        expect(draft.appliesTo).toEqual(['other', 'deploymentEnvironment']);
     });
 
     it('keeps chosen subjects in the vocabulary order and free of repeats', () => {

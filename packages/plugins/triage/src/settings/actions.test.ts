@@ -9,16 +9,23 @@ import {
     isTriageActionConfigurationCoherentV1,
     mutateTriageAction,
     parseTriageActions,
+    planTriageOfferedActionsV1,
+    projectTriageSubjectActionDeclarationV1,
     readTriageActionLaunchModeV1,
     readTriageActions,
     type TriageActionV1,
 } from './actions.js';
+import {
+    TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1,
+    type TriageSubjectActionDeclarationV1,
+} from '@happier-dev/triage-protocol/v1';
 
 const ASK = TRIAGE_DEFAULT_ACTIONS_V1[0]!;
 const FIX = TRIAGE_DEFAULT_ACTIONS_V1[1]!;
 const REVIEW = TRIAGE_DEFAULT_ACTIONS_V1[2]!;
 const EXPLAIN = TRIAGE_DEFAULT_ACTIONS_V1[3]!;
 const INVESTIGATE = TRIAGE_DEFAULT_ACTIONS_V1[4]!;
+const DECLARED = TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1.map(projectTriageSubjectActionDeclarationV1);
 
 function storedFrom(actions: readonly TriageActionV1[]): unknown {
     return {
@@ -61,7 +68,8 @@ describe('the Triage action record', () => {
         const investigation = parseTriageActions(undefined).value.actions.find(candidate => candidate.actionId === 'investigate');
         expect(investigation).toMatchObject({ enabled: true, workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: null, delivery: 'send' } });
-        expect(investigation?.target.seededFallbackInstruction).toContain('machines.services.logs.read');
+        expect(investigation?.target.seededFallbackInstruction).toContain('Investigate this failure.');
+        expect(investigation?.target.seededFallbackInstruction).not.toMatch(/machines\.services\.logs\.read|owner-read|separately admitted Actions/);
     });
     it('normalizes profile references through the Launch Profile id owner', () => {
         const profileId = 'é'.repeat(256);
@@ -77,7 +85,7 @@ describe('the Triage action record', () => {
         expect(read.value.actions).toEqual(TRIAGE_DEFAULT_ACTIONS_V1);
         // The seed is what a reader sees, not what the record holds: an absent
         // value must not need a write before the headline controls exist.
-        expect(read.value.actions.map((action) => action.label))
+        expect(read.value.actions.slice(0, 5).map((action) => action.label))
             .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat', 'Investigate']);
     });
 
@@ -94,7 +102,7 @@ describe('the Triage action record', () => {
         const read = parseTriageActions(storedFrom([custom, configuredReview]));
 
         expect(read.kind).toBe('parsed');
-        expect(read.value.actions).toEqual([custom, configuredReview, ASK, FIX, EXPLAIN, INVESTIGATE]);
+        expect(read.value.actions).toEqual([custom, configuredReview, ASK, FIX, EXPLAIN, INVESTIGATE, ...DECLARED]);
     });
 
     it('persists deletion of a built-in as disabled through the real writer and reader', async () => {
@@ -107,7 +115,7 @@ describe('the Triage action record', () => {
         });
 
         expect(removed.status).toBe('applied');
-        const expected = [ASK, FIX, REVIEW, { ...EXPLAIN, enabled: false }, INVESTIGATE];
+        const expected = [ASK, FIX, REVIEW, { ...EXPLAIN, enabled: false }, INVESTIGATE, ...DECLARED];
         expect(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toEqual(storedFrom(expected));
         expect((await readTriageActions({ catalog })).value.actions).toEqual(expected);
     });
@@ -198,7 +206,7 @@ describe('the Triage action record', () => {
         });
         expect(updated.status).toBe('applied');
         expect(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toEqual(storedFrom([
-            { ...ASK, label: 'Discuss' }, FIX, REVIEW, EXPLAIN, INVESTIGATE,
+            { ...ASK, label: 'Discuss' }, FIX, REVIEW, EXPLAIN, INVESTIGATE, ...DECLARED,
         ]));
     });
 
@@ -310,11 +318,7 @@ describe('the Triage action record', () => {
         expect(created.status).toBe('applied');
         if (created.status !== 'applied') return;
         expect(created.value.actions.map((action) => action.label)).toEqual([
-            'Ask',
-            'Fix',
-            'Review',
-            'Explain this PR in chat',
-            'Investigate',
+            ...TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.label),
             'Explain',
         ]);
         expect(created.value.actions.at(-1)).toEqual({
@@ -374,7 +378,8 @@ describe('the Triage action record', () => {
         const reordered = await mutateTriageAction(deps, {
             kind: 'reorder',
             expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
-            actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId, EXPLAIN.actionId, INVESTIGATE.actionId],
+            actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId, EXPLAIN.actionId, INVESTIGATE.actionId,
+                ...DECLARED.map(action => action.actionId)],
         });
         expect(reordered.status).toBe('applied');
         if (reordered.status !== 'applied') return;
@@ -384,6 +389,7 @@ describe('the Triage action record', () => {
             ASK.actionId,
             EXPLAIN.actionId,
             INVESTIGATE.actionId,
+            ...DECLARED.map(action => action.actionId),
         ]);
 
         const deleted = await mutateTriageAction(deps, { kind: 'delete', actionId: FIX.actionId, expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
@@ -395,6 +401,7 @@ describe('the Triage action record', () => {
             ASK.actionId,
             EXPLAIN.actionId,
             INVESTIGATE.actionId,
+            ...DECLARED.map(action => action.actionId),
         ]);
         expect(deleted.value.actions.find((action) => action.actionId === FIX.actionId)?.enabled).toBe(false);
     });
@@ -633,7 +640,7 @@ describe('the caller-observed revision', () => {
         // Nothing was written, and the other device's action is still there.
         const now = parseTriageActions(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1));
         expect(now.value.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat', 'Investigate', 'Triage']);
+            .toEqual([...TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.label), 'Triage']);
     });
 
     it('returns the revision an applied write landed on, so a second edit can name it', async () => {
@@ -684,5 +691,52 @@ describe('a press\'s launch mode (owner ruling 2026-11-07 "Agent actions: one sh
     it('refuses a start that names no task, since a background start has nobody to type it', () => {
         expect(applyTriageActionLaunchModeV1(ASK, 'start')).toBeNull();
         expect(applyTriageActionLaunchModeV1(ASK, 'review')).toEqual(ASK);
+    });
+});
+
+describe('subject-owned action records', () => {
+    const declaration = {
+        actionId: 'example.fix-deploy', label: 'Fix this deploy', appliesTo: ['deploymentReceipt'],
+        workspaceMode: 'repository', launchMode: 'review', instruction: 'Fix the failed deploy.',
+    } as const satisfies TriageSubjectActionDeclarationV1;
+
+    it('offers deployment repair and setup on their respective native subjects in the composer', () => {
+        const actions = parseTriageActions(undefined).value.actions;
+        const repair = planTriageOfferedActionsV1(actions, 'deploymentReceipt')
+            .find(action => action.actionId === 'deployments.fix-deploy');
+        const setup = planTriageOfferedActionsV1(actions, 'deploymentEnvironment')
+            .find(action => action.actionId === 'deployments.set-up');
+        expect(repair).toMatchObject({ label: 'Fix this deploy', appliesTo: ['deploymentReceipt'],
+            workspaceMode: 'repository', profileId: null, target: { kind: 'agent', delivery: 'compose' } });
+        expect(setup).toMatchObject({ label: 'Set it up', appliesTo: ['deploymentEnvironment'],
+            workspaceMode: 'repository', profileId: null, target: { kind: 'agent', delivery: 'compose' } });
+        expect(planTriageOfferedActionsV1(actions, 'deploymentReceipt')).not.toContain(setup);
+        expect(planTriageOfferedActionsV1(actions, 'deploymentEnvironment')).not.toContain(repair);
+    });
+
+    it('stores, reads back and offers a deployment-subject record only on its own subject', () => {
+        const record = projectTriageSubjectActionDeclarationV1(declaration);
+        const read = parseTriageActions(storedFrom([record]));
+        expect(read.kind).toBe('parsed');
+        expect(read.value.actions[0]).toEqual(record);
+        expect(planTriageOfferedActionsV1(read.value.actions, 'deploymentReceipt').map(action => action.actionId))
+            .toContain('example.fix-deploy');
+        expect(planTriageOfferedActionsV1(read.value.actions, 'issue').map(action => action.actionId))
+            .not.toContain('example.fix-deploy');
+        expect(readTriageActionLaunchModeV1(record)).toBe('review');
+        expect(readTriageActionLaunchModeV1(projectTriageSubjectActionDeclarationV1({ ...declaration, launchMode: 'start' })))
+            .toBe('start');
+    });
+
+    it('merges every declared record into absent and stored catalogs like a missing built-in', () => {
+        const declared = TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1.map(projectTriageSubjectActionDeclarationV1);
+        for (const record of declared) {
+            expect(isTriageActionConfigurationCoherentV1(record)).toBe(true);
+            expect(parseTriageActions(storedFrom([record])).value.actions[0]).toEqual(record);
+        }
+        expect(TRIAGE_DEFAULT_ACTIONS_V1).toEqual(expect.arrayContaining(declared));
+        const ids = TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.actionId);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(parseTriageActions({ v: 1, actions: [] }).value.actions).toEqual(TRIAGE_DEFAULT_ACTIONS_V1);
     });
 });

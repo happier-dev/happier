@@ -9,8 +9,10 @@ import {
     TriageAdministerActionInputV1Schema,
     TriageAdministerActionResultV1Schema,
     TriageReadActionsResultV1Schema,
+    TriageReadActionsActionInputV1Schema,
 } from './actionsCatalogProtocol.js';
-import { administerTriageAction, readTriageActionsForSurface } from './actionsCatalog.js';
+import { administerTriageAction, readTriageActionsForSurface, createTriageReadActionsActionHandler } from './actionsCatalog.js';
+import type { TriageDataActionContext } from './dataContext.js';
 
 /**
  * The two catalog Actions, exercised through their own published schemas.
@@ -23,6 +25,67 @@ import { administerTriageAction, readTriageActionsForSurface } from './actionsCa
  */
 
 describe('the configured-action Actions', () => {
+    it('chooses the configured investigation default and preserves its disabled choice through the same catalog read', async () => {
+        const testkit = createTestkitAccountKv();
+        // Account storage is the genuine host boundary; catalog policy and CAS remain real.
+        const context = { signal: new AbortController().signal,
+            services: { storage: { account: { kv: testkit.kv } } } } as unknown as TriageDataActionContext;
+        const input = TriageReadActionsActionInputV1Schema.parse({ v: 1, projection: 'sessionHandoff', task: 'investigate' });
+        const read = () => createTriageReadActionsActionHandler()(input, context);
+        expect(await read()).toMatchObject({ kind: 'choices', defaultActionId: 'investigate',
+            actions: expect.arrayContaining([expect.objectContaining({ selection: expect.objectContaining({ configuredActionId: 'investigate' }) })]) });
+        await administerTriageAction({ v: 1, kind: 'delete', actionId: 'investigate', expectedRevision: 'absent' },
+            { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'unused' });
+        expect(await read()).toMatchObject({ kind: 'choices', defaultActionId: null });
+        expect(testkit.setCallCount()).toBe(1);
+    });
+    it('offers a non-entry handoff only actions that apply to native subjects', async () => {
+        const testkit = createTestkitAccountKv();
+        const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'deploy-only' };
+        // A subject-owned record targets one native subject; the shared failure menus must not offer it elsewhere.
+        expect(await administerTriageAction(TriageAdministerActionInputV1Schema.parse({ v: 1, kind: 'create',
+            expectedRevision: 'absent', label: 'Set it up', enabled: true, appliesTo: ['deploymentEnvironment'],
+            profileId: null, workspaceMode: 'repository',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' } }), deps)).toMatchObject({ status: 'applied' });
+        const context = { signal: new AbortController().signal,
+            services: { storage: { account: { kv: testkit.kv } } } } as unknown as TriageDataActionContext;
+        const input = TriageReadActionsActionInputV1Schema.parse({ v: 1, projection: 'sessionHandoff', task: 'investigate' });
+        const read = await createTriageReadActionsActionHandler()(input, context);
+        if (!('kind' in read) || read.kind !== 'choices') throw new Error('Expected handoff choices');
+        expect(read.actions.map(action => action.selection.configuredActionId)).toEqual(['ask', 'fix', 'investigate']);
+        expect(read.defaultActionId).toBe('investigate');
+    });
+    it('reads a native subject\'s own records with the launch mode and start availability the catalog owner decides', async () => {
+        const testkit = createTestkitAccountKv();
+        const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'set-up' };
+        expect(await administerTriageAction(TriageAdministerActionInputV1Schema.parse({ v: 1, kind: 'create',
+            expectedRevision: 'absent', label: 'Set it up', enabled: true, appliesTo: ['deploymentEnvironment'],
+            profileId: null, workspaceMode: 'repository',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' } }), deps)).toMatchObject({ status: 'applied' });
+        const context = { signal: new AbortController().signal,
+            services: { storage: { account: { kv: testkit.kv } } } } as unknown as TriageDataActionContext;
+        const read = await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse({
+            v: 1, projection: 'sessionHandoff', task: 'investigate', subject: 'deploymentEnvironment' }), context);
+        if (!('kind' in read) || read.kind !== 'choices') throw new Error('Expected handoff choices');
+        const selection = (configuredActionId: string) => ({ configuredActionId,
+            sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
+        const byId = new Map(read.actions.map(action => [action.selection.configuredActionId, action]));
+        expect(byId.get('ask')).toEqual({ label: 'Ask', selection: selection('ask'), launchMode: 'review', startable: false,
+            titleKey: 'plugins.triage.surface.session.ask' });
+        expect(byId.get('fix')).toEqual({ label: 'Fix', selection: selection('fix'), launchMode: 'review', startable: true,
+            titleKey: 'plugins.triage.surface.session.fix' });
+        expect(byId.get('investigate')).toEqual({ label: 'Investigate', selection: selection('investigate'),
+            launchMode: 'start', startable: true, titleKey: 'plugins.triage.surface.session.investigate' });
+        // Only the Environment's own records are marked for the page; the failure menus never offer them.
+        expect(byId.get('set-up')).toEqual({ label: 'Set it up', selection: selection('set-up'), launchMode: 'review',
+            startable: false, forSubject: true });
+        const environmentOwn = [...TRIAGE_DEFAULT_ACTIONS_V1.filter(action => action.appliesTo.includes('deploymentEnvironment'))
+            .map(action => action.actionId), 'set-up'];
+        expect(read.actions.filter(action => action.forSubject === true).map(action => action.selection.configuredActionId))
+            .toEqual(environmentOwn);
+        expect(read.actions.map(action => action.selection.configuredActionId))
+            .toEqual(['ask', 'fix', 'investigate', ...environmentOwn]);
+    });
     it('resets stored opt-outs to absent through the administer contract and preserves a newer catalog', async () => {
         const testkit = createTestkitAccountKv();
         const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'unused' };
@@ -111,7 +174,7 @@ describe('the configured-action Actions', () => {
         // both: absent is showing the seed and the first write stores it.
         expect(result.availability).toBe('absent');
         expect(result.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat']);
+            .toEqual(TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.label));
         // The runnable Review arm is explicit on the wire, so nothing
         // downstream infers it from a label.
         expect(result.actions[2]?.target)
@@ -149,7 +212,7 @@ describe('the configured-action Actions', () => {
 
         expect(applied.status).toBe('applied');
         expect(applied.actions?.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat', 'Explain']);
+            .toEqual([...TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.label), 'Explain']);
 
         // The seed became stored bytes on that first write, which is also the
         // moment the person first expressed an opinion about it.
@@ -177,18 +240,19 @@ describe('the configured-action Actions', () => {
     it('reorders as an exact permutation and refuses anything else', async () => {
         const testkit = createTestkitAccountKv();
         const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'unused' };
+        const reorderedIds = ['review', 'ask', 'fix', ...TRIAGE_DEFAULT_ACTIONS_V1.slice(3).map(action => action.actionId)];
 
         const reordered = TriageAdministerActionResultV1Schema.parse(await administerTriageAction(
             TriageAdministerActionInputV1Schema.parse({
                 v: 1,
                 kind: 'reorder',
                 expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
-                actionIds: ['review', 'ask', 'fix', 'explain-pr'],
+                actionIds: reorderedIds,
             }),
             deps,
         ));
         expect(reordered.actions?.map((action) => action.actionId))
-            .toEqual(['review', 'ask', 'fix', 'explain-pr']);
+            .toEqual(reorderedIds);
 
         // A shorter list would delete an action under the guise of reordering.
         const dropped = TriageAdministerActionResultV1Schema.parse(await administerTriageAction(

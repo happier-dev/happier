@@ -56,6 +56,7 @@ export {
     TriageSourceInstanceIdV1Schema,
     TriageSourceInstanceRefV1Schema,
     TriageSourceWorkflowSubjectV1Schema,
+    TriageActionSubjectV1Schema,
 } from './identity.js';
 export type {
     TriageEntryLocatorV1,
@@ -64,6 +65,7 @@ export type {
     TriageSourceInstanceIdV1,
     TriageSourceInstanceRefV1,
     TriageSourceWorkflowSubjectV1,
+    TriageActionSubjectV1,
 } from './identity.js';
 
 export {
@@ -372,8 +374,11 @@ export type {
     TriageSessionHandoffChoicesV1,
 } from './sessionHandoff.js';
 export { TriageActionIdV1Schema } from './identity.js';
-export { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectEntryV1, triageHealthAlertEntryV1 } from './investigationSubjects.js';
+export { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1, triageFailureSubjectActionSubjectV1, triageFailureSubjectEntryV1,
+    triageHealthAlertEntryV1 } from './investigationSubjects.js';
 export type { TriageInvestigationSubjectEntryV1 } from './investigationSubjects.js';
+export { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1, DEPLOYMENT_FIX_DEPLOY_ACTION_ID_V1, DEPLOYMENT_SET_UP_ACTION_ID_V1 } from './subjectActions.js';
+export type { TriageSubjectActionDeclarationV1 } from './subjectActions.js';
 export { TriageSourceOperationOutcomeV1Schema, readTriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export type { TriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';
 export {

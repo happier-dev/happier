@@ -141,7 +141,7 @@ async function readFailureSubject(
             const receipt = result.deployment;
             const source = result.content?.sourceIntent;
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
-                receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
+                state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
                 requestedAtMs: receipt.requestedAtMs, startedAtMs: receipt.startedAtMs, settledAtMs: receipt.settledAtMs,
                 predecessorDeploymentId: receipt.predecessorDeploymentId,
                 ...(source ? { source: source.kind === 'repository'
@@ -184,13 +184,19 @@ async function readFailureSubject(
             reference = { actionId: 'deployments.domains.get', input: address };
             break;
         }
+        case 'deploymentEnvironment': {
+            if (!await environmentPlacement(subject.environmentId)) return null;
+            reference = { actionId: 'deployments.environments.get', input: { serverId, environmentId: subject.environmentId } };
+            break;
+        }
     }
     if (signal.aborted) return null;
     const placement = await resolveInvestigationPlacement(host, serverId, selected ?? affected, context.workspace,
         selected ? undefined : projectSourceId, signal);
     if (!placement || placement.kind !== 'ready') return placement;
     return { ...placement,
-        evidence: { source: { kind: 'alert' as const, label: 'Failure reference' }, author: { kind: 'process' as const },
+        evidence: { source: { kind: 'alert' as const, label: subject.kind === 'deploymentEnvironment' ? 'Environment reference'
+            : subject.kind === 'deploymentReceipt' ? 'Deployment reference' : 'Failure reference' }, author: { kind: 'process' as const },
             text: JSON.stringify({ subject, read: reference }) } };
 }
 

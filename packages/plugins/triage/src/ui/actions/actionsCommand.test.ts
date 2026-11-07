@@ -25,7 +25,7 @@ describe('the mounted action catalog projection', () => {
         const disabled = { ...TRIAGE_DEFAULT_ACTIONS_V1[3]!, enabled: false };
         const projection = TriageReadActionsResultV1Schema.parse({ v: 1, availability: 'parsed', revision: '0', actions: [disabled] });
         expect(readTriageActionsProjectionV1(projection).value.actions)
-            .toEqual([disabled, ...TRIAGE_DEFAULT_ACTIONS_V1.slice(0, 3)]);
+            .toEqual([disabled, ...TRIAGE_DEFAULT_ACTIONS_V1.filter(action => action.actionId !== disabled.actionId)]);
         expect(readTriageActionsProjectionV1({ availability: 'unavailable', actions: [] }))
             .toEqual(TRIAGE_UNREAD_ACTIONS_V1);
     });

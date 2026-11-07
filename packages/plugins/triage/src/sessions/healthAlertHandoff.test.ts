@@ -82,6 +82,7 @@ describe('typed failure subjects through the existing investigation owner', () =
         { kind: 'service', target },
         { kind: 'service', target: { kind: 'host', page: 'environment', environment: target.environment, targetLinkId: 'link' } },
         { kind: 'domain', serverId: 'server-a', environmentId: 'environment', domainId: 'domain-a' },
+        { kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'environment' },
     ];
     it.each(subjects)('keeps exact reference evidence without joining service establishment ($kind)', async subject => {
         const reads: Array<{ id: string; input: JsonValue }> = [];
@@ -122,12 +123,16 @@ describe('typed failure subjects through the existing investigation owner', () =
         expect(result).toMatchObject({ kind: 'ready', machine: { serverId: 'server-a', machineId: 'machine-b' } });
         expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ subject });
         if (subject.kind === 'deploymentReceipt') {
+            expect(result?.kind === 'ready' && result.evidence.source.label).toBe('Deployment reference');
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
                 actionId: 'deployments.receipts.get', input: { serverId: 'server-a', environmentId: 'environment', deploymentId: 'deployment-a' },
-                retained: { receiptRevision: 3, actionOperationId: 'deployment-operation',
+                retained: { state: 'failed', receiptRevision: 3, actionOperationId: 'deployment-operation',
                     requestedAtMs: 100, startedAtMs: 110, settledAtMs: 120, predecessorDeploymentId: 'deployment-before',
                     source: { kind: 'repository', projectSourceId: 'project', sourceRevision: 7, sha: 'a'.repeat(40) } },
             } });
+        } else if (subject.kind === 'deploymentEnvironment') {
+            expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
+                actionId: 'deployments.environments.get', input: { serverId: 'server-a', environmentId: 'environment' } } });
         } else if (subject.kind === 'managedMachineOperation' || subject.kind === 'backupRun') {
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
                 retained: { createdAt: 100, startedAt: 110, settledAt: 120 },
