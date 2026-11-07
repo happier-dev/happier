@@ -7380,8 +7380,9 @@ describe('PluginSurfacePlacementHost', () => {
         await screen.unmount();
     });
 
-    it('preserves plugin local state through same-Account availability failure and recovery', async () => {
+    it('preserves plugin local state through phone title changes and same-Account availability failure and recovery', async () => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { NavigationLargeTitleProvider, useNavigationLeavesLargeTitle } = await import('@/components/ui/layout/navigationTitleChrome');
         const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
         let modeAvailable = true;
         let modeDenied = false;
@@ -7389,8 +7390,11 @@ describe('PluginSurfacePlacementHost', () => {
         const mounts: string[] = [];
         function DraftPanel() {
             const [draft, setDraft] = React.useState('');
+            const mountId = React.useId();
+            const largeTitle = useNavigationLeavesLargeTitle();
             React.useEffect(() => { mounts.push('mount'); return () => { mounts.push('unmount'); }; }, []);
-            return React.createElement('TextInput', { testID: 'availability-draft', value: draft, onChangeText: setDraft });
+            return React.createElement('TextInput', { testID: 'availability-draft', nativeID: mountId,
+                accessibilityLabel: String(largeTitle), value: draft, onChangeText: setDraft });
         }
         reactNativeSurfaceRuntime.enabled = true;
         reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(DraftPanel) };
@@ -7405,15 +7409,26 @@ describe('PluginSurfacePlacementHost', () => {
             occurrenceId: 'browser-availability-generation-44', projectionGeneration: 44,
             displayName: 'Browser Inspector', version: '3.2.1',
         }).projection;
-        const host = () => <PluginSurfacePlacementHost
+        const host = (largeTitle = false) => <NavigationLargeTitleProvider largeTitle={largeTitle}><PluginSurfacePlacementHost
             placement={generatedReactNativePlacement({ occurrenceId: 'browser-availability-generation-44' })}
             resourceBrowserTarget={target} machineId="machine_1" serverId="server_1"
-            pluginUiProjection={projection} platform="web" />;
+            pluginUiProjection={projection} platform="web" /></NavigationLargeTitleProvider>;
         const screen = await renderScreen(host());
         try {
             await vi.waitFor(() => expect(screen.findByTestId('availability-draft')).not.toBeNull());
             await act(async () => { screen.findByTestId('availability-draft')!.props.onChangeText('Keep this recipe'); });
             expect(screen.findByTestId('availability-draft')?.props.value).toBe('Keep this recipe');
+            const mountId = screen.findByTestId('availability-draft')?.props.nativeID;
+            expect(typeof mountId).toBe('string');
+            // Phone title chrome is a presentation fact, not a new author
+            // lifetime. Both directions must retain the reader's local lens.
+            for (const largeTitle of [true, false]) {
+                await screen.update(host(largeTitle));
+                expect(screen.findByTestId('availability-draft')?.props.nativeID).toBe(mountId);
+                expect(screen.findByTestId('availability-draft')?.props.value).toBe('Keep this recipe');
+                expect(screen.findByTestId('availability-draft')?.props.accessibilityLabel).toBe('false');
+                expect(mounts).toEqual(['mount']);
+            }
             modeAvailable = false;
             await act(async () => { invalidateAccountEncryptionModeCache(); });
             await vi.waitFor(() => expect(failedModeReads).toBeGreaterThan(0));

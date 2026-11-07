@@ -215,7 +215,7 @@ import {
 } from './pluginSurfaceContext';
 import { usePluginUiHostPalette } from './pluginUiThemeProjection';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
-import { useNavigationChromeShowsBack } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationLargeTitleProvider, useNavigationChromeShowsBack } from '@/components/ui/layout/navigationTitleChrome';
 import { usePluginPageBackStepArmed } from '@/components/plugins/shared/PluginPageBackStep';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
 import { useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
@@ -1881,7 +1881,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
 
     useUiSurfaceOwnerLifetime(canonicalHostApiAdapter);
 
-    return (
+    const surface = (
         <PluginReactNativeSurface
             surfaceId={props.surfaceId}
             mountInstanceKey={props.mountInstanceKey}
@@ -1903,6 +1903,8 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                 loadedRuntimeIdentity={props.loadedRuntimeIdentity}
         />
     );
+    // Nested surfaces are not the page. Keep their title mask mounted as phone title chrome changes.
+    return <NavigationLargeTitleProvider largeTitle={false}>{surface}</NavigationLargeTitleProvider>;
 }
 
 function readReactNativeRuntimeState(
