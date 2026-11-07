@@ -6,7 +6,8 @@ import {
   useHappierCollection,
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
-import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBindingsReadResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -17,6 +18,7 @@ import {
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -30,6 +32,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { StatusWord } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -63,7 +66,7 @@ type BindingsDraft = ReturnType<typeof useEnvironmentSecretBindingsDraft>;
 type SavedSecretBindings = ReturnType<typeof useEnvironmentSavedSecretBindings>;
 type SecretSources = EnvironmentSavedSecretBindingResult['sources'];
 type PanelMode = 'table' | 'bulk';
-type Adding = 'plain' | 'secret' | 'saved';
+type Adding = 'plain' | 'secret' | 'saved' | 'reference';
 type SecretSource = Extract<VariableBinding['source'], { kind: 'secret' }>;
 
 const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
@@ -71,6 +74,17 @@ const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
 const MASK = '••••••••••••••••••••••••';
 const TABLE_MIN_WIDTH_PX = 520;
 const keyOf = (row: VariableRow) => row.key;
+/**
+ * A saved secret revision the running release does not have yet, per variable (T2-DOMAIN-PREVIEW
+ * `deployments.bindings.read`). A changed reference address is told at deploy review instead (O-DEPLOY 15:10Z).
+ */
+type RunningFact = 'secretRotated';
+type RunningFacts = ReadonlyMap<string, RunningFact>;
+const NO_RUNNING_FACTS: RunningFacts = new Map();
+/** A service another variable can point at: one declared service export of an Environment the page can name. */
+export type VariableReferenceTarget = Readonly<{ environmentId: string; export: string; service: string }>;
+const NO_REFERENCE_TARGETS: readonly VariableReferenceTarget[] = Object.freeze([]);
+const factKey = (name: string, phase: 'build' | 'runtime') => JSON.stringify([name, phase]);
 const noop = () => {};
 
 /**
@@ -97,6 +111,13 @@ export const DeploymentVariablesPanel = React.memo(
       lifetime: ServerAccountScopeLifetime | null;
       /** Only a single runtime Machine has an unambiguous Services destination. */
       machineId?: string | null;
+      /**
+       * The running release's binding facts, bound by the page to its current deployment placement; absent while
+       * nothing runs. Read once per open and when the bound secrets change, never polled.
+       */
+      readRunningBindings?: ((bindings: readonly EnvironmentSecretBindingV1[]) => Promise<DeploymentBindingsReadResultV1>) | null;
+      /** Declared service exports "Point at another service" offers (this Environment's and its Project's). */
+      referenceTargets?: readonly VariableReferenceTarget[];
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -110,6 +131,7 @@ export const DeploymentVariablesPanel = React.memo(
       [catalog],
     );
     const rows = React.useMemo(() => variableRows(editor.rows), [editor.rows]);
+    const running = useRunningBindingFacts(props.readRunningBindings ?? null, editor.rows);
     const [disclosedKey, setDisclosedKey] = React.useState<string | null>(null);
     const disclosedRow = rows.find(row => JSON.stringify([props.environmentId, row.key]) === disclosedKey);
     const disclosedRef = disclosedRow?.binding.source.kind === 'secret' ? disclosedRow.binding.source.ref : null;
@@ -201,6 +223,8 @@ export const DeploymentVariablesPanel = React.memo(
           binding={row.binding}
           environmentName={props.environmentName}
           secretName={secretName}
+          running={rowRunningFact(row, running)}
+          runningTestID={`project-deployments.environment.variable.${row.name}.running`}
         />
       );
       return {
@@ -220,6 +244,8 @@ export const DeploymentVariablesPanel = React.memo(
                   style={{ color: theme.colors.text.secondary }}
                 >
                   {`${phaseLabel(row.phase)} · ${sourceTitle(row.binding, props.environmentName, secretName)}`}
+                  {rowRunningFact(row, running) ? <>{' · '}<RunningFactWord testID={`project-deployments.environment.variable.${row.name}.running`}
+                    fact={rowRunningFact(row, running)!} /></> : null}
                 </Text>
               ),
         action: rowMenu(true),
@@ -266,6 +292,7 @@ export const DeploymentVariablesPanel = React.memo(
       props.scope,
       props.environmentId,
       manageSecret,
+      running,
       theme.colors.text.secondary,
     ]);
 
@@ -367,6 +394,7 @@ export const DeploymentVariablesPanel = React.memo(
             disabled={adding !== null}
             secretsAvailable={props.scope !== null}
             savedAvailable={props.lifetime !== null}
+            referenceAvailable={(props.referenceTargets ?? NO_REFERENCE_TARGETS).length > 0}
             onSelect={(choice) => {
               if (choice === 'paste') setMode('bulk');
               else if (choice === 'saved') void pickSaved();
@@ -423,7 +451,20 @@ export const DeploymentVariablesPanel = React.memo(
             }}
           />
         ) : null}
-        {mode === 'table' && adding ? (
+        {mode === 'table' && adding === 'reference' ? (
+          <AddReferenceVariable
+            taken={rows}
+            targets={props.referenceTargets ?? NO_REFERENCE_TARGETS}
+            environmentName={props.environmentName}
+            onCancel={() => setAdding(null)}
+            onAdd={(name, target) => {
+              const result = editor.setVariable({ name, phase: 'runtime', source: { kind: 'reference',
+                environmentId: target.environmentId, export: target.export, via: 'auto' } });
+              if (result.ok) setAdding(null);
+              return result.ok;
+            }}
+          />
+        ) : mode === 'table' && adding ? (
           <AddValueVariable
             taken={rows}
             secret={adding === 'secret'}
@@ -757,12 +798,68 @@ function AddValueVariable(
   );
 }
 
+/** Add → Point at another service (lab `variables/refpick`): a name and the service export it resolves to on deploy. */
+function AddReferenceVariable(
+  props: Readonly<{
+    taken: readonly VariableRow[];
+    targets: readonly VariableReferenceTarget[];
+    environmentName: (environmentId: string) => string | null;
+    onCancel: () => void;
+    onAdd: (name: string, target: VariableReferenceTarget) => boolean;
+  }>,
+) {
+  const [name, setName] = React.useState('');
+  const [targetKey, setTargetKey] = React.useState<string | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  const keyFor = (target: VariableReferenceTarget) => JSON.stringify([target.environmentId, target.export]);
+  const target = props.targets.find(item => keyFor(item) === targetKey) ?? null;
+  const trimmed = name.trim();
+  const duplicate = props.taken.some((row) => row.name === trimmed);
+  return (
+    <InlineAddExpander
+      isOpen
+      onOpenChange={(next) => { if (!next) props.onCancel(); }}
+      title={t('projects.deployments.editors.addReferenceTitle')}
+      trigger={null}
+      onCancel={props.onCancel}
+      onSave={() => { if (target) setFailed(!props.onAdd(trimmed, target)); }}
+      saveDisabled={trimmed.length === 0 || duplicate || target === null}
+      cancelLabel={t('common.cancel')}
+      saveLabel={t('common.add')}
+      saveTestID="project-deployments.environment.variables.add.save"
+      cancelTestID="project-deployments.environment.variables.add.cancel"
+    >
+      <View style={styles.addFields}>
+        <FieldTextInput
+          testID="project-deployments.environment.variables.add.name"
+          value={name}
+          onChangeText={(next) => { setFailed(false); setName(next.toUpperCase()); }}
+          monospace
+          autoCapitalize="characters"
+          accessibilityLabel={t('projects.deployments.columnName')}
+          placeholder="DATABASE_URL"
+          error={duplicate ? t('projects.deployments.variableExists') : failed ? t('projects.deployments.variableInvalid') : null}
+        />
+        <ValueFieldSelect
+          testID="project-deployments.environment.variables.add.reference"
+          label={t('projects.deployments.editors.referenceTarget')}
+          items={props.targets.map(item => ({ id: keyFor(item),
+            title: `${item.service} · ${item.export} · ${props.environmentName(item.environmentId) ?? t('projects.deployments.sourceAnotherEnvironment')}` }))}
+          selectedId={targetKey}
+          onSelect={setTargetKey}
+        />
+      </View>
+    </InlineAddExpander>
+  );
+}
+
 /** "+ Add" (lab d2 `addvar`): a new secret, a plain variable, or a pasted .env. */
 function AddMenu(
   props: Readonly<{
     disabled: boolean;
     secretsAvailable: boolean;
     savedAvailable: boolean;
+    referenceAvailable: boolean;
     onSelect: (choice: Adding | 'paste') => void;
   }>,
 ) {
@@ -796,6 +893,15 @@ function AddMenu(
         title: t('projects.deployments.addPlain'),
         icon: <Icon name="code" size={16} color={theme.colors.text.secondary} />,
       },
+      ...(props.referenceAvailable
+        ? [{
+            id: 'reference',
+            testID: `${id}.reference`,
+            title: t('projects.deployments.editors.addReference'),
+            subtitle: t('projects.deployments.editors.addReferenceHint'),
+            icon: <Icon name="link" size={16} color={theme.colors.text.secondary} />,
+          }]
+        : []),
       {
         id: 'paste',
         category: 'paste',
@@ -804,7 +910,7 @@ function AddMenu(
         icon: <Icon name="file-text" size={16} color={theme.colors.text.secondary} />,
       },
     ],
-    [props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
+    [props.referenceAvailable, props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -1062,12 +1168,64 @@ function SaveOutcome(
   );
 }
 
+/**
+ * Reads the running release's facts for the committed references and secrets once per open and whenever the set of
+ * bound sources changes. A failed or unavailable read shows nothing: unknown is not "unchanged" and not "changed".
+ */
+function useRunningBindingFacts(
+  read: ((bindings: readonly EnvironmentSecretBindingV1[]) => Promise<DeploymentBindingsReadResultV1>) | null,
+  projection: readonly EnvironmentSecretBindingProjectionV1[],
+): RunningFacts {
+  const bindings = React.useMemo(() => projection.map(row => row.binding), [projection]);
+  // Only the bound secrets decide the read; editing a plain value or a reference does not re-read.
+  const sourcesKey = JSON.stringify(bindings.flatMap(binding => binding.purpose === 'variable'
+    && binding.source.kind === 'secret' ? [[binding.name, binding.phase, binding.source]] : []));
+  const latest = React.useRef(bindings);
+  latest.current = bindings;
+  const [facts, setFacts] = React.useState<Readonly<{ key: string; facts: RunningFacts }> | null>(null);
+  React.useEffect(() => {
+    if (!read || sourcesKey === '[]') return;
+    let live = true;
+    void read(latest.current).then((result) => {
+      if (!live || !result.ok) return;
+      const next = new Map<string, RunningFact>();
+      for (const item of result.secrets) if (item.status === 'redeploy_required') next.set(factKey(item.name, item.phase), 'secretRotated');
+      setFacts({ key: sourcesKey, facts: next });
+    }, () => {});
+    return () => { live = false; };
+  }, [read, sourcesKey]);
+  return facts?.key === sourcesKey ? facts.facts : NO_RUNNING_FACTS;
+}
+
+function rowRunningFact(row: VariableRow, facts: RunningFacts): RunningFact | null {
+  if (facts.size === 0) return null;
+  const phases = row.phase === 'both' ? (['build', 'runtime'] as const) : [row.phase];
+  for (const phase of phases) {
+    const fact = facts.get(factKey(row.name, phase));
+    if (fact) return fact;
+  }
+  return null;
+}
+
+/** "New revision saved · redeploy to apply": amber, because the running release still uses the old revision. */
+function RunningFactWord(props: Readonly<{ fact: RunningFact; testID?: string }>) {
+  return (
+    <StatusWord
+      testID={props.testID}
+      variant="attention"
+      label={t('projects.deployments.editors.secretRotated')}
+    />
+  );
+}
+
 /** "Saved secret · revision 2" over its provenance, or a value, or a reference: what the row's value comes from. */
 function ValueSource(
   props: Readonly<{
     binding: VariableBinding;
     environmentName: (id: string) => string | null;
     secretName: (ref: string) => string | null;
+    running?: RunningFact | null;
+    runningTestID?: string;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1084,7 +1242,11 @@ function ValueSource(
       >
         {title}
       </Text>
-      {detail ? (
+      {props.running ? (
+        <Text variant="meta" numberOfLines={1}>
+          <RunningFactWord fact={props.running} testID={props.runningTestID} />
+        </Text>
+      ) : detail ? (
         <Text
           variant="meta"
           numberOfLines={1}

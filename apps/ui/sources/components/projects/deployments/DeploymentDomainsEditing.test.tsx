@@ -1,0 +1,431 @@
+import * as React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createDeploymentReadControllerV1,
+  type DeploymentReadTransportV1,
+} from '@happier-dev/deployments';
+import {
+  createDeploymentEnvironmentDetailV1,
+  createDeploymentReceiptDetailV1,
+} from '@happier-dev/deployment-protocol/testing/v1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import {
+  act,
+  renderScreen,
+  standardCleanup,
+  waitForTestEvent,
+} from '@/dev/testkit';
+
+vi.mock('react-native', async () =>
+  (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
+);
+vi.mock('react-native-unistyles', async () =>
+  (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+);
+const routerMock = await vi.hoisted(async () =>
+  (await import('@/dev/testkit/mocks/router')).createExpoRouterMock(),
+);
+vi.mock('expo-router', () => routerMock.module);
+// The exact controller RPC is the network boundary; its protocol reader stays real.
+vi.mock(
+  '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
+  () => ({
+    machineRpcWithServerScope: vi.fn(async () => {
+      throw new Error('controller_unavailable');
+    }),
+  }),
+);
+vi.mock(
+  '@/modal',
+  async () =>
+    (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+      renderCustomModals: true,
+    }).module,
+);
+// The person's choice in the shared Saved Secret picker sheet, and the signed-in Account it is chosen under, are the
+// boundaries here; the Domain page, its Environment read and the bindings Action input stay real.
+const picked = vi.hoisted(() => ({ ref: '', resourceRevision: 4 }));
+vi.mock(
+  '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker',
+  () => ({
+    presentSavedSecretReferencePicker: vi.fn(async () => ({
+      ref: picked.ref,
+      resourceRevision: picked.resourceRevision,
+    })),
+  }),
+);
+vi.mock('@/sync/ops/actions/actionAccountContext', () => ({
+  captureLazyActionAccountContext: vi.fn(async () => ({
+    accountLifetime: {
+      scope: { serverId: 'home', accountId: 'account-owner' },
+      isCurrent: () => true,
+      onRetire: () => ({ dispose() {} }),
+    },
+    dispose() {},
+  })),
+}));
+afterEach(standardCleanup);
+
+const { DeploymentEnvironmentDetail } =
+  await import('./DeploymentEnvironmentDetail');
+const { PresentedDetailNavigationProvider } =
+  await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
+
+const scope = {
+  serverId: 'home',
+  accountId: 'account-owner',
+  projectSourceId: 'source-app',
+};
+const shown = { mounted: true, visible: true, focused: true };
+const noReview = { pendingId: null, request: () => {}, open: () => {} };
+const id = 'project-deployments.environment.domains.add';
+type Detail = ReturnType<typeof createDeploymentEnvironmentDetailV1>;
+
+function domain(
+  domainId: string,
+  hostname: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    domain: {
+      v: 1 as const,
+      id: domainId,
+      environmentId: 'environment-staging',
+      targetLinkId: 'target-a',
+      revision: 1,
+      state: 'active' as const,
+      contentArtifactId: `content-${domainId}`,
+      contentHeaderVersion: 1,
+      contentBodyVersion: 1,
+      createdByAccountId: 'account-owner',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    },
+    title: hostname,
+    content: {
+      hostname,
+      target: { service: 'web', containerPort: 3000 },
+      healthCheck: { path: '/', expectStatus: 200 },
+      ...extra,
+    },
+  };
+}
+
+async function renderDomains(
+  detail: Detail,
+  items: readonly unknown[],
+  domainActions: Record<string, unknown>,
+) {
+  const receipt = createDeploymentReceiptDetailV1();
+  const transport: Partial<DeploymentReadTransportV1> = {
+    listEnvironments: async () => ({
+      ok: true,
+      value: { items: [], nextCursor: null },
+    }),
+    readEnvironment: async () => ({ ok: true, value: detail }),
+    listHistory: async () => ({
+      ok: true,
+      value: { ok: true, items: [], nextCursor: null },
+    }),
+    readReceipt: async () => ({ ok: true, value: receipt }),
+    listDomains: async () => ({
+      ok: true,
+      value: { items: items as never, nextCursor: null },
+    }),
+  };
+  const controller = createDeploymentReadControllerV1({
+    scope,
+    transport: transport as DeploymentReadTransportV1,
+  });
+  const screen = await renderScreen(
+    <PresentedDetailNavigationProvider>
+      <DeploymentEnvironmentDetail
+        controller={controller}
+        environmentId={detail.environment.id}
+        demand={shown}
+        accountId="account-owner"
+        serverId="home"
+        phone={false}
+        deploy={null}
+        review={noReview}
+        onOpenReceipt={() => {}}
+        destination={{ tab: 'domains', section: null }}
+        domainActions={domainActions as never}
+      />
+    </PresentedDetailNavigationProvider>,
+  );
+  const settle = async (testID: string) => {
+    await act(async () => {
+      await Promise.race([
+        waitForTestEvent(
+          screen.subscribe,
+          () => screen.findByTestId(testID),
+          (node) => node !== null,
+        ),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+    });
+    return screen.findByTestId(testID);
+  };
+  return { screen, controller, settle };
+}
+
+function domainActions(detail: Detail) {
+  return {
+    addDomain: vi.fn(async (..._args: unknown[]) => ({
+      ok: true as const,
+      environmentId: detail.environment.id,
+      revision: detail.environment.revision + 1,
+      domain: domain('new', 'docs.happier.dev').domain,
+    })),
+    setBindings: vi.fn(async (..._args: unknown[]) => ({
+      ok: true as const,
+      environmentId: detail.environment.id,
+      revision: detail.environment.revision + 1,
+    })),
+    verifyDomain: vi.fn(),
+    removeDomain: vi.fn(),
+  };
+}
+
+describe('Environment → Domains: add form (P6)', () => {
+  it('adds a redirect alias, your own certificate and a basic-auth user in one Domain Add', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = {
+      ...base,
+      content: { ...base.content, ingress: undefined },
+    };
+    const actions = domainActions(detail);
+    const { screen, controller, settle } = await renderDomains(
+      detail,
+      [],
+      actions,
+    );
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+        screen.changeTextByTestId(`${id}.redirect`, 'www.happier.dev');
+        screen.changeTextByTestId(`${id}.basicAuth`, 'preview');
+      });
+      await screen.pressByTestIdAsync(`${id}.certificate:custom`);
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          content: {
+            hostname: 'docs.happier.dev',
+            target: {
+              service: 'web',
+              containerPort: 3000,
+              redirectTo: 'www.happier.dev',
+            },
+            healthCheck: { path: '/', expectStatus: 200 },
+            tls: { kind: 'custom' },
+            basicAuth: { username: 'preview' },
+          },
+        }),
+      );
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it('keeps basic auth and your certificate off where the page cannot bind their credentials', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = {
+      ...base,
+      content: { ...base.content, ingress: undefined },
+    };
+    const { setBindings: _unused, ...withoutBindings } = domainActions(detail);
+    const { screen, controller, settle } = await renderDomains(
+      detail,
+      [],
+      withoutBindings,
+    );
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      expect(screen.findByTestId(`${id}.redirect`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.basicAuth`)).toBeNull();
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it("picks Service from the definition and Port from that service's declared export", async () => {
+    const { DropdownMenu } =
+      await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const base = createDeploymentEnvironmentDetailV1();
+    const definition = {
+      kind: 'repository' as const,
+      ref: 'main',
+      compose: {
+        path: 'compose.yaml',
+        profiles: [],
+        services: ['web', 'worker'],
+        primaryService: 'web',
+      },
+    };
+    const detail = {
+      ...base,
+      content: {
+        ...base.content,
+        ingress: undefined,
+        definition,
+        ownServer: {
+          rollout: 'recreate' as const,
+          autoRestorePreviousRelease: false,
+          serviceExports: [
+            {
+              key: 'http',
+              service: 'web',
+              containerPort: 8080,
+              scheme: 'http',
+              exposure: 'public' as const,
+            },
+          ],
+        },
+      },
+    };
+    const actions = domainActions(detail);
+    const { screen, controller, settle } = await renderDomains(
+      detail,
+      [],
+      actions,
+    );
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () =>
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev'),
+      );
+      const select = (testID: string) =>
+        screen
+          .findAllByType(DropdownMenu)
+          .find((node) => node.props.testID === testID);
+      expect(
+        select(`${id}.service`)?.props.items.map(
+          (item: { id: string }) => item.id,
+        ),
+      ).toEqual(['web', 'worker']);
+      await act(async () => select(`${id}.service`)!.props.onSelect('web'));
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          content: expect.objectContaining({
+            target: { service: 'web', containerPort: 8080 },
+          }),
+        }),
+      );
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+});
+
+describe('Environment → Domains: credentials an address needs', () => {
+  it('says a basic-auth address needs its password and binds the chosen Saved Secret through deployments.bindings.set', async () => {
+    const { DropdownMenu } =
+      await import('@/components/ui/forms/dropdown/DropdownMenu');
+    picked.ref = formatSharedSavedSecretRefV1('resource-password');
+    const detail = createDeploymentEnvironmentDetailV1();
+    const actions = domainActions(detail);
+    const guarded = domain('guarded', 'preview.happier.dev', {
+      basicAuth: { username: 'preview' },
+    });
+    const { screen, controller, settle } = await renderDomains(
+      detail,
+      [guarded],
+      actions,
+    );
+    const menu = 'project-deployments.environment.domains.guarded.menu';
+    try {
+      expect(await settle(menu)).not.toBeNull();
+      const dropdown = screen
+        .findAllByType(DropdownMenu)
+        .find(
+          (node) =>
+            node.props.testID === undefined &&
+            node.props.popoverAccessibilityLabel === 'preview.happier.dev',
+        )!;
+      expect(
+        dropdown.props.items.map((item: { id: string }) => item.id),
+      ).toContain('credential:basicAuth');
+      await act(async () => dropdown.props.onSelect('credential:basicAuth'));
+      await vi.waitFor(() =>
+        expect(actions.setBindings).toHaveBeenCalledTimes(1),
+      );
+      expect(actions.setBindings).toHaveBeenCalledWith({
+        environmentId: detail.environment.id,
+        expectedRevision: detail.environment.revision,
+        remove: [],
+        set: [
+          {
+            purpose: 'domainCredential',
+            domainId: 'guarded',
+            role: 'basicAuth',
+            source: { kind: 'secret', ref: picked.ref, resourceRevision: 4 },
+          },
+        ],
+      });
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it('stays quiet once the password is bound', async () => {
+    const { DropdownMenu } =
+      await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = {
+      ...base,
+      content: {
+        ...base.content,
+        bindings: [
+          {
+            purpose: 'domainCredential' as const,
+            domainId: 'guarded',
+            role: 'basicAuth' as const,
+            source: {
+              kind: 'secret' as const,
+              ref: formatSharedSavedSecretRefV1('resource-password'),
+              resourceRevision: 4,
+            },
+          },
+        ],
+      },
+    };
+    const guarded = domain('guarded', 'preview.happier.dev', {
+      basicAuth: { username: 'preview' },
+    });
+    const { screen, controller, settle } = await renderDomains(
+      detail,
+      [guarded],
+      domainActions(detail),
+    );
+    try {
+      expect(
+        await settle('project-deployments.environment.domains.guarded.menu'),
+      ).not.toBeNull();
+      const dropdown = screen
+        .findAllByType(DropdownMenu)
+        .find(
+          (node) =>
+            node.props.popoverAccessibilityLabel === 'preview.happier.dev',
+        )!;
+      expect(
+        dropdown.props.items.map((item: { id: string }) => item.id),
+      ).not.toContain('credential:basicAuth');
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+});

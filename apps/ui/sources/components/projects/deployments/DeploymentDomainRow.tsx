@@ -20,6 +20,9 @@ import { t } from '@/text';
 import type { useDeploymentEnvironmentDomains } from './useDeploymentReads';
 
 export type DomainItem = ReturnType<typeof useDeploymentEnvironmentDomains>['result']['items'][number];
+/** A Domain credential binding's role (basic auth password, your certificate's chain and key). */
+export type DomainCredentialRole = 'basicAuth' | 'certificateChain' | 'privateKey';
+type RowState = Readonly<{ variant: StatusPillVariant; label: string }>;
 type OperationAddress = NonNullable<DomainItem['domain']['operationAddress']>;
 type DomainRowProps = Readonly<{
   item: DomainItem;
@@ -28,6 +31,9 @@ type DomainRowProps = Readonly<{
   disabled: boolean;
   onVerify?: () => void;
   onRemove?: () => void;
+  /** Credentials this address's content asks for that no binding supplies; absent where the page cannot bind. */
+  missingCredentials?: readonly DomainCredentialRole[];
+  onChooseCredential?: (role: DomainCredentialRole) => void;
 }>;
 
 /** A legacy capture has no controller address to inspect; it keeps the Domain owner's desired state. */
@@ -74,10 +80,12 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
   const { theme } = useUnistyles();
   const { item } = props;
   const { state: lifecycle, retryRemoval, failure } = projectDeploymentDomainFactsV1(item.domain, props.accountId, props.observation);
-  const state = lifecycle === 'outcome_unknown'
+  const missing = props.missingCredentials ?? [];
+  // One state per row: the lifecycle speaks first; a settled address then names what it needs, then its health.
+  const state: RowState | null = lifecycle === 'outcome_unknown'
     ? { variant: 'attention' as const, label: t('projects.deployments.stateUnknown') }
     : lifecycle === 'cancelled' ? { variant: 'attention' as const, label: t('projects.deployments.stateCancelled') }
-    : domainState(lifecycle);
+    : domainState(lifecycle) ?? credentialState(missing) ?? healthState(item.health);
   const tag = domainTag(item.content);
   return <>
     <Item
@@ -88,7 +96,8 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
       subtitle={state ? <DomainStateLine state={state} route={domainRoute(item.content)} /> : domainRoute(item.content)}
       mode="info"
       rightElement={props.onRemove && props.onVerify ? <DomainRowMenu item={item} disabled={props.disabled}
-        retryRemoval={retryRemoval} onVerify={props.onVerify} onRemove={props.onRemove} /> : undefined}
+        retryRemoval={retryRemoval} onVerify={props.onVerify} onRemove={props.onRemove}
+        missingCredentials={missing} onChooseCredential={props.onChooseCredential} /> : undefined}
     />
     {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
   </>;
@@ -102,14 +111,25 @@ function DomainRowMenu(
     retryRemoval: boolean;
     onVerify: () => void;
     onRemove: () => void;
+    missingCredentials: readonly DomainCredentialRole[];
+    onChooseCredential?: (role: DomainCredentialRole) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
+  const { missingCredentials, onChooseCredential } = props;
   const id = `project-deployments.environment.domains.${props.item.domain.id}.menu`;
   const removing = props.item.domain.state === 'removing';
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
+      // What the address still needs leads its menu, as the row's state line says.
+      ...(!removing && onChooseCredential ? missingCredentials.map(role => ({
+        id: `credential:${role}`,
+        category: 'credential',
+        testID: `${id}.credential.${role}`,
+        title: credentialChoiceTitle(role),
+        icon: <Icon name="key" size={16} color={theme.colors.text.secondary} />,
+      })) : []),
       ...(!removing ? [{
         id: 'verify',
         category: 'check',
@@ -126,7 +146,7 @@ function DomainRowMenu(
         icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
       },
     ],
-    [id, removing, theme.colors.text.secondary],
+    [id, missingCredentials, onChooseCredential, removing, theme.colors.text.secondary],
   );
   if (props.disabled || removing && !props.retryRemoval) return null;
   return (
@@ -140,7 +160,10 @@ function DomainRowMenu(
       popoverAccessibilityLabel={props.item.content.hostname}
       separateCategories
       onSelect={(itemId) => {
-        if (itemId === 'verify') props.onVerify();
+        if (itemId.startsWith('credential:')) {
+          const role = missingCredentials.find(item => `credential:${item}` === itemId);
+          if (role) onChooseCredential?.(role);
+        } else if (itemId === 'verify') props.onVerify();
         else if (itemId === 'remove') props.onRemove();
       }}
       trigger={({ toggle }) => (
@@ -197,10 +220,48 @@ function domainTag(content: DomainItem['content']): string | null {
   return null;
 }
 
+/** A settled address whose own content asks for a credential no binding supplies yet. */
+function credentialState(missing: readonly DomainCredentialRole[]): RowState | null {
+  if (missing.length === 0) return null;
+  return { variant: 'attention', label: missing.includes('basicAuth')
+    ? t('projects.deployments.editors.needsPassword') : t('projects.deployments.editors.needsCertificate') };
+}
+
+function credentialChoiceTitle(role: DomainCredentialRole): string {
+  switch (role) {
+    case 'basicAuth': return t('projects.deployments.editors.choosePassword');
+    case 'certificateChain': return t('projects.deployments.editors.chooseCertificate');
+    case 'privateKey': return t('projects.deployments.editors.chooseKey');
+  }
+}
+
+/**
+ * The Domain health owner's one `needsYou` fact (T2-DOMAIN-PREVIEW `projectDeploymentDomainHealthFactsV1`): a
+ * certificate that expires soon or is no longer valid, or an address that does not answer, with its one cause.
+ * Healthy, unchecked and unavailable observations stay quiet.
+ */
+function healthState(health: DomainItem['health']): RowState | null {
+  const needs = health?.needsYou;
+  if (!needs) return null;
+  if (needs.cause === 'certificate') {
+    if (needs.reason === 'expiresSoon') return { variant: 'attention', label: health?.certificate.expiresAt
+      ? t('projects.deployments.editors.certExpiresSoon', { date: new Date(health.certificate.expiresAt).toLocaleDateString() })
+      : t('projects.deployments.editors.certInvalid') };
+    return { variant: 'danger', label: needs.reason === 'expired'
+      ? t('projects.deployments.editors.certExpired') : t('projects.deployments.editors.certInvalid') };
+  }
+  const where = needs.vantage === 'outside'
+    ? t('projects.deployments.editors.unreachableOutside') : t('projects.deployments.editors.unreachableHere');
+  const why = needs.cause === 'dns' ? t('projects.deployments.editors.diagnosisDns')
+    : needs.cause === 'network' ? t('projects.deployments.editors.diagnosisNetwork')
+    : t('projects.deployments.editors.diagnosisHttp');
+  return { variant: 'danger', label: `${where} · ${why}` };
+}
+
 /** Healthy (`active`) is quiet; the rest speak, in the colour of what they need. */
 function domainState(
   state: DomainItem['domain']['state'],
-): Readonly<{ variant: StatusPillVariant; label: string }> | null {
+): RowState | null {
   switch (state) {
     case 'active':
       return null;

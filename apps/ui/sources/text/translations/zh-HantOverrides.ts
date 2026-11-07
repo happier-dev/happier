@@ -6,6 +6,7 @@ import { botFaceNameTranslations } from './botFaceNameTranslations.shared';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { deploymentCopyTranslations } from './deploymentCopyTranslations';
+import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
 import { deploymentPlatformLinkTranslations } from './deploymentPlatformLinkTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
@@ -13463,6 +13464,7 @@ settingsSession: {
             creationReview: deploymentCreationReviewTranslations['zh-Hant'],
       defaultsEditor: deploymentDefaultsTranslations['zh-Hant'],
             copy: deploymentCopyTranslations['zh-Hant'],
+            editors: deploymentEditorsTranslations['zh-Hant'],
             platformLink: deploymentPlatformLinkTranslations['zh-Hant'],
             review: {
                 awakeNote: '僅在這台機器處於喚醒狀態且 Docker Desktop 已開啟時執行。',

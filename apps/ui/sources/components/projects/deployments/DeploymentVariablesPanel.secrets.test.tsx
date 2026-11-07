@@ -43,7 +43,8 @@ afterEach(async () => {
   home = null;
 });
 
-async function mount(phone = true) {
+async function mount(phone = true, readRunningBindings?: (bindings: readonly unknown[]) => Promise<unknown>,
+  referenceTargets?: readonly unknown[]) {
   home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }),
     handleRequest: async path => path === '/v1/account/saved-secrets/resources/activity'
       ? Response.json({ historyEntryId: 'disclosure-entry' }) : null });
@@ -63,7 +64,7 @@ async function mount(phone = true) {
       snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
     return <DeploymentVariablesPanel draft={draft} phone={phone} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id} scope={scope} lifetime={lifetime}
-      machineId="machine-a" />;
+      machineId="machine-a" readRunningBindings={readRunningBindings as never} referenceTargets={referenceTargets as never} />;
   }
   const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
     // Test Renderer has no layout engine; this is the platform's measured anchor.
@@ -127,3 +128,44 @@ it('takes the person to the Machine Services control owner and the existing API 
   expect(materialReads()).toBe(0);
 });
 
+it('marks a secret whose saved revision the running release does not have yet, from one bindings read', async () => {
+  const facts = { ok: true, environmentId: 'environment-staging', deploymentId: 'deployment-a', targetLinkId: 'target-a',
+    machineId: 'machine-a', installationId: 'installation-a', references: [],
+    secrets: [{ name: 'API_KEY', phase: 'runtime', status: 'redeploy_required', runningRevision: 2, currentRevision: 3 }] };
+  const read = vi.fn(async (_bindings: readonly unknown[]) => facts);
+  const { screen } = await mount(false, read);
+  await vi.waitFor(() => expect(screen.findByTestId(`${prefix}.running`)).not.toBeNull());
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(read.mock.calls[0]![0]).toEqual([expect.objectContaining({ name: 'API_KEY', purpose: 'variable' })]);
+  // A render that changes no bound source issues no second read.
+  await act(async () => {});
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it('shows nothing when the running release has no facts to compare', async () => {
+  const read = vi.fn(async () => ({ ok: false, error: 'deployment_unavailable' }));
+  const { screen } = await mount(false, read);
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  expect(screen.findByTestId(`${prefix}.running`)).toBeNull();
+});
+
+it('points a new variable at another service export through the same draft and binding write', async () => {
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const { screen } = await mount(false, undefined, [{ environmentId: 'environment-data', export: 'database', service: 'db' }]);
+  const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel !== undefined
+    && node.props.items?.some((item: { id: string }) => item.id === 'reference'));
+  expect(menu()).toBeDefined();
+  await act(async () => menu()!.props.onSelect('reference'));
+  await act(async () => screen.changeTextByTestId('project-deployments.environment.variables.add.name', 'database_url'));
+  const target = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.environment.variables.add.reference')!;
+  await act(async () => target.props.onSelect(JSON.stringify(['environment-data', 'database'])));
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.add.save');
+  await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.variable.DATABASE_URL')).not.toBeNull());
+  expect(screen.findByTestId('project-deployments.environment.variables.save')).not.toBeNull();
+});
+
+it('offers no service pointer when there is no declared export to point at', async () => {
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const { screen } = await mount(false);
+  expect(screen.findAllByType(DropdownMenu).some(node => node.props.items?.some((item: { id: string }) => item.id === 'reference'))).toBe(false);
+});

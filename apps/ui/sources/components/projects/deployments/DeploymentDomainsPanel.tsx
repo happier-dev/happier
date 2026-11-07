@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentDomainContentV1, DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol/v1';
 import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,
@@ -10,10 +10,12 @@ import type {
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -23,19 +25,28 @@ import {
   DeployOutcomeBanner,
   type DeploymentReviewHandle,
 } from './DeploymentEnvironmentDetail';
+import { useDeploymentDomainIngressFields, type DomainIngressInspection } from './DeploymentDomainIngressFields';
 import { DeploymentTabState } from './DeploymentTabState';
-import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
-import { DeploymentDomainRow, type DomainItem } from './DeploymentDomainRow';
+import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
+import { DeploymentDomainRow, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
   'addDomain' | 'removeDomain' | 'verifyDomain'
->;
+> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings'>>
+  & Readonly<{ inspectPlatformTarget?: DomainIngressInspection }>;
+type EnvironmentContent = DeploymentEnvironmentContentV1;
+type RouteExport = Readonly<{ service: string; containerPort: number }>;
+const NO_SERVICES: readonly string[] = Object.freeze([]);
+const NO_EXPORTS: readonly RouteExport[] = Object.freeze([]);
+const NO_BOUND: ReadonlySet<string> = new Set();
+const credentialKey = (domainId: string, role: DomainCredentialRole) => JSON.stringify([domainId, role]);
 
 /** What the page can change here: the Action owner's Domain Actions and the revisions they are admitted against. */
 export type DeploymentDomainEditing = Readonly<{
   actions: DomainActions;
   environmentRevision: number;
+  recordedIngress?: DeploymentEnvironmentContentV1['ingress'];
   /** The runtime target the addresses route to; Add domain needs one. */
   targetLink: Readonly<{ id: string; revision: number }> | null;
   review: DeploymentReviewHandle;
@@ -74,6 +85,33 @@ export function DeploymentDomainsPanel(
     void refresh();
   }, [editing, refresh]);
   const { running, outcome, press } = useDeploymentChangePress(editing?.review ?? null, onSettled);
+  // The Environment record (one shared lease with the page) names its services, their declared ports and which
+  // Domain credentials are already bound; it is read only where this viewer can edit.
+  const record = useDeploymentEnvironmentRecord(props.controller, editing ? props.environmentId : null, props.demand);
+  const environment = record.snapshot.value;
+  const content: EnvironmentContent | null = environment?.content ?? null;
+  const services = React.useMemo(() => content ? composeServices(content) : NO_SERVICES, [content]);
+  const routeExports = content?.ownServer?.serviceExports ?? NO_EXPORTS;
+  const bound = React.useMemo(() => content ? new Set(content.bindings.flatMap(binding => binding.purpose === 'domainCredential'
+    ? [credentialKey(binding.domainId, binding.role)] : [])) : NO_BOUND, [content]);
+  const setBindings = editing?.actions.setBindings;
+  const serverId = props.controller.scope.serverId;
+  const chooseCredential = React.useCallback(async (item: DomainItem, role: DomainCredentialRole) => {
+    if (!setBindings || !environment) return;
+    const controller = new AbortController();
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(serverId, controller.signal);
+    try {
+      const { presentSavedSecretReferencePicker } = await import('@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker');
+      const selected = await presentSavedSecretReferencePicker({ accountLifetime: account.accountLifetime,
+        signal: controller.signal, isCurrent: () => account.accountLifetime.isCurrent() });
+      if (!selected) return;
+      // One `deployments.bindings.set` write, the same Action an agent uses (with `person_selects` at its review).
+      await press(() => setBindings({ environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+        set: [{ purpose: 'domainCredential', domainId: item.domain.id, role,
+          source: { kind: 'secret', ref: selected.ref, resourceRevision: selected.resourceRevision } }], remove: [] }));
+    } finally { account.dispose(); }
+  }, [environment, press, serverId, setBindings]);
   const canAdd = editing !== null && editing !== undefined && editing.targetLink !== null;
   const addAction = canAdd && !adding ? (
     <SectionActionButton
@@ -109,6 +147,11 @@ export function DeploymentDomainsPanel(
           phone={props.phone === true}
           busy={running}
           taken={items.map((item) => item.content.hostname)}
+          recordedIngress={editing.recordedIngress}
+          inspect={editing.actions.inspectPlatformTarget}
+          services={services}
+          routeExports={routeExports}
+          credentials={setBindings !== undefined}
           onCancel={() => setAdding(false)}
           onAdd={async (content) => {
             const link = editing.targetLink!;
@@ -132,6 +175,8 @@ export function DeploymentDomainsPanel(
           disabled={running}
           onVerify={editing ? () => { void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
           onRemove={editing ? () => { void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
+          missingCredentials={setBindings && content ? missingCredentials(item, bound) : undefined}
+          onChooseCredential={setBindings && content ? (role) => { void chooseCredential(item, role); } : undefined}
         />
       ))}
       <DeploymentTabState
@@ -164,6 +209,22 @@ export function DeploymentDomainsPanel(
   );
 }
 
+/** The Compose services the definition selects; an empty selection (every service) names none, so Service stays typed. */
+function composeServices(content: EnvironmentContent): readonly string[] {
+  const { definition } = content;
+  const selected = definition.kind === 'stored' ? definition.services : definition.compose?.services;
+  return selected && selected.length > 0 ? selected : NO_SERVICES;
+}
+
+/** The credentials an address's own content asks for (basic auth, your certificate) that no binding supplies yet. */
+function missingCredentials(item: DomainItem, bound: ReadonlySet<string>): readonly DomainCredentialRole[] {
+  const needed: DomainCredentialRole[] = [
+    ...(item.content.basicAuth ? ['basicAuth' as const] : []),
+    ...(item.content.tls?.kind === 'custom' ? ['certificateChain' as const, 'privateKey' as const] : []),
+  ];
+  return needed.filter(role => !bound.has(credentialKey(item.domain.id, role)));
+}
+
 /** The exact address and the revisions a Remove or Check again is admitted against. */
 function domainOperands(environmentId: string, editing: DeploymentDomainEditing, item: DomainItem) {
   return {
@@ -183,6 +244,14 @@ function DomainAddForm(
     phone: boolean;
     busy: boolean;
     taken: readonly string[];
+    recordedIngress?: DeploymentEnvironmentContentV1['ingress'];
+    inspect?: DomainIngressInspection;
+    /** The definition's selected Compose services; empty means Service is typed. */
+    services: readonly string[];
+    /** Ports the Environment declares per service; a service without one keeps Port typed. */
+    routeExports: readonly RouteExport[];
+    /** Basic auth and your own certificate need a credential chosen on the address afterwards. */
+    credentials: boolean;
     onCancel: () => void;
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
@@ -192,6 +261,16 @@ function DomainAddForm(
   const [port, setPort] = React.useState('');
   const [path, setPath] = React.useState('');
   const [checkPath, setCheckPath] = React.useState('/');
+  const [redirectTo, setRedirectTo] = React.useState('');
+  const [certificate, setCertificate] = React.useState<'managed' | 'custom'>('managed');
+  const [basicAuthUser, setBasicAuthUser] = React.useState('');
+  const servicePorts = React.useMemo(() => [...new Set(props.routeExports
+    .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
+  const [ingressMode, setIngressMode] = React.useState(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
+  const needsSelection = props.recordedIngress?.kind === 'cloudflareTunnel' || ingressMode === 'cloudflare';
+  const { selection: ingress, fields: ingressFields } = useDeploymentDomainIngressFields({
+    hostname: hostname.trim().toLowerCase(), busy: props.busy, inspect: props.inspect, enabled: needsSelection,
+  });
   const host = hostname.trim().toLowerCase();
   const containerPort = Number(port);
   const portValid = /^\d+$/.test(port) && containerPort >= 1 && containerPort <= 65535;
@@ -200,7 +279,9 @@ function DomainAddForm(
   const duplicate = props.taken.includes(host);
   const pathValid = routePath === '' || routePath.startsWith('/');
   const probeValid = probePath.startsWith('/');
-  const ready = host.length > 0 && !duplicate && service.trim().length > 0 && portValid && pathValid && probeValid && !props.busy;
+  const redirect = redirectTo.trim();
+  const user = basicAuthUser.trim();
+  const ready = host.length > 0 && !duplicate && service.trim().length > 0 && portValid && pathValid && probeValid && (!needsSelection || !!ingress) && !props.busy;
   return (
     <InlineAddExpander
       isOpen
@@ -218,8 +299,12 @@ function DomainAddForm(
             service: service.trim(),
             containerPort,
             ...(routePath ? { path: routePath } : {}),
+            ...(redirect ? { redirectTo: redirect } : {}),
           },
           healthCheck: { path: probePath, expectStatus: 200 },
+          ...(needsSelection && ingress ? { ingress } : {}),
+          ...(props.credentials && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
+          ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
         });
       }}
       saveDisabled={!ready}
@@ -241,9 +326,39 @@ function DomainAddForm(
             error={duplicate ? t('projects.deployments.domainExists') : null}
           />
         </FieldItem>
+        {!props.recordedIngress ? (
+          <>
+            {ingressMode === 'environment' ? (
+              <Text testID="project-deployments.environment.domains.add.ingress.notRecorded">
+                {t('projects.deployments.domainIngressMissing')}
+              </Text>
+            ) : null}
+            <FieldItem label={t('projects.deployments.domainIngressRouting')}>
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.ingress.mode"
+                label={t('projects.deployments.domainIngressRouting')}
+                items={[
+                  { id: 'environment', title: t('projects.deployments.domainIngressEnvironment') },
+                  { id: 'cloudflare', title: t('projects.deployments.domainIngressTitle') },
+                ]}
+                selectedId={ingressMode} onSelect={setIngressMode} disabled={props.busy} />
+            </FieldItem>
+          </>
+        ) : null}
+        {ingressFields}
         <View style={props.phone ? styles.stack : styles.route}>
           <FieldItem label={t('projects.deployments.domainFieldService')} style={props.phone ? undefined : styles.routeService}>
-            <FieldTextInput
+            {props.services.length > 0 ? (
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.service"
+                label={t('projects.deployments.domainFieldService')}
+                items={props.services.map(name => ({ id: name, title: name }))}
+                selectedId={service || null}
+                onSelect={(next) => {
+                  setService(next);
+                  const ports = props.routeExports.filter(item => item.service === next);
+                  if (ports.length === 1) setPort(String(ports[0]!.containerPort));
+                }}
+                disabled={props.busy} />
+            ) : <FieldTextInput
               testID="project-deployments.environment.domains.add.service"
               value={service}
               onChangeText={setService}
@@ -251,10 +366,17 @@ function DomainAddForm(
               autoCapitalize="none"
               accessibilityLabel={t('projects.deployments.domainFieldService')}
               placeholder="web"
-            />
+            />}
           </FieldItem>
           <FieldItem label={t('projects.deployments.domainFieldPort')} style={props.phone ? undefined : styles.routePort}>
-            <FieldTextInput
+            {servicePorts.length > 0 ? (
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.port"
+                label={t('projects.deployments.domainFieldPort')}
+                items={servicePorts.map(value => ({ id: String(value), title: String(value) }))}
+                selectedId={port || null}
+                onSelect={setPort}
+                disabled={props.busy} />
+            ) : <FieldTextInput
               testID="project-deployments.environment.domains.add.port"
               value={port}
               onChangeText={(next) => setPort(next.replace(/[^0-9]/g, ''))}
@@ -262,7 +384,7 @@ function DomainAddForm(
               keyboardType="number-pad"
               accessibilityLabel={t('projects.deployments.domainFieldPort')}
               placeholder="3000"
-            />
+            />}
           </FieldItem>
           <FieldItem
             label={t('projects.deployments.domainFieldPath')}
@@ -280,6 +402,51 @@ function DomainAddForm(
             />
           </FieldItem>
         </View>
+        <FieldItem
+          label={t('projects.deployments.editors.redirect')}
+          supportingText={t('projects.deployments.editors.redirectHint')}
+        >
+          <FieldTextInput
+            testID="project-deployments.environment.domains.add.redirect"
+            value={redirectTo}
+            onChangeText={setRedirectTo}
+            monospace
+            autoCapitalize="none"
+            accessibilityLabel={t('projects.deployments.editors.redirect')}
+            placeholder="www.example.com"
+          />
+        </FieldItem>
+        {props.credentials ? (
+          <>
+            <FieldItem label={t('projects.deployments.editors.certificate')}>
+              <SegmentedTabBar<'managed' | 'custom'>
+                testIDPrefix="project-deployments.environment.domains.add.certificate"
+                accessibilityLabel={t('projects.deployments.editors.certificate')}
+                compact
+                segmentSizing="content"
+                role="radiogroup"
+                activeTabId={certificate}
+                onSelectTab={setCertificate}
+                tabs={[
+                  { id: 'managed', label: t('projects.deployments.editors.certificateAutomatic') },
+                  { id: 'custom', label: t('projects.deployments.editors.certificateOwn') },
+                ]}
+              />
+            </FieldItem>
+            <FieldItem
+              label={t('projects.deployments.editors.basicAuthUser')}
+              supportingText={t('projects.deployments.editors.basicAuthHint')}
+            >
+              <FieldTextInput
+                testID="project-deployments.environment.domains.add.basicAuth"
+                value={basicAuthUser}
+                onChangeText={setBasicAuthUser}
+                autoCapitalize="none"
+                accessibilityLabel={t('projects.deployments.editors.basicAuthUser')}
+              />
+            </FieldItem>
+          </>
+        ) : null}
         <FieldItem
           label={t('projects.deployments.domainFieldCheck')}
           supportingText={t('projects.deployments.domainCheckHint')}
