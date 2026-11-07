@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { setDesktopActivityOverlayKeyboardWanted } from '../../runtime/desktopActivityOverlayBridge';
+import { useDesktopActivityOverlayCardActionState } from './DesktopActivityOverlayCardActionState';
 import { DesktopActivityOverlayChip } from '../DesktopActivityOverlayChip';
 import {
     createDesktopActivityOverlayFocusRingStyle,
@@ -64,6 +65,7 @@ function bindInitialFocusRef(ref: React.Ref<View> | undefined, node: { focus: ()
 export function DesktopActivityOverlayCardActions(props: Readonly<{
     visualMode: DesktopActivityOverlayVisualMode;
     cardId: string;
+    stateKey: string;
     actions: readonly DesktopActivityOverlayActionDescriptor[];
     layout?: 'decision' | 'choices';
     inlineQuestionText?: string | null;
@@ -73,10 +75,11 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
     onDismissKey?: () => void;
 }>): React.ReactElement | null {
     // Keep the choices until the addressed action succeeds; failures remain retryable in place.
-    const [answer, setAnswer] = React.useState<string | null>(null);
+    const { state, update } = useDesktopActivityOverlayCardActionState(props.stateKey);
+    const { answer } = state;
     const answerWith = React.useCallback(async (action: DesktopActivityOverlayActionDescriptor, label: string) => {
-        if (await props.onAction?.(action)) setAnswer(label);
-    }, [props.onAction]);
+        if (await props.onAction?.(action)) update({ answer: label });
+    }, [props.onAction, update]);
     if (props.actions.length === 0) {
         return null;
     }
@@ -84,7 +87,7 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
         return <DesktopActivityOverlayAnswered cardId={props.cardId} label={answer} />;
     }
     if (props.layout === 'choices') {
-        return <DesktopActivityOverlayChoiceActions {...props} onAnswer={answerWith} />;
+        return <DesktopActivityOverlayChoiceActions {...props} state={state} update={update} onAnswer={answerWith} />;
     }
     const ordered = [...props.actions].sort((left, right) => rankActionTone(left.tone) - rankActionTone(right.tone));
 
@@ -126,12 +129,13 @@ function DesktopActivityOverlayAnswered(props: Readonly<{ cardId: string; label:
 }
 
 function DesktopActivityOverlayChoiceActions(props: React.ComponentProps<typeof DesktopActivityOverlayCardActions> & Readonly<{
+    state: ReturnType<typeof useDesktopActivityOverlayCardActionState>['state'];
+    update: ReturnType<typeof useDesktopActivityOverlayCardActionState>['update'];
     onAnswer: (action: DesktopActivityOverlayActionDescriptor, label: string) => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const [freeAnswerOpen, setFreeAnswerOpen] = React.useState(false);
-    const [freeAnswer, setFreeAnswer] = React.useState('');
-    const freeAnswerRef = React.useRef('');
+    const { freeAnswerOpen, freeAnswer } = props.state;
+    const freeAnswerRef = React.useRef(freeAnswer);
     const freeAction = props.actions.find((action) => action.inputKind === 'inline_text') ?? null;
     const questionText = props.inlineQuestionText?.trim() ?? '';
     const canSendFreeAnswer = freeAnswer.trim().length > 0 && questionText.length > 0;
@@ -165,7 +169,7 @@ function DesktopActivityOverlayChoiceActions(props: React.ComponentProps<typeof 
                                 if (action.inputKind === 'inline_text') {
                                     // Opening the field is going to type: the island takes the keyboard for it.
                                     if (!freeAnswerOpen) fireAndForget(setDesktopActivityOverlayKeyboardWanted(true), { tag: 'DesktopActivityOverlayCardActions.keyboard' });
-                                    setFreeAnswerOpen((open) => !open);
+                                    props.update({ freeAnswerOpen: !freeAnswerOpen });
                                 } else props.onAnswer(action, action.label);
                             }}
                         />
@@ -182,7 +186,7 @@ function DesktopActivityOverlayChoiceActions(props: React.ComponentProps<typeof 
                         value={freeAnswer}
                         onChangeText={(value) => {
                             freeAnswerRef.current = value;
-                            setFreeAnswer(value);
+                            props.update({ freeAnswer: value });
                         }}
                         onSubmitEditing={sendFreeAnswer}
                         returnKeyType="send"

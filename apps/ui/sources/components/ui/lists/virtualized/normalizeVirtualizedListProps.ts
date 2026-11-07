@@ -19,6 +19,7 @@ export type NormalizedSharedListProps<T> = Readonly<{
     data: readonly T[];
     renderItem: VirtualizedListRenderItem<T>;
     keyExtractor: (item: T, index: number) => string;
+    retainedItemKeys?: readonly string[];
     testID?: string;
     nativeID?: string;
     style?: StyleProp<ViewStyle>;
@@ -94,6 +95,7 @@ export function normalizeVirtualizedListProps<T>(
             data: props.data ?? [],
             renderItem: props.renderItem,
             keyExtractor: props.keyExtractor,
+            retainedItemKeys: props.retainedItemKeys,
             testID: props.testID,
             nativeID: props.nativeID,
             style: props.style,

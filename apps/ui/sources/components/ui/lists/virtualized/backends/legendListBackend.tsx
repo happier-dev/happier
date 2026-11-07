@@ -12,6 +12,7 @@ import { normalizeVirtualizedListProps } from '../normalizeVirtualizedListProps'
 import type {
     VirtualizedListProps,
     VirtualizedListRef,
+    VirtualizedListRenderItemInfo,
 } from '../virtualizedListTypes';
 
 const LEGEND_LIST_WEB_FILL_STYLE = {
@@ -78,6 +79,7 @@ function LegendListBackendInner<T>(
         contentContainerStyle,
         style,
         webScrollHandlers,
+        retainedItemKeys,
         ...legendShared
     } = shared;
     const legendContentContainerStyle = React.useMemo(() => (
@@ -104,6 +106,7 @@ function LegendListBackendInner<T>(
             onScrollEndDrag,
         };
     const innerRef = React.useRef<LegendListRef | null>(null);
+    const [focusedItemKey, setFocusedItemKey] = React.useState<string | null>(null);
 
     React.useImperativeHandle(ref, (): VirtualizedListRef => ({
         scrollToIndex: (params) => innerRef.current?.scrollToIndex(params),
@@ -115,10 +118,47 @@ function LegendListBackendInner<T>(
         getState: () => innerRef.current?.getState(),
     }), []);
 
+    // The web runtime publishes virtual extents through its state listeners rather than the native
+    // ScrollView callback. Adapt that push here so panels and page scrollers consume one size contract.
+    React.useEffect(() => {
+        if (Platform.OS !== 'web' || !onContentSizeChange) return;
+        const list = innerRef.current;
+        if (!list) return;
+        const publishSize = () => {
+            const node = list.getScrollableNode();
+            if (!node) return;
+            const length = list.getState().contentLength;
+            onContentSizeChange(shared.horizontal ? length : node.clientWidth,
+                shared.horizontal ? node.clientHeight : length);
+        };
+        const state = list.getState();
+        const remove = [
+            state.listen('totalSize', publishSize),
+            state.listen('headerSize', publishSize),
+            state.listen('footerSize', publishSize),
+            state.listen('otherAxisSize', publishSize),
+        ];
+        publishSize();
+        return () => { for (const unsubscribe of remove) unsubscribe(); };
+    }, [onContentSizeChange, shared.horizontal]);
+
+    // A browser retains keyboard focus while a person scrolls. Keep that cell in Legend's
+    // existing pinned inventory so recycling cannot silently move focus to the document body.
+    const renderItem = Platform.OS === 'web'
+        ? (info: VirtualizedListRenderItemInfo<T>) => {
+            const key = legendShared.keyExtractor(info.item, info.index);
+            return <div style={{ display: 'contents' }} onFocus={() => setFocusedItemKey(key)} onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setFocusedItemKey(null);
+            }}>{legendShared.renderItem(info)}</div>;
+        }
+        : legendShared.renderItem;
+    const retainedKeys = focusedItemKey ? [...(retainedItemKeys ?? []), focusedItemKey] : retainedItemKeys;
+
     // Boundary adapter: Legend's prop and renderItem-info shapes are structural
     // supersets of our neutral contract, mapped in one place here.
     const legendProps = {
         ...legendShared,
+        alwaysRender: retainedKeys ? { keys: [...retainedKeys] } : undefined,
         ...platformIdentityAndKeyboardProps,
         ...nativeScrollLifecycleHandlers,
         ...webScrollHandlers,
@@ -133,7 +173,7 @@ function LegendListBackendInner<T>(
         recycleItems: virtualization.recycleItems,
         onStartReached: virtualization.onStartReached,
         onStartReachedThreshold: virtualization.onStartReachedThreshold,
-        renderItem: legendShared.renderItem,
+        renderItem,
         data: legendShared.data,
     } as unknown as LegendListProps<T>;
 

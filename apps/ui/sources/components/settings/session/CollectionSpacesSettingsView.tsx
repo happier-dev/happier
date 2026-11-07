@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 import {
   COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1,
   CollectionEntityKindV1Schema,
@@ -11,22 +10,16 @@ import {
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
-import { resolveCollectionSpaceIconName } from '@/components/ui/lists/collection/CollectionSpacesStrip';
 import { useCollectionSpaceBinding } from '@/components/ui/lists/collection/useCollectionSpaceBinding';
 import { useCollectionSpaceEditing } from '@/components/ui/lists/collection/useCollectionSpaceEditing';
 import { useCollectionSpaceReorderBinding } from '@/components/ui/lists/collection/collectionSpaceReorder';
 import { useSetCollectionSpacesEnabled } from '@/components/ui/lists/collection/useSetCollectionSpacesEnabled';
 import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import {
-  EntityFlatReorderList,
-  EntityFlatReorderRow,
-} from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+import { CollectionSpacesSettingsList } from './CollectionSpacesSettingsList';
 import { t } from '@/text';
 
 import { collectionSpaceSettingRefs, collectionSpacesManageHref } from './collectionSpaceSettings';
@@ -39,7 +32,6 @@ function manageTitle(entityKind: CollectionEntityKindV1) {
   return t(entityKind === 'sessionWork' ? 'sessionsList.spacesManageSessions'
     : entityKind === 'workflow' ? 'sessionsList.spacesManageWorkflows' : 'sessionsList.spacesManageDiscussions');
 }
-const LEADING_STYLE = { flexDirection: 'row', alignItems: 'center' } as const;
 const NO_SUGGESTION = {
   name: '',
   icon: { kind: 'icon', name: 'list' },
@@ -133,7 +125,6 @@ function ManagedSpaces<K extends CollectionEntityKindV1>(
   props: Readonly<{ entityKind: K }>,
 ) {
   const { entityKind } = props;
-  const { theme } = useUnistyles();
   const name = defaultName(entityKind);
   const defaultFilter = React.useMemo(
     () => createDefaultCollectionSpaceV1(entityKind).filter,
@@ -170,65 +161,15 @@ function ManagedSpaces<K extends CollectionEntityKindV1>(
   });
   const refs = collectionSpaceSettingRefs(entityKind);
   return (
-    <ItemList style={{ paddingTop: 0 }} testID="collection-spaces-settings">
-      <SettingsPageHeader
-        title={manageTitle(entityKind)}
-        description={t('sessionsList.spacesManageDescription')}
-      />
-      {binding.spacesReady ? <SpacesSwitches entityKind={entityKind} spacesEnabled={binding.spacesEnabled} listEnabled={listEnabled} /> : null}
-      <SettingAnchor setting={refs.spaces}>
-        <EntityFlatReorderList
-          binding={reorder}
-          testID="collection-spaces-settings.reorder"
-        >
-          <ItemGroup>
-            {spaces.map((space) => (
-              <EntityFlatReorderRow key={space.id} id={space.id}>
-                {({ renderHandle }) => (
-                  <View
-                    ref={space.id === editingId ? anchorRef : undefined}
-                    collapsable={false}
-                  >
-                    <Item
-                      testID={`collection-spaces-settings:${space.id}`}
-                      title={space.name}
-                      leftElement={
-                        <View style={LEADING_STYLE}>
-                          {renderHandle(
-                            `collection-spaces-settings.move:${space.id}`,
-                          )}
-                          <Icon
-                            name={resolveCollectionSpaceIconName(space.icon)}
-                            size={ICON_SIZE.md}
-                            color={theme.colors.text.secondary}
-                          />
-                        </View>
-                      }
-                      showChevron={false}
-                      rightElement={
-                        <IconButton
-                          testID={`collection-spaces-settings.edit:${space.id}`}
-                          accessibilityLabel={t('sessionsList.spacesEditNamed', { name: space.name })}
-                          tooltip={t('sessionsList.spacesEdit')}
-                          variant="plain"
-                          iconName="pencil-simple"
-                          iconSize={ICON_SIZE.sm}
-                          onPress={() => {
-                            setEditingId(space.id);
-                            openEdit();
-                          }}
-                        />
-                      }
-                    />
-                  </View>
-                )}
-              </EntityFlatReorderRow>
-            ))}
-          </ItemGroup>
-        </EntityFlatReorderList>
-      </SettingAnchor>
-      {editing.formOverlay}
-    </ItemList>
+    <CollectionSpacesSettingsList spaces={spaces} reorder={reorder} editingId={editingId} anchorRef={anchorRef}
+      header={<>
+        <SettingsPageHeader title={manageTitle(entityKind)} description={t('sessionsList.spacesManageDescription')} />
+        {binding.spacesReady ? <SpacesSwitches entityKind={entityKind} spacesEnabled={binding.spacesEnabled} listEnabled={listEnabled} /> : null}
+      </>}
+      wrapSpaces={children => <SettingAnchor setting={refs.spaces}>{children}</SettingAnchor>}
+      onEdit={id => { setEditingId(id); openEdit(); }}
+      overlay={editing.formOverlay}
+    />
   );
 }
 

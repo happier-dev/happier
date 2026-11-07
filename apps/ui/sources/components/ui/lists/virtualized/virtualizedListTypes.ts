@@ -52,6 +52,8 @@ export type VirtualizedListProps<T> = Readonly<{
     data: readonly T[] | null | undefined;
     renderItem: VirtualizedListRenderItem<T>;
     keyExtractor: (item: T, index: number) => string;
+    /** Keep an active interaction's rows mounted while the viewport moves past them. */
+    retainedItemKeys?: readonly string[];
 
     testID?: string;
     nativeID?: string;

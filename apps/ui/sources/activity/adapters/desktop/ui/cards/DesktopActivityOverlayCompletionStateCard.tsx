@@ -41,6 +41,7 @@ export function DesktopActivityOverlayCompletionStateCard(props: Readonly<{
                 body={props.card.summary}
             >
                 <DesktopActivityOverlayCardActions
+                    stateKey={props.card.id}
                     cardId={props.card.sessionId}
                     visualMode={props.visualMode}
                     actions={actions}

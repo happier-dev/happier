@@ -105,10 +105,12 @@ type FlatContext = Readonly<{
     id: string;
     runtime: EntityDragDropRuntime;
     binding: EntityFlatReorderBinding;
+    itemsById: ReadonlyMap<string, EntityFlatReorderBinding['items'][number]>;
     organizing: boolean;
     pointerInteraction: boolean;
     axis: EntityFlatAxis;
     registry: ReturnType<typeof useTreeDropRegistry>;
+    rowNodes: Map<string, View>;
     getBounds(): WindowBounds | null;
     measure(): Promise<void>;
     autoscroll(pointer: WindowPointer): void;
@@ -125,18 +127,25 @@ function projectMove(binding: EntityFlatReorderBinding, itemId: string, position
         : resolveAnchoredListMoveV1(binding.items.map(item => item.id), itemId, position);
 }
 
-function webScrollNode(node: ScrollView | null | undefined): HTMLElement | null {
+type FlatScrollTarget = Readonly<{
+    scrollTo?: ScrollView['scrollTo'];
+    getScrollableNode?: () => unknown;
+    getNativeScrollRef?: () => unknown;
+}>;
+
+function webScrollNode(node: FlatScrollTarget | null | undefined): HTMLElement | null {
     if (Platform.OS !== 'web' || !node || typeof HTMLElement === 'undefined') return null;
-    const ref = node as ScrollView & { getScrollableNode?: () => unknown };
-    const candidate = ref.getScrollableNode?.() ?? node;
+    const candidate = node.getScrollableNode?.() ?? node;
     return candidate instanceof HTMLElement ? candidate : null;
 }
 
 /** One thin shape consumer of the realm runtime and content registry, used by all four flat lists. */
 export function EntityFlatReorderList(props: Readonly<{
     binding: EntityFlatReorderBinding;
-    children: React.ReactNode;
+    children: React.ReactNode | ((state: Readonly<{ order: readonly string[]; retainedItemKeys: readonly string[]; organizeControl: React.ReactNode }>) => React.ReactNode);
     testID: string;
+    /** A virtualized child owns the viewport and needs the list to fill its parent. */
+    fill?: boolean;
     /**
      * An editor whose whole job is arranging (a customizer, the Home layout) keeps every grip showing on touch and
      * offers no Organize toggle: its own Done closes the editor, so a second Done inside the list would duplicate it.
@@ -144,7 +153,7 @@ export function EntityFlatReorderList(props: Readonly<{
     alwaysOrganizing?: boolean;
     /** `horizontal`: the items sit in a row (the spaces strip); places split at each item's horizontal middle. */
     axis?: EntityFlatAxis;
-    scrollRef?: React.RefObject<ScrollView | null>;
+    scrollRef?: React.RefObject<FlatScrollTarget | null>;
     scrollOffsetY?: number | null;
     viewportHeightPx?: number | null;
     contentHeightPx?: number | null;
@@ -163,6 +172,7 @@ export function EntityFlatReorderList(props: Readonly<{
     const contentHeight = useSharedValue(0);
     const viewportBounds = React.useRef<WindowBounds | null>(null);
     const registry = useTreeDropRegistry(runtime.refresh);
+    const [rowNodes] = React.useState(() => new Map<string, View>());
     const [organizing, setOrganizing] = React.useState(props.alwaysOrganizing === true);
     const inheritedScroll = usePopoverScrollSourceRef();
     const scrollRef = props.scrollRef ?? inheritedScroll;
@@ -195,7 +205,7 @@ export function EntityFlatReorderList(props: Readonly<{
         const dom = webScrollNode(scroll);
         if (latest.current.onScrollToOffset) latest.current.onScrollToOffset(next);
         else if (dom) dom.scrollTop = next;
-        else scroll?.scrollTo({ y: next, animated: false });
+        else scroll?.scrollTo?.({ y: next, animated: false });
         void measure();
     }, [measure, scrollRef]);
     useTreeDropAutoscroll({ isActive, pointerY, viewportTopY, viewportHeight, scrollOffsetY, contentHeight, scrollToOffset });
@@ -260,22 +270,28 @@ export function EntityFlatReorderList(props: Readonly<{
     }, [landed, orderKey, props.binding]);
     const landedItemId = landed?.itemId ?? null;
     const axis = props.axis ?? 'vertical';
-    const context = React.useMemo(() => ({ id, runtime, binding: props.binding, organizing, pointerInteraction, axis, registry, getBounds, measure, autoscroll, admittedMoves, landedItemId }), [id, runtime, props.binding, organizing, pointerInteraction, axis, registry, getBounds, measure, autoscroll, admittedMoves, landedItemId]);
-    const children = React.useMemo(
-        () => projectFlatChildren(props.children, props.binding.items.map(item => item.id), landed),
-        [props.children, props.binding.items, landed],
-    );
-    // Organize is for coarse pointers only, and only when there is something to organize: hover-capable
-    // pointers already have the grip on every row (lab K1h; a control with an empty target set is hidden).
+    const itemsById = React.useMemo(() => new Map(props.binding.items.map(item => [item.id, item])), [props.binding.items]);
+    const context = React.useMemo(() => ({ id, runtime, binding: props.binding, itemsById, organizing, pointerInteraction, axis, registry, rowNodes, getBounds, measure, autoscroll, admittedMoves, landedItemId }), [id, runtime, props.binding, itemsById, organizing, pointerInteraction, axis, registry, rowNodes, getBounds, measure, autoscroll, admittedMoves, landedItemId]);
+    const carriedSourceId = React.useSyncExternalStore(runtime.subscribe, () => {
+        const snapshot = runtime.getSnapshot();
+        return snapshot.phase === 'carrying' || snapshot.phase === 'pending' ? snapshot.sourceId : null;
+    }, () => null);
+    const carriedItemId = props.binding.items.find(item => rowSourceId(context, item.id) === carriedSourceId)?.id;
+    // Organize is for coarse pointers only; a virtualized child keeps it at the end of its scroll content.
     const canOrganize = props.alwaysOrganizing !== true && !pointerInteraction && props.binding.scope !== null && props.binding.items.length > 1;
+    const organizeControl = canOrganize ? <RoundButton testID={`${props.testID}.organize`} size="small" display="secondary"
+            title={t(organizing ? 'entityDragDrop.organize.done' : 'entityDragDrop.organize.enter')}
+            onPress={() => { if (props.binding.items.some(item => rowSourceId(context, item.id) === runtime.getSnapshot().sourceId)) runtime.cancel('organize-exit'); setOrganizing(value => !value); }} /> : null;
+    const children = typeof props.children === 'function'
+        ? props.children({ order: landed?.order ?? props.binding.items.map(item => item.id), retainedItemKeys: carriedItemId ? [carriedItemId] : [], organizeControl })
+        : projectFlatChildren(props.children, props.binding.items.map(item => item.id), landed);
     return <FlatContext.Provider value={context}>
-        <View ref={node} testID={props.testID} style={axis === 'horizontal' ? HORIZONTAL_LIST_STYLE : undefined} onLayout={() => { void measure(); }}>
+        {props.binding.scope ? props.binding.items.map(item => <FlatSemanticItem key={item.id} id={item.id} context={context} scope={props.binding.scope!} />) : null}
+        <View ref={node} testID={props.testID} style={axis === 'horizontal' ? HORIZONTAL_LIST_STYLE : props.fill ? FILL_LIST_STYLE : undefined} onLayout={() => { void measure(); }}>
             {children}
             <FlatFeedback context={context} testID={props.testID} />
         </View>
-        {canOrganize ? <RoundButton testID={`${props.testID}.organize`} size="small" display="secondary"
-            title={t(organizing ? 'entityDragDrop.organize.done' : 'entityDragDrop.organize.enter')}
-            onPress={() => { if (props.binding.items.some(item => rowSourceId(context, item.id) === runtime.getSnapshot().sourceId)) runtime.cancel('organize-exit'); setOrganizing(value => !value); }} /> : null}
+        {typeof props.children === 'function' ? null : organizeControl}
     </FlatContext.Provider>;
 }
 
@@ -307,38 +323,33 @@ export function EntityFlatReorderRow(props: Readonly<{
 }>) {
     const context = React.useContext(FlatContext);
     if (!context) throw new Error('EntityFlatReorderRow requires its list owner');
-    return context.binding.scope ? <MountedFlatRow {...props} context={context} scope={context.binding.scope} />
+    return context.binding.scope ? <MountedFlatRow {...props} context={context} />
         : <View>{typeof props.children === 'function' ? props.children({ renderHandle: () => null, isDragging: false, moveBy: async () => null }) : props.children}</View>;
 }
 
-function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow> & Readonly<{ context: FlatContext; scope: EntityDragScopeV1 }>) {
-    const { context, id, scope } = props;
-    const reorderable = props.reorderable !== false;
+/** Semantic membership follows the list inventory; recycling a row removes only its geometry. */
+function FlatSemanticItem(props: Readonly<{ id: string; context: FlatContext; scope: EntityDragScopeV1 }>) {
+    const { id, context, scope } = props;
     const { runtime, registry } = context;
     const latest = React.useRef(context);
     latest.current = context;
     const sourceId = rowSourceId(context, id);
     const targetId = rowTargetId(context, id);
-    const active = useEntityDragSourceState(runtime, sourceId);
-    // Released and waiting: at its new slot and half-dimmed until the owner's list shows it.
-    const waiting = context.landedItemId === id || props.pending === true;
-    const settledMatch = React.useMemo(() => ({ sourceId }), [sourceId]);
-    const [chooserOpen, setChooserOpen] = React.useState(false);
-    React.useEffect(() => { if (!reorderable) setChooserOpen(false); }, [reorderable]);
-    const rowNode = React.useRef<View>(null);
     const current = () => {
         const ownerScope = latest.current.binding.scope;
-        return reorderable && ownerScope !== null && entityDragScopesEqualV1(ownerScope, scope) && latest.current.binding.items.some(item => item.id === id);
+        return ownerScope !== null && entityDragScopesEqualV1(ownerScope, scope) && latest.current.itemsById.has(id);
     };
     useEntityDragSource(runtime, { id: sourceId, scope, isCurrent: current,
         getItem: () => latest.current.binding.getItem(id), getBounds: () => getBounds(),
-        describe: () => ({ title: latest.current.binding.items.find(item => item.id === id)?.title ?? '', announcementOwner: 'source' }) }, reorderable);
+        describe: () => ({ title: latest.current.itemsById.get(id)?.title ?? '', announcementOwner: 'source' }) });
     const getBounds = () => {
-        const live = readWindowBounds(rowNode.current);
+        const node = latest.current.rowNodes.get(id);
+        const live = readWindowBounds(node);
         if (live) return live;
-        const list = latest.current.getBounds();
         const row = registry.getContentGeometry().rows.find(row => row.id === id);
-        return list && row ? { x: list.x + row.bounds.x, y: list.y + row.bounds.y, width: row.bounds.width, height: row.bounds.height } : null;
+        if (!row) return null;
+        const list = latest.current.getBounds();
+        return list ? { x: list.x + row.bounds.x, y: list.y + row.bounds.y, width: row.bounds.width, height: row.bounds.height } : null;
     };
     // The foreground list owns its row kind even where a smaller page target lies behind it.
     useEntityDropTarget(runtime, { id: targetId, scope, acceptedKinds: [context.binding.kind], captureKinds: [context.binding.kind], isCurrent: current, getBounds,
@@ -367,6 +378,29 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
             return move ? JSON.stringify([context.id, move.index]) : null;
         },
         execute: effect => latest.current.binding.execute(effect), autoscroll: context.autoscroll });
+    return null;
+}
+
+function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow> & Readonly<{ context: FlatContext }>) {
+    const { context, id } = props;
+    const reorderable = props.reorderable !== false;
+    const { runtime, registry } = context;
+    const latest = React.useRef(context);
+    latest.current = context;
+    const sourceId = rowSourceId(context, id);
+    const targetId = rowTargetId(context, id);
+    const active = useEntityDragSourceState(runtime, sourceId);
+    // Released and waiting: at its new slot and half-dimmed until the owner's list shows it.
+    const waiting = context.landedItemId === id || props.pending === true;
+    const settledMatch = React.useMemo(() => ({ sourceId }), [sourceId]);
+    const [chooserOpen, setChooserOpen] = React.useState(false);
+    React.useEffect(() => { if (!reorderable) setChooserOpen(false); }, [reorderable]);
+    const rowNode = React.useRef<View>(null);
+    const setRowNode = React.useCallback((node: View | null) => {
+        rowNode.current = node;
+        if (node) context.rowNodes.set(id, node);
+        else context.rowNodes.delete(id);
+    }, [context.rowNodes, id]);
     React.useEffect(() => () => registry.unregisterRow(id), [registry, id]);
     const adapter = React.useRef<ReturnType<typeof createEntityDragGestureAdapter> | null>(null);
     const endStarted = React.useRef(false);
@@ -466,7 +500,7 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
     const showHandle = reorderable && (context.organizing || context.pointerInteraction);
     const contents = typeof props.children === 'function' ? props.children({ renderHandle: showHandle ? handle : () => null, isDragging: reorderable && active.phase === 'carrying', moveBy })
         : <View style={{ flexDirection: 'row', alignItems: 'center' }}>{showHandle ? handle() : null}<View style={{ flex: 1 }}>{props.children}</View></View>;
-    const body = <View ref={rowNode} onLayout={(event: LayoutChangeEvent) => {
+    const body = <View ref={setRowNode} onLayout={(event: LayoutChangeEvent) => {
         registry.registerRow({ id, containerId: context.id, parentId: null, depth: 0, kind: 'leaf', bounds: event.nativeEvent.layout });
         void latest.current.measure().then(async () => {
             const row = await measureWindowBounds(rowNode.current);
@@ -482,6 +516,7 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
     </EntityDropSettledFeedback>;
 }
 
+const FILL_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
 const HORIZONTAL_LIST_STYLE = { flexDirection: 'row', alignItems: 'center' } as const;
 
 /** A write on its way: the row sits at its new place, half-dimmed (a carried source is dimmer). */

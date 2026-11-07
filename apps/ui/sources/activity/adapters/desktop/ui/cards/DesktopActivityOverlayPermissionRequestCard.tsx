@@ -34,6 +34,7 @@ export function DesktopActivityOverlayPermissionRequestCard(props: Readonly<{
             badgeText={props.card.count > 1 ? String(props.card.count) : null}
         >
             <DesktopActivityOverlayCardActions
+                stateKey={props.card.id}
                 cardId={props.card.id}
                 visualMode={props.visualMode}
                 actions={actions}

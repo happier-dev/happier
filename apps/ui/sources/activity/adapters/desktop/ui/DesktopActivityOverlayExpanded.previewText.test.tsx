@@ -1,8 +1,9 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen as renderWithProviders } from '@/dev/testkit';
 import { activityInstanceKey } from '@/sync/domains/session/sessionAddress';
 
 import type { DesktopActivityOverlayUiModel } from './shared/desktopActivityOverlayUiModel';
@@ -11,6 +12,33 @@ import {
     resolveDesktopActivityOverlayCardInstanceTestID,
     resolveDesktopActivityOverlayCardKindTestID,
 } from './shared/desktopActivityOverlaySelectors.mjs';
+
+// react-test-renderer supplies host refs through createNodeMock. Only the browser's physical
+// measurement boundary is simulated: the production Legend recycler and its layout path run intact.
+beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', class implements ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+    });
+});
+afterEach(() => vi.unstubAllGlobals());
+function createViewportNode(element: Readonly<{ type: React.ReactElement['type']; props: Record<string, unknown> }>) {
+    const node = document.createElement(element.type === 'canvas' ? 'canvas' : 'div');
+    // Canvas rasterization is the same genuine graphics boundary as the DOM viewport suite.
+    if (node instanceof HTMLCanvasElement) node.getContext = () => null;
+    const style = element.props.style as React.CSSProperties | undefined;
+    const height = style?.overflowY === 'auto' || style?.overflow === 'auto' ? 400 : 48;
+    node.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 800, bottom: height,
+        width: 800, height, toJSON: () => ({}) });
+    Object.defineProperties(node, { clientWidth: { value: 800 }, clientHeight: { value: height },
+        scrollHeight: { value: height } });
+    node.scrollTo = () => {};
+    return node;
+}
+function renderScreen(element: React.ReactElement) {
+    return renderWithProviders(element, { createNodeMock: createViewportNode });
+}
 
 type ExpandedCard = NonNullable<DesktopActivityOverlayUiModel['expanded']['cards']>[number];
 type SessionOverviewCard = Extract<ExpandedCard, { kind: 'session_overview' }>;
@@ -268,7 +296,8 @@ describe('DesktopActivityOverlayExpanded', () => {
                 onOpenSession={() => {}}
             />,
         );
-        const scroll = screen.findByTestId('desktop-activity-overlay-expanded-scroll');
+        const scroll = screen.findAllByTestId('desktop-activity-overlay-expanded-scroll')
+            .find(node => typeof node.props.onContentSizeChange === 'function') ?? null;
 
         await act(async () => {
             invokeTestInstanceHandler(scroll, 'onLayout', {
@@ -792,7 +821,8 @@ describe('DesktopActivityOverlayExpanded', () => {
             />
         );
         const screen = await renderScreen(element(React.createElement('Text', null, 'Needs you')));
-        const scroll = () => screen.findByTestId('desktop-activity-overlay-expanded-scroll');
+        const scroll = () => screen.findAllByTestId('desktop-activity-overlay-expanded-scroll')
+            .find(node => typeof node.props.onContentSizeChange === 'function');
         await act(async () => {
             invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-expanded-header'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 0, width: 440, height: 28 } } });
             (scroll()!.props.onContentSizeChange as (width: number, height: number) => void)(440, 200);

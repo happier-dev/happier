@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { ScrollView, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -53,6 +53,8 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     pin?: Readonly<{ pinned: boolean; onToggle: () => void }> | null;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const viewport = useWindowDimensions();
+    const [headerHeight, setHeaderHeight] = React.useState(0);
     const surfaceTestID = resolveDesktopActivityOverlaySurfaceTestID('desktop-activity-overlay-expanded', props.visualMode);
     const [completionAutoDismissPaused, setCompletionAutoDismissPaused] = React.useState(false);
     const scrollFades = useScrollEdgeFades({
@@ -90,6 +92,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     }, [onScrollContentSizeChange, reportNaturalHeight]);
     const handleHeaderLayout = React.useCallback((event: LayoutChangeEvent) => {
         headerHeightRef.current = event.nativeEvent.layout.height;
+        setHeaderHeight(headerHeightRef.current);
         reportNaturalHeight();
     }, [reportNaturalHeight]);
     const handleHoverIn = React.useCallback(() => {
@@ -153,31 +156,27 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                 // Under a status row standing on its edge, the pin sits at that row's trailing end.
                 <View style={styles.pinInStatusRow}>{pinButton}</View>
             ) : null}
-            <ScrollView
-                testID="desktop-activity-overlay-expanded-scroll"
-                style={[styles.scroll, scrollMaskStyle]}
-                contentContainerStyle={styles.scrollContent}
-                showsVerticalScrollIndicator={false}
-                scrollEventThrottle={16}
-                onLayout={scrollFades.onViewportLayout}
-                onContentSizeChange={handleContentSizeChange}
-                onScroll={scrollFades.onScroll}
-                onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}
-            >
-                {props.content ?? (
-                    <DesktopActivityOverlayExpandedCards
-                        bots={props.bots}
-                        model={props.model}
-                        visualMode={props.visualMode}
-                        onOpenSession={props.onOpenSession}
-                        onAction={props.onAction}
-                        completionAutoDismissPaused={completionAutoDismissPaused}
-                        initialFocusTarget={initialFocusTarget}
-                        initialFocusRef={props.initialFocusRef}
-                        onDismissKey={props.onDismissKey}
-                    />
-                )}
-            </ScrollView>
+            {props.content != null ? (
+                <ScrollView testID="desktop-activity-overlay-expanded-scroll" style={[styles.scroll, scrollMaskStyle]}
+                    contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} scrollEventThrottle={16}
+                    onLayout={scrollFades.onViewportLayout} onContentSizeChange={handleContentSizeChange}
+                    onScroll={scrollFades.onScroll} onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}>
+                    {props.content}
+                </ScrollView>
+            ) : (
+                <DesktopActivityOverlayExpandedCards bots={props.bots} model={props.model} visualMode={props.visualMode}
+                    onOpenSession={props.onOpenSession} onAction={props.onAction}
+                    completionAutoDismissPaused={completionAutoDismissPaused} initialFocusTarget={initialFocusTarget}
+                    initialFocusRef={props.initialFocusRef} onDismissKey={props.onDismissKey}
+                    scroll={{
+                        testID: 'desktop-activity-overlay-expanded-scroll',
+                        maxHeight: Math.max(0, (props.maxHeight ?? viewport.height) - insetTop - insetBottom
+                            - (props.header ? headerHeight + theme.space.s10 : 0)),
+                        style: [styles.scroll, scrollMaskStyle], showsVerticalScrollIndicator: false, scrollEventThrottle: 16,
+                        onLayout: scrollFades.onViewportLayout, onContentSizeChange: handleContentSizeChange,
+                        onScroll: scrollFades.onScroll, onMomentumScrollEnd: scrollFades.onMomentumScrollEnd,
+                    }} />
+            )}
         </View>
     );
 }

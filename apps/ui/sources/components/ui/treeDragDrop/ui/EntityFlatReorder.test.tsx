@@ -54,7 +54,7 @@ function RuntimeProbe(props: Readonly<{ enumerate?: boolean }>) {
 }
 
 function fixture(scrollRef?: React.RefObject<ScrollView | null>, acknowledgement?: Promise<void>, enumerate = false) {
-    const model = { ids: ['a', 'b', 'c'], scope, writes: [] as TodoReorderInputV1[], pending: new Set<string>(), dockSlot: null as StagedMoveDockSlot | null };
+    const model = { ids: ['a', 'b', 'c'], mountedIds: null as readonly string[] | null, scope, writes: [] as TodoReorderInputV1[], pending: new Set<string>(), dockSlot: null as StagedMoveDockSlot | null };
     const binding = (): EntityFlatReorderBinding => ({
         scope: model.scope, kind: 'todo', items: model.ids.map(id => ({ id, title: id })),
         getItem: id => model.ids.includes(id) ? { kind: 'todo', scope: model.scope, todoId: id } : null,
@@ -77,7 +77,7 @@ function fixture(scrollRef?: React.RefObject<ScrollView | null>, acknowledgement
         },
     });
     const render = () => <StagedMoveDockSlotContext.Provider value={model.dockSlot}><RuntimeProbe enumerate={enumerate} /><EntityFlatReorderList binding={binding()} testID="list" alwaysOrganizing scrollRef={scrollRef}>
-        {model.ids.map(id => <EntityFlatReorderRow key={id} id={id} pending={model.pending.has(id)}>
+        {(model.mountedIds ?? model.ids).map(id => <EntityFlatReorderRow key={id} id={id} pending={model.pending.has(id)}>
             {({ renderHandle }) => <>{renderHandle(`grip:${id}`)}<Text>{id}</Text></>}
         </EntityFlatReorderRow>)}
     </EntityFlatReorderList></StagedMoveDockSlotContext.Provider>;
@@ -97,7 +97,7 @@ async function mount(f: ReturnType<typeof fixture>, domRow?: HTMLElement) {
         },
     });
     screens.push(screen);
-    await measureRows(screen, f.model.ids);
+    await measureRows(screen, f.model.mountedIds ?? f.model.ids);
     return screen;
 }
 
@@ -136,6 +136,22 @@ afterEach(async () => {
 });
 
 describe('shared flat reorder UI binding', () => {
+    it('offers offscreen places and stages keyboard moves beyond the mounted rows', async () => {
+        const f = fixture();
+        f.model.mountedIds = ['a'];
+        const screen = await mount(f);
+        await key(screen, 'a', ' ');
+        const sourceId = runtime.getSnapshot().sourceId!;
+        const destinations = runtime.getDestinations(sourceId);
+        expect(destinations.some(destination => destination.destination
+            && AnchoredListPositionV1Schema.parse(destination.destination).anchorId === 'c')).toBe(true);
+        await key(screen, 'a', 'ArrowDown');
+        await key(screen, 'a', 'ArrowDown');
+        await key(screen, 'a', 'Enter');
+        expect(f.model.writes).toHaveLength(1);
+        expect(resolveAnchoredListMoveV1(f.model.ids, 'a', f.model.writes[0]!.position)).toEqual(['b', 'c', 'a']);
+    });
+
     it('gives neighboring descriptions of one effective gap the same identity', async () => {
         const f = fixture();
         const screen = await mount(f);
