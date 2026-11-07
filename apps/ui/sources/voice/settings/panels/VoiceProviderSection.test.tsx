@@ -2023,6 +2023,8 @@ describe('VoiceProviderSection', () => {
         onTestFinished(() => {
             storageBoundary.settings = null;
         });
+        // Grok's executable arrives through the selected Voice Machine's projection.
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 1, isOnline: true };
 
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const screen = await renderScreen(React.createElement(VoiceProviderSection, {
@@ -2030,6 +2032,7 @@ describe('VoiceProviderSection', () => {
             setVoice: vi.fn(),
             happierVoiceSupported: true,
             platformOs: 'web',
+            executionMachineId: 'machine-1',
         }));
         const { tree } = screen;
         await act(async () => {});

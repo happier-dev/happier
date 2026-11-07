@@ -223,10 +223,16 @@ function resolveVoiceRoleReadinessInternal(
   if (!declaredRequirements) {
     return result(input.role, input.providerId, 'needs_setup', 'provider_mode_unknown', 'open_provider_settings');
   }
-  const requirements = includePassiveSetupRequirements
+  // A plugin-delivered conversation adapter is activated only from the selected
+  // Voice Machine's plugin projection; Start reads that registration. Without
+  // the Machine, Start fails before capture, so Ready must require it too.
+  const executableMachineRequirement = entry.kind === 'voice.conversation-provider.v1'
+    && entry.source.kind !== 'built_in';
+  const requirements = includePassiveSetupRequirements || executableMachineRequirement
     ? Object.freeze(Array.from(new Set<VoiceReadinessRequirement>([
         ...declaredRequirements,
-        ...(entry.providerSettings?.connectedServicesBinding ? ['credential'] as const : []),
+        ...(includePassiveSetupRequirements && entry.providerSettings?.connectedServicesBinding ? ['credential'] as const : []),
+        ...(executableMachineRequirement ? ['execution_machine'] as const : []),
       ])))
     : declaredRequirements;
   for (const requirement of requirements) {

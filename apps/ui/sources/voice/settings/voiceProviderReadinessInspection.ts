@@ -1,3 +1,4 @@
+import { projectVoiceExecutionMachineReadiness } from '@/voice/settings/executionMachine';
 import type { ConnectedServiceBindingsV1, DaemonVoiceInferenceModelStatus, PluginContributionIdentityV1, VoiceRawCredentialGrantDeclaration } from '@happier-dev/protocol';
 import { VoiceRuntimePlatformSchema } from '@happier-dev/protocol/voice/realtime/capabilities';
 import { getDefaultModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
@@ -265,7 +266,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
             settings: projection?.status ?? 'unknown', serverFeature: hostedEnabled ? 'ready' : 'missing', endpoint: localFacts.endpoint,
             runtime: passiveFacts.runtime ?? localFacts.runtime, model: localFacts.model,
             executionMachine: machine.selectionKind === 'selected_unknown' ? 'unknown' : sourceSelection?.kind === 'connectedAccount' ? machine.selectionKind === 'selected_unreachable' ? 'incompatible' : machine.machineId ? 'ready' : 'missing'
-                : passiveFacts.executionMachine ?? 'missing', credential: passiveCredential ?? passiveFacts.credential ?? credential } });
+                : passiveFacts.executionMachine ?? projectVoiceExecutionMachineReadiness(machine.selectionKind, machine.machineId), credential: passiveCredential ?? passiveFacts.credential ?? credential } });
     const selectedReadiness = projectHostedModeAvailabilityReadiness({ providerId: voice.providerId ?? '', role: readiness.role,
         modeId: projection?.modeId ?? null, hostedEnabled }) ?? (voice.providerId === 'local_conversation'
             ? projectLocalConversationProviderReadiness(localFacts, readiness) : readiness);

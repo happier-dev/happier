@@ -42,6 +42,22 @@ describe('resolveVoiceRoleReadiness', () => {
     expect(project('ready')).toMatchObject({ status: 'ready', recoveryAction: 'none' });
   });
 
+  it('does not call a Machine-delivered conversation provider Ready while its Voice Machine is unreachable', () => {
+    // Start reads the adapter that the selected Voice Machine's plugin projection
+    // activates; without that Machine Start fails voice_provider_adapter_not_registered.
+    const project = (executionMachine: 'ready' | 'incompatible' | 'missing') => resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.voice.xai/realtime-grok',
+      platform: 'web',
+      modeId: 'byo',
+      facts: { ...readyFacts, executionMachine },
+    });
+    expect(project('incompatible')).toMatchObject({ status: 'incompatible', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' });
+    expect(project('missing')).toMatchObject({ status: 'needs_setup', code: 'execution_machine_missing' });
+    expect(project('ready')).toMatchObject({ status: 'ready', code: 'ready' });
+  });
+
   it('uses declaration-derived machine, runtime, and Connected Services checks for Codex', () => {
     expect(resolveVoicePassiveSetupReadiness({
       registry: createDefaultVoiceProviderRegistry(),

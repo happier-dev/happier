@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
+import { projectVoiceExecutionMachineReadiness, type VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Platform } from 'react-native';
@@ -556,7 +556,8 @@ export function useVoiceConversationsReadinessModel(props: {
               : props.executionMachineSelectionKind === 'selected_unreachable'
                 ? 'incompatible'
                 : 'missing'
-            : declaredPassiveSetupFacts.executionMachine ?? 'missing',
+            : declaredPassiveSetupFacts.executionMachine ?? projectVoiceExecutionMachineReadiness(
+              props.executionMachineSelectionKind, selectedMachineReady ? props.executionMachineId : null),
       credential: row.providerId === 'local_conversation'
         ? localConversationReadinessFacts.credential
         : credentialFact,
