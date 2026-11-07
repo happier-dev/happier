@@ -46,7 +46,9 @@ export type SessionBoardItemMenuInput = Readonly<{
     definition?: Readonly<{ onAbout?: (() => void) | undefined; onAddTo?: (() => void) | undefined; onSaveAsYours?: (() => void) | undefined; onPostSnapshot?: (() => void) | undefined }>;
     /** Opens the Network access flow of an HTML visual. Editors only; present only when the controller can save it. */
     onEditNetwork?: (() => void) | undefined;
-    visualCopy?: Readonly<{ onSaveArtifact?: (() => void) | undefined; onShare?: (() => void) | undefined }>;
+    visualCopy?: Readonly<{ onSaveArtifact?: (() => void) | undefined; onShare?: (() => void) | undefined;
+        /** An independent copy of this exact revision in another Session (any source kind). */
+        onCopyToSession?: (() => void) | undefined }>;
     onMove?: ((direction: 'before' | 'after') => void) | undefined;
     canMoveBefore?: boolean | undefined;
     canMoveAfter?: boolean | undefined;
@@ -140,6 +142,8 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
         ...(!promotable ? { onAddTo: undefined, onSaveAsYours: undefined } : {}), group: contentGroup }));
     if (input.visualCopy?.onSaveArtifact) actions.push({ id: 'saveArtifact', title: t('widgetDefinition.visualSaveMenu'),
         icon: 'floppy-disk', group: contentGroup, onPress: input.visualCopy.onSaveArtifact });
+    if (input.visualCopy?.onCopyToSession) actions.push({ id: 'copyToSession', title: t('widgetDefinition.visualCopyToSessionMenu'),
+        icon: 'copy', group: contentGroup, onPress: input.visualCopy.onCopyToSession });
     if (promotable && input.visualCopy?.onShare) actions.push({ id: 'shareVisual', title: t('widgetDefinition.visualShareMenu'),
         icon: 'link', group: contentGroup, onPress: input.visualCopy.onShare });
 

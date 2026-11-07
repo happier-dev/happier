@@ -125,4 +125,10 @@ describe('a visual’s copies in its ⋯ menu', () => {
       expect.arrayContaining(['saveArtifact', 'shareVisual']),
     );
   });
+
+  it('copies any ready visual into another Session at its exact revision, and never one without a revision', async () => {
+    const note = itemOf({ kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('Body') });
+    expect(await menuIds(note)).toContain('copyToSession');
+    expect(await menuIds({ ...note, revision: null })).not.toContain('copyToSession');
+  });
 });

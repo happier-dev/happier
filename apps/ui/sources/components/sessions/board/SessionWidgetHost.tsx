@@ -74,6 +74,10 @@ import {
 import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityTargetFeedback, useSessionSurfaceEntityDrag, type SessionSurfaceEntityBinding } from './SessionSurfaceEntityDrag';
 import { buildSessionBoardItemActions, type SessionBoardItemMenuInput } from './sessionBoardItemMenu';
 import { SessionVisualCopyPanel } from './SessionVisualCopyPanel';
+import { copySessionVisualToSession } from './sessionVisualSessionCopy';
+import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
+import { storage } from '@/sync/domains/state/storage';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { SessionVisualNetworkPanel } from './SessionVisualNetworkPanel';
 import { readSessionVisualNetworkChoice, type SessionVisualNetworkChoice } from './sessionBoardVisualNetwork';
 import { WidgetFlowShell } from '@/components/widgets/flow/WidgetFlowShell';
@@ -462,6 +466,28 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     const copyable = Boolean(readyItem && canPromoteSessionWidgetDefinitionSourceV1(readyItem.source) && copyAccount);
     const saveHtml = React.useMemo(() => copyable && readyItem?.source.kind === 'hostedHtml' ? () => { card.reveal(); setCopyFlow('save'); } : undefined, [card, copyable, readyItem?.source.kind]);
     const shareVisual = React.useMemo(() => copyable ? () => { card.reveal(); setCopyFlow('share'); } : undefined, [card, copyable]);
+    // Copy to another session (V-OP-02): the exact revision on screen, into a Session the viewer may edit,
+    // through the same upsert copySource an agent sends. The picker is the incumbent Session picker.
+    const sourceRevision = props.item.revision;
+    const copyServerId = boardSurface.scope?.serverId ?? null;
+    const copyToSession = React.useMemo(() => readyItem && sourceRevision !== null && copyServerId ? () => {
+        const source = { sessionId: props.sessionId, itemId: props.item.itemId, revision: sourceRevision };
+        void (async () => {
+            const picked = await presentSessionAddressSelection(copyServerId, { kind: 'view', ref: card.anchorRef },
+                { excludedSessionId: source.sessionId, capability: 'editSessionRecords', title: t('widgetDefinition.visualCopyToSessionTitle') }).result;
+            if (!picked || picked.kind !== 'existingSession') return;
+            const outcome = await copySessionVisualToSession({ serverId: copyServerId, source, destinationSessionId: picked.sessionId });
+            const destination = storage.getState().sessions[picked.sessionId];
+            const name = destination ? getSessionName(destination, copyServerId) : t('session.untitled');
+            const key = `${source.sessionId}:${source.itemId}:copyToSession`;
+            publishPresentationNotice(outcome.status === 'ok'
+                ? { key, severity: 'info', message: t('widgetDefinition.visualCopiedToSession', { session: name }), emphasis: name }
+                : outcome.status === 'pending_approval' ? { key, severity: 'info', message: t('widgetAdd.areaApprovalPending') }
+                : outcome.status === 'refused' && outcome.error.error === 'session_board_revision_conflict'
+                    ? { key, severity: 'warning', message: t('widgetDefinition.visualCopySourceChanged') }
+                    : { key, severity: 'error', message: t('widgetDefinition.visualCopyFailed') });
+        })();
+    } : undefined, [card.anchorRef, copyServerId, props.item.itemId, props.sessionId, readyItem, sourceRevision]);
     // The source's own mark (a widget's glyph), the same on the card and in its flows.
     const itemMark = widgetDescriptor?.icon ?? sessionWidgetMark(state);
     const sessionItem = React.useMemo((): WidgetDefinitionSessionItem | null => {
@@ -543,7 +569,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         editInputs: inputs.editInputs,
         definition: { onAbout: definitionFlows.about, onAddTo: definitionFlows.addTo, onSaveAsYours: definitionFlows.saveAsYours, onPostSnapshot: definitionFlows.postSnapshot },
         onEditNetwork: editNetwork,
-        visualCopy: { onSaveArtifact: saveHtml, onShare: shareVisual },
+        visualCopy: { onSaveArtifact: saveHtml, onShare: shareVisual, onCopyToSession: copyToSession },
         onMove: props.onMove,
         canMoveBefore: props.canMoveBefore,
         canMoveAfter: props.canMoveAfter,
@@ -571,6 +597,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         definitionFlows.postSnapshot,
         saveHtml,
         shareVisual,
+        copyToSession,
         editNetwork,
         props.canEdit,
         props.canMoveAfter,

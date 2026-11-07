@@ -117,8 +117,11 @@ describe('TranscriptSendToSessionModal', () => {
             createSessionFixture({ id: 'other-home', serverId: 'server-b', metadata: createNamedMetadata('Other home') }),
         ];
         const onResolve = vi.fn();
+        const setChrome = vi.fn();
         const screen = await renderScreen(<TranscriptSendToSessionModal selectionOnly sourceServerId="server-a"
-            onResolve={onResolve} onClose={vi.fn()} />);
+            onResolve={onResolve} onClose={vi.fn()} setChrome={setChrome} />);
+        // The value-returning presenter owns its anchored chrome throughout the mounted list.
+        expect(setChrome).not.toHaveBeenCalled();
         expect(screen.findAllByTestId('transcript-send-to-session-option-new-session')).toHaveLength(0);
         expect(screen.findAllByTestId('transcript-send-to-session-option-other-home')).toHaveLength(0);
         await screen.pressByTestIdAsync('transcript-send-to-session-option-readable');

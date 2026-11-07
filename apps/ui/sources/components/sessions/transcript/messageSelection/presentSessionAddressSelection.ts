@@ -1,14 +1,19 @@
 import { Modal } from '@/modal';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover';
+
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import { t } from '@/text';
 
 import { TranscriptSendToSessionModal } from './TranscriptSendToSessionModal';
-import { TRANSCRIPT_SEND_TO_SESSION_MODAL_DEFAULT_MAX_HEIGHT_RATIO, TRANSCRIPT_SEND_TO_SESSION_MODAL_SIZE,
-    TRANSCRIPT_SEND_TO_SESSION_MODAL_WIDTH } from './resolveTranscriptSendToSessionModalLayout';
 import type { SendTranscriptSelectionDestination } from './sendTranscriptSelectionToSession';
 
-/** No-invoke reference mode of the incumbent Home-scoped native Session picker. */
-export function presentSessionAddressSelection(serverId: string) {
+/**
+ * No-invoke selection mode of the incumbent Home-scoped native Session picker: a reference by default,
+ * or a destination for Session records (excluding its source, editable Sessions only).
+ */
+export function presentSessionAddressSelection(serverId: string, anchor?: PopoverAnchor,
+    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords'; title: string }>) {
     const deferred = createDeferredOnce<SendTranscriptSelectionDestination | null>();
     let modalId = '';
     let closed = false;
@@ -21,15 +26,11 @@ export function presentSessionAddressSelection(serverId: string) {
     const close = () => settle(null);
     modalId = Modal.show({
         component: TranscriptSendToSessionModal,
-        props: { selectionOnly: true, sourceServerId: serverId, onResolve: settle },
+        props: { selectionOnly: true, sourceServerId: serverId, onResolve: settle, ...(destination ? { destination } : {}) },
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,
-        chrome: { kind: 'card', title: t('sessionGettingStarted.title.selectSession'), dimensions: {
-            width: TRANSCRIPT_SEND_TO_SESSION_MODAL_WIDTH,
-            maxHeightRatio: TRANSCRIPT_SEND_TO_SESSION_MODAL_DEFAULT_MAX_HEIGHT_RATIO,
-            size: TRANSCRIPT_SEND_TO_SESSION_MODAL_SIZE,
-        } },
+        chrome: createAnchoredSheetChrome({ title: destination?.title ?? t('sessionGettingStarted.title.selectSession'), anchor }),
     });
     if (!modalId) close();
     else if (closed) Modal.hide(modalId);

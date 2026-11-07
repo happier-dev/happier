@@ -50,6 +50,11 @@ export type WidgetDefinitionTranslation = Readonly<{
     visualShareTitle: string;
     visualSaveMenu: string;
     visualShareMenu: string;
+    visualCopyToSessionMenu: string;
+    visualCopyToSessionTitle: string;
+    visualCopiedToSession: (params: Readonly<{ session: string }>) => string;
+    visualCopySourceChanged: string;
+    visualCopyFailed: string;
     visualSavedCopy: string;
     visualSaveFailed: string;
     saveMenuSubtitle: string;
@@ -130,6 +135,11 @@ export const widgetDefinitionTranslationsEnglish = { en: {
         visualShareTitle: "Share",
         visualSaveMenu: "Save as Artifact…",
         visualShareMenu: "Share link…",
+        visualCopyToSessionMenu: "Copy to another session…",
+        visualCopyToSessionTitle: "Copy to a session",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `Copied to ${session}. It’s an independent copy on that session’s board.`,
+        visualCopySourceChanged: "This visual changed while you chose. Copy it again to take the current version.",
+        visualCopyFailed: "The copy could not be made. This visual is unchanged.",
         visualSavedCopy: "Saved to your account as an independent copy. Creating a public link is a separate choice.",
         visualSaveFailed: "The copy could not be saved. Your session visual is still here.",
         saveMenuSubtitle: "A copy for Home and your boards",

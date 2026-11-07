@@ -12,7 +12,9 @@ import type {
 import {
     parseSessionBoardActionExecuteOutcomeV1,
 } from '@happier-dev/protocol/sessions/board';
-import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -68,6 +70,11 @@ export type SessionBoardItemUpsertInput = Readonly<
     Omit<Extract<SessionBoardActionInputV1ById['session.board.item.upsert'], { item: unknown }>, 'item'>
     & { item: SessionSurfaceItemV1 }
 >;
+/** Cross-Session copy (V-OP-02): no authored item; the executor materializes the exact source revision. */
+export type SessionBoardItemCopyInput = Readonly<
+    Omit<Extract<SessionBoardActionInputV1ById['session.board.item.upsert'], { copySource: unknown }>, 'item' | 'expectedItemRevision'>
+    & { expectedItemRevision: null; copySource: NonNullable<Extract<SessionBoardActionInputV1ById['session.board.item.upsert'], { copySource: unknown }>['copySource']> }
+>;
 export type SessionBoardItemRemoveInput = SessionBoardItemRemoveInputV1;
 export type SessionBoardLayoutUpdateInput = SessionBoardLayoutUpdateInputV1;
 export type SessionBoardMutationResult = SessionBoardMutationActionResultV1;
@@ -113,23 +120,15 @@ type SessionBoardActionExecute = (
     >,
 ) => Promise<ActionExecuteResult>;
 
-/**
- * Bind the human Board to the same Action executor used by Agents and declared
- * surface Actions. The exact Home and Session are captured once when the pane
- * mounts, so a later Home-focus change cannot retarget an edit in progress.
- */
-export function createSessionBoardActionsPort(input: Readonly<{
-    serverId: string;
-    sessionId: string;
-    execute?: SessionBoardActionExecute;
-}>): SessionBoardActionsPort {
+/** The one human Board dispatch: the captured Home and Session, the shared executor, typed outcomes. */
+function createSessionBoardActionRun(input: Readonly<{ serverId: string; sessionId: string; execute?: SessionBoardActionExecute }>) {
     const serverId = input.serverId.trim();
     const sessionId = input.sessionId.trim();
     const execute = input.execute ?? createFrontDoorActionExecute();
 
     const run = async (
         actionId: 'session.board.item.upsert' | 'session.board.item.remove' | 'session.board.layout.update',
-        actionInput: SessionBoardItemUpsertInput | SessionBoardItemRemoveInput | SessionBoardLayoutUpdateInput,
+        actionInput: SessionBoardItemUpsertInput | SessionBoardItemCopyInput | SessionBoardItemRemoveInput | SessionBoardLayoutUpdateInput,
     ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> => {
         if (!serverId || !sessionId || actionInput.sessionId !== sessionId) {
             return { status: 'refused', error: { error: 'session_board_forbidden' } };
@@ -199,6 +198,20 @@ export function createSessionBoardActionsPort(input: Readonly<{
         }
     };
 
+    return run;
+}
+
+/**
+ * Bind the human Board to the same Action executor used by Agents and declared
+ * surface Actions. The exact Home and Session are captured once when the pane
+ * mounts, so a later Home-focus change cannot retarget an edit in progress.
+ */
+export function createSessionBoardActionsPort(input: Readonly<{
+    serverId: string;
+    sessionId: string;
+    execute?: SessionBoardActionExecute;
+}>): SessionBoardActionsPort {
+    const run = createSessionBoardActionRun(input);
     return Object.freeze({
         upsertItem: async (actionInput) => await run('session.board.item.upsert', actionInput),
         removeItem: async (actionInput) => await run('session.board.item.remove', actionInput),
@@ -209,4 +222,16 @@ export function createSessionBoardActionsPort(input: Readonly<{
 /** The stored item revision an upsert committed, when the result is an item upsert. */
 export function readSessionBoardUpsertItemRevision(result: SessionBoardMutationResult): string | null {
     return result.result.operation === 'upsert_item' ? result.result.itemRevision : null;
+}
+
+/**
+ * Copy an exact Session visual revision into the captured (destination) Session (V-OP-02): the same
+ * `session.board.item.upsert` with `copySource` an agent sends. The shared executor reads the source
+ * at that revision and materializes an independent item; this adds no copy logic of its own.
+ */
+export async function copySessionBoardItemIntoSession(
+    destination: Readonly<{ serverId: string; sessionId: string; execute?: SessionBoardActionExecute }>,
+    actionInput: SessionBoardItemCopyInput,
+): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> {
+    return await createSessionBoardActionRun(destination)('session.board.item.upsert', actionInput);
 }
