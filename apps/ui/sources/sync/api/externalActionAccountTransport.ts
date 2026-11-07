@@ -29,7 +29,7 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import { storage } from '@/sync/domains/state/storageStore';
 import { serializeRequesterAccountCredentials } from '@/sync/ops/actions/requesterSessionSpawnPreparation';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
@@ -199,25 +199,10 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         const wake = executionAuthorization.managedFiniteWake;
         let controllerPublicKey: Uint8Array | undefined;
         if (wake) {
-            const controllerTarget = wake.target.controller;
-            if (!controllerTarget) return failure('admission_unavailable');
-            const readController = async () => {
-                const row = await readOriginalAccountActionMachine(account, controllerTarget.machineId, params.signal);
-                return row && row.kind === 'persistent' && row.revokedAt === null && row.replacedByMachineId === null
-                    && row.installationId === controllerTarget.installationId && row.installationPublicKey
-                    && encodeBase64(row.installationPublicKey, 'base64url') === wake.installationPublicKey
-                    && row.access?.accessState === 'ready' && row.access.role === 'manage'
-                    ? { ...row, access: row.access, installationPublicKey: row.installationPublicKey } : null;
-            };
-            const controller = await readController();
-            if (!controller) return failure('admission_unavailable');
-            if (controller.access.custodian.accountId !== account.accountId) {
-                const currentController = await readController();
-                if (!currentController || currentController.access.custodian.accountId !== controller.access.custodian.accountId) {
-                    return failure('admission_unavailable');
-                }
-                controllerPublicKey = currentController.installationPublicKey;
-            } else controllerPublicKey = controller.installationPublicKey;
+            if (!wake.target.controller) return failure('admission_unavailable');
+            // Home admitted the guest's exact installed controller and key.
+            // Guest Use does not require a separate grant on that controller.
+            controllerPublicKey = decodeBase64(wake.installationPublicKey, 'base64url');
         }
         if (managedControllerCodec && codecMaterial) {
             if (!custody.installationPublicKey || wake) return failure('admission_unavailable');

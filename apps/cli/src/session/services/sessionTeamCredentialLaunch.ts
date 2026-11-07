@@ -37,6 +37,10 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     : ConnectedServiceBindingsV2IngressSchema.safeParse(options.connectedServices);
   if (connectedServices && !connectedServices.success) throw new SessionTeamCredentialLaunchUnavailableError('invalid_request', 'connected_services');
   const explicitModelBinding = options.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
+  const explicitTeamModel = explicitModelBinding?.resourceId ? explicitModelBinding.providerModelSelection : undefined;
+  const model = explicitTeamModel
+    ? { agentTargetKey: explicitTeamModel.agentTargetKey, modelId: explicitTeamModel.modelId, providerConnectionId: null }
+    : options.modelSelection?.ref;
   const declarations = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
     agentId: input.agentId, contributions: input.contributions,
   });
@@ -49,7 +53,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   if (selectedPurposes.length === 0 && (!explicitModelBinding || explicitModelBinding.resourceId === null)) {
     return { options, teamModelRow: null };
   }
-  if (options.modelSelection && options.modelSelection.ref.agentTargetKey !== input.agentTargetKey) {
+  if (model && model.agentTargetKey !== input.agentTargetKey) {
     throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent', 'agent_target');
   }
   const resources = await input.readCatalog().catch(error => {
@@ -60,7 +64,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     ? resources.find(candidate => candidate.id === explicitModelBinding.resourceId) : undefined;
   // Check the caller's identity/revision witness before projecting readiness:
   // an exhausted current resource must not disguise a genuinely stale choice.
-  if (options.modelSelection?.ref.providerConnectionId == null
+  if (model?.providerConnectionId == null
     && explicitModelBinding && explicitModelBinding.resourceId !== null
     && (!explicitModelResource
       || (explicitModelBinding.teamId !== undefined && explicitModelBinding.teamId !== explicitModelResource.teamId)
@@ -88,7 +92,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   const normalizedOptions = teamCredentialBindings ? { ...options, teamCredentialBindings } : options;
   // Explicit model-source choices win. Purpose-bound credentials for other
   // integrations cannot replace a native clear or a personal Provider route.
-  if (explicitModelBinding?.resourceId === null || options.modelSelection?.ref.providerConnectionId != null) {
+  if (explicitModelBinding?.resourceId === null || model?.providerConnectionId != null) {
     return { options: normalizedOptions, teamModelRow: null };
   }
   const registry = { providersByContributionKey: input.contributions.providersByContributionKey };
@@ -111,7 +115,6 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   }
   if (!explicitModelBinding && modelSourceResources.size !== 1) throw new SessionTeamCredentialLaunchUnavailableError('invalid_request', 'model_source');
   const resourceId = explicitModelBinding?.resourceId ?? modelSourceResources.values().next().value;
-  const model = options.modelSelection?.ref;
   if (!resourceId) throw new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'resource_selection');
   if (!model) throw new SessionTeamCredentialLaunchUnavailableError('team_credential_model_selection_required', 'model_selection');
   const resource = explicitModelResource ?? resources.find(candidate => candidate.id === resourceId);
@@ -157,5 +160,10 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
       ...(input.executionMachineId ? { application: row.application, executionMachineId: input.executionMachineId } : {}),
       ...(row.nativeSource ? { nativeSource: { sourceRevision: row.sourceRevision, providerTicket: row.nativeSource.providerTicket } } : {}),
     }, ...(row.selection.nativeDelivery ? { nativeDelivery: row.selection.nativeDelivery } : {}) } : binding);
-  return { options: teamCredentialBindings ? { ...options, teamCredentialBindings } : options, teamModelRow: row };
+  // V2 authors carry the Team source and tuple in the binding alone. Project
+  // the admitted tuple for runtime consumers, retaining the Team source above.
+  return { options: { ...options, teamCredentialBindings,
+    modelSelection: { v: 1, updatedAt: options.modelSelection?.updatedAt ?? Date.now(),
+      ref: { agentTargetKey: row.selection.agentTargetKey, providerConnectionId: null, modelId: row.selection.modelId } },
+  }, teamModelRow: row };
 }

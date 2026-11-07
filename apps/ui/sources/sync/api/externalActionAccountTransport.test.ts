@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -55,6 +58,62 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it('dispatches a Can use guest spawn with Home-admitted controller custody and no controller grant', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+        const controllerKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
+        const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'custodian' }),
+            installationId: 'installation-1', installationPublicKey: encodeBase64(guestKeys.publicKey),
+            access: { custodian: { accountId: 'custodian', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
+        let controllerReads = 0;
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => {
+                if (id === row.id) return row;
+                controllerReads++;
+                return null; // Can use on the guest grants no access to its controller.
+            }).json(),
+        }) });
+        const actionId = 'session.spawn_new';
+        const actionPath = `/v1/actions/${actionId}`;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-spawn-proof', binding: { ...binding, actionId,
+                machineId: row.id, installationId: row.installationId,
+                custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+                machineRuntimeDemand: 'required',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) },
+                managedFiniteWake: { target: { homeId: binding.serverIdentityId, managedId: 'managed-guest',
+                    enrolledMachineId: row.id, expectedIntentRevision: 0,
+                    controller: { machineId: 'private-controller', installationId: 'controller-installation' },
+                    reason: 'admitted-work', origin: { kind: 'finite-command', actionRequestId: binding.requestId } },
+                    installationPublicKey: encodeBase64(controllerKeys.publicKey, 'base64url') } }) };
+        } });
+        homes.answer(serverId, actionPath, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            const authorization = request.executionAuthorization;
+            if (!authorization?.managedFiniteWake) throw new Error('Expected admitted wake custody');
+            for (const recipient of [
+                { machineId: row.id, installationId: row.installationId, installationPrivateKey: guestKeys.secretKey,
+                    purpose: { kind: 'external_action' } as const },
+                { machineId: 'private-controller', installationId: 'controller-installation', installationPrivateKey: controllerKeys.secretKey,
+                    purpose: { kind: 'managed_finite_wake', target: authorization.managedFiniteWake.target } as const },
+            ]) expect(openExternalActionRequesterAccountContextV1({ authorization, serverIdentityId: binding.serverIdentityId,
+                ...recipient })).toMatchObject({ token: account?.credentials.token });
+            expect(JSON.stringify(body)).not.toContain(account?.credentials.token);
+            return { body: { v: 1, actionId, requestId: binding.requestId,
+                execution: { ok: true, result: { type: 'success', sessionId: 'created-session' } } } };
+        } });
+        const result = await executeOriginalAccountMachineAction({ account, actionId, requestId: binding.requestId,
+            machineId: row.id, input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
+                creationKey: 'shared-guest-spawn', executionTarget: { serverId, machineId: row.id },
+                directory: { kind: 'path', path: '/tmp' }, permissionMode: 'default',
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            })) });
+        expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
+        expect(controllerReads).toBe(0);
+        expect(result.ok, JSON.stringify(result)).toBe(true);
+        expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+    });
     it.each(['matching', 'mismatched'] as const)('preserves the Machine availability cause and remedy with %s request correlation', async correlation => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
         const refusal = { error: 'invalid_request', code: 'target_unavailable',

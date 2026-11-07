@@ -14,6 +14,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
+import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 
 const target = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' });
 const selection = { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' } as const;
@@ -39,6 +40,31 @@ const options: SpawnSessionOptions = {
 const applications = resource.providerModels.map(entry => entry.application);
 
 describe('Session Team launch composition', () => {
+  it.each([false, true])('preserves an explicit Team-only model tuple emitted by the V2 authoring owner (profile default: %s)', async profileDefault => {
+    const selected = { v: 2, updatedAt: 1, ref: { source: 'team_resource',
+      ...resource.providerModels[0]!.selection } } as const;
+    const { kind: _kind, ...ref } = selected.ref;
+    const selectionV2 = { ...selected, ref };
+    const legacy = projectSessionModelSelectionV2ToV1(selectionV2);
+    expect(legacy).toBeNull();
+    const launch = await normalizeSessionTeamCredentialLaunch({
+      options: { directory: options.directory, ...(legacy ? { modelSelection: legacy } : {}),
+        ...(profileDefault ? { modelSelection: { v: 1 as const, updatedAt: 2,
+          ref: { agentTargetKey: target, providerConnectionId: ProviderConnectionIdSchema.parse('pc_profile'),
+            modelId: 'profile-default-model' } } } : {}),
+        teamCredentialBindings: [sessionModelSelectionV2TeamBindingIntent(selectionV2)],
+        sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
+          overrides: { reasoning_effort: { value: 'low', updatedAt: 1 } } } },
+      agentId: 'codex', agentTargetKey: target, executionMachineId: 'worker',
+      contributions: readCurrentContributionRegistry(), applications, readCatalog: async () => [resource],
+    });
+    expect(launch.teamModelRow).toEqual(resource.providerModels[0]);
+    expect(launch.options).toMatchObject({
+      modelSelection: { ref: { agentTargetKey: target, modelId: selectionV2.ref.modelId } },
+      teamCredentialBindings: [{ resourceId: resource.id, providerModelSelection: { modelId: selectionV2.ref.modelId } }],
+      sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } },
+    });
+  });
   it.each([
     { kind: 'unknown', code: 'action_outcome_unknown' },
     { kind: 'refused', code: 'credential_unavailable' },

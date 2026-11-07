@@ -426,7 +426,6 @@ export async function executeSpawnSessionRequest(
             permissionModeUpdatedAt,
             agentModeId,
             agentModeUpdatedAt,
-            modelSelection,
             normalizedExistingSessionId,
             effectiveResume,
             effectiveBackendTargetV2,
@@ -436,6 +435,7 @@ export async function executeSpawnSessionRequest(
             environmentVariablesValidation,
             persistedProviderResumeState,
         } = prepared;
+        let modelSelection = prepared.modelSelection;
         diagnosticSessionId = sessionId || normalizedExistingSessionId || diagnosticSessionId;
         let directory = preparedDirectory;
         options = {
@@ -632,6 +632,7 @@ export async function executeSpawnSessionRequest(
                         ...(params.signal ? { signal: params.signal } : {}),
                     });
                     options = normalized.options;
+                    modelSelection = options.modelSelection;
                     teamModelRow = normalized.teamModelRow;
                 } catch (error) {
                     if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw error;
